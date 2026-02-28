@@ -86,6 +86,7 @@ Data/manifest.json
 Data/expansions/*/manifest.json
 Data/expansions/*/assets/
 Data/expansions/*/overlay/
+Data/expansions/*/db/*.csv
 Data/hd/
 ingest/
 
