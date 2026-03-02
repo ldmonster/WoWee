@@ -3166,6 +3166,9 @@ void Renderer::renderOverlay(const glm::vec4& color) {
 void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     (void)world;
 
+    // Guard against null command buffer (e.g. after VK_ERROR_DEVICE_LOST)
+    if (currentCmd == VK_NULL_HANDLE) return;
+
     // GPU crash diagnostic: skip ALL world rendering to isolate crash source
     static const bool skipAll = (std::getenv("WOWEE_SKIP_ALL_RENDER") != nullptr);
     if (skipAll) return;
@@ -3731,6 +3734,7 @@ void Renderer::setTerrainStreaming(bool enabled) {
 }
 
 void Renderer::renderHUD() {
+    if (currentCmd == VK_NULL_HANDLE) return;
     if (performanceHUD && camera) {
         performanceHUD->render(this, camera.get());
     }
