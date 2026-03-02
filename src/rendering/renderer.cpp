@@ -3165,6 +3165,10 @@ void Renderer::renderOverlay(const glm::vec4& color) {
 void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     (void)world;
 
+    // GPU crash diagnostic: skip ALL world rendering to isolate crash source
+    static const bool skipAll = (std::getenv("WOWEE_SKIP_ALL_RENDER") != nullptr);
+    if (skipAll) return;
+
     auto renderStart = std::chrono::steady_clock::now();
     lastTerrainRenderMs = 0.0;
     lastWMORenderMs = 0.0;
@@ -3208,6 +3212,11 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         skySystem->render(currentCmd, perFrameSet, *camera, skyParams);
     }
 
+    // GPU crash diagnostic: skip individual renderers to isolate which one faults
+    static const bool skipWMO = (std::getenv("WOWEE_SKIP_WMO") != nullptr);
+    static const bool skipChars = (std::getenv("WOWEE_SKIP_CHARS") != nullptr);
+    static const bool skipM2 = (std::getenv("WOWEE_SKIP_M2") != nullptr);
+
     // Terrain (opaque pass)
     if (terrainRenderer && camera && terrainEnabled) {
         auto terrainStart = std::chrono::steady_clock::now();
@@ -3217,7 +3226,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     }
 
     // WMO buildings (opaque, drawn before characters so selection circle sits on top)
-    if (wmoRenderer && camera) {
+    if (wmoRenderer && camera && !skipWMO) {
         auto wmoStart = std::chrono::steady_clock::now();
         wmoRenderer->render(currentCmd, perFrameSet, *camera);
         lastWMORenderMs = std::chrono::duration<double, std::milli>(
@@ -3228,12 +3237,12 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     renderSelectionCircle(view, projection);
 
     // Characters (after selection circle so units draw over the ring)
-    if (characterRenderer && camera) {
+    if (characterRenderer && camera && !skipChars) {
         characterRenderer->render(currentCmd, perFrameSet, *camera);
     }
 
     // M2 doodads, creatures, glow sprites, particles
-    if (m2Renderer && camera) {
+    if (m2Renderer && camera && !skipM2) {
         if (cameraController) {
             m2Renderer->setInsideInterior(cameraController->isInsideWMO());
             m2Renderer->setOnTaxi(cameraController->isOnTaxi());
@@ -3393,21 +3402,21 @@ bool Renderer::loadTestTerrain(pipeline::AssetManager* assetManager, const std::
     if (!wmoRenderer) {
         wmoRenderer = std::make_unique<WMORenderer>();
         wmoRenderer->initialize(vkCtx, perFrameSetLayout, assetManager);
+        if (shadowRenderPass != VK_NULL_HANDLE) {
+            wmoRenderer->initializeShadow(shadowRenderPass);
+        }
     }
 
-    // Initialize shadow pipelines (Phase 7/8)
-    if (wmoRenderer && shadowRenderPass != VK_NULL_HANDLE) {
-        wmoRenderer->initializeShadow(shadowRenderPass);
-    }
-    if (m2Renderer && shadowRenderPass != VK_NULL_HANDLE) {
+    // Initialize shadow pipelines for M2 if not yet done
+    if (m2Renderer && shadowRenderPass != VK_NULL_HANDLE && !m2Renderer->hasShadowPipeline()) {
         m2Renderer->initializeShadow(shadowRenderPass);
     }
     if (!characterRenderer) {
         characterRenderer = std::make_unique<CharacterRenderer>();
         characterRenderer->initialize(vkCtx, perFrameSetLayout, assetManager);
-    }
-    if (characterRenderer && shadowRenderPass != VK_NULL_HANDLE) {
-        characterRenderer->initializeShadow(shadowRenderPass);
+        if (shadowRenderPass != VK_NULL_HANDLE) {
+            characterRenderer->initializeShadow(shadowRenderPass);
+        }
     }
 
     // Create and initialize terrain manager
@@ -3862,6 +3871,8 @@ void Renderer::renderReflectionPass() {
 }
 
 void Renderer::renderShadowPass() {
+    static const bool skipShadows = (std::getenv("WOWEE_SKIP_SHADOWS") != nullptr);
+    if (skipShadows) return;
     if (!shadowsEnabled || shadowDepthImage == VK_NULL_HANDLE) return;
     if (currentCmd == VK_NULL_HANDLE) return;
 

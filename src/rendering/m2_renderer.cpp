@@ -3254,6 +3254,35 @@ void M2Renderer::clear() {
         for (auto& inst : instances) {
             destroyInstanceBones(inst);
         }
+        // Reset descriptor pools so new allocations succeed after reload.
+        // destroyModelGPU/destroyInstanceBones don't free individual sets,
+        // so the pools fill up across map changes without this reset.
+        VkDevice device = vkCtx_->getDevice();
+        if (materialDescPool_) {
+            vkResetDescriptorPool(device, materialDescPool_, 0);
+            // Re-allocate the glow texture descriptor set (pre-allocated during init,
+            // invalidated by pool reset).
+            if (glowTexture_ && particleTexLayout_) {
+                VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+                ai.descriptorPool = materialDescPool_;
+                ai.descriptorSetCount = 1;
+                ai.pSetLayouts = &particleTexLayout_;
+                glowTexDescSet_ = VK_NULL_HANDLE;
+                if (vkAllocateDescriptorSets(device, &ai, &glowTexDescSet_) == VK_SUCCESS) {
+                    VkDescriptorImageInfo imgInfo = glowTexture_->descriptorInfo();
+                    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                    write.dstSet = glowTexDescSet_;
+                    write.dstBinding = 0;
+                    write.descriptorCount = 1;
+                    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                    write.pImageInfo = &imgInfo;
+                    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+                }
+            }
+        }
+        if (boneDescPool_) {
+            vkResetDescriptorPool(device, boneDescPool_, 0);
+        }
     }
     models.clear();
     instances.clear();

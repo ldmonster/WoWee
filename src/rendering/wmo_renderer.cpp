@@ -1059,6 +1059,11 @@ void WMORenderer::clearAll() {
             if (entry.texture) entry.texture->destroy(device, allocator);
             if (entry.normalHeightMap) entry.normalHeightMap->destroy(device, allocator);
         }
+
+        // Reset descriptor pool so new allocations succeed after reload
+        if (materialDescPool_) {
+            vkResetDescriptorPool(device, materialDescPool_, 0);
+        }
     }
 
     loadedModels.clear();

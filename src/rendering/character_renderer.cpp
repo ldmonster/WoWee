@@ -383,6 +383,85 @@ void CharacterRenderer::shutdown() {
     vkCtx_ = nullptr;
 }
 
+void CharacterRenderer::clear() {
+    if (!vkCtx_) return;
+
+    LOG_INFO("CharacterRenderer::clear instances=", instances.size(),
+             " models=", models.size());
+
+    vkDeviceWaitIdle(vkCtx_->getDevice());
+    VkDevice device = vkCtx_->getDevice();
+    VmaAllocator alloc = vkCtx_->getAllocator();
+
+    // Destroy GPU resources for all models
+    for (auto& pair : models) {
+        destroyModelGPU(pair.second);
+    }
+
+    // Destroy bone buffers for all instances
+    for (auto& pair : instances) {
+        destroyInstanceBones(pair.second);
+    }
+
+    // Clear texture cache (VkTexture unique_ptrs auto-destroy)
+    textureCache.clear();
+    textureHasAlphaByPtr_.clear();
+    textureColorKeyBlackByPtr_.clear();
+    textureCacheBytes_ = 0;
+    textureCacheCounter_ = 0;
+    loggedTextureLoadFails_.clear();
+
+    // Clear composite and failed caches
+    compositeCache_.clear();
+    failedTextureCache_.clear();
+
+    // Recreate default textures (needed by loadModel/loadTexture fallbacks)
+    whiteTexture_.reset();
+    transparentTexture_.reset();
+    flatNormalTexture_.reset();
+    {
+        uint8_t white[] = {255, 255, 255, 255};
+        whiteTexture_ = std::make_unique<VkTexture>();
+        whiteTexture_->upload(*vkCtx_, white, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, false);
+        whiteTexture_->createSampler(device, VK_FILTER_NEAREST, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+    }
+    {
+        uint8_t transparent[] = {0, 0, 0, 0};
+        transparentTexture_ = std::make_unique<VkTexture>();
+        transparentTexture_->upload(*vkCtx_, transparent, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, false);
+        transparentTexture_->createSampler(device, VK_FILTER_NEAREST, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+    }
+    {
+        uint8_t flatNormal[] = {128, 128, 255, 128};
+        flatNormalTexture_ = std::make_unique<VkTexture>();
+        flatNormalTexture_->upload(*vkCtx_, flatNormal, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, false);
+        flatNormalTexture_->createSampler(device, VK_FILTER_NEAREST, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+    }
+
+    models.clear();
+    instances.clear();
+
+    // Release deferred transient material UBOs
+    for (int i = 0; i < 2; i++) {
+        for (const auto& b : transientMaterialUbos_[i]) {
+            if (b.first) {
+                vmaDestroyBuffer(alloc, b.first, b.second);
+            }
+        }
+        transientMaterialUbos_[i].clear();
+    }
+
+    // Reset descriptor pools (don't destroy — reuse for new allocations)
+    for (int i = 0; i < 2; i++) {
+        if (materialDescPools_[i]) {
+            vkResetDescriptorPool(device, materialDescPools_[i], 0);
+        }
+    }
+    if (boneDescPool_) {
+        vkResetDescriptorPool(device, boneDescPool_, 0);
+    }
+}
+
 void CharacterRenderer::destroyModelGPU(M2ModelGPU& gpuModel) {
     if (!vkCtx_) return;
     VmaAllocator alloc = vkCtx_->getAllocator();

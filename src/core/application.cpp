@@ -1456,11 +1456,21 @@ void Application::setupUICallbacks() {
             return;
         }
 
+        // If a world load is already in progress (re-entrant call from
+        // gameHandler->update() processing SMSG_NEW_WORLD during warmup),
+        // defer this entry.  The current load will pick it up when it finishes.
+        if (loadingWorld_) {
+            LOG_WARNING("World entry deferred: map ", mapId, " while loading (will process after current load)");
+            pendingWorldEntry_ = {mapId, x, y, z};
+            return;
+        }
+
         worldEntryMovementGraceTimer_ = 2.0f;
         taxiLandingClampTimer_ = 0.0f;
         lastTaxiFlight_ = false;
         loadOnlineWorldTerrain(mapId, x, y, z);
-        loadedMapId_ = mapId;
+        // loadedMapId_ is set inside loadOnlineWorldTerrain (including
+        // any deferred entries it processes), so we must NOT override it here.
     });
 
     auto sampleBestFloorAt = [this](float x, float y, float probeZ) -> std::optional<float> {
@@ -3160,6 +3170,11 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         return;
     }
 
+    // Guard against re-entrant calls.  The worldEntryCallback defers new
+    // entries while this flag is set; we process them at the end.
+    loadingWorld_ = true;
+    pendingWorldEntry_.reset();
+
     // --- Loading screen for online mode ---
     rendering::LoadingScreen loadingScreen;
     loadingScreen.setVkContext(window->getVkContext());
@@ -3196,43 +3211,44 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
 
     // --- Clean up previous map's state on map change ---
     // (Same cleanup as logout, but preserves player identity and renderer objects.)
-    if (loadedMapId_ != 0xFFFFFFFF) {
-        LOG_INFO("Map change: cleaning up old map ", loadedMapId_, " before loading map ", mapId);
+    LOG_WARNING("loadOnlineWorldTerrain: mapId=", mapId, " loadedMapId_=", loadedMapId_);
+    bool hasRendererData = renderer && (renderer->getWMORenderer() || renderer->getM2Renderer());
+    if (loadedMapId_ != 0xFFFFFFFF || hasRendererData) {
+        LOG_WARNING("Map change: cleaning up old map ", loadedMapId_, " before loading map ", mapId);
 
-        // Clear entity instances from old map
-        creatureInstances_.clear();
-        creatureModelIds_.clear();
-        creatureRenderPosCache_.clear();
-        creatureWeaponsAttached_.clear();
-        creatureWeaponAttachAttempts_.clear();
-        deadCreatureGuids_.clear();
-        nonRenderableCreatureDisplayIds_.clear();
-        creaturePermanentFailureGuids_.clear();
-
+        // Clear pending queues first (these don't touch GPU resources)
         pendingCreatureSpawns_.clear();
         pendingCreatureSpawnGuids_.clear();
         creatureSpawnRetryCounts_.clear();
-
-        playerInstances_.clear();
-        onlinePlayerAppearance_.clear();
-        pendingOnlinePlayerEquipment_.clear();
-        deferredEquipmentQueue_.clear();
         pendingPlayerSpawns_.clear();
         pendingPlayerSpawnGuids_.clear();
-
-        gameObjectInstances_.clear();
+        pendingOnlinePlayerEquipment_.clear();
+        deferredEquipmentQueue_.clear();
         pendingGameObjectSpawns_.clear();
         pendingTransportMoves_.clear();
         pendingTransportDoodadBatches_.clear();
 
         if (renderer) {
-            // Clear all world geometry from old map (including textures/models)
+            // Clear all world geometry from old map (including textures/models).
+            // WMO clearAll and M2 clear both call vkDeviceWaitIdle internally,
+            // ensuring no GPU command buffers reference old resources.
             if (auto* wmo = renderer->getWMORenderer()) {
                 wmo->clearAll();
             }
             if (auto* m2 = renderer->getM2Renderer()) {
                 m2->clear();
             }
+
+            // Full clear of character renderer: removes all instances, models,
+            // textures, and resets descriptor pools.  This prevents stale GPU
+            // resources from accumulating across map changes (old creature
+            // models, bone buffers, texture descriptor sets) which can cause
+            // VK_ERROR_DEVICE_LOST on some drivers.
+            if (auto* cr = renderer->getCharacterRenderer()) {
+                cr->clear();
+                renderer->setCharacterFollow(0);
+            }
+
             if (auto* terrain = renderer->getTerrainManager()) {
                 terrain->softReset();
                 terrain->setStreamingEnabled(true);  // Re-enable in case previous map disabled it
@@ -3242,6 +3258,22 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
             }
             renderer->clearMount();
         }
+
+        // Clear application-level instance tracking (after renderer cleanup)
+        creatureInstances_.clear();
+        creatureModelIds_.clear();
+        creatureRenderPosCache_.clear();
+        creatureWeaponsAttached_.clear();
+        creatureWeaponAttachAttempts_.clear();
+        deadCreatureGuids_.clear();
+        nonRenderableCreatureDisplayIds_.clear();
+        creaturePermanentFailureGuids_.clear();
+
+        playerInstances_.clear();
+        onlinePlayerAppearance_.clear();
+
+        gameObjectInstances_.clear();
+        gameObjectDisplayIdModelCache_.clear();
 
         // Force player character re-spawn on new map
         playerCharacterSpawned = false;
@@ -3395,25 +3427,22 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         LOG_WARNING("WMO-only map detected — loading root WMO: ", wdtInfo.rootWMOPath);
         showProgress("Loading instance geometry...", 0.25f);
 
-        // Still call loadTestTerrain with a dummy path to initialize all renderers
-        // (terrain, WMO, M2, character). The terrain load will fail gracefully.
-        auto [tileX, tileY] = core::coords::canonicalToTile(spawnCanonical.x, spawnCanonical.y);
-        std::string dummyAdtPath = "World\\Maps\\" + mapName + "\\" + mapName + "_" +
-                                   std::to_string(tileX) + "_" + std::to_string(tileY) + ".adt";
-        LOG_WARNING("WMO-only: calling loadTestTerrain with dummy ADT: ", dummyAdtPath);
-        renderer->loadTestTerrain(assetManager.get(), dummyAdtPath);
-        LOG_WARNING("WMO-only: loadTestTerrain returned");
+        // Initialize renderers if they don't exist yet (first login to a WMO-only map).
+        // On map change, renderers already exist from the previous map.
+        if (!renderer->getWMORenderer() || !renderer->getTerrainManager()) {
+            auto [tileX, tileY] = core::coords::canonicalToTile(spawnCanonical.x, spawnCanonical.y);
+            std::string dummyAdtPath = "World\\Maps\\" + mapName + "\\" + mapName + "_" +
+                                       std::to_string(tileX) + "_" + std::to_string(tileY) + ".adt";
+            LOG_WARNING("WMO-only: calling loadTestTerrain to create renderers");
+            renderer->loadTestTerrain(assetManager.get(), dummyAdtPath);
+        }
 
-        // Set map name on the newly-created WMO renderer (loadTestTerrain creates it)
+        // Set map name on WMO and terrain renderers
         if (renderer->getWMORenderer()) {
             renderer->getWMORenderer()->setMapName(mapName);
         }
         if (renderer->getTerrainManager()) {
             renderer->getTerrainManager()->setMapName(mapName);
-        }
-
-        // Disable terrain streaming — no ADT tiles for WMO-only maps
-        if (renderer->getTerrainManager()) {
             renderer->getTerrainManager()->setStreamingEnabled(false);
         }
 
@@ -3606,6 +3635,15 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
             LOG_INFO("Online world terrain loading initiated");
         }
 
+        // Set map name on the newly-created WMO/terrain renderers
+        // (loadTestTerrain creates them, so the earlier setMapName at line ~3296 was a no-op)
+        if (renderer->getWMORenderer()) {
+            renderer->getWMORenderer()->setMapName(mapName);
+        }
+        if (renderer->getTerrainManager()) {
+            renderer->getTerrainManager()->setMapName(mapName);
+        }
+
         // Character renderer is created inside loadTestTerrain(), so spawn the
         // player model now that the renderer actually exists.
         if (!playerCharacterSpawned) {
@@ -3791,6 +3829,15 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
 
             // Drain network and process deferred spawn/composite queues while hidden.
             if (gameHandler) gameHandler->update(1.0f / 60.0f);
+
+            // If a new world entry was deferred during packet processing,
+            // stop warming up this map — we'll load the new one after cleanup.
+            if (pendingWorldEntry_) {
+                LOG_WARNING("loadOnlineWorldTerrain(map ", mapId,
+                            ") — deferred world entry pending, stopping warmup");
+                break;
+            }
+
             if (world) world->update(1.0f / 60.0f);
             processPlayerSpawnQueue();
             processCreatureSpawnQueue();
@@ -3823,8 +3870,26 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         loadingScreen.shutdown();
     }
 
+    // Track which map we actually loaded (used by same-map teleport check).
+    loadedMapId_ = mapId;
+
     // Set game state
     setState(AppState::IN_GAME);
+
+    // Clear loading flag and process any deferred world entry.
+    // A deferred entry occurs when SMSG_NEW_WORLD arrived during our warmup
+    // (e.g., an area trigger in a dungeon immediately teleporting the player out).
+    loadingWorld_ = false;
+    if (pendingWorldEntry_) {
+        auto entry = *pendingWorldEntry_;
+        pendingWorldEntry_.reset();
+        LOG_WARNING("Processing deferred world entry: map ", entry.mapId);
+        worldEntryMovementGraceTimer_ = 2.0f;
+        taxiLandingClampTimer_ = 0.0f;
+        lastTaxiFlight_ = false;
+        // Recursive call — sets loadedMapId_ to entry.mapId inside.
+        loadOnlineWorldTerrain(entry.mapId, entry.x, entry.y, entry.z);
+    }
 }
 
 void Application::buildCreatureDisplayLookups() {
@@ -6181,7 +6246,15 @@ void Application::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_t 
         auto itCache = gameObjectDisplayIdModelCache_.find(displayId);
         if (itCache != gameObjectDisplayIdModelCache_.end()) {
             modelId = itCache->second;
-        } else {
+            if (!m2Renderer->hasModel(modelId)) {
+                LOG_WARNING("GO M2 cache hit but model gone: displayId=", displayId,
+                            " modelId=", modelId, " path=", modelPath,
+                            " — reloading");
+                gameObjectDisplayIdModelCache_.erase(itCache);
+                itCache = gameObjectDisplayIdModelCache_.end();
+            }
+        }
+        if (itCache == gameObjectDisplayIdModelCache_.end()) {
             modelId = nextGameObjectModelId_++;
 
             auto m2Data = assetManager->readFile(modelPath);

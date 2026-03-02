@@ -254,6 +254,7 @@ public:
      * Initialize shadow pipeline (Phase 7)
      */
     bool initializeShadow(VkRenderPass shadowRenderPass);
+    bool hasShadowPipeline() const { return shadowPipeline_ != VK_NULL_HANDLE; }
 
     /**
      * Render depth-only pass for shadow casting

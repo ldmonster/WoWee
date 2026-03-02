@@ -48,6 +48,7 @@ public:
                     VkRenderPass renderPassOverride = VK_NULL_HANDLE,
                     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT);
     void shutdown();
+    void clear();  // Remove all models/instances/textures but keep pipelines/pools
 
     void setAssetManager(pipeline::AssetManager* am) { assetManager = am; }
 

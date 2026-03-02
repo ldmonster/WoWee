@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <array>
+#include <optional>
 
 namespace wowee {
 
@@ -189,6 +190,12 @@ private:
     uint32_t wyvernDisplayId_ = 0;
     bool lastTaxiFlight_ = false;
     uint32_t loadedMapId_ = 0xFFFFFFFF;  // Map ID of currently loaded terrain (0xFFFFFFFF = none)
+    uint32_t worldLoadGeneration_ = 0;   // Incremented on each world entry to detect re-entrant loads
+    bool loadingWorld_ = false;          // True while loadOnlineWorldTerrain is running
+    struct PendingWorldEntry {
+        uint32_t mapId; float x, y, z;
+    };
+    std::optional<PendingWorldEntry> pendingWorldEntry_;  // Deferred world entry during loading
     float taxiLandingClampTimer_ = 0.0f;
     float worldEntryMovementGraceTimer_ = 0.0f;
     float facingSendCooldown_ = 0.0f;        // Rate-limits MSG_MOVE_SET_FACING

@@ -557,7 +557,9 @@ void SwimEffects::update(const Camera& camera, const CameraController& cc,
     }
 
     // --- Bubble spawning ---
-    bool underwater = camWaterH && camPos.z < *camWaterH;
+    // Require swimming state to prevent spurious bubbles on login/teleport
+    // when camera may briefly appear below a water surface before grounding.
+    bool underwater = swimming && camWaterH && camPos.z < *camWaterH;
     if (underwater) {
         float bubbleRate = 20.0f;
         bubbleSpawnAccum += bubbleRate * deltaTime;
