@@ -1617,6 +1617,9 @@ uint32_t M2Renderer::createInstance(uint32_t modelId, const glm::vec3& position,
     instance.cachedIsSmoke = mdlRef.isSmoke;
     instance.cachedHasParticleEmitters = !mdlRef.particleEmitters.empty();
     instance.cachedBoundRadius = mdlRef.boundRadius;
+    instance.cachedIsGroundDetail = mdlRef.isGroundDetail;
+    instance.cachedIsInvisibleTrap = mdlRef.isInvisibleTrap;
+    instance.cachedIsValid = mdlRef.isValid();
 
     // Initialize animation: play first sequence (usually Stand/Idle)
     const auto& mdl = mdlRef;
@@ -1691,6 +1694,9 @@ uint32_t M2Renderer::createInstanceWithMatrix(uint32_t modelId, const glm::mat4&
     instance.cachedIsSmoke = mdl2.isSmoke;
     instance.cachedHasParticleEmitters = !mdl2.particleEmitters.empty();
     instance.cachedBoundRadius = mdl2.boundRadius;
+    instance.cachedIsGroundDetail = mdl2.isGroundDetail;
+    instance.cachedIsInvisibleTrap = mdl2.isInvisibleTrap;
+    instance.cachedIsValid = mdl2.isValid();
 
     // Initialize animation
     if (mdl2.hasAnimation && !mdl2.disableAnimation && !mdl2.sequences.empty()) {
@@ -2139,28 +2145,26 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     for (uint32_t i = 0; i < static_cast<uint32_t>(instances.size()); ++i) {
         const auto& instance = instances[i];
 
+        // Use cached model flags — no hash lookup needed
+        if (!instance.cachedIsValid || instance.cachedIsSmoke || instance.cachedIsInvisibleTrap) continue;
+
         glm::vec3 toCam = instance.position - camPos;
         float distSq = glm::dot(toCam, toCam);
+        if (distSq > maxPossibleDistSq) continue;
 
-        auto it = models.find(instance.modelId);
-        if (it == models.end()) continue;
-        const M2ModelGPU& model = it->second;
-        if (!model.isValid() || model.isSmoke || model.isInvisibleTrap) continue;
-
-        float worldRadius = model.boundRadius * instance.scale;
+        float worldRadius = instance.cachedBoundRadius * instance.scale;
         float cullRadius = worldRadius;
-        if (model.disableAnimation) {
+        if (instance.cachedDisableAnimation) {
             cullRadius = std::max(cullRadius, 3.0f);
         }
         float effectiveMaxDistSq = maxRenderDistanceSq * std::max(1.0f, cullRadius / 12.0f);
-        if (model.disableAnimation) {
+        if (instance.cachedDisableAnimation) {
             effectiveMaxDistSq *= 2.6f;
         }
-        if (model.isGroundDetail) {
+        if (instance.cachedIsGroundDetail) {
             effectiveMaxDistSq *= 0.75f;
         }
 
-        if (distSq > maxPossibleDistSq) continue;
         if (distSq > effectiveMaxDistSq) continue;
 
         // Frustum cull with padding
@@ -2278,12 +2282,11 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             }
         }
 
-        // LOD selection based on distance
-        float dist = std::sqrt(entry.distSq);
+        // LOD selection based on squared distance (avoid sqrt)
         uint16_t desiredLOD = 0;
-        if (dist > 150.0f) desiredLOD = 3;
-        else if (dist > 80.0f) desiredLOD = 2;
-        else if (dist > 40.0f) desiredLOD = 1;
+        if (entry.distSq > 150.0f * 150.0f) desiredLOD = 3;
+        else if (entry.distSq > 80.0f * 80.0f) desiredLOD = 2;
+        else if (entry.distSq > 40.0f * 40.0f) desiredLOD = 1;
 
         uint16_t targetLOD = desiredLOD;
         if (desiredLOD > 0) {
@@ -2450,23 +2453,21 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         vkCmdPushConstants(cmd, particlePipelineLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                            sizeof(particlePush), &particlePush);
 
-        // Build and upload vertex data
-        std::vector<float> glowData;
-        glowData.reserve(glowSprites_.size() * 9);
-        for (const auto& gs : glowSprites_) {
-            glowData.push_back(gs.worldPos.x);
-            glowData.push_back(gs.worldPos.y);
-            glowData.push_back(gs.worldPos.z);
-            glowData.push_back(gs.color.r);
-            glowData.push_back(gs.color.g);
-            glowData.push_back(gs.color.b);
-            glowData.push_back(gs.color.a);
-            glowData.push_back(gs.size);
-            glowData.push_back(0.0f);
-        }
-
+        // Write glow vertex data directly to mapped buffer (no temp vector)
         size_t uploadCount = std::min(glowSprites_.size(), MAX_GLOW_SPRITES);
-        memcpy(glowVBMapped_, glowData.data(), uploadCount * 9 * sizeof(float));
+        float* dst = static_cast<float*>(glowVBMapped_);
+        for (size_t gi = 0; gi < uploadCount; gi++) {
+            const auto& gs = glowSprites_[gi];
+            *dst++ = gs.worldPos.x;
+            *dst++ = gs.worldPos.y;
+            *dst++ = gs.worldPos.z;
+            *dst++ = gs.color.r;
+            *dst++ = gs.color.g;
+            *dst++ = gs.color.b;
+            *dst++ = gs.color.a;
+            *dst++ = gs.size;
+            *dst++ = 0.0f;
+        }
 
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &glowVB_, &offset);
@@ -2748,6 +2749,9 @@ void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMa
         const M2ModelGPU* currentModel = nullptr;
 
         for (const auto& instance : instances) {
+            // Use cached flags to skip early without hash lookup
+            if (!instance.cachedIsValid || instance.cachedIsSmoke || instance.cachedIsInvisibleTrap) continue;
+
             // Distance cull against shadow frustum
             glm::vec3 diff = instance.position - shadowCenter;
             if (glm::dot(diff, diff) > shadowRadiusSq) continue;
@@ -2755,7 +2759,6 @@ void M2Renderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSpaceMa
             auto modelIt = models.find(instance.modelId);
             if (modelIt == models.end()) continue;
             const M2ModelGPU& model = modelIt->second;
-            if (!model.isValid() || model.isSmoke || model.isInvisibleTrap) continue;
 
             // Filter: only draw foliage models in foliage pass, non-foliage in non-foliage pass
             if (model.shadowWindFoliage != foliagePass) continue;

@@ -179,6 +179,9 @@ struct M2Instance {
     bool cachedDisableAnimation = false;
     bool cachedIsSmoke = false;
     bool cachedHasParticleEmitters = false;
+    bool cachedIsGroundDetail = false;
+    bool cachedIsInvisibleTrap = false;
+    bool cachedIsValid = false;
     float cachedBoundRadius = 0.0f;
 
     // Frame-skip optimization (update distant animations less frequently)
