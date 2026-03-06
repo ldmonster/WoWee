@@ -753,6 +753,44 @@ static void blitOverlayScaled2x(std::vector<uint8_t>& composite, int compW, int 
     blitOverlayScaledN(composite, compW, compH, overlay, dstX, dstY, 2);
 }
 
+// Nearest-neighbor downscale blit: sample every Nth pixel from overlay
+static void blitOverlayDownscaleN(std::vector<uint8_t>& composite, int compW, int compH,
+                                   const pipeline::BLPImage& overlay, int dstX, int dstY, int scale) {
+    if (scale < 2) { blitOverlay(composite, compW, compH, overlay, dstX, dstY); return; }
+    int outW = overlay.width / scale;
+    int outH = overlay.height / scale;
+    for (int oy = 0; oy < outH; oy++) {
+        int dy = dstY + oy;
+        if (dy < 0 || dy >= compH) continue;
+        for (int ox = 0; ox < outW; ox++) {
+            int dx = dstX + ox;
+            if (dx < 0 || dx >= compW) continue;
+
+            int sx = ox * scale;
+            int sy = oy * scale;
+            size_t srcIdx = (static_cast<size_t>(sy) * overlay.width + sx) * 4;
+            size_t dstIdx = (static_cast<size_t>(dy) * compW + dx) * 4;
+
+            uint8_t srcA = overlay.data[srcIdx + 3];
+            if (srcA == 0) continue;
+
+            if (srcA == 255) {
+                composite[dstIdx + 0] = overlay.data[srcIdx + 0];
+                composite[dstIdx + 1] = overlay.data[srcIdx + 1];
+                composite[dstIdx + 2] = overlay.data[srcIdx + 2];
+                composite[dstIdx + 3] = 255;
+            } else {
+                float alpha = srcA / 255.0f;
+                float invAlpha = 1.0f - alpha;
+                composite[dstIdx + 0] = static_cast<uint8_t>(overlay.data[srcIdx + 0] * alpha + composite[dstIdx + 0] * invAlpha);
+                composite[dstIdx + 1] = static_cast<uint8_t>(overlay.data[srcIdx + 1] * alpha + composite[dstIdx + 1] * invAlpha);
+                composite[dstIdx + 2] = static_cast<uint8_t>(overlay.data[srcIdx + 2] * alpha + composite[dstIdx + 2] * invAlpha);
+                composite[dstIdx + 3] = std::max(composite[dstIdx + 3], srcA);
+            }
+        }
+    }
+}
+
 VkTexture* CharacterRenderer::compositeTextures(const std::vector<std::string>& layerPaths) {
     if (layerPaths.empty() || !assetManager || !assetManager->isInitialized()) {
         return whiteTexture_.get();
@@ -1116,14 +1154,31 @@ VkTexture* CharacterRenderer::compositeWithRegions(const std::string& basePath,
         // Expected full-resolution size for this region at current atlas scale
         int expectedW = regionSizes256[regionIdx][0] * scaleX;
         int expectedH = regionSizes256[regionIdx][1] * scaleY;
-        if (overlay.width * 2 == expectedW && overlay.height * 2 == expectedH) {
+        if (overlay.width == expectedW && overlay.height == expectedH) {
+            // Exact match — blit 1:1
+            blitOverlay(composite, width, height, overlay, dstX, dstY);
+        } else if (overlay.width * 2 == expectedW && overlay.height * 2 == expectedH) {
+            // Overlay is half size — upscale 2x
             blitOverlayScaled2x(composite, width, height, overlay, dstX, dstY);
+        } else if (overlay.width > expectedW && overlay.height > expectedH &&
+                   expectedW > 0 && expectedH > 0) {
+            // Overlay is larger than region (e.g. HD textures for 1024 atlas on 512 canvas)
+            // Downscale to fit
+            int dsX = overlay.width / expectedW;
+            int dsY = overlay.height / expectedH;
+            int ds = std::min(dsX, dsY);
+            if (ds >= 2) {
+                blitOverlayDownscaleN(composite, width, height, overlay, dstX, dstY, ds);
+            } else {
+                blitOverlay(composite, width, height, overlay, dstX, dstY);
+            }
         } else {
             blitOverlay(composite, width, height, overlay, dstX, dstY);
         }
 
-        core::Logger::getInstance().debug("compositeWithRegions: region ", regionIdx,
-            " at (", dstX, ",", dstY, ") ", overlay.width, "x", overlay.height, " from ", rl.second);
+        core::Logger::getInstance().warning("compositeWithRegions: region ", regionIdx,
+            " at (", dstX, ",", dstY, ") overlay=", overlay.width, "x", overlay.height,
+            " expected=", expectedW, "x", expectedH, " from ", rl.second);
     }
 
     // Upload to GPU via VkTexture

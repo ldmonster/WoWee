@@ -4077,18 +4077,24 @@ void Application::buildCreatureDisplayLookups() {
     // Col 5: HairStyleID
     // Col 6: HairColorID
     // Col 7: FacialHairID
-    // Turtle/Vanilla: 19 fields — 10 equip slots (8-17), BakeName=18 (no Flags field)
-    // WotLK/TBC/Classic: 21 fields — 11 equip slots (8-18), Flags=19, BakeName=20
+    // CreatureDisplayInfoExtra.dbc field layout depends on actual field count:
+    //   19 fields: 10 equip slots (8-17), BakeName=18 (no Flags field)
+    //   21 fields: 11 equip slots (8-18), Flags=19, BakeName=20
     if (auto cdie = assetManager->loadDBC("CreatureDisplayInfoExtra.dbc"); cdie && cdie->isLoaded()) {
         const auto* cdieL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("CreatureDisplayInfoExtra") : nullptr;
         const uint32_t cdieEquip0 = cdieL ? (*cdieL)["EquipDisplay0"] : 8;
-        const uint32_t bakeField = cdieL ? (*cdieL)["BakeName"] : 20;
-        // Count equipment slots: Vanilla/Turtle has 10, WotLK/TBC has 11
-        int numEquipSlots = 10;
-        if (cdieL && cdieL->field("EquipDisplay10") != 0xFFFFFFFF) {
+        // Detect actual field count to determine equip slot count and BakeName position
+        const uint32_t dbcFieldCount = cdie->getFieldCount();
+        int numEquipSlots;
+        uint32_t bakeField;
+        if (dbcFieldCount <= 19) {
+            // 19 fields: 10 equip slots (8-17), BakeName at 18
+            numEquipSlots = 10;
+            bakeField = 18;
+        } else {
+            // 21 fields: 11 equip slots (8-18), Flags=19, BakeName=20
             numEquipSlots = 11;
-        } else if (!cdieL) {
-            numEquipSlots = 11;  // Default (WotLK) has 11
+            bakeField = cdieL ? (*cdieL)["BakeName"] : 20;
         }
         uint32_t withBakeName = 0;
         for (uint32_t i = 0; i < cdie->getRecordCount(); i++) {
@@ -4107,8 +4113,9 @@ void Application::buildCreatureDisplayLookups() {
             if (!extra.bakeName.empty()) withBakeName++;
             humanoidExtraMap_[cdie->getUInt32(i, cdieL ? (*cdieL)["ID"] : 0)] = extra;
         }
-        LOG_INFO("Loaded ", humanoidExtraMap_.size(), " humanoid display extra entries (",
-                 withBakeName, " with baked textures, ", numEquipSlots, " equip slots)");
+        LOG_WARNING("Loaded ", humanoidExtraMap_.size(), " humanoid display extra entries (",
+                 withBakeName, " with baked textures, ", numEquipSlots, " equip slots, ",
+                 dbcFieldCount, " DBC fields, bakeField=", bakeField, ")");
     }
 
     // CreatureModelData.dbc: modelId (col 0) → modelPath (col 2, .mdx → .m2)
@@ -4508,12 +4515,11 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                 LOG_DEBUG("  Found humanoid extra: raceId=", (int)extra.raceId, " sexId=", (int)extra.sexId,
                           " hairStyle=", (int)extra.hairStyleId, " hairColor=", (int)extra.hairColorId,
                           " bakeName='", extra.bakeName, "'");
-                LOG_DEBUG("  Equipment: helm=", extra.equipDisplayId[0], " shoulder=", extra.equipDisplayId[1],
-                          " shirt=", extra.equipDisplayId[2], " chest=", extra.equipDisplayId[3],
-                          " belt=", extra.equipDisplayId[4], " legs=", extra.equipDisplayId[5],
-                          " feet=", extra.equipDisplayId[6], " wrist=", extra.equipDisplayId[7],
-                          " hands=", extra.equipDisplayId[8], " tabard=", extra.equipDisplayId[9],
-                          " cape=", extra.equipDisplayId[10]);
+                LOG_DEBUG("NPC equip: chest=", extra.equipDisplayId[3],
+                          " legs=", extra.equipDisplayId[5],
+                          " feet=", extra.equipDisplayId[6],
+                          " hands=", extra.equipDisplayId[8],
+                          " bake='", extra.bakeName, "'");
 
                 // Build equipment texture region layers from NPC equipment display IDs
                 // (texture-only compositing — no geoset changes to avoid invisibility bugs)
@@ -4574,8 +4580,11 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                             }
                         };
                         auto regionAllowedForNpcSlotCtx = [&](int eqSlot, int region) -> bool {
-                            // Avoid painting arm regions from shirt/chest when NPC has no arm armor.
-                            if ((eqSlot == 2 || eqSlot == 3) && !npcHasArmArmor) {
+                            // Shirt (slot 2) without arm armor: restrict to torso only
+                            // to avoid bare-skin shirt textures bleeding onto arms.
+                            // Chest (slot 3) always paints arms — plate/mail chest armor
+                            // must cover the full upper body even without separate gloves.
+                            if (eqSlot == 2 && !npcHasArmArmor) {
                                 return (region == 3 || region == 4);
                             }
                             return regionAllowedForNpcSlot(eqSlot, region);
@@ -4684,35 +4693,26 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                 // Use baked texture for body skin (types 1, 2)
                 // Type 6 (hair) needs its own texture from CharSections.dbc
                 const bool allowNpcRegionComposite = true;
+                rendering::VkTexture* bakedSkinTex = nullptr;
                 if (!extra.bakeName.empty()) {
                     std::string bakePath = "Textures\\BakedNpcTextures\\" + extra.bakeName;
-
-                    // Composite equipment textures over baked NPC texture, or just load baked texture
-                    rendering::VkTexture* finalTex = nullptr;
-                    if (allowNpcRegionComposite && !npcRegionLayers.empty()) {
-                        finalTex = charRenderer->compositeWithRegions(bakePath, {}, npcRegionLayers);
-                        LOG_DEBUG("Composited NPC baked texture with ", npcRegionLayers.size(),
-                                  " equipment regions: ", bakePath);
-                    } else {
-                        finalTex = charRenderer->loadTexture(bakePath);
-                    }
-
+                    rendering::VkTexture* finalTex = charRenderer->loadTexture(bakePath);
+                    bakedSkinTex = finalTex;
                     if (finalTex && modelData) {
                         for (size_t ti = 0; ti < modelData->textures.size(); ti++) {
                             uint32_t texType = modelData->textures[ti].type;
-                            // Humanoid NPCs typically use creature-skin texture types (11-13).
-                            // Keep type 2 (object skin) untouched so cloak/cape slots do not get face/body textures.
-                            if (texType == 1 || texType == 11 || texType == 12 || texType == 13) {
+                            if (texType == 1) {
                                 charRenderer->setModelTexture(modelId, static_cast<uint32_t>(ti), finalTex);
-                                LOG_DEBUG("Applied baked NPC texture to slot ", ti, " (type ", texType, "): ", bakePath);
                                 hasHumanoidTexture = true;
+                                LOG_DEBUG("NPC baked type1 slot=", ti, " modelId=", modelId,
+                                            " tex=", bakePath);
                             }
                         }
-                    } else {
-                        LOG_WARNING("Failed to load baked NPC texture: ", bakePath);
                     }
-                } else {
-                    LOG_DEBUG("  Humanoid extra has empty bakeName, trying CharSections fallback");
+                }
+                // Fallback: if baked texture failed or bakeName was empty, build from CharSections
+                if (!hasHumanoidTexture) {
+                    LOG_DEBUG("  Trying CharSections fallback for NPC skin");
 
                     // Build skin texture from CharSections.dbc (same as player character)
                     auto csFallbackDbc = assetManager->loadDBC("CharSections.dbc");
@@ -4755,6 +4755,9 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                             }
                         }
 
+                        LOG_DEBUG("NPC CharSections lookup: race=", npcRace, " sex=", npcSex,
+                                    " skin=", npcSkin, " face=", npcFace,
+                                    " skinPath='", npcSkinPath, "' faceLower='", npcFaceLower, "'");
                         if (!npcSkinPath.empty()) {
                             // Composite skin + face + underwear
                             std::vector<std::string> skinLayers;
@@ -4775,14 +4778,19 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                             }
 
                             if (npcSkinTex && modelData) {
+                                int slotsSet = 0;
                                 for (size_t ti = 0; ti < modelData->textures.size(); ti++) {
                                     uint32_t texType = modelData->textures[ti].type;
                                     if (texType == 1 || texType == 11 || texType == 12 || texType == 13) {
                                         charRenderer->setModelTexture(modelId, static_cast<uint32_t>(ti), npcSkinTex);
                                         hasHumanoidTexture = true;
+                                        slotsSet++;
                                     }
                                 }
-                                LOG_DEBUG("Applied CharSections skin to NPC: ", npcSkinPath);
+                                LOG_DEBUG("NPC CharSections: skin='", npcSkinPath, "' regions=",
+                                            npcRegionLayers.size(), " applied=", hasHumanoidTexture,
+                                            " slots=", slotsSet,
+                                            " modelId=", modelId, " texCount=", modelData->textures.size());
                             }
                         }
                     }
@@ -4814,12 +4822,21 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
 
                     if (!hairTexPath.empty()) {
                         rendering::VkTexture* hairTex = charRenderer->loadTexture(hairTexPath);
-                        if (hairTex && modelData) {
+                        rendering::VkTexture* whTex = charRenderer->loadTexture("");
+                        if (hairTex && hairTex != whTex && modelData) {
                             for (size_t ti = 0; ti < modelData->textures.size(); ti++) {
                                 if (modelData->textures[ti].type == 6) {
                                     charRenderer->setModelTexture(modelId, static_cast<uint32_t>(ti), hairTex);
-                                    LOG_DEBUG("Applied hair texture to slot ", ti, ": ", hairTexPath);
                                 }
+                            }
+                        }
+                    }
+                    // Bald NPCs (hairStyle=0 or no CharSections match): set type-6 to
+                    // the skin/baked texture so the scalp cap renders with skin color.
+                    if (hairTexPath.empty() && bakedSkinTex && modelData) {
+                        for (size_t ti = 0; ti < modelData->textures.size(); ti++) {
+                            if (modelData->textures[ti].type == 6) {
+                                charRenderer->setModelTexture(modelId, static_cast<uint32_t>(ti), bakedSkinTex);
                             }
                         }
                     }
@@ -4959,6 +4976,7 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                         uint32_t tgtSex = static_cast<uint32_t>(extra.sexId);
 
                         // Look up hair texture (section 3)
+                        rendering::VkTexture* whiteTex = charRenderer->loadTexture("");
                         for (uint32_t r = 0; r < charSectionsDbc2->getRecordCount(); r++) {
                             uint32_t rId = charSectionsDbc2->getUInt32(r, csL ? (*csL)["RaceID"] : 1);
                             uint32_t sId = charSectionsDbc2->getUInt32(r, csL ? (*csL)["SexID"] : 2);
@@ -4972,7 +4990,7 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                             std::string hairPath = charSectionsDbc2->getString(r, csL ? (*csL)["Texture1"] : 6);
                             if (!hairPath.empty()) {
                                 rendering::VkTexture* hairTex = charRenderer->loadTexture(hairPath);
-                                if (hairTex) {
+                                if (hairTex && hairTex != whiteTex) {
                                     for (size_t ti = 0; ti < md->textures.size(); ti++) {
                                         if (md->textures[ti].type == 6) {
                                             charRenderer->setTextureSlotOverride(instanceId, static_cast<uint16_t>(ti), hairTex);
@@ -4983,28 +5001,37 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                             break;
                         }
 
-                        // Look up skin texture (section 0) for per-instance skin color
-                        for (uint32_t r = 0; r < charSectionsDbc2->getRecordCount(); r++) {
-                            uint32_t rId = charSectionsDbc2->getUInt32(r, csL ? (*csL)["RaceID"] : 1);
-                            uint32_t sId = charSectionsDbc2->getUInt32(r, csL ? (*csL)["SexID"] : 2);
-                            if (rId != tgtRace || sId != tgtSex) continue;
-                            uint32_t sec = charSectionsDbc2->getUInt32(r, csL ? (*csL)["BaseSection"] : 3);
-                            if (sec != 0) continue;
-                            uint32_t col = charSectionsDbc2->getUInt32(r, csL ? (*csL)["ColorIndex"] : 5);
-                            if (col != static_cast<uint32_t>(extra.skinId)) continue;
-                            std::string skinPath = charSectionsDbc2->getString(r, csL ? (*csL)["Texture1"] : 6);
-                            if (!skinPath.empty()) {
-                                rendering::VkTexture* skinTex = charRenderer->loadTexture(skinPath);
-                                if (skinTex) {
-                                    for (size_t ti = 0; ti < md->textures.size(); ti++) {
-                                        uint32_t tt = md->textures[ti].type;
-                                        if (tt == 1 || tt == 11) {
-                                            charRenderer->setTextureSlotOverride(instanceId, static_cast<uint16_t>(ti), skinTex);
+                        // Look up skin texture (section 0) for per-instance skin color.
+                        // Skip when the NPC has a baked texture or composited equipment —
+                        // those already encode armor over skin and must not be replaced.
+                        bool hasEquipOrBake = !extra.bakeName.empty();
+                        if (!hasEquipOrBake) {
+                            for (int s = 0; s < 11 && !hasEquipOrBake; s++)
+                                if (extra.equipDisplayId[s] != 0) hasEquipOrBake = true;
+                        }
+                        if (!hasEquipOrBake) {
+                            for (uint32_t r = 0; r < charSectionsDbc2->getRecordCount(); r++) {
+                                uint32_t rId = charSectionsDbc2->getUInt32(r, csL ? (*csL)["RaceID"] : 1);
+                                uint32_t sId = charSectionsDbc2->getUInt32(r, csL ? (*csL)["SexID"] : 2);
+                                if (rId != tgtRace || sId != tgtSex) continue;
+                                uint32_t sec = charSectionsDbc2->getUInt32(r, csL ? (*csL)["BaseSection"] : 3);
+                                if (sec != 0) continue;
+                                uint32_t col = charSectionsDbc2->getUInt32(r, csL ? (*csL)["ColorIndex"] : 5);
+                                if (col != static_cast<uint32_t>(extra.skinId)) continue;
+                                std::string skinPath = charSectionsDbc2->getString(r, csL ? (*csL)["Texture1"] : 6);
+                                if (!skinPath.empty()) {
+                                    rendering::VkTexture* skinTex = charRenderer->loadTexture(skinPath);
+                                    if (skinTex) {
+                                        for (size_t ti = 0; ti < md->textures.size(); ti++) {
+                                            uint32_t tt = md->textures[ti].type;
+                                            if (tt == 1 || tt == 11) {
+                                                charRenderer->setTextureSlotOverride(instanceId, static_cast<uint16_t>(ti), skinTex);
+                                            }
                                         }
                                     }
                                 }
+                                break;
                             }
-                            break;
                         }
                     }
                 }
@@ -5111,7 +5138,7 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
     // aggressive and can make NPCs invisible (targetable but not rendered).
     // Keep default model geosets for online creatures until this path is made
     // data-accurate per display model.
-    static constexpr bool kEnableNpcHumanoidOverrides = true;
+    static constexpr bool kEnableNpcHumanoidOverrides = false;
 
     // Set geosets for humanoid NPCs based on CreatureDisplayInfoExtra
     if (kEnableNpcHumanoidOverrides &&
@@ -5198,44 +5225,42 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                 // Equipment slots: 0=helm, 1=shoulder, 2=shirt, 3=chest, 4=belt, 5=legs, 6=feet, 7=wrist, 8=hands, 9=tabard, 10=cape
                 const uint32_t fGG1 = idiL ? (*idiL)["GeosetGroup1"] : 7;
 
-                // Chest (slot 3) → group 5 (torso) + group 8 (sleeves/wristbands)
-                if (extra.equipDisplayId[3] != 0) {
-                    int32_t idx = itemDisplayDbc->findRecordById(extra.equipDisplayId[3]);
-                    if (idx >= 0) {
-                        uint32_t gg = itemDisplayDbc->getUInt32(static_cast<uint32_t>(idx), fGG1);
-                        if (gg > 0) geosetTorso = pickGeoset(static_cast<uint16_t>(501 + gg), 5);
-                        if (gg > 0) geosetSleeves = pickGeoset(static_cast<uint16_t>(801 + gg), 8);
-                        // Do not derive robe/kilt from chest by default here.
-                        // Some NPC datasets set chest geosets that cause persistent
-                        // apron/robe overlays; prefer explicit legs slot for trousers.
+                auto readGeosetGroup = [&](int slot, const char* slotName) -> uint32_t {
+                    uint32_t did = extra.equipDisplayId[slot];
+                    if (did == 0) return 0;
+                    int32_t idx = itemDisplayDbc->findRecordById(did);
+                    if (idx < 0) {
+                        LOG_INFO("NPC equip slot ", slotName, " displayId=", did, " NOT FOUND in ItemDisplayInfo.dbc");
+                        return 0;
                     }
+                    uint32_t gg = itemDisplayDbc->getUInt32(static_cast<uint32_t>(idx), fGG1);
+                    LOG_INFO("NPC equip slot ", slotName, " displayId=", did, " GeosetGroup1=", gg, " (field=", fGG1, ")");
+                    return gg;
+                };
+
+                // Chest (slot 3) → group 5 (torso) + group 8 (sleeves/wristbands)
+                {
+                    uint32_t gg = readGeosetGroup(3, "chest");
+                    if (gg > 0) geosetTorso = pickGeoset(static_cast<uint16_t>(501 + gg), 5);
+                    if (gg > 0) geosetSleeves = pickGeoset(static_cast<uint16_t>(801 + gg), 8);
                 }
 
                 // Legs (slot 5) → group 13 (trousers)
-                if (extra.equipDisplayId[5] != 0) {
-                    int32_t idx = itemDisplayDbc->findRecordById(extra.equipDisplayId[5]);
-                    if (idx >= 0) {
-                        uint32_t gg = itemDisplayDbc->getUInt32(static_cast<uint32_t>(idx), fGG1);
-                        if (gg > 0) geosetPants = pickGeoset(static_cast<uint16_t>(1301 + gg), 13);
-                    }
+                {
+                    uint32_t gg = readGeosetGroup(5, "legs");
+                    if (gg > 0) geosetPants = pickGeoset(static_cast<uint16_t>(1301 + gg), 13);
                 }
 
                 // Feet (slot 6) → group 4 (boots/shins)
-                if (extra.equipDisplayId[6] != 0) {
-                    int32_t idx = itemDisplayDbc->findRecordById(extra.equipDisplayId[6]);
-                    if (idx >= 0) {
-                        uint32_t gg = itemDisplayDbc->getUInt32(static_cast<uint32_t>(idx), fGG1);
-                        if (gg > 0) geosetBoots = pickGeoset(static_cast<uint16_t>(401 + gg), 4);
-                    }
+                {
+                    uint32_t gg = readGeosetGroup(6, "feet");
+                    if (gg > 0) geosetBoots = pickGeoset(static_cast<uint16_t>(401 + gg), 4);
                 }
 
                 // Hands (slot 8) → group 3 (gloves/forearms)
-                if (extra.equipDisplayId[8] != 0) {
-                    int32_t idx = itemDisplayDbc->findRecordById(extra.equipDisplayId[8]);
-                    if (idx >= 0) {
-                        uint32_t gg = itemDisplayDbc->getUInt32(static_cast<uint32_t>(idx), fGG1);
-                        if (gg > 0) geosetGloves = pickGeoset(static_cast<uint16_t>(301 + gg), 3);
-                    }
+                {
+                    uint32_t gg = readGeosetGroup(8, "hands");
+                    if (gg > 0) geosetGloves = pickGeoset(static_cast<uint16_t>(301 + gg), 3);
                 }
 
                 // Tabard (slot 9) intentionally disabled for now (see geosetTabard TODO above).
@@ -5495,6 +5520,7 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
             uint16_t selectedFacial300 = 300;
             uint16_t selectedFacial300Alt = 300;
             bool wantsFacialHair = false;
+            uint32_t equipChestGG = 0, equipLegsGG = 0, equipFeetGG = 0;
             std::unordered_set<uint16_t> hairScalpGeosetsForRaceSex;
             if (itDisplayData != displayDataMap_.end() &&
                 itDisplayData->second.extraDisplayId != 0) {
@@ -5597,6 +5623,20 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                                 }
                             }
                     }
+
+                    // Read GeosetGroup1 from equipment to drive clothed mesh selection
+                    if (itemDisplayDbc) {
+                        const uint32_t fGG1 = idiL ? (*idiL)["GeosetGroup1"] : 7;
+                        auto readGG = [&](uint32_t did) -> uint32_t {
+                            if (did == 0) return 0;
+                            int32_t idx = itemDisplayDbc->findRecordById(did);
+                            return (idx >= 0) ? itemDisplayDbc->getUInt32(static_cast<uint32_t>(idx), fGG1) : 0;
+                        };
+                        equipChestGG = readGG(itExtra->second.equipDisplayId[3]);
+                        if (equipChestGG == 0) equipChestGG = readGG(itExtra->second.equipDisplayId[2]); // shirt fallback
+                        equipLegsGG = readGG(itExtra->second.equipDisplayId[5]);
+                        equipFeetGG = readGG(itExtra->second.equipDisplayId[6]);
+                    }
                 }
             }
 
@@ -5650,11 +5690,17 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
             // Even "bare" variants can produce unwanted looped arm geometry on NPCs.
 
             if (hasGroup4) {
-                uint16_t forearmSid = pickFromGroup(401, 4);
-                if (forearmSid != 0) normalizedGeosets.insert(forearmSid);
+                uint16_t wantBoots = (equipFeetGG > 0) ? static_cast<uint16_t>(400 + equipFeetGG) : 401;
+                uint16_t bootsSid = pickFromGroup(wantBoots, 4);
+                if (bootsSid != 0) normalizedGeosets.insert(bootsSid);
             }
 
-            // Intentionally do not add group 8 (sleeve/wrist accessory meshes).
+            // Add sleeve/wrist meshes when chest armor calls for them.
+            if (hasGroup8 && equipChestGG > 0) {
+                uint16_t wantSleeves = static_cast<uint16_t>(800 + equipChestGG);
+                uint16_t sleeveSid = pickFromGroup(wantSleeves, 8);
+                if (sleeveSid != 0) normalizedGeosets.insert(sleeveSid);
+            }
 
             // Show tabard mesh only when CreatureDisplayInfoExtra equips one.
             if (hasGroup12 && hasEquippedTabard) {
@@ -5675,9 +5721,10 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                 }
             }
 
-            // Prefer trousers geoset, not robe/kilt overlays.
+            // Prefer trousers geoset; use covered variant when legs armor exists.
             if (hasGroup13) {
-                uint16_t pantsSid = pickFromGroup(1301, 13);
+                uint16_t wantPants = (equipLegsGG > 0) ? static_cast<uint16_t>(1300 + equipLegsGG) : 1301;
+                uint16_t pantsSid = pickFromGroup(wantPants, 13);
                 if (pantsSid != 0) normalizedGeosets.insert(pantsSid);
             }
 

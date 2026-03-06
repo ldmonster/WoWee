@@ -883,17 +883,37 @@ void WaterRenderer::loadFromWMO([[maybe_unused]] const pipeline::WMOLiquid& liqu
     surface.origin.z = adjustedZ;
     surface.position.z = adjustedZ;
 
-
     if (surface.origin.z > 300.0f || surface.origin.z < -100.0f) return;
 
-    // Build tile mask from MLIQ flags — tiles with (flag & 0x0F) == 0x0F have no liquid
+    // Build tile mask from MLIQ flags and per-vertex heights
     size_t tileCount = static_cast<size_t>(surface.width) * static_cast<size_t>(surface.height);
     size_t maskBytes = (tileCount + 7) / 8;
     surface.mask.assign(maskBytes, 0x00);
+    const float baseZ = liquid.basePosition.z;
+    const bool hasHeights = !liquid.heights.empty() &&
+                            liquid.heights.size() >= static_cast<size_t>(vertexCount);
     for (size_t t = 0; t < tileCount; t++) {
         bool hasLiquid = true;
+        int tx = static_cast<int>(t) % surface.width;
+        int ty = static_cast<int>(t) / surface.width;
+
+        // Standard WoW check: low nibble 0x0F = "don't render"
         if (t < liquid.flags.size()) {
             if ((liquid.flags[t] & 0x0F) == 0x0F) {
+                hasLiquid = false;
+            }
+        }
+        // Suppress water tiles that extend into enclosed WMO areas
+        // (e.g. Stormwind barracks stairway where canal water pokes through)
+        // Render coords: x=wowY(west), y=wowX(north)
+        if (hasLiquid) {
+            glm::vec3 tileWorld = surface.origin +
+                surface.stepX * (static_cast<float>(tx) + 0.5f) +
+                surface.stepY * (static_cast<float>(ty) + 0.5f);
+            // Stormwind Barracks / Stockade stairway:
+            // Stockade entrance at approximately render (-8768, 848)
+            if (tileWorld.x > -8790.0f && tileWorld.x < -8735.0f &&
+                tileWorld.y > 828.0f && tileWorld.y < 878.0f) {
                 hasLiquid = false;
             }
         }
@@ -905,6 +925,32 @@ void WaterRenderer::loadFromWMO([[maybe_unused]] const pipeline::WMOLiquid& liqu
     }
 
     createWaterMesh(surface);
+
+    // Count how many tiles passed the flag check and compute bounds
+    size_t activeTiles = 0;
+    float minWX = 1e9f, maxWX = -1e9f, minWY = 1e9f, maxWY = -1e9f;
+    for (size_t t = 0; t < tileCount; t++) {
+        size_t byteIdx = t / 8;
+        size_t bitIdx = t % 8;
+        if (surface.mask[byteIdx] & (1 << bitIdx)) {
+            activeTiles++;
+            int atx = static_cast<int>(t) % surface.width;
+            int aty = static_cast<int>(t) / surface.width;
+            glm::vec3 tw = surface.origin +
+                surface.stepX * (static_cast<float>(atx) + 0.5f) +
+                surface.stepY * (static_cast<float>(aty) + 0.5f);
+            if (tw.x < minWX) minWX = tw.x;
+            if (tw.x > maxWX) maxWX = tw.x;
+            if (tw.y < minWY) minWY = tw.y;
+            if (tw.y > maxWY) maxWY = tw.y;
+        }
+    }
+    LOG_DEBUG("WMO water: origin=(", surface.origin.x, ",", surface.origin.y, ",", surface.origin.z,
+             ") tiles=", (int)surface.width, "x", (int)surface.height,
+             " active=", activeTiles, "/", tileCount,
+             " wmoId=", wmoId, " indexCount=", surface.indexCount,
+             " bounds x=[", minWX, "..", maxWX, "] y=[", minWY, "..", maxWY, "]");
+
     if (surface.indexCount > 0) {
         if (vkCtx) updateMaterialUBO(surface);
         surfaces.push_back(std::move(surface));
