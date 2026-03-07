@@ -10,6 +10,8 @@
 #include <unordered_set>
 #include <array>
 #include <optional>
+#include <future>
+#include <mutex>
 
 namespace wowee {
 
@@ -18,7 +20,7 @@ namespace rendering { class Renderer; }
 namespace ui { class UIManager; }
 namespace auth { class AuthHandler; }
 namespace game { class GameHandler; class World; class ExpansionRegistry; }
-namespace pipeline { class AssetManager; class DBCLayout; }
+namespace pipeline { class AssetManager; class DBCLayout; struct M2Model; }
 namespace audio { enum class VoiceType; }
 
 namespace core {
@@ -90,6 +92,7 @@ private:
     static const char* mapIdToName(uint32_t mapId);
     void loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float z);
     void buildFactionHostilityMap(uint8_t playerRace);
+    pipeline::M2Model loadCreatureM2Sync(const std::string& m2Path);
     void spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x, float y, float z, float orientation);
     void despawnOnlineCreature(uint64_t guid);
     bool tryAttachCreatureVirtualWeapons(uint64_t guid, uint32_t instanceId);
@@ -181,8 +184,37 @@ private:
     std::unordered_map<uint64_t, glm::vec3> creatureRenderPosCache_; // guid -> last synced render position
     std::unordered_set<uint64_t> creatureWeaponsAttached_;       // guid set when NPC virtual weapons attached
     std::unordered_map<uint64_t, uint8_t> creatureWeaponAttachAttempts_; // guid -> attach attempts
+    std::unordered_map<uint32_t, bool> modelIdIsWolfLike_;     // modelId → cached wolf/worg check
+    static constexpr int MAX_WEAPON_ATTACHES_PER_TICK = 2;     // limit weapon attach work per 1s tick
+
+    // CharSections.dbc lookup cache to avoid O(N) DBC scan per NPC spawn.
+    // Key: (race<<24)|(sex<<16)|(section<<12)|(variation<<8)|color → texture path
+    std::unordered_map<uint64_t, std::string> charSectionsCache_;
+    bool charSectionsCacheBuilt_ = false;
+    void buildCharSectionsCache();
+    std::string lookupCharSection(uint8_t race, uint8_t sex, uint8_t section,
+                                  uint8_t variation, uint8_t color, int texIndex = 0) const;
+
+    // Async creature model loading: file I/O + M2 parsing on background thread,
+    // GPU upload + instance creation on main thread.
+    struct PreparedCreatureModel {
+        uint64_t guid;
+        uint32_t displayId;
+        uint32_t modelId;
+        float x, y, z, orientation;
+        std::shared_ptr<pipeline::M2Model> model; // parsed on background thread
+        bool valid = false;
+        bool permanent_failure = false;
+    };
+    struct AsyncCreatureLoad {
+        std::future<PreparedCreatureModel> future;
+    };
+    std::vector<AsyncCreatureLoad> asyncCreatureLoads_;
+    void processAsyncCreatureResults();
+    static constexpr int MAX_ASYNC_CREATURE_LOADS = 4; // concurrent background loads
     std::unordered_set<uint64_t> deadCreatureGuids_;            // GUIDs that should spawn in corpse/death pose
     std::unordered_map<uint32_t, uint32_t> displayIdModelCache_; // displayId → modelId (model caching)
+    std::unordered_set<uint32_t> displayIdTexturesApplied_;    // displayIds with per-model textures applied
     mutable std::unordered_set<uint32_t> warnedMissingDisplayDataIds_; // displayIds already warned
     mutable std::unordered_set<uint32_t> warnedMissingModelPathIds_;   // modelIds/displayIds already warned
     uint32_t nextCreatureModelId_ = 5000;  // Model IDs for online creatures

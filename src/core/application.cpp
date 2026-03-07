@@ -734,6 +734,16 @@ void Application::logoutToLogin() {
     deadCreatureGuids_.clear();
     nonRenderableCreatureDisplayIds_.clear();
     creaturePermanentFailureGuids_.clear();
+    modelIdIsWolfLike_.clear();
+    displayIdTexturesApplied_.clear();
+    charSectionsCache_.clear();
+    charSectionsCacheBuilt_ = false;
+
+    // Wait for any in-flight async creature loads before clearing state
+    for (auto& load : asyncCreatureLoads_) {
+        if (load.future.valid()) load.future.wait();
+    }
+    asyncCreatureLoads_.clear();
 
     // --- Creature spawn queues ---
     pendingCreatureSpawns_.clear();
@@ -1285,6 +1295,7 @@ void Application::update(float deltaTime) {
                 npcWeaponRetryTimer += deltaTime;
                 const bool npcWeaponRetryTick = (npcWeaponRetryTimer >= 1.0f);
                 if (npcWeaponRetryTick) npcWeaponRetryTimer = 0.0f;
+                int weaponAttachesThisTick = 0;
                 glm::vec3 playerPos(0.0f);
                 glm::vec3 playerRenderPos(0.0f);
                 bool havePlayerPos = false;
@@ -1304,11 +1315,14 @@ void Application::update(float deltaTime) {
                     auto entity = gameHandler->getEntityManager().getEntity(guid);
                     if (!entity || entity->getType() != game::ObjectType::UNIT) continue;
 
-                    if (npcWeaponRetryTick && !creatureWeaponsAttached_.count(guid)) {
+                    if (npcWeaponRetryTick &&
+                        weaponAttachesThisTick < MAX_WEAPON_ATTACHES_PER_TICK &&
+                        !creatureWeaponsAttached_.count(guid)) {
                         uint8_t attempts = 0;
                         auto itAttempts = creatureWeaponAttachAttempts_.find(guid);
                         if (itAttempts != creatureWeaponAttachAttempts_.end()) attempts = itAttempts->second;
                         if (attempts < 30) {
+                            weaponAttachesThisTick++;
                             if (tryAttachCreatureVirtualWeapons(guid, instanceId)) {
                                 creatureWeaponsAttached_.insert(guid);
                                 creatureWeaponAttachAttempts_.erase(guid);
@@ -1355,14 +1369,21 @@ void Application::update(float deltaTime) {
                         // often put head/torso inside the player capsule).
                         auto mit = creatureModelIds_.find(guid);
                         if (mit != creatureModelIds_.end()) {
-                            if (const auto* md = charRenderer->getModelData(mit->second)) {
-                                std::string modelName = md->name;
-                                std::transform(modelName.begin(), modelName.end(), modelName.begin(),
-                                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                                if (modelName.find("wolf") != std::string::npos ||
-                                    modelName.find("worg") != std::string::npos) {
-                                    minSep = std::max(minSep, 2.45f);
+                            uint32_t mid = mit->second;
+                            auto wolfIt = modelIdIsWolfLike_.find(mid);
+                            if (wolfIt == modelIdIsWolfLike_.end()) {
+                                bool isWolf = false;
+                                if (const auto* md = charRenderer->getModelData(mid)) {
+                                    std::string modelName = md->name;
+                                    std::transform(modelName.begin(), modelName.end(), modelName.begin(),
+                                                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                                    isWolf = (modelName.find("wolf") != std::string::npos ||
+                                              modelName.find("worg") != std::string::npos);
                                 }
+                                wolfIt = modelIdIsWolfLike_.emplace(mid, isWolf).first;
+                            }
+                            if (wolfIt->second) {
+                                minSep = std::max(minSep, 2.45f);
                             }
                         }
 
@@ -3465,6 +3486,14 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         deadCreatureGuids_.clear();
         nonRenderableCreatureDisplayIds_.clear();
         creaturePermanentFailureGuids_.clear();
+        modelIdIsWolfLike_.clear();
+        displayIdTexturesApplied_.clear();
+        charSectionsCache_.clear();
+        charSectionsCacheBuilt_ = false;
+        for (auto& load : asyncCreatureLoads_) {
+            if (load.future.valid()) load.future.wait();
+        }
+        asyncCreatureLoads_.clear();
 
         playerInstances_.clear();
         onlinePlayerAppearance_.clear();
@@ -4140,6 +4169,55 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
     setState(AppState::IN_GAME);
 }
 
+void Application::buildCharSectionsCache() {
+    if (charSectionsCacheBuilt_ || !assetManager || !assetManager->isInitialized()) return;
+    auto dbc = assetManager->loadDBC("CharSections.dbc");
+    if (!dbc) return;
+    const auto* csL = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("CharSections") : nullptr;
+    uint32_t raceF = csL ? (*csL)["RaceID"] : 1;
+    uint32_t sexF = csL ? (*csL)["SexID"] : 2;
+    uint32_t secF = csL ? (*csL)["BaseSection"] : 3;
+    uint32_t varF = csL ? (*csL)["VariationIndex"] : 4;
+    uint32_t colF = csL ? (*csL)["ColorIndex"] : 5;
+    uint32_t tex1F = csL ? (*csL)["Texture1"] : 6;
+    for (uint32_t r = 0; r < dbc->getRecordCount(); r++) {
+        uint32_t race = dbc->getUInt32(r, raceF);
+        uint32_t sex = dbc->getUInt32(r, sexF);
+        uint32_t section = dbc->getUInt32(r, secF);
+        uint32_t variation = dbc->getUInt32(r, varF);
+        uint32_t color = dbc->getUInt32(r, colF);
+        // We only cache sections 0 (skin), 1 (face), 3 (hair), 4 (underwear)
+        if (section != 0 && section != 1 && section != 3 && section != 4) continue;
+        for (int ti = 0; ti < 3; ti++) {
+            std::string tex = dbc->getString(r, tex1F + ti);
+            if (tex.empty()) continue;
+            // Key: race(8)|sex(4)|section(4)|variation(8)|color(8)|texIndex(2) packed into 64 bits
+            uint64_t key = (static_cast<uint64_t>(race) << 26) |
+                           (static_cast<uint64_t>(sex & 0xF) << 22) |
+                           (static_cast<uint64_t>(section & 0xF) << 18) |
+                           (static_cast<uint64_t>(variation & 0xFF) << 10) |
+                           (static_cast<uint64_t>(color & 0xFF) << 2) |
+                           static_cast<uint64_t>(ti);
+            charSectionsCache_.emplace(key, tex);
+        }
+    }
+    charSectionsCacheBuilt_ = true;
+    LOG_INFO("CharSections cache built: ", charSectionsCache_.size(), " entries");
+}
+
+std::string Application::lookupCharSection(uint8_t race, uint8_t sex, uint8_t section,
+                                           uint8_t variation, uint8_t color, int texIndex) const {
+    uint64_t key = (static_cast<uint64_t>(race) << 26) |
+                   (static_cast<uint64_t>(sex & 0xF) << 22) |
+                   (static_cast<uint64_t>(section & 0xF) << 18) |
+                   (static_cast<uint64_t>(variation & 0xFF) << 10) |
+                   (static_cast<uint64_t>(color & 0xFF) << 2) |
+                   static_cast<uint64_t>(texIndex);
+    auto it = charSectionsCache_.find(key);
+    return (it != charSectionsCache_.end()) ? it->second : std::string();
+}
+
 void Application::buildCreatureDisplayLookups() {
     if (creatureLookupsBuilt_ || !assetManager || !assetManager->isInitialized()) return;
 
@@ -4479,6 +4557,47 @@ bool Application::getRenderFootZForGuid(uint64_t guid, float& outFootZ) const {
     return renderer->getCharacterRenderer()->getInstanceFootZ(instanceId, outFootZ);
 }
 
+pipeline::M2Model Application::loadCreatureM2Sync(const std::string& m2Path) {
+    auto m2Data = assetManager->readFile(m2Path);
+    if (m2Data.empty()) {
+        LOG_WARNING("Failed to read creature M2: ", m2Path);
+        return {};
+    }
+
+    pipeline::M2Model model = pipeline::M2Loader::load(m2Data);
+    if (model.vertices.empty()) {
+        LOG_WARNING("Failed to parse creature M2: ", m2Path);
+        return {};
+    }
+
+    // Load skin file (only for WotLK M2s - vanilla has embedded skin)
+    if (model.version >= 264) {
+        std::string skinPath = m2Path.substr(0, m2Path.size() - 3) + "00.skin";
+        auto skinData = assetManager->readFile(skinPath);
+        if (!skinData.empty()) {
+            pipeline::M2Loader::loadSkin(skinData, model);
+        } else {
+            LOG_WARNING("Missing skin file for WotLK creature M2: ", skinPath);
+        }
+    }
+
+    // Load external .anim files for sequences without flag 0x20
+    std::string basePath = m2Path.substr(0, m2Path.size() - 3);
+    for (uint32_t si = 0; si < model.sequences.size(); si++) {
+        if (!(model.sequences[si].flags & 0x20)) {
+            char animFileName[256];
+            snprintf(animFileName, sizeof(animFileName), "%s%04u-%02u.anim",
+                basePath.c_str(), model.sequences[si].id, model.sequences[si].variationIndex);
+            auto animData = assetManager->readFileOptional(animFileName);
+            if (!animData.empty()) {
+                pipeline::M2Loader::loadAnimFile(m2Data, animData, si, model);
+            }
+        }
+    }
+
+    return model;
+}
+
 void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x, float y, float z, float orientation) {
     if (!renderer || !renderer->getCharacterRenderer() || !assetManager) return;
 
@@ -4525,45 +4644,11 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
         // Load model from disk (only once per displayId)
         modelId = nextCreatureModelId_++;
 
-        auto m2Data = assetManager->readFile(m2Path);
-        if (m2Data.empty()) {
-            LOG_WARNING("Failed to read creature M2: ", m2Path);
+        pipeline::M2Model model = loadCreatureM2Sync(m2Path);
+        if (!model.isValid()) {
             nonRenderableCreatureDisplayIds_.insert(displayId);
             creaturePermanentFailureGuids_.insert(guid);
             return;
-        }
-
-        pipeline::M2Model model = pipeline::M2Loader::load(m2Data);
-        if (model.vertices.empty()) {
-            LOG_WARNING("Failed to parse creature M2: ", m2Path);
-            nonRenderableCreatureDisplayIds_.insert(displayId);
-            creaturePermanentFailureGuids_.insert(guid);
-            return;
-        }
-
-        // Load skin file (only for WotLK M2s - vanilla has embedded skin)
-        if (model.version >= 264) {
-            std::string skinPath = m2Path.substr(0, m2Path.size() - 3) + "00.skin";
-            auto skinData = assetManager->readFile(skinPath);
-            if (!skinData.empty()) {
-                pipeline::M2Loader::loadSkin(skinData, model);
-            } else {
-                LOG_WARNING("Missing skin file for WotLK creature M2: ", skinPath);
-            }
-        }
-
-        // Load external .anim files for sequences without flag 0x20
-        std::string basePath = m2Path.substr(0, m2Path.size() - 3);
-        for (uint32_t si = 0; si < model.sequences.size(); si++) {
-            if (!(model.sequences[si].flags & 0x20)) {
-                char animFileName[256];
-                snprintf(animFileName, sizeof(animFileName), "%s%04u-%02u.anim",
-                    basePath.c_str(), model.sequences[si].id, model.sequences[si].variationIndex);
-                auto animData = assetManager->readFileOptional(animFileName);
-                if (!animData.empty()) {
-                    pipeline::M2Loader::loadAnimFile(m2Data, animData, si, model);
-                }
-            }
         }
 
         if (!charRenderer->loadModel(model, modelId)) {
@@ -4576,9 +4661,13 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
         displayIdModelCache_[displayId] = modelId;
     }
 
-    // Apply skin textures from CreatureDisplayInfo.dbc (only for newly loaded models)
+    // Apply skin textures from CreatureDisplayInfo.dbc (only once per displayId model).
+    // Track separately from model cache because async loading may upload the model
+    // before textures are applied.
     auto itDisplayData = displayDataMap_.find(displayId);
-    if (!modelCached && itDisplayData != displayDataMap_.end()) {
+    bool needsTextures = (displayIdTexturesApplied_.find(displayId) == displayIdTexturesApplied_.end());
+    if (needsTextures && itDisplayData != displayDataMap_.end()) {
+        displayIdTexturesApplied_.insert(displayId);
         const auto& dispData = itDisplayData->second;
 
         // Get model directory for texture path construction
@@ -5058,7 +5147,9 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
 
     // Per-instance hair/skin texture overrides — runs for ALL NPCs (including cached models)
     // so that each NPC gets its own hair/skin color regardless of model sharing.
+    // Uses pre-built CharSections cache (O(1) lookup instead of O(N) DBC scan).
     {
+        if (!charSectionsCacheBuilt_) buildCharSectionsCache();
         auto itDD = displayDataMap_.find(displayId);
         if (itDD != displayDataMap_.end() && itDD->second.extraDisplayId != 0) {
             auto itExtra2 = humanoidExtraMap_.find(itDD->second.extraDisplayId);
@@ -5066,37 +5157,19 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                 const auto& extra = itExtra2->second;
                 const auto* md = charRenderer->getModelData(modelId);
                 if (md) {
-                    auto charSectionsDbc2 = assetManager->loadDBC("CharSections.dbc");
-                    if (charSectionsDbc2) {
-                        const auto* csL = pipeline::getActiveDBCLayout()
-                            ? pipeline::getActiveDBCLayout()->getLayout("CharSections") : nullptr;
-                        uint32_t tgtRace = static_cast<uint32_t>(extra.raceId);
-                        uint32_t tgtSex = static_cast<uint32_t>(extra.sexId);
-
-                        // Look up hair texture (section 3)
+                        // Look up hair texture (section 3) via cache
                         rendering::VkTexture* whiteTex = charRenderer->loadTexture("");
-                        for (uint32_t r = 0; r < charSectionsDbc2->getRecordCount(); r++) {
-                            uint32_t rId = charSectionsDbc2->getUInt32(r, csL ? (*csL)["RaceID"] : 1);
-                            uint32_t sId = charSectionsDbc2->getUInt32(r, csL ? (*csL)["SexID"] : 2);
-                            if (rId != tgtRace || sId != tgtSex) continue;
-                            uint32_t sec = charSectionsDbc2->getUInt32(r, csL ? (*csL)["BaseSection"] : 3);
-                            if (sec != 3) continue;
-                            uint32_t var = charSectionsDbc2->getUInt32(r, csL ? (*csL)["VariationIndex"] : 4);
-                            uint32_t col = charSectionsDbc2->getUInt32(r, csL ? (*csL)["ColorIndex"] : 5);
-                            if (var != static_cast<uint32_t>(extra.hairStyleId)) continue;
-                            if (col != static_cast<uint32_t>(extra.hairColorId)) continue;
-                            std::string hairPath = charSectionsDbc2->getString(r, csL ? (*csL)["Texture1"] : 6);
-                            if (!hairPath.empty()) {
-                                rendering::VkTexture* hairTex = charRenderer->loadTexture(hairPath);
-                                if (hairTex && hairTex != whiteTex) {
-                                    for (size_t ti = 0; ti < md->textures.size(); ti++) {
-                                        if (md->textures[ti].type == 6) {
-                                            charRenderer->setTextureSlotOverride(instanceId, static_cast<uint16_t>(ti), hairTex);
-                                        }
+                        std::string hairPath = lookupCharSection(
+                            extra.raceId, extra.sexId, 3, extra.hairStyleId, extra.hairColorId, 0);
+                        if (!hairPath.empty()) {
+                            rendering::VkTexture* hairTex = charRenderer->loadTexture(hairPath);
+                            if (hairTex && hairTex != whiteTex) {
+                                for (size_t ti = 0; ti < md->textures.size(); ti++) {
+                                    if (md->textures[ti].type == 6) {
+                                        charRenderer->setTextureSlotOverride(instanceId, static_cast<uint16_t>(ti), hairTex);
                                     }
                                 }
                             }
-                            break;
                         }
 
                         // Look up skin texture (section 0) for per-instance skin color.
@@ -5108,30 +5181,20 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                                 if (extra.equipDisplayId[s] != 0) hasEquipOrBake = true;
                         }
                         if (!hasEquipOrBake) {
-                            for (uint32_t r = 0; r < charSectionsDbc2->getRecordCount(); r++) {
-                                uint32_t rId = charSectionsDbc2->getUInt32(r, csL ? (*csL)["RaceID"] : 1);
-                                uint32_t sId = charSectionsDbc2->getUInt32(r, csL ? (*csL)["SexID"] : 2);
-                                if (rId != tgtRace || sId != tgtSex) continue;
-                                uint32_t sec = charSectionsDbc2->getUInt32(r, csL ? (*csL)["BaseSection"] : 3);
-                                if (sec != 0) continue;
-                                uint32_t col = charSectionsDbc2->getUInt32(r, csL ? (*csL)["ColorIndex"] : 5);
-                                if (col != static_cast<uint32_t>(extra.skinId)) continue;
-                                std::string skinPath = charSectionsDbc2->getString(r, csL ? (*csL)["Texture1"] : 6);
-                                if (!skinPath.empty()) {
-                                    rendering::VkTexture* skinTex = charRenderer->loadTexture(skinPath);
-                                    if (skinTex) {
-                                        for (size_t ti = 0; ti < md->textures.size(); ti++) {
-                                            uint32_t tt = md->textures[ti].type;
-                                            if (tt == 1 || tt == 11) {
-                                                charRenderer->setTextureSlotOverride(instanceId, static_cast<uint16_t>(ti), skinTex);
-                                            }
+                            std::string skinPath = lookupCharSection(
+                                extra.raceId, extra.sexId, 0, 0, extra.skinId, 0);
+                            if (!skinPath.empty()) {
+                                rendering::VkTexture* skinTex = charRenderer->loadTexture(skinPath);
+                                if (skinTex) {
+                                    for (size_t ti = 0; ti < md->textures.size(); ti++) {
+                                        uint32_t tt = md->textures[ti].type;
+                                        if (tt == 1 || tt == 11) {
+                                            charRenderer->setTextureSlotOverride(instanceId, static_cast<uint16_t>(ti), skinTex);
                                         }
                                     }
                                 }
-                                break;
                             }
                         }
-                    }
                 }
             }
         }
@@ -6692,19 +6755,94 @@ void Application::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_t 
              " displayId=", displayId, " at (", x, ", ", y, ", ", z, ")");
 }
 
+void Application::processAsyncCreatureResults() {
+    // Check completed async model loads and finalize on main thread (GPU upload + instance creation).
+    for (auto it = asyncCreatureLoads_.begin(); it != asyncCreatureLoads_.end(); ) {
+        if (!it->future.valid() ||
+            it->future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+            ++it;
+            continue;
+        }
+        auto result = it->future.get();
+        it = asyncCreatureLoads_.erase(it);
+
+        if (result.permanent_failure) {
+            nonRenderableCreatureDisplayIds_.insert(result.displayId);
+            creaturePermanentFailureGuids_.insert(result.guid);
+            pendingCreatureSpawnGuids_.erase(result.guid);
+            creatureSpawnRetryCounts_.erase(result.guid);
+            continue;
+        }
+        if (!result.valid || !result.model) {
+            pendingCreatureSpawnGuids_.erase(result.guid);
+            creatureSpawnRetryCounts_.erase(result.guid);
+            continue;
+        }
+
+        // Model parsed on background thread — upload to GPU on main thread.
+        auto* charRenderer = renderer ? renderer->getCharacterRenderer() : nullptr;
+        if (!charRenderer) {
+            pendingCreatureSpawnGuids_.erase(result.guid);
+            continue;
+        }
+
+        // Upload model to GPU (must happen on main thread)
+        if (!charRenderer->loadModel(*result.model, result.modelId)) {
+            nonRenderableCreatureDisplayIds_.insert(result.displayId);
+            creaturePermanentFailureGuids_.insert(result.guid);
+            pendingCreatureSpawnGuids_.erase(result.guid);
+            creatureSpawnRetryCounts_.erase(result.guid);
+            continue;
+        }
+        displayIdModelCache_[result.displayId] = result.modelId;
+
+        pendingCreatureSpawnGuids_.erase(result.guid);
+        creatureSpawnRetryCounts_.erase(result.guid);
+
+        // Re-queue as a normal pending spawn — model is now cached, so sync spawn is fast
+        // (only creates instance + applies textures, no file I/O).
+        if (!creatureInstances_.count(result.guid) &&
+            !creaturePermanentFailureGuids_.count(result.guid)) {
+            PendingCreatureSpawn s{};
+            s.guid = result.guid;
+            s.displayId = result.displayId;
+            s.x = result.x;
+            s.y = result.y;
+            s.z = result.z;
+            s.orientation = result.orientation;
+            pendingCreatureSpawns_.push_back(s);
+            pendingCreatureSpawnGuids_.insert(result.guid);
+        }
+    }
+}
+
 void Application::processCreatureSpawnQueue() {
+    // First, finalize any async model loads that completed on background threads.
+    processAsyncCreatureResults();
+
     if (pendingCreatureSpawns_.empty()) return;
     if (!creatureLookupsBuilt_) {
         buildCreatureDisplayLookups();
         if (!creatureLookupsBuilt_) return;
     }
 
+    auto startTime = std::chrono::steady_clock::now();
+    // Budget: max 4ms per frame for creature spawning to prevent stutter.
+    static constexpr float kSpawnBudgetMs = 4.0f;
+
     int processed = 0;
-    int newModelLoads = 0;
+    int asyncLaunched = 0;
     size_t rotationsLeft = pendingCreatureSpawns_.size();
     while (!pendingCreatureSpawns_.empty() &&
            processed < MAX_SPAWNS_PER_FRAME &&
            rotationsLeft > 0) {
+        // Check time budget after each spawn (not for the first one, always process at least 1)
+        if (processed > 0) {
+            auto now = std::chrono::steady_clock::now();
+            float elapsedMs = std::chrono::duration<float, std::milli>(now - startTime).count();
+            if (elapsedMs >= kSpawnBudgetMs) break;
+        }
+
         PendingCreatureSpawn s = pendingCreatureSpawns_.front();
         pendingCreatureSpawns_.erase(pendingCreatureSpawns_.begin());
 
@@ -6717,14 +6855,106 @@ void Application::processCreatureSpawnQueue() {
         }
 
         const bool needsNewModel = (displayIdModelCache_.find(s.displayId) == displayIdModelCache_.end());
-        if (needsNewModel && newModelLoads >= MAX_NEW_CREATURE_MODELS_PER_FRAME) {
-            // Defer additional first-time model/texture loads to later frames so
-            // movement stays responsive in dense areas.
-            pendingCreatureSpawns_.push_back(s);
-            rotationsLeft--;
+
+        // For new models: launch async load on background thread instead of blocking.
+        if (needsNewModel) {
+            if (static_cast<int>(asyncCreatureLoads_.size()) + asyncLaunched >= MAX_ASYNC_CREATURE_LOADS) {
+                // Too many in-flight — defer to next frame
+                pendingCreatureSpawns_.push_back(s);
+                rotationsLeft--;
+                continue;
+            }
+
+            std::string m2Path = getModelPathForDisplayId(s.displayId);
+            if (m2Path.empty()) {
+                nonRenderableCreatureDisplayIds_.insert(s.displayId);
+                creaturePermanentFailureGuids_.insert(s.guid);
+                pendingCreatureSpawnGuids_.erase(s.guid);
+                creatureSpawnRetryCounts_.erase(s.guid);
+                processed++;
+                rotationsLeft = pendingCreatureSpawns_.size();
+                continue;
+            }
+
+            // Check for invisible stalkers
+            {
+                std::string lowerPath = m2Path;
+                std::transform(lowerPath.begin(), lowerPath.end(), lowerPath.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                if (lowerPath.find("invisiblestalker") != std::string::npos ||
+                    lowerPath.find("invisible_stalker") != std::string::npos) {
+                    nonRenderableCreatureDisplayIds_.insert(s.displayId);
+                    creaturePermanentFailureGuids_.insert(s.guid);
+                    pendingCreatureSpawnGuids_.erase(s.guid);
+                    processed++;
+                    rotationsLeft = pendingCreatureSpawns_.size();
+                    continue;
+                }
+            }
+
+            // Launch async M2 load — file I/O and parsing happen off the main thread.
+            uint32_t modelId = nextCreatureModelId_++;
+            auto* am = assetManager.get();
+            AsyncCreatureLoad load;
+            load.future = std::async(std::launch::async,
+                [am, m2Path, modelId, s]() -> PreparedCreatureModel {
+                    PreparedCreatureModel result;
+                    result.guid = s.guid;
+                    result.displayId = s.displayId;
+                    result.modelId = modelId;
+                    result.x = s.x;
+                    result.y = s.y;
+                    result.z = s.z;
+                    result.orientation = s.orientation;
+
+                    auto m2Data = am->readFile(m2Path);
+                    if (m2Data.empty()) {
+                        result.permanent_failure = true;
+                        return result;
+                    }
+
+                    auto model = std::make_shared<pipeline::M2Model>(pipeline::M2Loader::load(m2Data));
+                    if (model->vertices.empty()) {
+                        result.permanent_failure = true;
+                        return result;
+                    }
+
+                    // Load skin file
+                    if (model->version >= 264) {
+                        std::string skinPath = m2Path.substr(0, m2Path.size() - 3) + "00.skin";
+                        auto skinData = am->readFile(skinPath);
+                        if (!skinData.empty()) {
+                            pipeline::M2Loader::loadSkin(skinData, *model);
+                        }
+                    }
+
+                    // Load external .anim files
+                    std::string basePath = m2Path.substr(0, m2Path.size() - 3);
+                    for (uint32_t si = 0; si < model->sequences.size(); si++) {
+                        if (!(model->sequences[si].flags & 0x20)) {
+                            char animFileName[256];
+                            snprintf(animFileName, sizeof(animFileName), "%s%04u-%02u.anim",
+                                basePath.c_str(), model->sequences[si].id, model->sequences[si].variationIndex);
+                            auto animData = am->readFileOptional(animFileName);
+                            if (!animData.empty()) {
+                                pipeline::M2Loader::loadAnimFile(m2Data, animData, si, *model);
+                            }
+                        }
+                    }
+
+                    result.model = std::move(model);
+                    result.valid = true;
+                    return result;
+                });
+            asyncCreatureLoads_.push_back(std::move(load));
+            asyncLaunched++;
+            // Don't erase from pendingCreatureSpawnGuids_ — the async result handler will do it
+            rotationsLeft = pendingCreatureSpawns_.size();
+            processed++;
             continue;
         }
 
+        // Cached model — spawn is fast (no file I/O, just instance creation + texture setup)
         spawnOnlineCreature(s.guid, s.displayId, s.x, s.y, s.z, s.orientation);
         pendingCreatureSpawnGuids_.erase(s.guid);
 
@@ -6751,9 +6981,6 @@ void Application::processCreatureSpawnQueue() {
             }
         } else {
             creatureSpawnRetryCounts_.erase(s.guid);
-        }
-        if (needsNewModel) {
-            newModelLoads++;
         }
         rotationsLeft = pendingCreatureSpawns_.size();
         processed++;
