@@ -381,6 +381,11 @@ private:
     std::unordered_set<std::string> missingAdtWarnings_;
     std::mutex missingAdtWarningsMutex_;
 
+    // Thread-safe set of M2 model IDs already uploaded to GPU
+    // (checked by workers to skip redundant file I/O + parsing)
+    std::unordered_set<uint32_t> uploadedM2Ids_;
+    std::mutex uploadedM2IdsMutex_;
+
     // Dedup set for doodad placements across tile boundaries
     std::unordered_set<uint32_t> placedDoodadIds;
 

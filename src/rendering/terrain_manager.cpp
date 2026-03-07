@@ -1,5 +1,6 @@
 #include "rendering/terrain_manager.hpp"
 #include "rendering/terrain_renderer.hpp"
+#include "rendering/vk_context.hpp"
 #include "rendering/water_renderer.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "rendering/wmo_renderer.hpp"
@@ -53,12 +54,12 @@ int computeTerrainWorkerCount() {
 
     unsigned hc = std::thread::hardware_concurrency();
     if (hc > 0) {
-        // Terrain streaming should leave CPU room for render/update threads.
-        const unsigned availableCores = (hc > 1u) ? (hc - 1u) : 1u;
-        const unsigned targetWorkers = std::max(2u, availableCores / 2u);
+        // Use most cores for loading — leave 1-2 for render/update threads.
+        const unsigned reserved = (hc >= 8u) ? 2u : 1u;
+        const unsigned targetWorkers = std::max(4u, hc - reserved);
         return static_cast<int>(targetWorkers);
     }
-    return 2;  // Fallback
+    return 4;  // Fallback
 }
 
 bool decodeLayerAlpha(const pipeline::MapChunk& chunk, size_t layerIdx, std::vector<uint8_t>& outAlpha) {
@@ -372,6 +373,15 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
                                    int& skippedSkinNotFound) -> bool {
         if (preparedModelIds.find(modelId) != preparedModelIds.end()) return true;
 
+        // Skip file I/O + parsing for models already uploaded to GPU from previous tiles
+        {
+            std::lock_guard<std::mutex> lock(uploadedM2IdsMutex_);
+            if (uploadedM2Ids_.count(modelId)) {
+                preparedModelIds.insert(modelId);
+                return true;
+            }
+        }
+
         std::vector<uint8_t> m2Data = assetManager->readFile(m2Path);
         if (m2Data.empty()) {
             skippedFileNotFound++;
@@ -551,19 +561,30 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
                         }
 
                         uint32_t doodadModelId = static_cast<uint32_t>(std::hash<std::string>{}(m2Path));
-                        std::vector<uint8_t> m2Data = assetManager->readFile(m2Path);
-                        if (m2Data.empty()) continue;
 
-                        pipeline::M2Model m2Model = pipeline::M2Loader::load(m2Data);
-                        if (m2Model.name.empty()) {
-                            m2Model.name = m2Path;
+                        // Skip file I/O if model already uploaded from a previous tile
+                        bool modelAlreadyUploaded = false;
+                        {
+                            std::lock_guard<std::mutex> lock(uploadedM2IdsMutex_);
+                            modelAlreadyUploaded = uploadedM2Ids_.count(doodadModelId) > 0;
                         }
-                        std::string skinPath = m2Path.substr(0, m2Path.size() - 3) + "00.skin";
-                        std::vector<uint8_t> skinData = assetManager->readFile(skinPath);
-                        if (!skinData.empty() && m2Model.version >= 264) {
-                            pipeline::M2Loader::loadSkin(skinData, m2Model);
+
+                        pipeline::M2Model m2Model;
+                        if (!modelAlreadyUploaded) {
+                            std::vector<uint8_t> m2Data = assetManager->readFile(m2Path);
+                            if (m2Data.empty()) continue;
+
+                            m2Model = pipeline::M2Loader::load(m2Data);
+                            if (m2Model.name.empty()) {
+                                m2Model.name = m2Path;
+                            }
+                            std::string skinPath = m2Path.substr(0, m2Path.size() - 3) + "00.skin";
+                            std::vector<uint8_t> skinData = assetManager->readFile(skinPath);
+                            if (!skinData.empty() && m2Model.version >= 264) {
+                                pipeline::M2Loader::loadSkin(skinData, m2Model);
+                            }
+                            if (!m2Model.isValid()) continue;
                         }
-                        if (!m2Model.isValid()) continue;
 
                         // Build doodad's local transform (WoW coordinates)
                         // WMO doodads use quaternion rotation
@@ -720,7 +741,7 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
             }
             bool allDone = terrainRenderer->loadTerrainIncremental(
                 pending->mesh, pending->terrain.textures, x, y,
-                ft.terrainChunkNext, 16);
+                ft.terrainChunkNext, 64);
             if (!allDone) {
                 return false; // More chunks remain — yield to time budget
             }
@@ -750,13 +771,21 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
     }
 
     case FinalizationPhase::M2_MODELS: {
-        // Upload ONE M2 model per call
+        // Upload multiple M2 models per call (batched GPU uploads)
         if (m2Renderer && ft.m2ModelIndex < pending->m2Models.size()) {
-            auto& m2Ready = pending->m2Models[ft.m2ModelIndex];
-            if (m2Renderer->loadModel(m2Ready.model, m2Ready.modelId)) {
-                ft.uploadedM2ModelIds.insert(m2Ready.modelId);
+            constexpr size_t kModelsPerStep = 8;
+            size_t uploaded = 0;
+            while (ft.m2ModelIndex < pending->m2Models.size() && uploaded < kModelsPerStep) {
+                auto& m2Ready = pending->m2Models[ft.m2ModelIndex];
+                if (m2Renderer->loadModel(m2Ready.model, m2Ready.modelId)) {
+                    ft.uploadedM2ModelIds.insert(m2Ready.modelId);
+                    // Track uploaded model IDs so background threads can skip re-reading
+                    std::lock_guard<std::mutex> lock(uploadedM2IdsMutex_);
+                    uploadedM2Ids_.insert(m2Ready.modelId);
+                }
+                ft.m2ModelIndex++;
+                uploaded++;
             }
-            ft.m2ModelIndex++;
             // Stay in this phase until all models uploaded
             if (ft.m2ModelIndex < pending->m2Models.size()) {
                 return false;
@@ -798,22 +827,23 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
     }
 
     case FinalizationPhase::WMO_MODELS: {
-        // Upload ONE WMO model per call
+        // Upload multiple WMO models per call (batched GPU uploads)
         if (wmoRenderer && assetManager) {
             wmoRenderer->initialize(nullptr, VK_NULL_HANDLE, assetManager);
 
-            if (ft.wmoModelIndex < pending->wmoModels.size()) {
+            constexpr size_t kWmosPerStep = 4;
+            size_t uploaded = 0;
+            while (ft.wmoModelIndex < pending->wmoModels.size() && uploaded < kWmosPerStep) {
                 auto& wmoReady = pending->wmoModels[ft.wmoModelIndex];
-                // Deduplicate
                 if (wmoReady.uniqueId != 0 && placedWmoIds.count(wmoReady.uniqueId)) {
                     ft.wmoModelIndex++;
-                    if (ft.wmoModelIndex < pending->wmoModels.size()) return false;
                 } else {
                     wmoRenderer->loadModel(wmoReady.model, wmoReady.modelId);
                     ft.wmoModelIndex++;
-                    if (ft.wmoModelIndex < pending->wmoModels.size()) return false;
+                    uploaded++;
                 }
             }
+            if (ft.wmoModelIndex < pending->wmoModels.size()) return false;
         }
         ft.phase = FinalizationPhase::WMO_INSTANCES;
         return false;
@@ -874,17 +904,25 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
     }
 
     case FinalizationPhase::WMO_DOODADS: {
-        // Upload ONE WMO doodad M2 per call
+        // Upload multiple WMO doodad M2s per call (batched GPU uploads)
         if (m2Renderer && ft.wmoDoodadIndex < pending->wmoDoodads.size()) {
-            auto& doodad = pending->wmoDoodads[ft.wmoDoodadIndex];
-            m2Renderer->loadModel(doodad.model, doodad.modelId);
-            uint32_t wmoDoodadInstId = m2Renderer->createInstanceWithMatrix(
-                doodad.modelId, doodad.modelMatrix, doodad.worldPosition);
-            if (wmoDoodadInstId) {
-                m2Renderer->setSkipCollision(wmoDoodadInstId, true);
-                ft.m2InstanceIds.push_back(wmoDoodadInstId);
+            constexpr size_t kDoodadsPerStep = 16;
+            size_t uploaded = 0;
+            while (ft.wmoDoodadIndex < pending->wmoDoodads.size() && uploaded < kDoodadsPerStep) {
+                auto& doodad = pending->wmoDoodads[ft.wmoDoodadIndex];
+                if (m2Renderer->loadModel(doodad.model, doodad.modelId)) {
+                    std::lock_guard<std::mutex> lock(uploadedM2IdsMutex_);
+                    uploadedM2Ids_.insert(doodad.modelId);
+                }
+                uint32_t wmoDoodadInstId = m2Renderer->createInstanceWithMatrix(
+                    doodad.modelId, doodad.modelMatrix, doodad.worldPosition);
+                if (wmoDoodadInstId) {
+                    m2Renderer->setSkipCollision(wmoDoodadInstId, true);
+                    ft.m2InstanceIds.push_back(wmoDoodadInstId);
+                }
+                ft.wmoDoodadIndex++;
+                uploaded++;
             }
-            ft.wmoDoodadIndex++;
             if (ft.wmoDoodadIndex < pending->wmoDoodads.size()) return false;
         }
         ft.phase = FinalizationPhase::WATER;
@@ -1062,6 +1100,11 @@ void TerrainManager::processReadyTiles() {
         }
     }
 
+    // Outer upload batch: all GPU uploads across all advanceFinalization calls
+    // this frame share a single command buffer submission + fence wait.
+    VkContext* vkCtx = terrainRenderer ? terrainRenderer->getVkContext() : nullptr;
+    if (vkCtx) vkCtx->beginUploadBatch();
+
     // Drive incremental finalization within time budget
     while (!finalizingTiles_.empty()) {
         auto& ft = finalizingTiles_.front();
@@ -1077,6 +1120,8 @@ void TerrainManager::processReadyTiles() {
             break;
         }
     }
+
+    if (vkCtx) vkCtx->endUploadBatch();
 }
 
 void TerrainManager::processAllReadyTiles() {
@@ -1094,12 +1139,19 @@ void TerrainManager::processAllReadyTiles() {
             }
         }
     }
+
+    // Batch all GPU uploads across all tiles into a single submission
+    VkContext* vkCtx = terrainRenderer ? terrainRenderer->getVkContext() : nullptr;
+    if (vkCtx) vkCtx->beginUploadBatch();
+
     // Finalize all tiles completely (no time budget — used for loading screens)
     while (!finalizingTiles_.empty()) {
         auto& ft = finalizingTiles_.front();
         while (!advanceFinalization(ft)) {}
         finalizingTiles_.pop_front();
     }
+
+    if (vkCtx) vkCtx->endUploadBatch();
 }
 
 void TerrainManager::processOneReadyTile() {
@@ -1118,9 +1170,14 @@ void TerrainManager::processOneReadyTile() {
     }
     // Finalize ONE tile completely, then return so caller can update the screen
     if (!finalizingTiles_.empty()) {
+        VkContext* vkCtx = terrainRenderer ? terrainRenderer->getVkContext() : nullptr;
+        if (vkCtx) vkCtx->beginUploadBatch();
+
         auto& ft = finalizingTiles_.front();
         while (!advanceFinalization(ft)) {}
         finalizingTiles_.pop_front();
+
+        if (vkCtx) vkCtx->endUploadBatch();
     }
 }
 
@@ -1340,6 +1397,10 @@ void TerrainManager::unloadAll() {
     finalizingTiles_.clear();
     placedDoodadIds.clear();
     placedWmoIds.clear();
+    {
+        std::lock_guard<std::mutex> lock(uploadedM2IdsMutex_);
+        uploadedM2Ids_.clear();
+    }
 
     LOG_INFO("Unloading all terrain tiles");
     loadedTiles.clear();
@@ -1388,6 +1449,10 @@ void TerrainManager::softReset() {
     finalizingTiles_.clear();
     placedDoodadIds.clear();
     placedWmoIds.clear();
+    {
+        std::lock_guard<std::mutex> lock(uploadedM2IdsMutex_);
+        uploadedM2Ids_.clear();
+    }
 
     // Clear tile cache — keys are (x,y) without map name, so stale entries from
     // a different map with overlapping coordinates would produce wrong geometry.

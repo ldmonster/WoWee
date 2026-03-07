@@ -127,6 +127,7 @@ public:
     int getRenderedChunkCount() const { return renderedChunks; }
     int getCulledChunkCount() const { return culledChunks; }
     int getTriangleCount() const;
+    VkContext* getVkContext() const { return vkCtx; }
 
 private:
     TerrainChunkGPU uploadChunk(const pipeline::ChunkMesh& chunk);
