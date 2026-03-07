@@ -593,15 +593,22 @@ bool WMORenderer::loadModel(const pipeline::WMOModel& model, uint32_t id) {
 
             // Detect window/glass materials by texture name.
             // Flag 0x10 (F_SIDN) marks night-glow materials (windows AND lamps),
-            // so we additionally check for "window" in the texture path to
+            // so we additionally check for "window" or "glass" in the texture path to
             // distinguish actual glass from lamp post geometry.
             bool isWindow = false;
             if (batch.materialId < modelData.materialTextureIndices.size()) {
                 uint32_t ti = modelData.materialTextureIndices[batch.materialId];
                 if (ti < modelData.textureNames.size()) {
-                    isWindow = (modelData.textureNames[ti].find("window") != std::string::npos);
+                    const auto& texName = modelData.textureNames[ti];
+                    // Case-insensitive search for "window" or "glass"
+                    std::string texNameLower = texName;
+                    std::transform(texNameLower.begin(), texNameLower.end(), texNameLower.begin(), ::tolower);
+                    isWindow = (texNameLower.find("window") != std::string::npos ||
+                                texNameLower.find("glass") != std::string::npos);
                 }
             }
+
+
 
             BatchKey key{ reinterpret_cast<uintptr_t>(tex), alphaTest, unlit, isWindow };
             auto& mb = batchMap[key];
@@ -651,7 +658,7 @@ bool WMORenderer::loadModel(const pipeline::WMOModel& model, uint32_t id) {
             matData.unlit = mb.unlit ? 1 : 0;
             matData.isInterior = isInterior ? 1 : 0;
             matData.specularIntensity = 0.5f;
-            matData.isWindow = mb.isWindow ? 1 : 0;
+            matData.isWindow = mb.isWindow ? (wmoOnlyMap_ ? 2 : 1) : 0;
             matData.enableNormalMap = normalMappingEnabled_ ? 1 : 0;
             matData.enablePOM = pomEnabled_ ? 1 : 0;
             matData.pomScale = 0.012f;

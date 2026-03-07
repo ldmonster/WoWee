@@ -196,6 +196,7 @@ public:
     void setNormalMapStrength(float s) { normalMapStrength_ = s; materialSettingsDirty_ = true; }
     void setPOMEnabled(bool enabled) { pomEnabled_ = enabled; materialSettingsDirty_ = true; }
     void setPOMQuality(int q) { pomQuality_ = q; materialSettingsDirty_ = true; }
+    void setWMOOnlyMap(bool v) { wmoOnlyMap_ = v; materialSettingsDirty_ = true; }
     bool isNormalMappingEnabled() const { return normalMappingEnabled_; }
     float getNormalMapStrength() const { return normalMapStrength_; }
     bool isPOMEnabled() const { return pomEnabled_; }
@@ -670,6 +671,7 @@ private:
     bool pomEnabled_ = true;             // on by default
     int pomQuality_ = 1;                 // 0=Low(16), 1=Medium(32), 2=High(64)
     bool materialSettingsDirty_ = false; // rebuild UBOs when settings change
+    bool wmoOnlyMap_ = false;            // true for dungeon/instance WMO-only maps
 
     // Rendering state
     bool wireframeMode = false;

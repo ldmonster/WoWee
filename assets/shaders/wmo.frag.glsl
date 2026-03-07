@@ -152,9 +152,9 @@ void main() {
 
     vec3 result;
 
-    // Sample shadow map for all non-window WMO surfaces
+    // Sample shadow map — skip for interior WMO groups (no sun indoors)
     float shadow = 1.0;
-    if (shadowParams.x > 0.5) {
+    if (shadowParams.x > 0.5 && isInterior == 0) {
         vec3 ldir = normalize(-lightDir.xyz);
         float normalOffset = SHADOW_TEXEL * 2.0 * (1.0 - abs(dot(norm, ldir)));
         vec3 biasedPos = FragPos + norm * normalOffset;
@@ -219,7 +219,12 @@ void main() {
         glass += specBroad * lightColor.rgb * 0.12;
 
         result = glass;
-        alpha = mix(0.4, 0.95, NdotV);
+        if (isWindow == 2) {
+            // Instance/dungeon glass: mostly transparent to see through
+            alpha = mix(0.12, 0.35, fresnel);
+        } else {
+            alpha = mix(0.4, 0.95, NdotV);
+        }
     }
 
     outColor = vec4(result, alpha);

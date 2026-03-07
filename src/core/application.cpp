@@ -3525,9 +3525,10 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         renderer->getCameraController()->reset();
     }
 
-    // Set map name for WMO renderer
+    // Set map name for WMO renderer and reset instance mode
     if (renderer->getWMORenderer()) {
         renderer->getWMORenderer()->setMapName(mapName);
+        renderer->getWMORenderer()->setWMOOnlyMap(false);
     }
 
     // Set map name for terrain manager
@@ -3634,6 +3635,7 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         // Set map name on WMO renderer and disable terrain streaming (no ADT tiles for instances)
         if (renderer->getWMORenderer()) {
             renderer->getWMORenderer()->setMapName(mapName);
+            renderer->getWMORenderer()->setWMOOnlyMap(true);
         }
         if (renderer->getTerrainManager()) {
             renderer->getTerrainManager()->setStreamingEnabled(false);
