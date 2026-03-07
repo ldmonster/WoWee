@@ -695,27 +695,39 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
             return true;
         }
 
-        LOG_DEBUG("Finalizing tile [", x, ",", y, "] (incremental)");
-
-        // Upload pre-loaded textures
-        if (!pending->preloadedTextures.empty()) {
-            terrainRenderer->uploadPreloadedTextures(pending->preloadedTextures);
-        }
-
-        // Upload terrain mesh to GPU
-        if (!terrainRenderer->loadTerrain(pending->mesh, pending->terrain.textures, x, y)) {
-            LOG_ERROR("Failed to upload terrain to GPU for tile [", x, ",", y, "]");
-            failedTiles[coord] = true;
-            {
-                std::lock_guard<std::mutex> lock(queueMutex);
-                pendingTiles.erase(coord);
+        // Upload pre-loaded textures (once)
+        if (!ft.terrainPreloaded) {
+            LOG_DEBUG("Finalizing tile [", x, ",", y, "] (incremental)");
+            if (!pending->preloadedTextures.empty()) {
+                terrainRenderer->uploadPreloadedTextures(pending->preloadedTextures);
             }
-            ft.phase = FinalizationPhase::DONE;
-            return true;
+            ft.terrainPreloaded = true;
+            // Yield after preload to give time budget a chance to interrupt
+            return false;
         }
 
-        // Load water immediately after terrain (same frame) — water is now
-        // deduplicated to ~1-2 merged surfaces per tile, so this is fast.
+        // Upload terrain chunks incrementally (16 per call to spread across frames)
+        if (!ft.terrainMeshDone) {
+            if (pending->mesh.validChunkCount == 0) {
+                LOG_ERROR("Failed to upload terrain to GPU for tile [", x, ",", y, "]");
+                failedTiles[coord] = true;
+                {
+                    std::lock_guard<std::mutex> lock(queueMutex);
+                    pendingTiles.erase(coord);
+                }
+                ft.phase = FinalizationPhase::DONE;
+                return true;
+            }
+            bool allDone = terrainRenderer->loadTerrainIncremental(
+                pending->mesh, pending->terrain.textures, x, y,
+                ft.terrainChunkNext, 16);
+            if (!allDone) {
+                return false; // More chunks remain — yield to time budget
+            }
+            ft.terrainMeshDone = true;
+        }
+
+        // Load water after all terrain chunks are uploaded
         if (waterRenderer) {
             size_t beforeSurfaces = waterRenderer->getSurfaceCount();
             waterRenderer->loadFromTerrain(pending->terrain, true, x, y);

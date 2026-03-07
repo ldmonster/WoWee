@@ -678,6 +678,7 @@ void M2Renderer::shutdown() {
     instances.clear();
     spatialGrid.clear();
     instanceIndexById.clear();
+    instanceDedupMap_.clear();
 
     // Delete cached textures
     textureCache.clear();
@@ -1613,17 +1614,16 @@ uint32_t M2Renderer::createInstance(uint32_t modelId, const glm::vec3& position,
     }
     const auto& mdlRef = modelIt->second;
 
-    // Ground clutter is procedurally scattered and high-count; avoid O(N) dedup
-    // scans that can hitch when new tiles stream in.
+    // Deduplicate: skip if same model already at nearly the same position.
+    // Uses hash map for O(1) lookup instead of O(N) scan.
     if (!mdlRef.isGroundDetail) {
-        // Deduplicate: skip if same model already at nearly the same position
-        for (const auto& existing : instances) {
-            if (existing.modelId == modelId) {
-                glm::vec3 d = existing.position - position;
-                if (glm::dot(d, d) < 0.01f) {
-                    return existing.id;
-                }
-            }
+        DedupKey dk{modelId,
+                    static_cast<int32_t>(std::round(position.x * 10.0f)),
+                    static_cast<int32_t>(std::round(position.y * 10.0f)),
+                    static_cast<int32_t>(std::round(position.z * 10.0f))};
+        auto dit = instanceDedupMap_.find(dk);
+        if (dit != instanceDedupMap_.end()) {
+            return dit->second;
         }
     }
 
@@ -1660,6 +1660,15 @@ uint32_t M2Renderer::createInstance(uint32_t modelId, const glm::vec3& position,
         instance.animDuration = static_cast<float>(mdl.sequences[0].duration);
         instance.animTime = static_cast<float>(rand() % std::max(1u, mdl.sequences[0].duration));
         instance.variationTimer = 3000.0f + static_cast<float>(rand() % 8000);
+    }
+
+    // Register in dedup map before pushing (uses original position, not ground-adjusted)
+    if (!mdlRef.isGroundDetail) {
+        DedupKey dk{modelId,
+                    static_cast<int32_t>(std::round(position.x * 10.0f)),
+                    static_cast<int32_t>(std::round(position.y * 10.0f)),
+                    static_cast<int32_t>(std::round(position.z * 10.0f))};
+        instanceDedupMap_[dk] = instance.id;
     }
 
     instances.push_back(instance);
@@ -1700,13 +1709,15 @@ uint32_t M2Renderer::createInstanceWithMatrix(uint32_t modelId, const glm::mat4&
         return 0;
     }
 
-    // Deduplicate: skip if same model already at nearly the same position
-    for (const auto& existing : instances) {
-        if (existing.modelId == modelId) {
-            glm::vec3 d = existing.position - position;
-            if (glm::dot(d, d) < 0.01f) {
-                return existing.id;
-            }
+    // Deduplicate: O(1) hash lookup
+    {
+        DedupKey dk{modelId,
+                    static_cast<int32_t>(std::round(position.x * 10.0f)),
+                    static_cast<int32_t>(std::round(position.y * 10.0f)),
+                    static_cast<int32_t>(std::round(position.z * 10.0f))};
+        auto dit = instanceDedupMap_.find(dk);
+        if (dit != instanceDedupMap_.end()) {
+            return dit->second;
         }
     }
 
@@ -1741,6 +1752,15 @@ uint32_t M2Renderer::createInstanceWithMatrix(uint32_t modelId, const glm::mat4&
         instance.variationTimer = 3000.0f + static_cast<float>(rand() % 8000);
     } else {
         instance.animTime = static_cast<float>(rand()) / RAND_MAX * 10000.0f;
+    }
+
+    // Register in dedup map
+    {
+        DedupKey dk{modelId,
+                    static_cast<int32_t>(std::round(position.x * 10.0f)),
+                    static_cast<int32_t>(std::round(position.y * 10.0f)),
+                    static_cast<int32_t>(std::round(position.z * 10.0f))};
+        instanceDedupMap_[dk] = instance.id;
     }
 
     instances.push_back(instance);
@@ -3477,6 +3497,7 @@ void M2Renderer::clear() {
     instances.clear();
     spatialGrid.clear();
     instanceIndexById.clear();
+    instanceDedupMap_.clear();
     smokeParticles.clear();
     smokeInstanceIndices_.clear();
     portalInstanceIndices_.clear();
@@ -3513,6 +3534,7 @@ M2Renderer::GridCell M2Renderer::toCell(const glm::vec3& p) const {
 void M2Renderer::rebuildSpatialIndex() {
     spatialGrid.clear();
     instanceIndexById.clear();
+    instanceDedupMap_.clear();
     instanceIndexById.reserve(instances.size());
     smokeInstanceIndices_.clear();
     portalInstanceIndices_.clear();
@@ -3523,6 +3545,15 @@ void M2Renderer::rebuildSpatialIndex() {
     for (size_t i = 0; i < instances.size(); i++) {
         const auto& inst = instances[i];
         instanceIndexById[inst.id] = i;
+
+        // Rebuild dedup map (skip ground detail)
+        if (!inst.cachedIsGroundDetail) {
+            DedupKey dk{inst.modelId,
+                        static_cast<int32_t>(std::round(inst.position.x * 10.0f)),
+                        static_cast<int32_t>(std::round(inst.position.y * 10.0f)),
+                        static_cast<int32_t>(std::round(inst.position.z * 10.0f))};
+            instanceDedupMap_[dk] = inst.id;
+        }
 
         if (inst.cachedIsSmoke) {
             smokeInstanceIndices_.push_back(i);

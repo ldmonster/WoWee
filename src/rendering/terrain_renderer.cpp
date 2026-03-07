@@ -409,6 +409,90 @@ bool TerrainRenderer::loadTerrain(const pipeline::TerrainMesh& mesh,
     return !chunks.empty();
 }
 
+bool TerrainRenderer::loadTerrainIncremental(const pipeline::TerrainMesh& mesh,
+                                              const std::vector<std::string>& texturePaths,
+                                              int tileX, int tileY,
+                                              int& chunkIndex, int maxChunksPerCall) {
+    int uploaded = 0;
+    while (chunkIndex < 256 && uploaded < maxChunksPerCall) {
+        int cy = chunkIndex / 16;
+        int cx = chunkIndex % 16;
+        chunkIndex++;
+
+        const auto& chunk = mesh.getChunk(cx, cy);
+        if (!chunk.isValid()) continue;
+
+        TerrainChunkGPU gpuChunk = uploadChunk(chunk);
+        if (!gpuChunk.isValid()) continue;
+
+        calculateBoundingSphere(gpuChunk, chunk);
+
+        if (!chunk.layers.empty()) {
+            uint32_t baseTexId = chunk.layers[0].textureId;
+            if (baseTexId < texturePaths.size()) {
+                gpuChunk.baseTexture = loadTexture(texturePaths[baseTexId]);
+            } else {
+                gpuChunk.baseTexture = whiteTexture.get();
+            }
+
+            for (size_t i = 1; i < chunk.layers.size() && i < 4; i++) {
+                const auto& layer = chunk.layers[i];
+                int li = static_cast<int>(i) - 1;
+
+                VkTexture* layerTex = whiteTexture.get();
+                if (layer.textureId < texturePaths.size()) {
+                    layerTex = loadTexture(texturePaths[layer.textureId]);
+                }
+                gpuChunk.layerTextures[li] = layerTex;
+
+                VkTexture* alphaTex = opaqueAlphaTexture.get();
+                if (!layer.alphaData.empty()) {
+                    alphaTex = createAlphaTexture(layer.alphaData);
+                }
+                gpuChunk.alphaTextures[li] = alphaTex;
+                gpuChunk.layerCount = static_cast<int>(i);
+            }
+        } else {
+            gpuChunk.baseTexture = whiteTexture.get();
+        }
+
+        gpuChunk.tileX = tileX;
+        gpuChunk.tileY = tileY;
+
+        TerrainParamsUBO params{};
+        params.layerCount = gpuChunk.layerCount;
+        params.hasLayer1 = gpuChunk.layerCount >= 1 ? 1 : 0;
+        params.hasLayer2 = gpuChunk.layerCount >= 2 ? 1 : 0;
+        params.hasLayer3 = gpuChunk.layerCount >= 3 ? 1 : 0;
+
+        VkBufferCreateInfo bufCI{};
+        bufCI.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufCI.size = sizeof(TerrainParamsUBO);
+        bufCI.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+
+        VmaAllocationCreateInfo allocCI{};
+        allocCI.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+        allocCI.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+        VmaAllocationInfo mapInfo{};
+        vmaCreateBuffer(vkCtx->getAllocator(), &bufCI, &allocCI,
+                        &gpuChunk.paramsUBO, &gpuChunk.paramsAlloc, &mapInfo);
+        if (mapInfo.pMappedData) {
+            std::memcpy(mapInfo.pMappedData, &params, sizeof(params));
+        }
+
+        gpuChunk.materialSet = allocateMaterialSet();
+        if (gpuChunk.materialSet) {
+            writeMaterialDescriptors(gpuChunk.materialSet, gpuChunk);
+        }
+
+        chunks.push_back(std::move(gpuChunk));
+        uploaded++;
+    }
+
+    return chunkIndex >= 256;
+}
+
 TerrainChunkGPU TerrainRenderer::uploadChunk(const pipeline::ChunkMesh& chunk) {
     TerrainChunkGPU gpuChunk;
 

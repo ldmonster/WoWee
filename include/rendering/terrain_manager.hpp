@@ -150,6 +150,11 @@ struct FinalizingTile {
     size_t wmoModelIndex = 0;      // Next WMO model to upload
     size_t wmoDoodadIndex = 0;     // Next WMO doodad to upload
 
+    // Incremental terrain upload state (splits TERRAIN phase across frames)
+    bool terrainPreloaded = false;  // True after preloaded textures uploaded
+    int terrainChunkNext = 0;       // Next chunk index to upload (0-255, row-major)
+    bool terrainMeshDone = false;   // True when all chunks uploaded
+
     // Accumulated results (built up across phases)
     std::vector<uint32_t> m2InstanceIds;
     std::vector<uint32_t> wmoInstanceIds;

@@ -389,6 +389,25 @@ private:
     std::unordered_map<uint32_t, M2ModelGPU> models;
     std::vector<M2Instance> instances;
 
+    // O(1) dedup: key = (modelId, quantized x, quantized y, quantized z) → instanceId
+    struct DedupKey {
+        uint32_t modelId;
+        int32_t qx, qy, qz; // position quantized to 0.1 units
+        bool operator==(const DedupKey& o) const {
+            return modelId == o.modelId && qx == o.qx && qy == o.qy && qz == o.qz;
+        }
+    };
+    struct DedupHash {
+        size_t operator()(const DedupKey& k) const {
+            size_t h = std::hash<uint32_t>()(k.modelId);
+            h ^= std::hash<int32_t>()(k.qx) * 2654435761u;
+            h ^= std::hash<int32_t>()(k.qy) * 40503u;
+            h ^= std::hash<int32_t>()(k.qz) * 12289u;
+            return h;
+        }
+    };
+    std::unordered_map<DedupKey, uint32_t, DedupHash> instanceDedupMap_;
+
     uint32_t nextInstanceId = 1;
     uint32_t lastDrawCallCount = 0;
     size_t modelCacheLimit_ = 6000;
