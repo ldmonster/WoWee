@@ -87,6 +87,7 @@ private:
     bool pendingVsync = false;
     int pendingResIndex = 0;
     bool pendingShadows = true;
+    bool pendingWaterRefraction = false;
     int pendingMasterVolume = 100;
     int pendingMusicVolume = 30;
     int pendingAmbientVolume = 100;
@@ -123,6 +124,7 @@ private:
     bool minimapSettingsApplied_ = false;
     bool volumeSettingsApplied_ = false;  // True once saved volume settings applied to audio managers
     bool msaaSettingsApplied_ = false;   // True once saved MSAA setting applied to renderer
+    bool waterRefractionApplied_ = false;
     bool normalMapSettingsApplied_ = false;  // True once saved normal map/POM settings applied
 
     // Mute state: mute bypasses master volume without touching slider values

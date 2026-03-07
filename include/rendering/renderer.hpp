@@ -256,6 +256,9 @@ public:
     bool areShadowsEnabled() const { return shadowsEnabled; }
     void setMsaaSamples(VkSampleCountFlagBits samples);
 
+    void setWaterRefractionEnabled(bool enabled);
+    bool isWaterRefractionEnabled() const;
+
 private:
     void applyMsaaChange();
     VkSampleCountFlagBits pendingMsaaSamples_ = VK_SAMPLE_COUNT_1_BIT;

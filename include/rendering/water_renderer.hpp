@@ -93,12 +93,13 @@ public:
     bool hasWater1xPass() const { return water1xRenderPass != VK_NULL_HANDLE; }
     VkRenderPass getWater1xRenderPass() const { return water1xRenderPass; }
 
-    void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera, float time, bool use1x = false);
+    void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera, float time, bool use1x = false, uint32_t frameIndex = 0);
     void captureSceneHistory(VkCommandBuffer cmd,
                              VkImage srcColorImage,
                              VkImage srcDepthImage,
                              VkExtent2D srcExtent,
-                             bool srcDepthIsMsaa);
+                             bool srcDepthIsMsaa,
+                             uint32_t frameIndex = 0);
 
     // --- Planar reflection pass ---
     // Call sequence: beginReflectionPass → [render scene] → endReflectionPass
@@ -123,6 +124,9 @@ public:
 
     void setEnabled(bool enabled) { renderingEnabled = enabled; }
     bool isEnabled() const { return renderingEnabled; }
+
+    void setRefractionEnabled(bool enabled);
+    bool isRefractionEnabled() const { return refractionEnabled; }
 
     std::optional<float> getWaterHeightAt(float glX, float glY) const;
     /// Like getWaterHeightAt but only returns water surfaces whose height is
@@ -159,17 +163,22 @@ private:
     VkDescriptorPool materialDescPool = VK_NULL_HANDLE;
     VkDescriptorSetLayout sceneSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool sceneDescPool = VK_NULL_HANDLE;
-    VkDescriptorSet sceneSet = VK_NULL_HANDLE;
     static constexpr uint32_t MAX_WATER_SETS = 16384;
 
     VkSampler sceneColorSampler = VK_NULL_HANDLE;
     VkSampler sceneDepthSampler = VK_NULL_HANDLE;
-    VkImage sceneColorImage = VK_NULL_HANDLE;
-    VmaAllocation sceneColorAlloc = VK_NULL_HANDLE;
-    VkImageView sceneColorView = VK_NULL_HANDLE;
-    VkImage sceneDepthImage = VK_NULL_HANDLE;
-    VmaAllocation sceneDepthAlloc = VK_NULL_HANDLE;
-    VkImageView sceneDepthView = VK_NULL_HANDLE;
+    // Per-frame scene history to avoid race between frames in flight
+    static constexpr uint32_t SCENE_HISTORY_FRAMES = 2;
+    struct PerFrameSceneHistory {
+        VkImage colorImage = VK_NULL_HANDLE;
+        VmaAllocation colorAlloc = VK_NULL_HANDLE;
+        VkImageView colorView = VK_NULL_HANDLE;
+        VkImage depthImage = VK_NULL_HANDLE;
+        VmaAllocation depthAlloc = VK_NULL_HANDLE;
+        VkImageView depthView = VK_NULL_HANDLE;
+        VkDescriptorSet sceneSet = VK_NULL_HANDLE;
+    };
+    PerFrameSceneHistory sceneHistory[SCENE_HISTORY_FRAMES];
     VkExtent2D sceneHistoryExtent = {0, 0};
     bool sceneHistoryReady = false;
     mutable uint32_t renderDiagCounter_ = 0;
@@ -200,6 +209,7 @@ private:
 
     std::vector<WaterSurface> surfaces;
     bool renderingEnabled = true;
+    bool refractionEnabled = false;
 };
 
 } // namespace rendering

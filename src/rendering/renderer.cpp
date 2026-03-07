@@ -855,6 +855,14 @@ void Renderer::unregisterPreview(CharacterPreview* preview) {
     }
 }
 
+void Renderer::setWaterRefractionEnabled(bool enabled) {
+    if (waterRenderer) waterRenderer->setRefractionEnabled(enabled);
+}
+
+bool Renderer::isWaterRefractionEnabled() const {
+    return waterRenderer && waterRenderer->isRefractionEnabled();
+}
+
 void Renderer::setMsaaSamples(VkSampleCountFlagBits samples) {
     if (!vkCtx) return;
 
@@ -1054,20 +1062,27 @@ void Renderer::endFrame() {
 
     vkCmdEndRenderPass(currentCmd);
 
-    // Scene-history capture is disabled: with MAX_FRAMES_IN_FLIGHT=2, the single
-    // sceneColorImage can race between frame N-1's water shader read and frame N's
-    // transfer write, eventually causing VK_ERROR_DEVICE_LOST.  Water renders
-    // without refraction until per-frame scene-history images are implemented.
-    // TODO: allocate per-frame sceneColor/Depth images to fix the race.
+    uint32_t frame = vkCtx->getCurrentFrame();
 
-    // Render water in separate 1x pass (without scene refraction for now)
+    // Capture scene color/depth into per-frame history images for water refraction
+    if (waterRenderer && waterRenderer->isRefractionEnabled() && waterRenderer->hasSurfaces()
+        && currentImageIndex < vkCtx->getSwapchainImages().size()) {
+        waterRenderer->captureSceneHistory(
+            currentCmd,
+            vkCtx->getSwapchainImages()[currentImageIndex],
+            vkCtx->getDepthCopySourceImage(),
+            vkCtx->getSwapchainExtent(),
+            vkCtx->isDepthCopySourceMsaa(),
+            frame);
+    }
+
+    // Render water in separate 1x pass after MSAA resolve + scene capture
     bool waterDeferred = waterRenderer && waterRenderer->hasSurfaces() && waterRenderer->hasWater1xPass()
                          && vkCtx->getMsaaSamples() != VK_SAMPLE_COUNT_1_BIT;
     if (waterDeferred && camera) {
         VkExtent2D ext = vkCtx->getSwapchainExtent();
-        uint32_t frame = vkCtx->getCurrentFrame();
         if (waterRenderer->beginWater1xPass(currentCmd, currentImageIndex, ext)) {
-            waterRenderer->render(currentCmd, perFrameDescSets[frame], *camera, globalTime, true);
+            waterRenderer->render(currentCmd, perFrameDescSets[frame], *camera, globalTime, true, frame);
             waterRenderer->endWater1xPass(currentCmd);
         }
     }
@@ -3268,7 +3283,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     bool waterDeferred = waterRenderer && waterRenderer->hasWater1xPass()
                          && vkCtx->getMsaaSamples() != VK_SAMPLE_COUNT_1_BIT;
     if (waterRenderer && camera && !waterDeferred) {
-        waterRenderer->render(currentCmd, perFrameSet, *camera, globalTime);
+        waterRenderer->render(currentCmd, perFrameSet, *camera, globalTime, false, vkCtx->getCurrentFrame());
     }
 
     // Weather particles

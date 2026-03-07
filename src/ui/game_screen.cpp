@@ -288,6 +288,15 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         msaaSettingsApplied_ = true;
     }
 
+    // Apply saved water refraction setting once when renderer is available
+    if (!waterRefractionApplied_) {
+        auto* renderer = core::Application::getInstance().getRenderer();
+        if (renderer) {
+            renderer->setWaterRefractionEnabled(pendingWaterRefraction);
+            waterRefractionApplied_ = true;
+        }
+    }
+
     // Apply saved normal mapping / POM settings once when WMO renderer is available
     if (!normalMapSettingsApplied_) {
         auto* renderer = core::Application::getInstance().getRenderer();
@@ -6237,6 +6246,10 @@ void GameScreen::renderSettingsWindow() {
                     if (renderer) renderer->setShadowsEnabled(pendingShadows);
                     saveSettings();
                 }
+                if (ImGui::Checkbox("Water Refraction", &pendingWaterRefraction)) {
+                    if (renderer) renderer->setWaterRefractionEnabled(pendingWaterRefraction);
+                    saveSettings();
+                }
                 {
                     const char* aaLabels[] = { "Off", "2x MSAA", "4x MSAA", "8x MSAA" };
                     if (ImGui::Combo("Anti-Aliasing", &pendingAntiAliasing, aaLabels, 4)) {
@@ -6336,7 +6349,9 @@ void GameScreen::renderSettingsWindow() {
                     window->setFullscreen(pendingFullscreen);
                     window->setVsync(pendingVsync);
                     window->applyResolution(kResolutions[pendingResIndex][0], kResolutions[pendingResIndex][1]);
+                    pendingWaterRefraction = false;
                     if (renderer) renderer->setShadowsEnabled(pendingShadows);
+                    if (renderer) renderer->setWaterRefractionEnabled(pendingWaterRefraction);
                     if (renderer) renderer->setMsaaSamples(VK_SAMPLE_COUNT_1_BIT);
                     if (renderer) {
                         if (auto* tm = renderer->getTerrainManager()) {
@@ -7349,6 +7364,7 @@ void GameScreen::saveSettings() {
     out << "auto_loot=" << (pendingAutoLoot ? 1 : 0) << "\n";
     out << "ground_clutter_density=" << pendingGroundClutterDensity << "\n";
     out << "shadows=" << (pendingShadows ? 1 : 0) << "\n";
+    out << "water_refraction=" << (pendingWaterRefraction ? 1 : 0) << "\n";
     out << "antialiasing=" << pendingAntiAliasing << "\n";
     out << "normal_mapping=" << (pendingNormalMapping ? 1 : 0) << "\n";
     out << "normal_map_strength=" << pendingNormalMapStrength << "\n";
@@ -7433,6 +7449,7 @@ void GameScreen::loadSettings() {
             else if (key == "auto_loot") pendingAutoLoot = (std::stoi(val) != 0);
             else if (key == "ground_clutter_density") pendingGroundClutterDensity = std::clamp(std::stoi(val), 0, 150);
             else if (key == "shadows") pendingShadows = (std::stoi(val) != 0);
+            else if (key == "water_refraction") pendingWaterRefraction = (std::stoi(val) != 0);
             else if (key == "antialiasing") pendingAntiAliasing = std::clamp(std::stoi(val), 0, 3);
             else if (key == "normal_mapping") pendingNormalMapping = (std::stoi(val) != 0);
             else if (key == "normal_map_strength") pendingNormalMapStrength = std::clamp(std::stof(val), 0.0f, 2.0f);

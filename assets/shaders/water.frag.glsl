@@ -226,11 +226,32 @@ void main() {
     float depthFade = 1.0 - exp(-verticalDepth * 0.15);
     vec3 waterBody = mix(shallowColor, deepColor, depthFade);
 
-    vec3 refractedColor = mix(foggedScene * absorbed, waterBody, depthFade * 0.7);
+    // Detect if scene history is available (scene data captured for refraction)
+    float sceneBrightness = dot(sceneRefract, vec3(0.299, 0.587, 0.114));
+    bool hasSceneData = (sceneBrightness > 0.003);
 
-    if (verticalDepth < 0.01) {
-        float opticalDepth = 1.0 - exp(-dist * 0.004);
-        refractedColor = mix(foggedScene, waterBody, opticalDepth * 0.6);
+    // Animated caustic shimmer — only without refraction (refraction already provides movement)
+    if (!hasSceneData) {
+        float caustic1 = noiseValue(FragPos.xy * 1.8 + time * vec2(0.3, 0.15));
+        float caustic2 = noiseValue(FragPos.xy * 3.2 - time * vec2(0.2, 0.35));
+        float causticPattern = caustic1 * 0.6 + caustic2 * 0.4;
+        vec3 causticTint = vec3(0.08, 0.18, 0.28) * smoothstep(0.35, 0.75, causticPattern);
+        waterBody += causticTint;
+    }
+
+    vec3 refractedColor;
+    if (hasSceneData) {
+        refractedColor = mix(foggedScene * absorbed, waterBody, depthFade * 0.7);
+        if (verticalDepth < 0.01) {
+            float opticalDepth = 1.0 - exp(-dist * 0.004);
+            refractedColor = mix(foggedScene, waterBody, opticalDepth * 0.6);
+        }
+    } else {
+        // No refraction data — use lit water body with animated variation
+        vec3 litWater = waterBody * (ambientColor.rgb * 0.8 + NdotL * lightColor.rgb * 0.6);
+        float normalShift = dot(detailNorm.xy, vec2(0.5, 0.5));
+        litWater += vec3(0.02, 0.06, 0.10) * normalShift;
+        refractedColor = litWater;
     }
 
     vec3 litBase = waterBody * (ambientColor.rgb * 0.7 + NdotL * lightColor.rgb * 0.5);
