@@ -348,6 +348,7 @@ private:
     int unloadRadius = 7;    // Unload tiles beyond this radius
     float updateInterval = 0.033f;  // Check streaming every 33ms (~30 fps)
     float timeSinceLastUpdate = 0.0f;
+    float proactiveStreamTimer_ = 0.0f;
     bool taxiStreamingMode_ = false;
 
     // Tile size constants (WoW ADT specifications)

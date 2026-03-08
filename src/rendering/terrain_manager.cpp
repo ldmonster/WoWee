@@ -207,16 +207,20 @@ void TerrainManager::update(const Camera& camera, float deltaTime) {
         streamTiles();
         lastStreamTile = newTile;
     } else {
-        // Proactive loading: when workers are idle, re-check for unloaded tiles
-        // within range. This catches tiles that weren't queued on the initial
-        // streamTiles pass (e.g. cache eviction, late-arriving ADT availability).
-        bool workersIdle;
-        {
-            std::lock_guard<std::mutex> lock(queueMutex);
-            workersIdle = loadQueue.empty();
-        }
-        if (workersIdle) {
-            streamTiles();
+        // Proactive loading: when workers are idle, periodically re-check for
+        // unloaded tiles within range. Throttled to avoid hitching right after
+        // world load when many tiles finalize simultaneously.
+        proactiveStreamTimer_ += deltaTime;
+        if (proactiveStreamTimer_ >= 2.0f) {
+            proactiveStreamTimer_ = 0.0f;
+            bool workersIdle;
+            {
+                std::lock_guard<std::mutex> lock(queueMutex);
+                workersIdle = loadQueue.empty();
+            }
+            if (workersIdle) {
+                streamTiles();
+            }
         }
     }
 }
