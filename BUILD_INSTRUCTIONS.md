@@ -29,9 +29,13 @@ sudo apt install -y \
 sudo pacman -S --needed \
   base-devel cmake pkgconf git \
   sdl2 glew glm openssl zlib \
-  vulkan-devel vulkan-tools shaderc \
+  vulkan-headers vulkan-icd-loader vulkan-tools shaderc \
   ffmpeg unicorn stormlib
 ```
+
+> **Note:** `vulkan-headers` provides the `vulkan/vulkan.h` development headers required
+> at build time. `vulkan-devel` is a group that includes these on some distros but is not
+> available by name on Arch — install `vulkan-headers` and `vulkan-icd-loader` explicitly.
 
 ---
 
