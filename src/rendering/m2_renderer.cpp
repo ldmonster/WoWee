@@ -282,6 +282,14 @@ glm::vec3 closestPointOnTriangle(const glm::vec3& p,
 
 } // namespace
 
+// Thread-local scratch buffers for collision queries (allows concurrent getFloorHeight calls)
+static thread_local std::vector<size_t> tl_m2_candidateScratch;
+static thread_local std::unordered_set<uint32_t> tl_m2_candidateIdScratch;
+static thread_local std::vector<uint32_t> tl_m2_collisionTriScratch;
+
+// Forward declaration (defined after animation helpers)
+static void computeBoneMatrices(const M2ModelGPU& model, M2Instance& instance);
+
 void M2Instance::updateModelMatrix() {
     modelMatrix = glm::mat4(1.0f);
     modelMatrix = glm::translate(modelMatrix, position);
@@ -1673,6 +1681,21 @@ uint32_t M2Renderer::createInstance(uint32_t modelId, const glm::vec3& position,
         instance.animDuration = static_cast<float>(mdl.sequences[0].duration);
         instance.animTime = static_cast<float>(rand() % std::max(1u, mdl.sequences[0].duration));
         instance.variationTimer = 3000.0f + static_cast<float>(rand() % 8000);
+
+        // Seed bone matrices from an existing instance of the same model so the
+        // new instance renders immediately instead of being invisible until the
+        // next update() computes bones (prevents pop-in flash).
+        for (const auto& existing : instances) {
+            if (existing.modelId == modelId && !existing.boneMatrices.empty()) {
+                instance.boneMatrices = existing.boneMatrices;
+                instance.bonesDirty = true;
+                break;
+            }
+        }
+        // If no sibling exists yet, compute bones immediately
+        if (instance.boneMatrices.empty()) {
+            computeBoneMatrices(mdlRef, instance);
+        }
     }
 
     // Register in dedup map before pushing (uses original position, not ground-adjusted)
@@ -1764,6 +1787,18 @@ uint32_t M2Renderer::createInstanceWithMatrix(uint32_t modelId, const glm::mat4&
         instance.animDuration = static_cast<float>(mdl2.sequences[0].duration);
         instance.animTime = static_cast<float>(rand() % std::max(1u, mdl2.sequences[0].duration));
         instance.variationTimer = 3000.0f + static_cast<float>(rand() % 8000);
+
+        // Seed bone matrices from an existing sibling so the instance renders immediately
+        for (const auto& existing : instances) {
+            if (existing.modelId == modelId && !existing.boneMatrices.empty()) {
+                instance.boneMatrices = existing.boneMatrices;
+                instance.bonesDirty = true;
+                break;
+            }
+        }
+        if (instance.boneMatrices.empty()) {
+            computeBoneMatrices(mdl2, instance);
+        }
     } else {
         instance.animTime = static_cast<float>(rand()) / RAND_MAX * 10000.0f;
     }
@@ -2380,12 +2415,15 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         }
 
         // Upload bone matrices to SSBO if model has skeletal animation.
-        // Bone buffers are pre-allocated by prepareRender() on the main thread.
-        // If not yet allocated (race/timing), skip this instance entirely to avoid
-        // a bind-pose flash — it will render correctly next frame.
-        bool needsBones = model.hasAnimation && !model.disableAnimation && !instance.boneMatrices.empty();
+        // Skip animated instances entirely until bones are computed + buffers allocated
+        // to prevent bind-pose/T-pose flash on first appearance.
+        bool modelNeedsAnimation = model.hasAnimation && !model.disableAnimation;
+        if (modelNeedsAnimation && instance.boneMatrices.empty()) {
+            continue;  // Bones not yet computed — skip to avoid bind-pose flash
+        }
+        bool needsBones = modelNeedsAnimation && !instance.boneMatrices.empty();
         if (needsBones && (!instance.boneBuffer[frameIndex] || !instance.boneSet[frameIndex])) {
-            continue;
+            continue;  // Bone buffers not yet allocated — skip to avoid bind-pose flash
         }
         bool useBones = needsBones;
         if (useBones) {
@@ -3620,7 +3658,7 @@ void M2Renderer::rebuildSpatialIndex() {
 void M2Renderer::gatherCandidates(const glm::vec3& queryMin, const glm::vec3& queryMax,
                                   std::vector<size_t>& outIndices) const {
     outIndices.clear();
-    candidateIdScratch.clear();
+    tl_m2_candidateIdScratch.clear();
 
     GridCell minCell = toCell(queryMin);
     GridCell maxCell = toCell(queryMax);
@@ -3630,7 +3668,7 @@ void M2Renderer::gatherCandidates(const glm::vec3& queryMin, const glm::vec3& qu
                 auto it = spatialGrid.find(GridCell{x, y, z});
                 if (it == spatialGrid.end()) continue;
                 for (uint32_t id : it->second) {
-                    if (!candidateIdScratch.insert(id).second) continue;
+                    if (!tl_m2_candidateIdScratch.insert(id).second) continue;
                     auto idxIt = instanceIndexById.find(id);
                     if (idxIt != instanceIndexById.end()) {
                         outIndices.push_back(idxIt->second);
@@ -3803,9 +3841,9 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
 
     glm::vec3 queryMin(glX - 2.0f, glY - 2.0f, glZ - 6.0f);
     glm::vec3 queryMax(glX + 2.0f, glY + 2.0f, glZ + 8.0f);
-    gatherCandidates(queryMin, queryMax, candidateScratch);
+    gatherCandidates(queryMin, queryMax, tl_m2_candidateScratch);
 
-    for (size_t idx : candidateScratch) {
+    for (size_t idx : tl_m2_candidateScratch) {
         const auto& instance = instances[idx];
         if (collisionFocusEnabled &&
             pointAABBDistanceSq(collisionFocusPos, instance.worldBoundsMin, instance.worldBoundsMax) > collisionFocusRadiusSq) {
@@ -3827,14 +3865,14 @@ std::optional<float> M2Renderer::getFloorHeight(float glX, float glY, float glZ,
             model.collision.getFloorTrisInRange(
                 localPos.x - 1.0f, localPos.y - 1.0f,
                 localPos.x + 1.0f, localPos.y + 1.0f,
-                collisionTriScratch_);
+                tl_m2_collisionTriScratch);
 
             glm::vec3 rayOrigin(localPos.x, localPos.y, localPos.z + 5.0f);
             glm::vec3 rayDir(0.0f, 0.0f, -1.0f);
             float bestHitZ = -std::numeric_limits<float>::max();
             bool hitAny = false;
 
-            for (uint32_t ti : collisionTriScratch_) {
+            for (uint32_t ti : tl_m2_collisionTriScratch) {
                 if (ti >= model.collision.triCount) continue;
                 if (model.collision.triBounds[ti].maxZ < localPos.z - 10.0f ||
                     model.collision.triBounds[ti].minZ > localPos.z + 5.0f) continue;
@@ -3949,10 +3987,10 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
 
     glm::vec3 queryMin = glm::min(from, to) - glm::vec3(7.0f, 7.0f, 5.0f);
     glm::vec3 queryMax = glm::max(from, to) + glm::vec3(7.0f, 7.0f, 5.0f);
-    gatherCandidates(queryMin, queryMax, candidateScratch);
+    gatherCandidates(queryMin, queryMax, tl_m2_candidateScratch);
 
     // Check against all M2 instances in local space (rotation-aware).
-    for (size_t idx : candidateScratch) {
+    for (size_t idx : tl_m2_candidateScratch) {
         const auto& instance = instances[idx];
         if (collisionFocusEnabled &&
             pointAABBDistanceSq(collisionFocusPos, instance.worldBoundsMin, instance.worldBoundsMax) > collisionFocusRadiusSq) {
@@ -3985,14 +4023,14 @@ bool M2Renderer::checkCollision(const glm::vec3& from, const glm::vec3& to,
                 std::min(localFrom.y, localPos.y) - localRadius - 1.0f,
                 std::max(localFrom.x, localPos.x) + localRadius + 1.0f,
                 std::max(localFrom.y, localPos.y) + localRadius + 1.0f,
-                collisionTriScratch_);
+                tl_m2_collisionTriScratch);
 
             constexpr float PLAYER_HEIGHT = 2.0f;
             constexpr float MAX_TOTAL_PUSH = 0.02f; // Cap total push per instance
             bool pushed = false;
             float totalPushX = 0.0f, totalPushY = 0.0f;
 
-            for (uint32_t ti : collisionTriScratch_) {
+            for (uint32_t ti : tl_m2_collisionTriScratch) {
                 if (ti >= model.collision.triCount) continue;
                 if (localPos.z + PLAYER_HEIGHT < model.collision.triBounds[ti].minZ ||
                     localPos.z > model.collision.triBounds[ti].maxZ) continue;
@@ -4190,9 +4228,9 @@ float M2Renderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3&
     glm::vec3 rayEnd = origin + direction * maxDistance;
     glm::vec3 queryMin = glm::min(origin, rayEnd) - glm::vec3(1.0f);
     glm::vec3 queryMax = glm::max(origin, rayEnd) + glm::vec3(1.0f);
-    gatherCandidates(queryMin, queryMax, candidateScratch);
+    gatherCandidates(queryMin, queryMax, tl_m2_candidateScratch);
 
-    for (size_t idx : candidateScratch) {
+    for (size_t idx : tl_m2_candidateScratch) {
         const auto& instance = instances[idx];
         if (collisionFocusEnabled &&
             pointAABBDistanceSq(collisionFocusPos, instance.worldBoundsMin, instance.worldBoundsMax) > collisionFocusRadiusSq) {

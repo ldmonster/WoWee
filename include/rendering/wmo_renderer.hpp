@@ -711,9 +711,7 @@ private:
     static constexpr float SPATIAL_CELL_SIZE = 64.0f;
     std::unordered_map<GridCell, std::vector<uint32_t>, GridCellHash> spatialGrid;
     std::unordered_map<uint32_t, size_t> instanceIndexById;
-    mutable std::vector<size_t> candidateScratch;
-    mutable std::vector<uint32_t> triScratch_;  // Scratch for collision grid queries
-    mutable std::unordered_set<uint32_t> candidateIdScratch;
+    // Collision scratch buffers are thread_local (see wmo_renderer.cpp) for thread-safety.
 
     // Parallel visibility culling
     uint32_t numCullThreads_ = 1;

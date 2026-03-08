@@ -70,6 +70,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <set>
+#include <future>
 
 namespace wowee {
 namespace rendering {
@@ -2678,16 +2679,23 @@ void Renderer::update(float deltaTime) {
     }
 
 
-    // Update character animations
+    // Launch M2 doodad animation on background thread (overlaps with character animation + audio)
+    std::future<void> m2AnimFuture;
+    bool m2AnimLaunched = false;
+    if (m2Renderer && camera) {
+        float m2DeltaTime = deltaTime;
+        glm::vec3 m2CamPos = camera->getPosition();
+        glm::mat4 m2ViewProj = camera->getProjectionMatrix() * camera->getViewMatrix();
+        m2AnimFuture = std::async(std::launch::async,
+            [this, m2DeltaTime, m2CamPos, m2ViewProj]() {
+                m2Renderer->update(m2DeltaTime, m2CamPos, m2ViewProj);
+            });
+        m2AnimLaunched = true;
+    }
+
+    // Update character animations (runs in parallel with M2 animation above)
     if (characterRenderer && camera) {
-        auto charAnimStart = std::chrono::steady_clock::now();
         characterRenderer->update(deltaTime, camera->getPosition());
-        float charAnimMs = std::chrono::duration<float, std::milli>(
-            std::chrono::steady_clock::now() - charAnimStart).count();
-        if (charAnimMs > 5.0f) {
-            LOG_WARNING("SLOW characterRenderer->update: ", charAnimMs, "ms (",
-                        characterRenderer->getInstanceCount(), " instances)");
-        }
     }
 
     // Update AudioEngine (cleanup finished sounds, etc.)
@@ -2872,17 +2880,9 @@ void Renderer::update(float deltaTime) {
         ambientSoundManager->update(deltaTime, camPos, isIndoor, isSwimming, isBlacksmith);
     }
 
-    // Update M2 doodad animations (pass camera for frustum-culling bone computation)
-    if (m2Renderer && camera) {
-        auto m2Start = std::chrono::steady_clock::now();
-        m2Renderer->update(deltaTime, camera->getPosition(),
-                           camera->getProjectionMatrix() * camera->getViewMatrix());
-        float m2Ms = std::chrono::duration<float, std::milli>(
-            std::chrono::steady_clock::now() - m2Start).count();
-        if (m2Ms > 3.0f) {
-            LOG_WARNING("SLOW m2Renderer->update: ", m2Ms, "ms (",
-                        m2Renderer->getInstanceCount(), " instances)");
-        }
+    // Wait for M2 doodad animation to finish (was launched earlier in parallel with character anim)
+    if (m2AnimLaunched) {
+        m2AnimFuture.get();
     }
 
     // Helper: play zone music, dispatching local files (file: prefix) vs MPQ paths
@@ -4338,27 +4338,32 @@ glm::mat4 Renderer::computeLightSpaceMatrix() {
     shadowCenter = desiredCenter;
     glm::vec3 center = shadowCenter;
 
-    // Snap to shadow texel grid to keep projection stable while moving.
+    // Snap shadow frustum to texel grid so the projection is perfectly stable
+    // while moving. We compute the light's right/up axes from the sun direction
+    // (these are constant per frame regardless of center) and snap center along
+    // them before building the view matrix.
     float halfExtent = kShadowHalfExtent;
     float texelWorld = (2.0f * halfExtent) / static_cast<float>(SHADOW_MAP_SIZE);
 
-    // Build light view to get stable axes
+    // Stable light-space axes (independent of center position)
     glm::vec3 up(0.0f, 0.0f, 1.0f);
-    // If sunDir is nearly parallel to up, pick a different up vector
     if (std::abs(glm::dot(sunDir, up)) > 0.99f) {
         up = glm::vec3(0.0f, 1.0f, 0.0f);
     }
-    glm::mat4 lightView = glm::lookAt(center - sunDir * kShadowLightDistance, center, up);
+    glm::vec3 lightRight = glm::normalize(glm::cross(sunDir, up));
+    glm::vec3 lightUp = glm::normalize(glm::cross(lightRight, sunDir));
 
-    // Stable texel snapping in light space removes movement shimmer.
-    glm::vec4 centerLS = lightView * glm::vec4(center, 1.0f);
-    centerLS.x = std::round(centerLS.x / texelWorld) * texelWorld;
-    centerLS.y = std::round(centerLS.y / texelWorld) * texelWorld;
-    glm::vec4 snappedCenter = glm::inverse(lightView) * centerLS;
-    center = glm::vec3(snappedCenter);
+    // Snap center along light's right and up axes to align with texel grid.
+    // This eliminates sub-texel shifts that cause shadow shimmer.
+    float dotR = glm::dot(center, lightRight);
+    float dotU = glm::dot(center, lightUp);
+    dotR = std::floor(dotR / texelWorld) * texelWorld;
+    dotU = std::floor(dotU / texelWorld) * texelWorld;
+    float dotD = glm::dot(center, sunDir);  // depth axis unchanged
+    center = lightRight * dotR + lightUp * dotU + sunDir * dotD;
     shadowCenter = center;
-    lightView = glm::lookAt(center - sunDir * kShadowLightDistance, center, up);
 
+    glm::mat4 lightView = glm::lookAt(center - sunDir * kShadowLightDistance, center, up);
     glm::mat4 lightProj = glm::ortho(-halfExtent, halfExtent, -halfExtent, halfExtent,
                                      kShadowNearPlane, kShadowFarPlane);
     lightProj[1][1] *= -1.0f; // Vulkan Y-flip for shadow pass

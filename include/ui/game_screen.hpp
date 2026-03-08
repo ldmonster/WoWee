@@ -87,7 +87,7 @@ private:
     bool pendingVsync = false;
     int pendingResIndex = 0;
     bool pendingShadows = true;
-    float pendingShadowDistance = 72.0f;
+    float pendingShadowDistance = 300.0f;
     bool pendingWaterRefraction = false;
     int pendingMasterVolume = 100;
     int pendingMusicVolume = 30;

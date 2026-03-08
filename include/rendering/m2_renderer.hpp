@@ -475,9 +475,7 @@ private:
     static constexpr float SPATIAL_CELL_SIZE = 64.0f;
     std::unordered_map<GridCell, std::vector<uint32_t>, GridCellHash> spatialGrid;
     std::unordered_map<uint32_t, size_t> instanceIndexById;
-    mutable std::vector<size_t> candidateScratch;
-    mutable std::unordered_set<uint32_t> candidateIdScratch;
-    mutable std::vector<uint32_t> collisionTriScratch_;
+    // Collision scratch buffers are thread_local (see m2_renderer.cpp) for thread-safety.
 
     // Collision query profiling (per frame).
     mutable double queryTimeMs = 0.0;

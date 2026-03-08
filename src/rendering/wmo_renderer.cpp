@@ -48,6 +48,11 @@ size_t envSizeOrDefault(const char* name, size_t defValue) {
 }
 } // namespace
 
+// Thread-local scratch buffers for collision queries (allows concurrent getFloorHeight/checkWallCollision calls)
+static thread_local std::vector<size_t> tl_candidateScratch;
+static thread_local std::vector<uint32_t> tl_triScratch;
+static thread_local std::unordered_set<uint32_t> tl_candidateIdScratch;
+
 static void transformAABB(const glm::mat4& modelMatrix,
                           const glm::vec3& localMin,
                           const glm::vec3& localMax,
@@ -1288,7 +1293,7 @@ void WMORenderer::rebuildSpatialIndex() {
 void WMORenderer::gatherCandidates(const glm::vec3& queryMin, const glm::vec3& queryMax,
                                    std::vector<size_t>& outIndices) const {
     outIndices.clear();
-    candidateIdScratch.clear();
+    tl_candidateIdScratch.clear();
 
     GridCell minCell = toCell(queryMin);
     GridCell maxCell = toCell(queryMax);
@@ -1298,7 +1303,7 @@ void WMORenderer::gatherCandidates(const glm::vec3& queryMin, const glm::vec3& q
                 auto it = spatialGrid.find(GridCell{x, y, z});
                 if (it == spatialGrid.end()) continue;
                 for (uint32_t id : it->second) {
-                    if (!candidateIdScratch.insert(id).second) continue;
+                    if (!tl_candidateIdScratch.insert(id).second) continue;
                     auto idxIt = instanceIndexById.find(id);
                     if (idxIt != instanceIndexById.end()) {
                         outIndices.push_back(idxIt->second);
@@ -2830,9 +2835,9 @@ std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ
         group.getTrianglesInRange(
             localOrigin.x - 1.0f, localOrigin.y - 1.0f,
             localOrigin.x + 1.0f, localOrigin.y + 1.0f,
-            triScratch_);
+            tl_triScratch);
 
-        for (uint32_t triStart : triScratch_) {
+        for (uint32_t triStart : tl_triScratch) {
             const glm::vec3& v0 = verts[indices[triStart]];
             const glm::vec3& v1 = verts[indices[triStart + 1]];
             const glm::vec3& v2 = verts[indices[triStart + 2]];
@@ -2906,9 +2911,9 @@ std::optional<float> WMORenderer::getFloorHeight(float glX, float glY, float glZ
     // early-returned because overlapping WMO instances need full coverage).
     glm::vec3 queryMin(glX - 2.0f, glY - 2.0f, glZ - 8.0f);
     glm::vec3 queryMax(glX + 2.0f, glY + 2.0f, glZ + 10.0f);
-    gatherCandidates(queryMin, queryMax, candidateScratch);
+    gatherCandidates(queryMin, queryMax, tl_candidateScratch);
 
-    for (size_t idx : candidateScratch) {
+    for (size_t idx : tl_candidateScratch) {
         const auto& instance = instances[idx];
         if (collisionFocusEnabled &&
             pointAABBDistanceSq(collisionFocusPos, instance.worldBoundsMin, instance.worldBoundsMax) > collisionFocusRadiusSq) {
@@ -3081,9 +3086,9 @@ bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to,
 
     glm::vec3 queryMin = glm::min(from, to) - glm::vec3(8.0f, 8.0f, 5.0f);
     glm::vec3 queryMax = glm::max(from, to) + glm::vec3(8.0f, 8.0f, 5.0f);
-    gatherCandidates(queryMin, queryMax, candidateScratch);
+    gatherCandidates(queryMin, queryMax, tl_candidateScratch);
 
-    for (size_t idx : candidateScratch) {
+    for (size_t idx : tl_candidateScratch) {
         const auto& instance = instances[idx];
         if (collisionFocusEnabled &&
             pointAABBDistanceSq(collisionFocusPos, instance.worldBoundsMin, instance.worldBoundsMax) > collisionFocusRadiusSq) {
@@ -3149,9 +3154,9 @@ bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to,
             float rangeMinY = std::min(localFrom.y, localTo.y) - PLAYER_RADIUS - 1.5f;
             float rangeMaxX = std::max(localFrom.x, localTo.x) + PLAYER_RADIUS + 1.5f;
             float rangeMaxY = std::max(localFrom.y, localTo.y) + PLAYER_RADIUS + 1.5f;
-            group.getTrianglesInRange(rangeMinX, rangeMinY, rangeMaxX, rangeMaxY, triScratch_);
+            group.getTrianglesInRange(rangeMinX, rangeMinY, rangeMaxX, rangeMaxY, tl_triScratch);
 
-            for (uint32_t triStart : triScratch_) {
+            for (uint32_t triStart : tl_triScratch) {
                 // Use pre-computed Z bounds for fast vertical reject
                 const auto& tb = group.triBounds[triStart / 3];
 
@@ -3319,9 +3324,9 @@ void WMORenderer::updateActiveGroup(float glX, float glY, float glZ) {
 
     glm::vec3 queryMin(glX - 0.5f, glY - 0.5f, glZ - 0.5f);
     glm::vec3 queryMax(glX + 0.5f, glY + 0.5f, glZ + 0.5f);
-    gatherCandidates(queryMin, queryMax, candidateScratch);
+    gatherCandidates(queryMin, queryMax, tl_candidateScratch);
 
-    for (size_t idx : candidateScratch) {
+    for (size_t idx : tl_candidateScratch) {
         const auto& instance = instances[idx];
         if (glX < instance.worldBoundsMin.x || glX > instance.worldBoundsMax.x ||
             glY < instance.worldBoundsMin.y || glY > instance.worldBoundsMax.y ||
@@ -3365,9 +3370,9 @@ bool WMORenderer::isInsideWMO(float glX, float glY, float glZ, uint32_t* outMode
     QueryTimer timer(&queryTimeMs, &queryCallCount);
     glm::vec3 queryMin(glX - 0.5f, glY - 0.5f, glZ - 0.5f);
     glm::vec3 queryMax(glX + 0.5f, glY + 0.5f, glZ + 0.5f);
-    gatherCandidates(queryMin, queryMax, candidateScratch);
+    gatherCandidates(queryMin, queryMax, tl_candidateScratch);
 
-    for (size_t idx : candidateScratch) {
+    for (size_t idx : tl_candidateScratch) {
         const auto& instance = instances[idx];
         if (collisionFocusEnabled &&
             pointAABBDistanceSq(collisionFocusPos, instance.worldBoundsMin, instance.worldBoundsMax) > collisionFocusRadiusSq) {
@@ -3414,9 +3419,9 @@ bool WMORenderer::isInsideWMO(float glX, float glY, float glZ, uint32_t* outMode
 bool WMORenderer::isInsideInteriorWMO(float glX, float glY, float glZ) const {
     glm::vec3 queryMin(glX - 0.5f, glY - 0.5f, glZ - 0.5f);
     glm::vec3 queryMax(glX + 0.5f, glY + 0.5f, glZ + 0.5f);
-    gatherCandidates(queryMin, queryMax, candidateScratch);
+    gatherCandidates(queryMin, queryMax, tl_candidateScratch);
 
-    for (size_t idx : candidateScratch) {
+    for (size_t idx : tl_candidateScratch) {
         const auto& instance = instances[idx];
         if (collisionFocusEnabled &&
             pointAABBDistanceSq(collisionFocusPos, instance.worldBoundsMin, instance.worldBoundsMax) > collisionFocusRadiusSq) {
@@ -3470,9 +3475,9 @@ float WMORenderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3
     glm::vec3 rayEnd = origin + direction * maxDistance;
     glm::vec3 queryMin = glm::min(origin, rayEnd) - glm::vec3(1.0f);
     glm::vec3 queryMax = glm::max(origin, rayEnd) + glm::vec3(1.0f);
-    gatherCandidates(queryMin, queryMax, candidateScratch);
+    gatherCandidates(queryMin, queryMax, tl_candidateScratch);
 
-    for (size_t idx : candidateScratch) {
+    for (size_t idx : tl_candidateScratch) {
         const auto& instance = instances[idx];
         if (collisionFocusEnabled &&
             pointAABBDistanceSq(collisionFocusPos, instance.worldBoundsMin, instance.worldBoundsMax) > collisionFocusRadiusSq) {
@@ -3526,9 +3531,9 @@ float WMORenderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3
             float rMinY = std::min(localOrigin.y, localEnd.y) - 1.0f;
             float rMaxX = std::max(localOrigin.x, localEnd.x) + 1.0f;
             float rMaxY = std::max(localOrigin.y, localEnd.y) + 1.0f;
-            group.getWallTrianglesInRange(rMinX, rMinY, rMaxX, rMaxY, triScratch_);
+            group.getWallTrianglesInRange(rMinX, rMinY, rMaxX, rMaxY, tl_triScratch);
 
-            for (uint32_t triStart : triScratch_) {
+            for (uint32_t triStart : tl_triScratch) {
                 const glm::vec3& v0 = verts[indices[triStart]];
                 const glm::vec3& v1 = verts[indices[triStart + 1]];
                 const glm::vec3& v2 = verts[indices[triStart + 2]];

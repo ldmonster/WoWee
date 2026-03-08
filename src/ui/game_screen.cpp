@@ -6270,7 +6270,7 @@ void GameScreen::renderSettingsWindow() {
                 if (pendingShadows) {
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(150.0f);
-                    if (ImGui::SliderFloat("Distance##shadow", &pendingShadowDistance, 40.0f, 200.0f, "%.0f")) {
+                    if (ImGui::SliderFloat("Distance##shadow", &pendingShadowDistance, 40.0f, 500.0f, "%.0f")) {
                         if (renderer) renderer->setShadowDistance(pendingShadowDistance);
                         saveSettings();
                     }
@@ -6387,7 +6387,7 @@ void GameScreen::renderSettingsWindow() {
                     pendingFullscreen = kDefaultFullscreen;
                     pendingVsync = kDefaultVsync;
                     pendingShadows = kDefaultShadows;
-                    pendingShadowDistance = 72.0f;
+                    pendingShadowDistance = 300.0f;
                     pendingGroundClutterDensity = kDefaultGroundClutterDensity;
                     pendingAntiAliasing = 0;
                     pendingNormalMapping = true;
@@ -7505,7 +7505,7 @@ void GameScreen::loadSettings() {
             else if (key == "auto_loot") pendingAutoLoot = (std::stoi(val) != 0);
             else if (key == "ground_clutter_density") pendingGroundClutterDensity = std::clamp(std::stoi(val), 0, 150);
             else if (key == "shadows") pendingShadows = (std::stoi(val) != 0);
-            else if (key == "shadow_distance") pendingShadowDistance = std::clamp(std::stof(val), 40.0f, 200.0f);
+            else if (key == "shadow_distance") pendingShadowDistance = std::clamp(std::stof(val), 40.0f, 500.0f);
             else if (key == "water_refraction") pendingWaterRefraction = (std::stoi(val) != 0);
             else if (key == "antialiasing") pendingAntiAliasing = std::clamp(std::stoi(val), 0, 3);
             else if (key == "normal_mapping") pendingNormalMapping = (std::stoi(val) != 0);

@@ -1,5 +1,6 @@
 #include "rendering/camera_controller.hpp"
 #include <algorithm>
+#include <future>
 #include <imgui.h>
 #include "rendering/terrain_manager.hpp"
 #include "rendering/wmo_renderer.hpp"
@@ -808,25 +809,53 @@ void CameraController::update(float deltaTime) {
                 if (useCached) {
                     groundH = cachedFloorHeight_;
                 } else {
-                    // Full collision check
+                    // Full collision check — run terrain/WMO/M2 queries in parallel
                     std::optional<float> terrainH;
                     std::optional<float> wmoH;
                     std::optional<float> m2H;
-                    if (terrainManager) {
-                        terrainH = terrainManager->getHeightAt(targetPos.x, targetPos.y);
-                    }
                     // When airborne, anchor probe to last ground level so the
                     // ceiling doesn't rise with the jump and catch roof geometry.
                     float wmoBaseZ = grounded ? std::max(targetPos.z, lastGroundZ) : lastGroundZ;
                     float wmoProbeZ = wmoBaseZ + stepUpBudget + 0.5f;
                     float wmoNormalZ = 1.0f;
+
+                    // Launch WMO + M2 floor queries asynchronously while terrain runs on this thread.
+                    // Collision scratch buffers are thread_local so concurrent calls are safe.
+                    using FloorResult = std::pair<std::optional<float>, float>;
+                    std::future<FloorResult> wmoFuture;
+                    std::future<FloorResult> m2Future;
+                    bool wmoAsync = false, m2Async = false;
+                    float px = targetPos.x, py = targetPos.y;
                     if (wmoRenderer) {
-                        wmoH = wmoRenderer->getFloorHeight(targetPos.x, targetPos.y, wmoProbeZ, &wmoNormalZ);
+                        wmoAsync = true;
+                        wmoFuture = std::async(std::launch::async,
+                            [this, px, py, wmoProbeZ]() -> FloorResult {
+                                float nz = 1.0f;
+                                auto h = wmoRenderer->getFloorHeight(px, py, wmoProbeZ, &nz);
+                                return {h, nz};
+                            });
                     }
                     if (m2Renderer && !externalFollow_) {
-                        float m2NormalZ = 1.0f;
-                        m2H = m2Renderer->getFloorHeight(targetPos.x, targetPos.y, wmoProbeZ, &m2NormalZ);
-                        if (m2H && m2NormalZ < MIN_WALKABLE_NORMAL_M2) {
+                        m2Async = true;
+                        m2Future = std::async(std::launch::async,
+                            [this, px, py, wmoProbeZ]() -> FloorResult {
+                                float nz = 1.0f;
+                                auto h = m2Renderer->getFloorHeight(px, py, wmoProbeZ, &nz);
+                                return {h, nz};
+                            });
+                    }
+                    if (terrainManager) {
+                        terrainH = terrainManager->getHeightAt(targetPos.x, targetPos.y);
+                    }
+                    if (wmoAsync) {
+                        auto [h, nz] = wmoFuture.get();
+                        wmoH = h;
+                        wmoNormalZ = nz;
+                    }
+                    if (m2Async) {
+                        auto [h, nz] = m2Future.get();
+                        m2H = h;
+                        if (m2H && nz < MIN_WALKABLE_NORMAL_M2) {
                             m2H = std::nullopt;
                         }
                     }

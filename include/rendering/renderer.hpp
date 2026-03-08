@@ -246,7 +246,7 @@ private:
     glm::vec3 shadowCenter = glm::vec3(0.0f);
     bool shadowCenterInitialized = false;
     bool shadowsEnabled = true;
-    float shadowDistance_ = 72.0f;  // Shadow frustum half-extent (default: 72 units)
+    float shadowDistance_ = 300.0f;  // Shadow frustum half-extent (default: 300 units)
     uint32_t shadowFrameCounter_ = 0;
 
 
@@ -257,7 +257,7 @@ public:
 
     void setShadowsEnabled(bool enabled) { shadowsEnabled = enabled; }
     bool areShadowsEnabled() const { return shadowsEnabled; }
-    void setShadowDistance(float dist) { shadowDistance_ = glm::clamp(dist, 40.0f, 200.0f); }
+    void setShadowDistance(float dist) { shadowDistance_ = glm::clamp(dist, 40.0f, 500.0f); }
     float getShadowDistance() const { return shadowDistance_; }
     void setMsaaSamples(VkSampleCountFlagBits samples);
 
