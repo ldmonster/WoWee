@@ -3759,6 +3759,8 @@ bool Renderer::initFSR2Resources() {
     fsr2_.amdFsr3FramegenRuntimeActive = false;
     fsr2_.amdFsr3FramegenRuntimeReady = false;
     fsr2_.framegenOutputValid = false;
+    fsr2_.amdFsr3RuntimePath = "Path C";
+    fsr2_.amdFsr3RuntimeLastError.clear();
     fsr2_.amdFsr3UpscaleDispatchCount = 0;
     fsr2_.amdFsr3FramegenDispatchCount = 0;
     fsr2_.amdFsr3FallbackCount = 0;
@@ -3881,9 +3883,17 @@ bool Renderer::initFSR2Resources() {
                     fgInit.enableFrameGeneration = true;
                     fsr2_.amdFsr3FramegenRuntimeReady = fsr2_.amdFsr3Runtime->initialize(fgInit);
                     if (fsr2_.amdFsr3FramegenRuntimeReady) {
+                        fsr2_.amdFsr3RuntimeLastError.clear();
+                        if (fsr2_.amdFsr3Runtime->loadPathKind() == AmdFsr3Runtime::LoadPathKind::Wrapper) {
+                            fsr2_.amdFsr3RuntimePath = "Path B";
+                        } else {
+                            fsr2_.amdFsr3RuntimePath = "Path A";
+                        }
                         LOG_INFO("FSR3 framegen runtime library loaded from ", fsr2_.amdFsr3Runtime->loadedLibraryPath(),
                                  " (upscale+framegen dispatch enabled)");
                     } else {
+                        fsr2_.amdFsr3RuntimePath = "Path C";
+                        fsr2_.amdFsr3RuntimeLastError = fsr2_.amdFsr3Runtime->lastError();
                         LOG_WARNING("FSR3 framegen toggle is enabled, but runtime initialization failed. ",
                                     "Set WOWEE_FFX_SDK_RUNTIME_LIB to the SDK runtime binary path.");
                     }
@@ -4189,6 +4199,8 @@ void Renderer::destroyFSR2Resources() {
     fsr2_.amdFsr3FramegenRuntimeActive = false;
     fsr2_.amdFsr3FramegenRuntimeReady = false;
     fsr2_.framegenOutputValid = false;
+    fsr2_.amdFsr3RuntimePath = "Path C";
+    fsr2_.amdFsr3RuntimeLastError.clear();
 #if WOWEE_HAS_AMD_FSR3_FRAMEGEN
     if (fsr2_.amdFsr3Runtime) {
         fsr2_.amdFsr3Runtime->shutdown();
@@ -4603,6 +4615,8 @@ void Renderer::setAmdFsr3FramegenEnabled(bool enabled) {
         fsr2_.needsRecreate = true;
         fsr2_.needsHistoryReset = true;
         fsr2_.amdFsr3FramegenRuntimeReady = false;
+        fsr2_.amdFsr3RuntimePath = "Path C";
+        fsr2_.amdFsr3RuntimeLastError.clear();
         LOG_INFO("FSR3 framegen requested; runtime will initialize on next FSR2 resource creation.");
     } else {
         fsr2_.amdFsr3FramegenRuntimeActive = false;
@@ -4610,6 +4624,8 @@ void Renderer::setAmdFsr3FramegenEnabled(bool enabled) {
         fsr2_.framegenOutputValid = false;
         fsr2_.needsHistoryReset = true;
         fsr2_.needsRecreate = true;
+        fsr2_.amdFsr3RuntimePath = "Path C";
+        fsr2_.amdFsr3RuntimeLastError = "disabled by user";
         if (fsr2_.amdFsr3Runtime) {
             fsr2_.amdFsr3Runtime->shutdown();
             fsr2_.amdFsr3Runtime.reset();
@@ -5325,6 +5341,10 @@ void Renderer::setTerrainStreaming(bool enabled) {
         terrainManager->setStreamingEnabled(enabled);
         LOG_INFO("Terrain streaming: ", enabled ? "ON" : "OFF");
     }
+}
+
+const char* Renderer::getAmdFsr3FramegenRuntimePath() const {
+    return fsr2_.amdFsr3RuntimePath.c_str();
 }
 
 void Renderer::renderHUD() {

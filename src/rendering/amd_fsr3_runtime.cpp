@@ -145,9 +145,12 @@ FfxResourceDescription makeResourceDescription(VkFormat format,
 
 bool AmdFsr3Runtime::initialize(const AmdFsr3RuntimeInitDesc& desc) {
     shutdown();
+    lastError_.clear();
+    loadPathKind_ = LoadPathKind::None;
 
 #if !WOWEE_HAS_AMD_FSR3_FRAMEGEN
     (void)desc;
+    lastError_ = "FSR3 runtime support not compiled in";
     return false;
 #else
     if (!desc.physicalDevice || !desc.device || !desc.getDeviceProcAddr ||
@@ -155,38 +158,58 @@ bool AmdFsr3Runtime::initialize(const AmdFsr3RuntimeInitDesc& desc) {
         desc.displayWidth == 0 || desc.displayHeight == 0 ||
         desc.colorFormat == VK_FORMAT_UNDEFINED) {
         LOG_WARNING("FSR3 runtime: invalid initialization descriptors.");
+        lastError_ = "invalid initialization descriptors";
         return false;
     }
 
-    std::vector<std::string> candidates;
+    struct Candidate {
+        std::string path;
+        LoadPathKind kind = LoadPathKind::Official;
+    };
+    std::vector<Candidate> candidates;
     if (const char* envPath = std::getenv("WOWEE_FFX_SDK_RUNTIME_LIB")) {
-        if (*envPath) candidates.emplace_back(envPath);
+        if (*envPath) candidates.push_back({envPath, LoadPathKind::Official});
+    }
+    if (const char* wrapperEnv = std::getenv("WOWEE_FFX_SDK_RUNTIME_WRAPPER_LIB")) {
+        if (*wrapperEnv) candidates.push_back({wrapperEnv, LoadPathKind::Wrapper});
     }
 #if defined(_WIN32)
-    candidates.emplace_back("ffx_fsr3_vk.dll");
-    candidates.emplace_back("ffx_fsr3.dll");
+    candidates.push_back({"ffx_fsr3_vk.dll", LoadPathKind::Official});
+    candidates.push_back({"ffx_fsr3.dll", LoadPathKind::Official});
+    candidates.push_back({"ffx_fsr3_vk_wrapper.dll", LoadPathKind::Wrapper});
+    candidates.push_back({"ffx_fsr3_bridge.dll", LoadPathKind::Wrapper});
 #elif defined(__APPLE__)
-    candidates.emplace_back("libffx_fsr3_vk.dylib");
-    candidates.emplace_back("libffx_fsr3.dylib");
+    candidates.push_back({"libffx_fsr3_vk.dylib", LoadPathKind::Official});
+    candidates.push_back({"libffx_fsr3.dylib", LoadPathKind::Official});
+    candidates.push_back({"libffx_fsr3_vk_wrapper.dylib", LoadPathKind::Wrapper});
+    candidates.push_back({"libffx_fsr3_bridge.dylib", LoadPathKind::Wrapper});
 #else
-    candidates.emplace_back("libffx_fsr3_vk.so");
-    candidates.emplace_back("libffx_fsr3.so");
+    candidates.push_back({"./libffx_fsr3_vk.so", LoadPathKind::Official});
+    candidates.push_back({"libffx_fsr3_vk.so", LoadPathKind::Official});
+    candidates.push_back({"libffx_fsr3.so", LoadPathKind::Official});
+    candidates.push_back({"./libffx_fsr3_vk_wrapper.so", LoadPathKind::Wrapper});
+    candidates.push_back({"libffx_fsr3_vk_wrapper.so", LoadPathKind::Wrapper});
+    candidates.push_back({"libffx_fsr3_bridge.so", LoadPathKind::Wrapper});
 #endif
 
-    for (const std::string& candidate : candidates) {
+    for (const Candidate& candidate : candidates) {
 #if defined(_WIN32)
-        HMODULE h = LoadLibraryA(candidate.c_str());
+        HMODULE h = LoadLibraryA(candidate.path.c_str());
         if (!h) continue;
         libHandle_ = reinterpret_cast<void*>(h);
 #else
-        void* h = dlopen(candidate.c_str(), RTLD_NOW | RTLD_LOCAL);
+        void* h = dlopen(candidate.path.c_str(), RTLD_NOW | RTLD_LOCAL);
         if (!h) continue;
         libHandle_ = h;
 #endif
-        loadedLibraryPath_ = candidate;
+        loadedLibraryPath_ = candidate.path;
+        loadPathKind_ = candidate.kind;
         break;
     }
-    if (!libHandle_) return false;
+    if (!libHandle_) {
+        lastError_ = "no official runtime (Path A) or wrapper runtime (Path B) found";
+        return false;
+    }
 
     auto resolveSym = [&](const char* name) -> void* {
 #if defined(_WIN32)
@@ -212,6 +235,7 @@ bool AmdFsr3Runtime::initialize(const AmdFsr3RuntimeInitDesc& desc) {
         !fns_->getCommandListVK || !fns_->getResourceVK || !fns_->fsr3ContextCreate || !fns_->fsr3ContextDispatchUpscale ||
         !fns_->fsr3ContextDestroy) {
         LOG_WARNING("FSR3 runtime: required symbols not found in ", loadedLibraryPath_);
+        lastError_ = "missing required Vulkan FSR3 symbols in runtime library";
         shutdown();
         return false;
     }
@@ -219,12 +243,14 @@ bool AmdFsr3Runtime::initialize(const AmdFsr3RuntimeInitDesc& desc) {
     scratchBufferSize_ = fns_->getScratchMemorySizeVK(desc.physicalDevice, FFX_FSR3_CONTEXT_COUNT);
     if (scratchBufferSize_ == 0) {
         LOG_WARNING("FSR3 runtime: scratch buffer size query returned 0.");
+        lastError_ = "scratch buffer size query returned 0";
         shutdown();
         return false;
     }
     scratchBuffer_ = std::malloc(scratchBufferSize_);
     if (!scratchBuffer_) {
         LOG_WARNING("FSR3 runtime: failed to allocate scratch buffer.");
+        lastError_ = "failed to allocate scratch buffer";
         shutdown();
         return false;
     }
@@ -239,6 +265,7 @@ bool AmdFsr3Runtime::initialize(const AmdFsr3RuntimeInitDesc& desc) {
     FfxErrorCode ifaceErr = fns_->getInterfaceVK(&backendShared, ffxDevice, scratchBuffer_, scratchBufferSize_, FFX_FSR3_CONTEXT_COUNT);
     if (ifaceErr != FFX_OK) {
         LOG_WARNING("FSR3 runtime: ffxGetInterfaceVK failed (", static_cast<int>(ifaceErr), ").");
+        lastError_ = "ffxGetInterfaceVK failed";
         shutdown();
         return false;
     }
@@ -268,6 +295,7 @@ bool AmdFsr3Runtime::initialize(const AmdFsr3RuntimeInitDesc& desc) {
     contextStorage_ = std::malloc(sizeof(FfxFsr3Context));
     if (!contextStorage_) {
         LOG_WARNING("FSR3 runtime: failed to allocate context storage.");
+        lastError_ = "failed to allocate context storage";
         shutdown();
         return false;
     }
@@ -276,6 +304,7 @@ bool AmdFsr3Runtime::initialize(const AmdFsr3RuntimeInitDesc& desc) {
     FfxErrorCode createErr = fns_->fsr3ContextCreate(reinterpret_cast<FfxFsr3Context*>(contextStorage_), &ctxDesc);
     if (createErr != FFX_OK) {
         LOG_WARNING("FSR3 runtime: ffxFsr3ContextCreate failed (", static_cast<int>(createErr), ").");
+        lastError_ = "ffxFsr3ContextCreate failed";
         shutdown();
         return false;
     }
@@ -283,6 +312,7 @@ bool AmdFsr3Runtime::initialize(const AmdFsr3RuntimeInitDesc& desc) {
     if (desc.enableFrameGeneration) {
         if (!fns_->fsr3ConfigureFrameGeneration || !fns_->fsr3DispatchFrameGeneration) {
             LOG_WARNING("FSR3 runtime: frame generation symbols unavailable in ", loadedLibraryPath_);
+            lastError_ = "frame generation entry points unavailable";
             shutdown();
             return false;
         }
@@ -295,6 +325,7 @@ bool AmdFsr3Runtime::initialize(const AmdFsr3RuntimeInitDesc& desc) {
             reinterpret_cast<FfxFsr3Context*>(contextStorage_), &fgCfg);
         if (cfgErr != FFX_OK) {
             LOG_WARNING("FSR3 runtime: ffxFsr3ConfigureFrameGeneration failed (", static_cast<int>(cfgErr), ").");
+            lastError_ = "ffxFsr3ConfigureFrameGeneration failed";
             shutdown();
             return false;
         }
@@ -419,6 +450,7 @@ void AmdFsr3Runtime::shutdown() {
 #endif
     libHandle_ = nullptr;
     loadedLibraryPath_.clear();
+    loadPathKind_ = LoadPathKind::None;
 }
 
 }  // namespace wowee::rendering

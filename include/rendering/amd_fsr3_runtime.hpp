@@ -48,6 +48,12 @@ struct AmdFsr3RuntimeDispatchDesc {
 
 class AmdFsr3Runtime {
 public:
+    enum class LoadPathKind {
+        None,
+        Official,
+        Wrapper
+    };
+
     AmdFsr3Runtime();
     ~AmdFsr3Runtime();
 
@@ -59,6 +65,8 @@ public:
     bool isReady() const { return ready_; }
     bool isFrameGenerationReady() const { return frameGenerationReady_; }
     const std::string& loadedLibraryPath() const { return loadedLibraryPath_; }
+    LoadPathKind loadPathKind() const { return loadPathKind_; }
+    const std::string& lastError() const { return lastError_; }
 
 private:
     void* libHandle_ = nullptr;
@@ -67,6 +75,8 @@ private:
     size_t scratchBufferSize_ = 0;
     bool ready_ = false;
     bool frameGenerationReady_ = false;
+    LoadPathKind loadPathKind_ = LoadPathKind::None;
+    std::string lastError_;
 
     struct RuntimeFns;
     RuntimeFns* fns_ = nullptr;

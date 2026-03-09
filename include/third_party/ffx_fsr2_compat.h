@@ -3,6 +3,8 @@
 // Compatibility shim for building AMD FSR2 SDK sources on non-MSVC toolchains.
 #include <stddef.h>
 #include <wchar.h>
+#include <string.h>
+#include <stdio.h>
 #include <locale>
 #include <codecvt>
 

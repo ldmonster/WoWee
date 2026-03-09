@@ -294,6 +294,8 @@ public:
 #endif
     bool isAmdFsr3FramegenRuntimeActive() const { return fsr2_.amdFsr3FramegenRuntimeActive; }
     bool isAmdFsr3FramegenRuntimeReady() const { return fsr2_.amdFsr3FramegenRuntimeReady; }
+    const char* getAmdFsr3FramegenRuntimePath() const;
+    const std::string& getAmdFsr3FramegenRuntimeError() const { return fsr2_.amdFsr3RuntimeLastError; }
     size_t getAmdFsr3UpscaleDispatchCount() const { return fsr2_.amdFsr3UpscaleDispatchCount; }
     size_t getAmdFsr3FramegenDispatchCount() const { return fsr2_.amdFsr3FramegenDispatchCount; }
     size_t getAmdFsr3FallbackCount() const { return fsr2_.amdFsr3FallbackCount; }
@@ -448,6 +450,8 @@ private:
         bool amdFsr3FramegenEnabled = false;
         bool amdFsr3FramegenRuntimeActive = false;
         bool amdFsr3FramegenRuntimeReady = false;
+        std::string amdFsr3RuntimePath = "Path C";
+        std::string amdFsr3RuntimeLastError{};
         size_t amdFsr3UpscaleDispatchCount = 0;
         size_t amdFsr3FramegenDispatchCount = 0;
         size_t amdFsr3FallbackCount = 0;
