@@ -5159,6 +5159,11 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
         }
 
         cachedAssetManager = assetManager;
+
+        // Enrich zone music from DBC if not already done (e.g. asset manager was null at init).
+        if (zoneManager && assetManager) {
+            zoneManager->enrichFromDBC(assetManager);
+        }
     }
 
     // Snap camera to ground
