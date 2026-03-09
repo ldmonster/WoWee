@@ -2083,6 +2083,12 @@ network::Packet ReadyCheckConfirmPacket::build(bool ready) {
 // Duel
 // ============================================================
 
+network::Packet DuelAcceptPacket::build() {
+    network::Packet packet(wireOpcode(Opcode::CMSG_DUEL_ACCEPTED));
+    LOG_DEBUG("Built CMSG_DUEL_ACCEPTED");
+    return packet;
+}
+
 network::Packet DuelCancelPacket::build() {
     network::Packet packet(wireOpcode(Opcode::CMSG_DUEL_CANCELLED));
     LOG_DEBUG("Built CMSG_DUEL_CANCELLED");

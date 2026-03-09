@@ -1891,8 +1891,22 @@ void GameHandler::handlePacket(network::Packet& packet) {
             handleRaidInstanceInfo(packet);
             break;
         case Opcode::SMSG_DUEL_REQUESTED:
-            // Duel request UI flow not implemented yet.
-            packet.setReadPos(packet.getSize());
+            handleDuelRequested(packet);
+            break;
+        case Opcode::SMSG_DUEL_COMPLETE:
+            handleDuelComplete(packet);
+            break;
+        case Opcode::SMSG_DUEL_WINNER:
+            handleDuelWinner(packet);
+            break;
+        case Opcode::SMSG_DUEL_OUTOFBOUNDS:
+            addSystemChatMessage("You are out of the duel area!");
+            break;
+        case Opcode::SMSG_DUEL_INBOUNDS:
+            // Re-entered the duel area; no special action needed.
+            break;
+        case Opcode::SMSG_DUEL_COUNTDOWN:
+            // Countdown timer — no action needed; server also sends UNIT_FIELD_FLAGS update.
             break;
         case Opcode::SMSG_PARTYKILLLOG:
             // Classic-era packet: killer GUID + victim GUID.
@@ -7023,16 +7037,74 @@ void GameHandler::respondToReadyCheck(bool ready) {
     LOG_INFO("Responded to ready check: ", ready ? "ready" : "not ready");
 }
 
+void GameHandler::acceptDuel() {
+    if (!pendingDuelRequest_ || state != WorldState::IN_WORLD || !socket) return;
+    pendingDuelRequest_ = false;
+    auto pkt = DuelAcceptPacket::build();
+    socket->send(pkt);
+    addSystemChatMessage("You accept the duel.");
+    LOG_INFO("Accepted duel from guid=0x", std::hex, duelChallengerGuid_, std::dec);
+}
+
 void GameHandler::forfeitDuel() {
     if (state != WorldState::IN_WORLD || !socket) {
         LOG_WARNING("Cannot forfeit duel: not in world or not connected");
         return;
     }
-
+    pendingDuelRequest_ = false;  // cancel request if still pending
     auto packet = DuelCancelPacket::build();
     socket->send(packet);
     addSystemChatMessage("You have forfeited the duel.");
     LOG_INFO("Forfeited duel");
+}
+
+void GameHandler::handleDuelRequested(network::Packet& packet) {
+    if (packet.getSize() - packet.getReadPos() < 16) {
+        packet.setReadPos(packet.getSize());
+        return;
+    }
+    duelChallengerGuid_ = packet.readUInt64();
+    duelFlagGuid_       = packet.readUInt64();
+
+    // Resolve challenger name from entity list
+    duelChallengerName_.clear();
+    auto entity = entityManager.getEntity(duelChallengerGuid_);
+    if (auto* unit = dynamic_cast<Unit*>(entity.get())) {
+        duelChallengerName_ = unit->getName();
+    }
+    if (duelChallengerName_.empty()) {
+        char tmp[32];
+        std::snprintf(tmp, sizeof(tmp), "0x%llX",
+                      static_cast<unsigned long long>(duelChallengerGuid_));
+        duelChallengerName_ = tmp;
+    }
+    pendingDuelRequest_ = true;
+
+    addSystemChatMessage(duelChallengerName_ + " challenges you to a duel!");
+    LOG_INFO("SMSG_DUEL_REQUESTED: challenger=0x", std::hex, duelChallengerGuid_,
+             " flag=0x", duelFlagGuid_, std::dec, " name=", duelChallengerName_);
+}
+
+void GameHandler::handleDuelComplete(network::Packet& packet) {
+    if (packet.getSize() - packet.getReadPos() < 1) return;
+    uint8_t started = packet.readUInt8();
+    // started=1: duel began, started=0: duel was cancelled before starting
+    pendingDuelRequest_ = false;
+    if (!started) {
+        addSystemChatMessage("The duel was cancelled.");
+    }
+    LOG_INFO("SMSG_DUEL_COMPLETE: started=", static_cast<int>(started));
+}
+
+void GameHandler::handleDuelWinner(network::Packet& packet) {
+    if (packet.getSize() - packet.getReadPos() < 3) return;
+    /*uint8_t type =*/ packet.readUInt8();  // 0=normal, 1=flee
+    std::string winner = packet.readString();
+    std::string loser  = packet.readString();
+
+    std::string msg = winner + " has defeated " + loser + " in a duel!";
+    addSystemChatMessage(msg);
+    LOG_INFO("SMSG_DUEL_WINNER: winner=", winner, " loser=", loser);
 }
 
 void GameHandler::toggleAfk(const std::string& message) {

@@ -707,6 +707,12 @@ public:
     bool hasPendingGroupInvite() const { return pendingGroupInvite; }
     const std::string& getPendingInviterName() const { return pendingInviterName; }
 
+    // ---- Duel ----
+    bool hasPendingDuelRequest() const { return pendingDuelRequest_; }
+    const std::string& getDuelChallengerName() const { return duelChallengerName_; }
+    void acceptDuel();
+    // forfeitDuel() already declared at line ~399
+
     // ---- Instance lockouts ----
     struct InstanceLockout {
         uint32_t mapId       = 0;
@@ -1249,6 +1255,9 @@ private:
 
     // ---- Instance lockout handler ----
     void handleRaidInstanceInfo(network::Packet& packet);
+    void handleDuelRequested(network::Packet& packet);
+    void handleDuelComplete(network::Packet& packet);
+    void handleDuelWinner(network::Packet& packet);
 
     // ---- LFG / Dungeon Finder handlers ----
     void handleLfgJoinResult(network::Packet& packet);
@@ -1600,6 +1609,12 @@ private:
     GroupListData partyData;
     bool pendingGroupInvite = false;
     std::string pendingInviterName;
+
+    // Duel state
+    bool pendingDuelRequest_    = false;
+    uint64_t duelChallengerGuid_= 0;
+    uint64_t duelFlagGuid_      = 0;
+    std::string duelChallengerName_;
 
     // ---- Guild state ----
     std::string guildName_;

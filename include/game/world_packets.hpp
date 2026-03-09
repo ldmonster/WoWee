@@ -1265,6 +1265,12 @@ public:
 // Duel
 // ============================================================
 
+/** CMSG_DUEL_ACCEPTED packet builder (no payload) */
+class DuelAcceptPacket {
+public:
+    static network::Packet build();
+};
+
 /** CMSG_DUEL_CANCELLED packet builder */
 class DuelCancelPacket {
 public:

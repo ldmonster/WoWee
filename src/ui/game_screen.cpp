@@ -396,6 +396,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderCombatText(gameHandler);
     renderPartyFrames(gameHandler);
     renderGroupInvitePopup(gameHandler);
+    renderDuelRequestPopup(gameHandler);
     renderGuildInvitePopup(gameHandler);
     renderGuildRoster(gameHandler);
     renderBuffBar(gameHandler);
@@ -4371,6 +4372,30 @@ void GameScreen::renderGroupInvitePopup(game::GameHandler& gameHandler) {
         ImGui::SameLine();
         if (ImGui::Button("Decline", ImVec2(130, 30))) {
             gameHandler.declineGroupInvite();
+        }
+    }
+    ImGui::End();
+}
+
+void GameScreen::renderDuelRequestPopup(game::GameHandler& gameHandler) {
+    if (!gameHandler.hasPendingDuelRequest()) return;
+
+    auto* window = core::Application::getInstance().getWindow();
+    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
+
+    ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 150, 250), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_Always);
+
+    if (ImGui::Begin("Duel Request", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize)) {
+        ImGui::Text("%s challenges you to a duel!", gameHandler.getDuelChallengerName().c_str());
+        ImGui::Spacing();
+
+        if (ImGui::Button("Accept", ImVec2(130, 30))) {
+            gameHandler.acceptDuel();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Decline", ImVec2(130, 30))) {
+            gameHandler.forfeitDuel();
         }
     }
     ImGui::End();
