@@ -25,7 +25,8 @@ ensure_fsr2_sdk() {
 ensure_fidelityfx_sdk() {
     local sdk_dir="extern/FidelityFX-SDK"
     local sdk_header="$sdk_dir/sdk/include/FidelityFX/host/ffx_frameinterpolation.h"
-    local sdk_ref="v1.1.4"
+    local sdk_repo="${WOWEE_FFX_SDK_REPO:-https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git}"
+    local sdk_ref="${WOWEE_FFX_SDK_REF:-v1.1.4}"
     if [ -f "$sdk_header" ]; then
         return
     fi
@@ -33,9 +34,9 @@ ensure_fidelityfx_sdk() {
         echo "Warning: git not found; cannot auto-fetch AMD FidelityFX SDK."
         return
     fi
-    echo "Fetching AMD FidelityFX SDK ($sdk_ref) into $sdk_dir ..."
+    echo "Fetching AMD FidelityFX SDK ($sdk_ref from $sdk_repo) into $sdk_dir ..."
     mkdir -p extern
-    git clone --depth 1 --branch "$sdk_ref" https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git "$sdk_dir" || {
+    git clone --depth 1 --branch "$sdk_ref" "$sdk_repo" "$sdk_dir" || {
         echo "Warning: failed to clone AMD FidelityFX SDK. FSR3 framegen extern will be unavailable."
     }
 }

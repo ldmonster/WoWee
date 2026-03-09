@@ -190,6 +190,9 @@ make -j$(nproc)
   - `https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git`
 - Ref:
   - `v1.1.4` (depth-1 clone)
+  - Override with env vars:
+    - `WOWEE_FFX_SDK_REPO=https://github.com/<you>/FidelityFX-SDK.git`
+    - `WOWEE_FFX_SDK_REF=<branch-or-tag>`
 - This ref includes Vulkan framegen building blocks (`frameinterpolation` + `opticalflow`) and Vulkan shader manifests:
   - `sdk/src/backends/vk/CMakeShadersFrameinterpolation.txt`
   - `sdk/src/backends/vk/CMakeShadersOpticalflow.txt`
@@ -202,6 +205,9 @@ make -j$(nproc)
     - `WOWEE_FFX_SDK_RUNTIME_LIB=/absolute/path/to/libffx_fsr3_vk.so` (platform extension varies).
   - Wrapper override path:
     - `WOWEE_FFX_SDK_RUNTIME_WRAPPER_LIB=/absolute/path/to/libffx_fsr3_vk_wrapper.so` (platform extension varies).
+  - In-tree wrapper build:
+    - `wowee_fsr3_vk_wrapper` now builds automatically when FSR3 SDK headers are present and outputs to `build/bin/libffx_fsr3_vk_wrapper.*`.
+    - Wrapper backend override (what the wrapper loads underneath): `WOWEE_FSR3_WRAPPER_BACKEND_LIB=/absolute/path/to/libffx_fsr3_vk.so`.
   - Path B wrapper libraries must export the clean wrapper ABI (`include/rendering/amd_fsr3_wrapper_abi.h`):
     - `wowee_fsr3_wrapper_get_abi_version`
     - `wowee_fsr3_wrapper_initialize`

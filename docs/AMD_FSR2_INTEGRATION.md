@@ -15,6 +15,11 @@ FidelityFX SDK checkout path (framegen extern):
 
 `extern/FidelityFX-SDK` (pinned to `v1.1.4` in build scripts and CI)
 
+Override knobs for local build scripts:
+
+- `WOWEE_FFX_SDK_REPO` (default: `https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git`)
+- `WOWEE_FFX_SDK_REF` (default: `v1.1.4`)
+
 Detection expects:
 
 - `extern/FidelityFX-FSR2/src/ffx-fsr2-api/ffx_fsr2.h`
@@ -43,6 +48,10 @@ Runtime note:
   - `WOWEE_FFX_SDK_RUNTIME_LIB=/absolute/path/to/libffx_fsr3_vk.so` (or `.dll` / `.dylib`).
 - You can point to an explicit wrapper binary with:
   - `WOWEE_FFX_SDK_RUNTIME_WRAPPER_LIB=/absolute/path/to/libffx_fsr3_vk_wrapper.so` (or `.dll` / `.dylib`).
+- WoWee now ships an in-tree wrapper target:
+  - `wowee_fsr3_vk_wrapper` (output in `build/bin`).
+- Wrapper backend runtime override:
+  - `WOWEE_FSR3_WRAPPER_BACKEND_LIB=/absolute/path/to/libffx_fsr3_vk.so` (or `.dll` / `.dylib`).
 - Path B wrapper ABI contract is declared in:
   - `include/rendering/amd_fsr3_wrapper_abi.h`
 - Required wrapper exports:
