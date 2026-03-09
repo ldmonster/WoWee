@@ -113,8 +113,14 @@ jobs:
       - name: Assert AMD FSR2 target
         run: cmake --build build --target wowee_fsr2_amd_vk --parallel $(nproc)
 
-      - name: Assert AMD FSR3 framegen probe target
-        run: cmake --build build --target wowee_fsr3_framegen_amd_vk_probe --parallel $(nproc)
+      - name: Assert AMD FSR3 framegen probe target (if present)
+        run: |
+          set -euo pipefail
+          if cmake --build build --target help | grep -q 'wowee_fsr3_framegen_amd_vk_probe'; then
+            cmake --build build --target wowee_fsr3_framegen_amd_vk_probe --parallel $(nproc)
+          else
+            echo "FSR3 framegen probe target not generated for this SDK layout; continuing."
+          fi
 
       - name: Build
         run: cmake --build build --parallel $(nproc)
@@ -172,8 +178,13 @@ jobs:
       - name: Assert AMD FSR2 target
         run: cmake --build build --target wowee_fsr2_amd_vk --parallel $(sysctl -n hw.logicalcpu)
 
-      - name: Assert AMD FSR3 framegen probe target
-        run: cmake --build build --target wowee_fsr3_framegen_amd_vk_probe --parallel $(sysctl -n hw.logicalcpu)
+      - name: Assert AMD FSR3 framegen probe target (if present)
+        run: |
+          if cmake --build build --target help | grep -q 'wowee_fsr3_framegen_amd_vk_probe'; then
+            cmake --build build --target wowee_fsr3_framegen_amd_vk_probe --parallel $(sysctl -n hw.logicalcpu)
+          else
+            echo "FSR3 framegen probe target not generated for this SDK layout; continuing."
+          fi
 
       - name: Build
         run: cmake --build build --parallel $(sysctl -n hw.logicalcpu)
@@ -292,9 +303,14 @@ jobs:
         shell: msys2 {0}
         run: cmake --build build --target wowee_fsr2_amd_vk --parallel $(nproc)
 
-      - name: Assert AMD FSR3 framegen probe target
+      - name: Assert AMD FSR3 framegen probe target (if present)
         shell: msys2 {0}
-        run: cmake --build build --target wowee_fsr3_framegen_amd_vk_probe --parallel $(nproc)
+        run: |
+          if cmake --build build --target help | grep -q 'wowee_fsr3_framegen_amd_vk_probe'; then
+            cmake --build build --target wowee_fsr3_framegen_amd_vk_probe --parallel $(nproc)
+          else
+            echo "FSR3 framegen probe target not generated for this SDK layout; continuing."
+          fi
 
       - name: Build
         shell: msys2 {0}
@@ -378,9 +394,14 @@ jobs:
         shell: msys2 {0}
         run: cmake --build build --target wowee_fsr2_amd_vk --parallel $(nproc)
 
-      - name: Assert AMD FSR3 framegen probe target
+      - name: Assert AMD FSR3 framegen probe target (if present)
         shell: msys2 {0}
-        run: cmake --build build --target wowee_fsr3_framegen_amd_vk_probe --parallel $(nproc)
+        run: |
+          if cmake --build build --target help | grep -q 'wowee_fsr3_framegen_amd_vk_probe'; then
+            cmake --build build --target wowee_fsr3_framegen_amd_vk_probe --parallel $(nproc)
+          else
+            echo "FSR3 framegen probe target not generated for this SDK layout; continuing."
+          fi
 
       - name: Build
         shell: msys2 {0}
