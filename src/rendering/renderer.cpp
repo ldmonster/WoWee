@@ -1205,9 +1205,7 @@ void Renderer::endFrame() {
         renderFSR2Sharpen();
 
         // Maintain frame bookkeeping
-        fsr2_.prevViewProjection = fsr2_.useAmdBackend
-            ? camera->getUnjitteredViewProjectionMatrix()
-            : camera->getViewProjectionMatrix();
+        fsr2_.prevViewProjection = camera->getViewProjectionMatrix();
         fsr2_.prevJitter = camera->getJitter();
         camera->clearJitter();
         if (fsr2_.useAmdBackend) {
@@ -3826,9 +3824,7 @@ bool Renderer::initFSR2Resources() {
             fsr2_.amdScratchBufferSize = 0;
         } else {
             FfxFsr2ContextDescription ctxDesc{};
-            // AMD path uses unjittered reprojection matrices for motion vectors.
-            // Keep jitter cancellation off to avoid double compensation jitter.
-            ctxDesc.flags = FFX_FSR2_ENABLE_AUTO_EXPOSURE;
+            ctxDesc.flags = FFX_FSR2_ENABLE_AUTO_EXPOSURE | FFX_FSR2_ENABLE_MOTION_VECTORS_JITTER_CANCELLATION;
             ctxDesc.maxRenderSize.width = fsr2_.internalWidth;
             ctxDesc.maxRenderSize.height = fsr2_.internalHeight;
             ctxDesc.displaySize.width = swapExtent.width;
@@ -4187,17 +4183,14 @@ void Renderer::dispatchMotionVectors() {
     vkCmdBindDescriptorSets(currentCmd, VK_PIPELINE_BIND_POINT_COMPUTE,
         fsr2_.motionVecPipelineLayout, 0, 1, &fsr2_.motionVecDescSet, 0, nullptr);
 
-    // Reprojection matrices:
-    // AMD path uses unjittered matrices (FSR handles jitter via desc.jitterOffset).
-    // Internal fallback keeps existing jittered behavior.
+    // Reprojection with jittered matrices:
+    // reconstruct world position from current depth, then project into previous clip.
     struct {
         glm::mat4 prevViewProjection;
         glm::mat4 invCurrentViewProj;
     } pc;
 
-    glm::mat4 currentVP = fsr2_.useAmdBackend
-        ? camera->getUnjitteredViewProjectionMatrix()
-        : camera->getViewProjectionMatrix();
+    glm::mat4 currentVP = camera->getViewProjectionMatrix();
     pc.prevViewProjection = fsr2_.prevViewProjection;
     pc.invCurrentViewProj = glm::inverse(currentVP);
 

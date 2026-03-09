@@ -317,18 +317,17 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         }
     }
 
-    // Apply saved FSR setting once when renderer is available
-    if (!fsrSettingsApplied_ && pendingFSR) {
+    // Apply saved upscaling setting once when renderer is available
+    if (!fsrSettingsApplied_) {
         auto* renderer = core::Application::getInstance().getRenderer();
         if (renderer) {
             static const float fsrScales[] = { 0.77f, 0.67f, 0.59f, 0.50f };
             renderer->setFSRQuality(fsrScales[pendingFSRQuality]);
             renderer->setFSRSharpness(pendingFSRSharpness);
-            renderer->setFSREnabled(true);
+            renderer->setFSREnabled(pendingUpscalingMode == 1);
+            renderer->setFSR2Enabled(pendingUpscalingMode == 2);
             fsrSettingsApplied_ = true;
         }
-    } else {
-        fsrSettingsApplied_ = true;
     }
 
     // Apply auto-loot setting to GameHandler every frame (cheap bool sync)
@@ -6300,9 +6299,9 @@ void GameScreen::renderSettingsWindow() {
                 {
                     // FSR mode selection: Off, FSR 1.0 (Spatial), FSR 2.2 (Temporal)
                     const char* fsrModeLabels[] = { "Off", "FSR 1.0 (Spatial)", "FSR 2.2 (Temporal)" };
-                    int fsrMode = pendingFSR ? 1 : 0;
-                    if (renderer && renderer->isFSR2Enabled()) fsrMode = 2;
+                    int fsrMode = pendingUpscalingMode;
                     if (ImGui::Combo("Upscaling", &fsrMode, fsrModeLabels, 3)) {
+                        pendingUpscalingMode = fsrMode;
                         pendingFSR = (fsrMode == 1);
                         if (renderer) {
                             renderer->setFSREnabled(fsrMode == 1);
@@ -7441,6 +7440,7 @@ void GameScreen::saveSettings() {
     out << "normal_map_strength=" << pendingNormalMapStrength << "\n";
     out << "pom=" << (pendingPOM ? 1 : 0) << "\n";
     out << "pom_quality=" << pendingPOMQuality << "\n";
+    out << "upscaling_mode=" << pendingUpscalingMode << "\n";
     out << "fsr=" << (pendingFSR ? 1 : 0) << "\n";
     out << "fsr_quality=" << pendingFSRQuality << "\n";
     out << "fsr_sharpness=" << pendingFSRSharpness << "\n";
@@ -7530,7 +7530,14 @@ void GameScreen::loadSettings() {
             else if (key == "normal_map_strength") pendingNormalMapStrength = std::clamp(std::stof(val), 0.0f, 2.0f);
             else if (key == "pom") pendingPOM = (std::stoi(val) != 0);
             else if (key == "pom_quality") pendingPOMQuality = std::clamp(std::stoi(val), 0, 2);
-            else if (key == "fsr") pendingFSR = (std::stoi(val) != 0);
+            else if (key == "upscaling_mode") {
+                pendingUpscalingMode = std::clamp(std::stoi(val), 0, 2);
+                pendingFSR = (pendingUpscalingMode == 1);
+            } else if (key == "fsr") {
+                pendingFSR = (std::stoi(val) != 0);
+                // Backward compatibility: old configs only had fsr=0/1.
+                if (pendingUpscalingMode == 0 && pendingFSR) pendingUpscalingMode = 1;
+            }
             else if (key == "fsr_quality") pendingFSRQuality = std::clamp(std::stoi(val), 0, 3);
             else if (key == "fsr_sharpness") pendingFSRSharpness = std::clamp(std::stof(val), 0.0f, 2.0f);
             // Controls
