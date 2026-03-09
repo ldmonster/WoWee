@@ -11,14 +11,15 @@
 
 #include "core/logger.hpp"
 
-#if WOWEE_HAS_AMD_FSR3_FRAMEGEN
-#include <FidelityFX/host/ffx_fsr3.h>
-#include <FidelityFX/host/backends/vk/ffx_vk.h>
 #if defined(_WIN32)
 #include <windows.h>
 #else
 #include <dlfcn.h>
 #endif
+
+#if WOWEE_HAS_AMD_FSR3_FRAMEGEN
+#include <FidelityFX/host/ffx_fsr3.h>
+#include <FidelityFX/host/backends/vk/ffx_vk.h>
 #endif
 
 namespace wowee::rendering {
