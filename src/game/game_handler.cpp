@@ -4409,6 +4409,220 @@ void GameHandler::handlePacket(network::Packet& packet) {
             packet.setReadPos(packet.getSize());
             break;
 
+        // ---- Quest failure notification ----
+        case Opcode::SMSG_QUESTGIVER_QUEST_FAILED: {
+            // uint32 questId + uint32 reason
+            if (packet.getSize() - packet.getReadPos() >= 8) {
+                /*uint32_t questId =*/ packet.readUInt32();
+                uint32_t reason = packet.readUInt32();
+                const char* reasonStr = "Unknown reason";
+                switch (reason) {
+                    case 1: reasonStr = "Quest failed: failed conditions"; break;
+                    case 2: reasonStr = "Quest failed: inventory full"; break;
+                    case 3: reasonStr = "Quest failed: too far away"; break;
+                    case 4: reasonStr = "Quest failed: another quest is blocking"; break;
+                    case 5: reasonStr = "Quest failed: wrong time of day"; break;
+                    case 6: reasonStr = "Quest failed: wrong race"; break;
+                    case 7: reasonStr = "Quest failed: wrong class"; break;
+                }
+                addSystemChatMessage(reasonStr);
+            }
+            break;
+        }
+
+        // ---- Suspend comms (requires ACK) ----
+        case Opcode::SMSG_SUSPEND_COMMS: {
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                uint32_t seqIdx = packet.readUInt32();
+                if (socket) {
+                    network::Packet ack(wireOpcode(Opcode::CMSG_SUSPEND_COMMS_ACK));
+                    ack.writeUInt32(seqIdx);
+                    socket->send(ack);
+                }
+            }
+            break;
+        }
+
+        // ---- Pre-resurrect state ----
+        case Opcode::SMSG_PRE_RESURRECT: {
+            // packed GUID of the player to enter pre-resurrect
+            (void)UpdateObjectParser::readPackedGuid(packet);
+            break;
+        }
+
+        // ---- Hearthstone bind error ----
+        case Opcode::SMSG_PLAYERBINDERROR: {
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                uint32_t error = packet.readUInt32();
+                if (error == 0)
+                    addSystemChatMessage("Your hearthstone is not bound.");
+                else
+                    addSystemChatMessage("Hearthstone bind failed.");
+            }
+            break;
+        }
+
+        // ---- Instance/raid errors ----
+        case Opcode::SMSG_RAID_GROUP_ONLY: {
+            addSystemChatMessage("You must be in a raid group to enter this instance.");
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+        case Opcode::SMSG_RAID_READY_CHECK_ERROR: {
+            if (packet.getSize() - packet.getReadPos() >= 1) {
+                uint8_t err = packet.readUInt8();
+                if (err == 0) addSystemChatMessage("Ready check failed: not in a group.");
+                else if (err == 1) addSystemChatMessage("Ready check failed: in instance.");
+                else addSystemChatMessage("Ready check failed.");
+            }
+            break;
+        }
+        case Opcode::SMSG_RESET_FAILED_NOTIFY: {
+            addSystemChatMessage("Cannot reset instance: another player is still inside.");
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+
+        // ---- Realm split ----
+        case Opcode::SMSG_REALM_SPLIT:
+            packet.setReadPos(packet.getSize());
+            break;
+
+        // ---- Real group update (status flags) ----
+        case Opcode::SMSG_REAL_GROUP_UPDATE:
+            packet.setReadPos(packet.getSize());
+            break;
+
+        // ---- Play music (WotLK standard opcode) ----
+        case Opcode::SMSG_PLAY_MUSIC: {
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                /*uint32_t soundId =*/ packet.readUInt32();
+                // TODO: hook into music manager when in-world music is reworked
+            }
+            break;
+        }
+
+        // ---- Play object/spell sounds ----
+        case Opcode::SMSG_PLAY_OBJECT_SOUND:
+        case Opcode::SMSG_PLAY_SPELL_IMPACT:
+            packet.setReadPos(packet.getSize());
+            break;
+
+        // ---- Resistance/combat log ----
+        case Opcode::SMSG_RESISTLOG:
+            packet.setReadPos(packet.getSize());
+            break;
+
+        // ---- Read item results ----
+        case Opcode::SMSG_READ_ITEM_OK:
+            addSystemChatMessage("You read the item.");
+            packet.setReadPos(packet.getSize());
+            break;
+        case Opcode::SMSG_READ_ITEM_FAILED:
+            addSystemChatMessage("You cannot read this item.");
+            packet.setReadPos(packet.getSize());
+            break;
+
+        // ---- Completed quests query ----
+        case Opcode::SMSG_QUERY_QUESTS_COMPLETED_RESPONSE: {
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                uint32_t count = packet.readUInt32();
+                if (count <= 4096) {
+                    for (uint32_t i = 0; i < count; ++i) {
+                        if (packet.getSize() - packet.getReadPos() < 4) break;
+                        uint32_t questId = packet.readUInt32();
+                        completedQuests_.insert(questId);
+                    }
+                    LOG_DEBUG("SMSG_QUERY_QUESTS_COMPLETED_RESPONSE: ", count, " completed quests");
+                }
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+
+        // ---- PVP quest kill update ----
+        case Opcode::SMSG_QUESTUPDATE_ADD_PVP_KILL: {
+            // uint64 guid + uint32 questId + uint32 killCount
+            if (packet.getSize() - packet.getReadPos() >= 16) {
+                /*uint64_t guid =*/ packet.readUInt64();
+                uint32_t questId = packet.readUInt32();
+                uint32_t count   = packet.readUInt32();
+                char buf[64];
+                std::snprintf(buf, sizeof(buf), "PVP kill counted for quest #%u (%u).",
+                              questId, count);
+                addSystemChatMessage(buf);
+            }
+            break;
+        }
+
+        // ---- NPC not responding ----
+        case Opcode::SMSG_NPC_WONT_TALK:
+            addSystemChatMessage("That creature can't talk to you right now.");
+            packet.setReadPos(packet.getSize());
+            break;
+
+        // ---- Petition ----
+        case Opcode::SMSG_OFFER_PETITION_ERROR: {
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                uint32_t err = packet.readUInt32();
+                if (err == 1) addSystemChatMessage("Player is already in a guild.");
+                else if (err == 2) addSystemChatMessage("Player already has a petition.");
+                else addSystemChatMessage("Cannot offer petition to that player.");
+            }
+            break;
+        }
+        case Opcode::SMSG_PETITION_QUERY_RESPONSE:
+        case Opcode::SMSG_PETITION_SHOW_SIGNATURES:
+        case Opcode::SMSG_PETITION_SIGN_RESULTS:
+            packet.setReadPos(packet.getSize());
+            break;
+
+        // ---- Pet system (not yet implemented) ----
+        case Opcode::SMSG_PET_GUIDS:
+        case Opcode::SMSG_PET_MODE:
+        case Opcode::SMSG_PET_BROKEN:
+        case Opcode::SMSG_PET_CAST_FAILED:
+        case Opcode::SMSG_PET_DISMISS_SOUND:
+        case Opcode::SMSG_PET_ACTION_SOUND:
+        case Opcode::SMSG_PET_LEARNED_SPELL:
+        case Opcode::SMSG_PET_UNLEARNED_SPELL:
+        case Opcode::SMSG_PET_UNLEARN_CONFIRM:
+        case Opcode::SMSG_PET_NAME_INVALID:
+        case Opcode::SMSG_PET_RENAMEABLE:
+        case Opcode::SMSG_PET_UPDATE_COMBO_POINTS:
+            packet.setReadPos(packet.getSize());
+            break;
+
+        // ---- Inspect (full character inspection) ----
+        case Opcode::SMSG_INSPECT:
+            packet.setReadPos(packet.getSize());
+            break;
+
+        // ---- Multiple aggregated packets/moves ----
+        case Opcode::SMSG_MULTIPLE_MOVES:
+        case Opcode::SMSG_MULTIPLE_PACKETS:
+            packet.setReadPos(packet.getSize());
+            break;
+
+        // ---- Misc consume ----
+        case Opcode::SMSG_SET_PLAYER_DECLINED_NAMES_RESULT:
+        case Opcode::SMSG_PROPOSE_LEVEL_GRANT:
+        case Opcode::SMSG_REFER_A_FRIEND_EXPIRED:
+        case Opcode::SMSG_REFER_A_FRIEND_FAILURE:
+        case Opcode::SMSG_REPORT_PVP_AFK_RESULT:
+        case Opcode::SMSG_REDIRECT_CLIENT:
+        case Opcode::SMSG_PVP_QUEUE_STATS:
+        case Opcode::SMSG_NOTIFY_DEST_LOC_SPELL_CAST:
+        case Opcode::SMSG_RESPOND_INSPECT_ACHIEVEMENTS:
+        case Opcode::SMSG_PLAYER_SKINNED:
+        case Opcode::SMSG_QUEST_POI_QUERY_RESPONSE:
+        case Opcode::SMSG_ON_CANCEL_EXPECTED_RIDE_VEHICLE_AURA:
+        case Opcode::SMSG_RESET_RANGED_COMBAT_TIMER:
+        case Opcode::SMSG_PROFILEDATA_RESPONSE:
+        case Opcode::SMSG_PLAY_TIME_WARNING:
+            packet.setReadPos(packet.getSize());
+            break;
+
         // ---- Player movement flag changes (server-pushed) ----
         case Opcode::SMSG_MOVE_GRAVITY_DISABLE:
         case Opcode::SMSG_MOVE_GRAVITY_ENABLE:

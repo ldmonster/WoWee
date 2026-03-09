@@ -2068,6 +2068,9 @@ private:
     bool repopPending_ = false;
     uint64_t lastRepopRequestMs_ = 0;
 
+    // ---- Completed quest IDs (SMSG_QUERY_QUESTS_COMPLETED_RESPONSE) ----
+    std::unordered_set<uint32_t> completedQuests_;
+
     // ---- Equipment sets (SMSG_EQUIPMENT_SET_LIST) ----
     struct EquipmentSet {
         uint64_t setGuid = 0;
