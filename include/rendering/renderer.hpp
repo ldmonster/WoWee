@@ -270,6 +270,11 @@ public:
     float getFSRSharpness() const { return fsr_.sharpness; }
     void setFSR2Enabled(bool enabled);
     bool isFSR2Enabled() const { return fsr2_.enabled; }
+#if WOWEE_HAS_AMD_FSR2
+    bool isAmdFsr2SdkAvailable() const { return true; }
+#else
+    bool isAmdFsr2SdkAvailable() const { return false; }
+#endif
 
     void setWaterRefractionEnabled(bool enabled);
     bool isWaterRefractionEnabled() const;

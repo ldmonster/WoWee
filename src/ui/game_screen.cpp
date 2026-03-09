@@ -6311,6 +6311,10 @@ void GameScreen::renderSettingsWindow() {
                         saveSettings();
                     }
                     if (fsrMode > 0) {
+                        if (fsrMode == 2 && renderer) {
+                            ImGui::TextDisabled("FSR2 backend: %s",
+                                renderer->isAmdFsr2SdkAvailable() ? "AMD FidelityFX SDK" : "Internal fallback");
+                        }
                         const char* fsrQualityLabels[] = { "Ultra Quality (77%)", "Quality (67%)", "Balanced (59%)", "Performance (50%)" };
                         static const float fsrScaleFactors[] = { 0.77f, 0.67f, 0.59f, 0.50f };
                         if (ImGui::Combo("FSR Quality", &pendingFSRQuality, fsrQualityLabels, 4)) {

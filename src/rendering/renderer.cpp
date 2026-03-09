@@ -3739,6 +3739,11 @@ bool Renderer::initFSR2Resources() {
     LOG_INFO("FSR2: initializing at ", fsr2_.internalWidth, "x", fsr2_.internalHeight,
              " -> ", swapExtent.width, "x", swapExtent.height,
              " (scale=", fsr2_.scaleFactor, ")");
+#if WOWEE_HAS_AMD_FSR2
+    LOG_INFO("FSR2: AMD FidelityFX SDK detected at build time.");
+#else
+    LOG_WARNING("FSR2: AMD FidelityFX SDK not detected; using internal fallback path.");
+#endif
 
     VkFormat colorFmt = vkCtx->getSwapchainFormat();
     VkFormat depthFmt = vkCtx->getDepthFormat();

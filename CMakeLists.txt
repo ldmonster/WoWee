@@ -22,6 +22,25 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 option(WOWEE_BUILD_TESTS "Build tests" OFF)
 option(WOWEE_ENABLE_ASAN "Enable AddressSanitizer (Debug builds)" OFF)
+option(WOWEE_ENABLE_AMD_FSR2 "Enable AMD FidelityFX FSR2 backend when SDK is present" ON)
+
+# AMD FidelityFX FSR2 SDK detection (drop-in under extern/FidelityFX-FSR2)
+set(WOWEE_AMD_FSR2_DIR ${CMAKE_SOURCE_DIR}/extern/FidelityFX-FSR2)
+set(WOWEE_AMD_FSR2_HEADER ${WOWEE_AMD_FSR2_DIR}/src/ffx-fsr2-api/ffx_fsr2.h)
+if(WOWEE_ENABLE_AMD_FSR2 AND EXISTS ${WOWEE_AMD_FSR2_HEADER})
+    message(STATUS "AMD FSR2 SDK detected at ${WOWEE_AMD_FSR2_DIR}")
+    add_compile_definitions(WOWEE_HAS_AMD_FSR2=1)
+    include_directories(
+        ${WOWEE_AMD_FSR2_DIR}/src
+        ${WOWEE_AMD_FSR2_DIR}/src/ffx-fsr2-api
+        ${WOWEE_AMD_FSR2_DIR}/src/ffx-fsr2-api/vk
+    )
+else()
+    add_compile_definitions(WOWEE_HAS_AMD_FSR2=0)
+    if(WOWEE_ENABLE_AMD_FSR2)
+        message(WARNING "AMD FSR2 SDK not found at ${WOWEE_AMD_FSR2_DIR}; using internal fallback implementation.")
+    endif()
+endif()
 
 # Opcode registry generation/validation
 find_package(Python3 COMPONENTS Interpreter QUIET)
