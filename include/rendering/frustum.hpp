@@ -33,12 +33,12 @@ struct Plane {
 class Frustum {
 public:
     enum Side {
-        LEFT = 0,
-        RIGHT,
-        BOTTOM,
-        TOP,
-        NEAR,
-        FAR
+        PLANE_LEFT = 0,
+        PLANE_RIGHT,
+        PLANE_BOTTOM,
+        PLANE_TOP,
+        PLANE_NEAR,
+        PLANE_FAR
     };
 
     Frustum() = default;
