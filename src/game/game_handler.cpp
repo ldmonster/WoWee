@@ -5238,7 +5238,15 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
         pendingQuestQueryIds_.clear();
         pendingLoginQuestResync_ = true;
         pendingLoginQuestResyncTimeout_ = 10.0f;
+        completedQuests_.clear();
         LOG_INFO("Queued quest log resync for login (from server quest slots)");
+
+        // Request completed quest IDs from server (populates completedQuests_ when response arrives)
+        if (socket) {
+            network::Packet cqcPkt(wireOpcode(Opcode::CMSG_QUERY_QUESTS_COMPLETED));
+            socket->send(cqcPkt);
+            LOG_INFO("Sent CMSG_QUERY_QUESTS_COMPLETED");
+        }
     }
 }
 
