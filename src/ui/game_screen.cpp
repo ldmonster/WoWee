@@ -6357,25 +6357,7 @@ void GameScreen::renderSettingsWindow() {
                                 }
                                 saveSettings();
                             }
-                            if (ImGui::SliderFloat("MV Scale X", &pendingFSR2MotionVecScaleX, -2.0f, 2.0f, "%.2f")) {
-                                if (renderer) {
-                                    renderer->setFSR2DebugTuning(
-                                        pendingFSR2JitterSign,
-                                        pendingFSR2MotionVecScaleX,
-                                        pendingFSR2MotionVecScaleY);
-                                }
-                                saveSettings();
-                            }
-                            if (ImGui::SliderFloat("MV Scale Y", &pendingFSR2MotionVecScaleY, -2.0f, 2.0f, "%.2f")) {
-                                if (renderer) {
-                                    renderer->setFSR2DebugTuning(
-                                        pendingFSR2JitterSign,
-                                        pendingFSR2MotionVecScaleX,
-                                        pendingFSR2MotionVecScaleY);
-                                }
-                                saveSettings();
-                            }
-                            ImGui::TextDisabled("Tip: default is jitter=-1, mv=(1,1).");
+                            ImGui::TextDisabled("Tip: 0.40 is the current recommended default.");
                         }
                     }
                 }

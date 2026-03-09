@@ -429,7 +429,7 @@ private:
         uint32_t frameIndex = 0;
         bool needsHistoryReset = true;
         bool useAmdBackend = false;
-        float jitterSign = -1.0f;
+        float jitterSign = 0.40f;
         float motionVecScaleX = 1.0f;
         float motionVecScaleY = 1.0f;
 #if WOWEE_HAS_AMD_FSR2
