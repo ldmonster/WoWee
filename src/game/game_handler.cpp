@@ -2798,6 +2798,75 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_INSTANCE_DIFFICULTY:
             handleInstanceDifficulty(packet);
             break;
+        case Opcode::SMSG_INSTANCE_SAVE_CREATED:
+            // Zero-payload: your instance save was just created on the server.
+            addSystemChatMessage("You are now saved to this instance.");
+            LOG_INFO("SMSG_INSTANCE_SAVE_CREATED");
+            break;
+        case Opcode::SMSG_RAID_INSTANCE_MESSAGE: {
+            if (packet.getSize() - packet.getReadPos() >= 12) {
+                uint32_t msgType   = packet.readUInt32();
+                uint32_t mapId     = packet.readUInt32();
+                /*uint32_t diff =*/  packet.readUInt32();
+                // type: 1=warning(time left), 2=saved, 3=welcome
+                if (msgType == 1 && packet.getSize() - packet.getReadPos() >= 4) {
+                    uint32_t timeLeft = packet.readUInt32();
+                    uint32_t minutes  = timeLeft / 60;
+                    std::string msg = "Instance " + std::to_string(mapId) +
+                        " will reset in " + std::to_string(minutes) + " minute(s).";
+                    addSystemChatMessage(msg);
+                } else if (msgType == 2) {
+                    addSystemChatMessage("You have been saved to instance " + std::to_string(mapId) + ".");
+                } else if (msgType == 3) {
+                    addSystemChatMessage("Welcome to instance " + std::to_string(mapId) + ".");
+                }
+                LOG_INFO("SMSG_RAID_INSTANCE_MESSAGE: type=", msgType, " map=", mapId);
+            }
+            break;
+        }
+        case Opcode::SMSG_INSTANCE_RESET: {
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                uint32_t mapId = packet.readUInt32();
+                // Remove matching lockout from local cache
+                auto it = std::remove_if(instanceLockouts_.begin(), instanceLockouts_.end(),
+                    [mapId](const InstanceLockout& lo){ return lo.mapId == mapId; });
+                instanceLockouts_.erase(it, instanceLockouts_.end());
+                addSystemChatMessage("Instance " + std::to_string(mapId) + " has been reset.");
+                LOG_INFO("SMSG_INSTANCE_RESET: mapId=", mapId);
+            }
+            break;
+        }
+        case Opcode::SMSG_INSTANCE_RESET_FAILED: {
+            if (packet.getSize() - packet.getReadPos() >= 8) {
+                uint32_t mapId  = packet.readUInt32();
+                uint32_t reason = packet.readUInt32();
+                static const char* resetFailReasons[] = {
+                    "Not max level.", "Offline party members.", "Party members inside.",
+                    "Party members changing zone.", "Heroic difficulty only."
+                };
+                const char* msg = (reason < 5) ? resetFailReasons[reason] : "Unknown reason.";
+                addSystemChatMessage("Cannot reset instance " + std::to_string(mapId) + ": " + msg);
+                LOG_INFO("SMSG_INSTANCE_RESET_FAILED: mapId=", mapId, " reason=", reason);
+            }
+            break;
+        }
+        case Opcode::SMSG_INSTANCE_LOCK_WARNING_QUERY: {
+            // Server asks player to confirm entering a saved instance.
+            // We auto-confirm with CMSG_INSTANCE_LOCK_RESPONSE.
+            if (socket && packet.getSize() - packet.getReadPos() >= 17) {
+                /*uint32_t mapId =*/ packet.readUInt32();
+                /*uint32_t diff  =*/ packet.readUInt32();
+                /*uint32_t timeLeft =*/ packet.readUInt32();
+                packet.readUInt32(); // unk
+                /*uint8_t  locked =*/ packet.readUInt8();
+                // Send acceptance
+                network::Packet resp(wireOpcode(Opcode::CMSG_INSTANCE_LOCK_RESPONSE));
+                resp.writeUInt8(1); // 1=accept
+                socket->send(resp);
+                LOG_INFO("SMSG_INSTANCE_LOCK_WARNING_QUERY: auto-accepted");
+            }
+            break;
+        }
 
         // ---- LFG / Dungeon Finder ----
         case Opcode::SMSG_LFG_JOIN_RESULT:
