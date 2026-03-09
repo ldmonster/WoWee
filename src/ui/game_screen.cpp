@@ -399,6 +399,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderDuelRequestPopup(gameHandler);
     renderLootRollPopup(gameHandler);
     renderTradeRequestPopup(gameHandler);
+    renderSummonRequestPopup(gameHandler);
     renderGuildInvitePopup(gameHandler);
     renderGuildRoster(gameHandler);
     renderBuffBar(gameHandler);
@@ -4398,6 +4399,34 @@ void GameScreen::renderDuelRequestPopup(game::GameHandler& gameHandler) {
         ImGui::SameLine();
         if (ImGui::Button("Decline", ImVec2(130, 30))) {
             gameHandler.forfeitDuel();
+        }
+    }
+    ImGui::End();
+}
+
+void GameScreen::renderSummonRequestPopup(game::GameHandler& gameHandler) {
+    if (!gameHandler.hasPendingSummonRequest()) return;
+
+    auto* window = core::Application::getInstance().getWindow();
+    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
+
+    ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 175, 430), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_Always);
+
+    if (ImGui::Begin("Summon Request", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize)) {
+        ImGui::Text("%s is summoning you.", gameHandler.getSummonerName().c_str());
+        float t = gameHandler.getSummonTimeoutSec();
+        if (t > 0.0f) {
+            ImGui::Text("Time remaining: %.0fs", t);
+        }
+        ImGui::Spacing();
+
+        if (ImGui::Button("Accept", ImVec2(130, 30))) {
+            gameHandler.acceptSummon();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Decline", ImVec2(130, 30))) {
+            gameHandler.declineSummon();
         }
     }
     ImGui::End();

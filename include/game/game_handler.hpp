@@ -707,6 +707,13 @@ public:
     bool hasPendingGroupInvite() const { return pendingGroupInvite; }
     const std::string& getPendingInviterName() const { return pendingInviterName; }
 
+    // ---- Summon ----
+    bool hasPendingSummonRequest() const { return pendingSummonRequest_; }
+    const std::string& getSummonerName() const { return summonerName_; }
+    float getSummonTimeoutSec() const { return summonTimeoutSec_; }
+    void acceptSummon();
+    void declineSummon();
+
     // ---- Trade ----
     enum class TradeStatus : uint8_t {
         None = 0, PendingIncoming, Open, Accepted, Complete
@@ -1280,6 +1287,7 @@ private:
 
     // ---- Instance lockout handler ----
     void handleRaidInstanceInfo(network::Packet& packet);
+    void handleSummonRequest(network::Packet& packet);
     void handleTradeStatus(network::Packet& packet);
     void handleDuelRequested(network::Packet& packet);
     void handleDuelComplete(network::Packet& packet);
@@ -1637,6 +1645,12 @@ private:
     GroupListData partyData;
     bool pendingGroupInvite = false;
     std::string pendingInviterName;
+
+    // Summon state
+    bool        pendingSummonRequest_ = false;
+    uint64_t    summonerGuid_         = 0;
+    std::string summonerName_;
+    float       summonTimeoutSec_     = 0.0f;
 
     // Trade state
     TradeStatus tradeStatus_  = TradeStatus::None;

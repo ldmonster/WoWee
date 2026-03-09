@@ -1953,6 +1953,13 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_LOOT_REMOVED:
             handleLootRemoved(packet);
             break;
+        case Opcode::SMSG_SUMMON_REQUEST:
+            handleSummonRequest(packet);
+            break;
+        case Opcode::SMSG_SUMMON_CANCEL:
+            pendingSummonRequest_ = false;
+            addSystemChatMessage("Summon cancelled.");
+            break;
         case Opcode::SMSG_TRADE_STATUS:
         case Opcode::SMSG_TRADE_STATUS_EXTENDED:
             handleTradeStatus(packet);
@@ -14993,6 +15000,56 @@ void GameHandler::handleAuctionCommandResult(network::Packet& packet) {
     }
     LOG_INFO("SMSG_AUCTION_COMMAND_RESULT: action=", actionName,
              " error=", result.errorCode);
+}
+
+// ---------------------------------------------------------------------------
+// SMSG_SUMMON_REQUEST
+//   uint64 summonerGuid + uint32 zoneId + uint32 timeoutMs
+// ---------------------------------------------------------------------------
+
+void GameHandler::handleSummonRequest(network::Packet& packet) {
+    if (packet.getSize() - packet.getReadPos() < 16) return;
+
+    summonerGuid_        = packet.readUInt64();
+    /*uint32_t zoneId =*/ packet.readUInt32();
+    uint32_t timeoutMs   = packet.readUInt32();
+    summonTimeoutSec_    = timeoutMs / 1000.0f;
+    pendingSummonRequest_= true;
+
+    summonerName_.clear();
+    auto entity = entityManager.getEntity(summonerGuid_);
+    if (auto* unit = dynamic_cast<Unit*>(entity.get())) {
+        summonerName_ = unit->getName();
+    }
+    if (summonerName_.empty()) {
+        char tmp[32];
+        std::snprintf(tmp, sizeof(tmp), "0x%llX",
+                      static_cast<unsigned long long>(summonerGuid_));
+        summonerName_ = tmp;
+    }
+
+    addSystemChatMessage(summonerName_ + " is summoning you.");
+    LOG_INFO("SMSG_SUMMON_REQUEST: summoner=", summonerName_,
+             " timeout=", summonTimeoutSec_, "s");
+}
+
+void GameHandler::acceptSummon() {
+    if (!pendingSummonRequest_ || !socket) return;
+    pendingSummonRequest_ = false;
+    network::Packet pkt(wireOpcode(Opcode::CMSG_SUMMON_RESPONSE));
+    pkt.writeUInt8(1);  // 1 = accept
+    socket->send(pkt);
+    addSystemChatMessage("Accepting summon...");
+    LOG_INFO("Accepted summon from ", summonerName_);
+}
+
+void GameHandler::declineSummon() {
+    if (!socket) return;
+    pendingSummonRequest_ = false;
+    network::Packet pkt(wireOpcode(Opcode::CMSG_SUMMON_RESPONSE));
+    pkt.writeUInt8(0);  // 0 = decline
+    socket->send(pkt);
+    addSystemChatMessage("Summon declined.");
 }
 
 // ---------------------------------------------------------------------------
