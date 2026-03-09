@@ -396,6 +396,14 @@ bool openSharedFenceHandle(ID3D12Device* device, uint64_t handleValue, const cha
     return true;
 }
 
+template <typename T>
+void safeRelease(T*& obj) {
+    if (obj) {
+        obj->Release();
+        obj = nullptr;
+    }
+}
+
 bool runDx12BridgePreflight(const WoweeFsr3WrapperInitDesc* initDesc, std::string& errorMessage) {
     std::vector<std::string> missing;
 
@@ -735,7 +743,7 @@ WOWEE_FSR3_WRAPPER_EXPORT int32_t wowee_fsr3_wrapper_initialize(const WoweeFsr3W
     }
 
     FfxInterface backendShared{};
-    FfxErrorCode ifaceErr = FFX_ERROR_CODE_INVALID_ARGUMENT;
+    FfxErrorCode ifaceErr = FFX_ERROR_INVALID_ARGUMENT;
     if (backend == WrapperBackend::Dx12Bridge) {
 #if defined(_WIN32)
         FfxDevice ffxDevice = ctx->fns.getDeviceDX12(ctx->dx12Device);
@@ -873,26 +881,41 @@ WOWEE_FSR3_WRAPPER_EXPORT int32_t wowee_fsr3_wrapper_dispatch_upscale(WoweeFsr3W
     static wchar_t kMotionName[] = L"FSR3_MotionVectors";
     static wchar_t kOutputName[] = L"FSR3_Output";
     FfxFsr3DispatchUpscaleDescription dispatch{};
+#if defined(_WIN32)
+    ID3D12Resource* colorRes = nullptr;
+    ID3D12Resource* depthRes = nullptr;
+    ID3D12Resource* motionRes = nullptr;
+    ID3D12Resource* outputRes = nullptr;
+    ID3D12Fence* acquireFence = nullptr;
+    ID3D12Fence* releaseFence = nullptr;
+    auto cleanupDx12Imports = [&]() {
+        safeRelease(colorRes);
+        safeRelease(depthRes);
+        safeRelease(motionRes);
+        safeRelease(outputRes);
+        safeRelease(acquireFence);
+        safeRelease(releaseFence);
+    };
+#endif
     if (ctx->backend == WrapperBackend::Dx12Bridge) {
 #if defined(_WIN32)
-        ID3D12Resource* colorRes = nullptr;
-        ID3D12Resource* depthRes = nullptr;
-        ID3D12Resource* motionRes = nullptr;
-        ID3D12Resource* outputRes = nullptr;
         if (ctx->dx12Device->OpenSharedHandle(reinterpret_cast<HANDLE>(dispatchDesc->colorMemoryHandle), IID_PPV_ARGS(&colorRes)) != S_OK ||
             ctx->dx12Device->OpenSharedHandle(reinterpret_cast<HANDLE>(dispatchDesc->depthMemoryHandle), IID_PPV_ARGS(&depthRes)) != S_OK ||
             ctx->dx12Device->OpenSharedHandle(reinterpret_cast<HANDLE>(dispatchDesc->motionVectorMemoryHandle), IID_PPV_ARGS(&motionRes)) != S_OK ||
             ctx->dx12Device->OpenSharedHandle(reinterpret_cast<HANDLE>(dispatchDesc->outputMemoryHandle), IID_PPV_ARGS(&outputRes)) != S_OK ||
+            ctx->dx12Device->OpenSharedHandle(reinterpret_cast<HANDLE>(dispatchDesc->acquireSemaphoreHandle), IID_PPV_ARGS(&acquireFence)) != S_OK ||
+            ctx->dx12Device->OpenSharedHandle(reinterpret_cast<HANDLE>(dispatchDesc->releaseSemaphoreHandle), IID_PPV_ARGS(&releaseFence)) != S_OK ||
             !colorRes || !depthRes || !motionRes || !outputRes) {
-            if (colorRes) colorRes->Release();
-            if (depthRes) depthRes->Release();
-            if (motionRes) motionRes->Release();
-            if (outputRes) outputRes->Release();
+            cleanupDx12Imports();
             setContextError(ctx, "dx12_bridge failed to import one or more upscale resources");
             return -1;
         }
-        ctx->dx12CommandAllocator->Reset();
-        ctx->dx12CommandList->Reset(ctx->dx12CommandAllocator, nullptr);
+        if (ctx->dx12CommandAllocator->Reset() != S_OK ||
+            ctx->dx12CommandList->Reset(ctx->dx12CommandAllocator, nullptr) != S_OK) {
+            cleanupDx12Imports();
+            setContextError(ctx, "dx12_bridge failed to reset DX12 command objects for upscale dispatch");
+            return -1;
+        }
         dispatch.commandList = ctx->fns.getCommandListDX12(ctx->dx12CommandList);
         dispatch.color = ctx->fns.getResourceDX12(colorRes, colorDesc, kColorName, FFX_RESOURCE_STATE_COMPUTE_READ);
         dispatch.depth = ctx->fns.getResourceDX12(depthRes, depthDesc, kDepthName, FFX_RESOURCE_STATE_COMPUTE_READ);
@@ -931,16 +954,29 @@ WOWEE_FSR3_WRAPPER_EXPORT int32_t wowee_fsr3_wrapper_dispatch_upscale(WoweeFsr3W
     const bool ok = (ctx->fns.fsr3ContextDispatchUpscale(reinterpret_cast<FfxFsr3Context*>(ctx->fsr3ContextStorage), &dispatch) == FFX_OK);
 #if defined(_WIN32)
     if (ctx->backend == WrapperBackend::Dx12Bridge) {
-        ctx->dx12CommandList->Close();
+        if (ctx->dx12CommandList->Close() != S_OK) {
+            cleanupDx12Imports();
+            setContextError(ctx, "dx12_bridge failed to close command list after upscale dispatch");
+            return -1;
+        }
         ID3D12CommandList* lists[] = {ctx->dx12CommandList};
         ctx->dx12Queue->ExecuteCommandLists(1, lists);
         const uint64_t waitValue = ctx->dx12FenceValue++;
-        if (ctx->dx12Queue->Signal(ctx->dx12Fence, waitValue) == S_OK) {
-            if (ctx->dx12Fence->GetCompletedValue() < waitValue) {
-                ctx->dx12Fence->SetEventOnCompletion(waitValue, ctx->dx12FenceEvent);
-                WaitForSingleObject(ctx->dx12FenceEvent, INFINITE);
-            }
+        if (ctx->dx12Queue->Signal(ctx->dx12Fence, waitValue) != S_OK) {
+            cleanupDx12Imports();
+            setContextError(ctx, "dx12_bridge failed to signal internal completion fence after upscale dispatch");
+            return -1;
         }
+        if (ctx->dx12Fence->GetCompletedValue() < waitValue) {
+            ctx->dx12Fence->SetEventOnCompletion(waitValue, ctx->dx12FenceEvent);
+            WaitForSingleObject(ctx->dx12FenceEvent, INFINITE);
+        }
+        if (releaseFence && ctx->dx12Queue->Signal(releaseFence, waitValue) != S_OK) {
+            cleanupDx12Imports();
+            setContextError(ctx, "dx12_bridge failed to signal shared release fence after upscale dispatch");
+            return -1;
+        }
+        cleanupDx12Imports();
     }
 #endif
     if (!ok) {
@@ -1006,20 +1042,35 @@ WOWEE_FSR3_WRAPPER_EXPORT int32_t wowee_fsr3_wrapper_dispatch_framegen(WoweeFsr3
     static wchar_t kPresentName[] = L"FSR3_PresentColor";
     static wchar_t kInterpolatedName[] = L"FSR3_InterpolatedOutput";
     FfxFrameGenerationDispatchDescription fgDispatch{};
+#if defined(_WIN32)
+    ID3D12Resource* presentRes = nullptr;
+    ID3D12Resource* framegenRes = nullptr;
+    ID3D12Fence* acquireFence = nullptr;
+    ID3D12Fence* releaseFence = nullptr;
+    auto cleanupDx12Imports = [&]() {
+        safeRelease(presentRes);
+        safeRelease(framegenRes);
+        safeRelease(acquireFence);
+        safeRelease(releaseFence);
+    };
+#endif
     if (ctx->backend == WrapperBackend::Dx12Bridge) {
 #if defined(_WIN32)
-        ID3D12Resource* presentRes = nullptr;
-        ID3D12Resource* framegenRes = nullptr;
         if (ctx->dx12Device->OpenSharedHandle(reinterpret_cast<HANDLE>(dispatchDesc->outputMemoryHandle), IID_PPV_ARGS(&presentRes)) != S_OK ||
             ctx->dx12Device->OpenSharedHandle(reinterpret_cast<HANDLE>(dispatchDesc->frameGenOutputMemoryHandle), IID_PPV_ARGS(&framegenRes)) != S_OK ||
+            ctx->dx12Device->OpenSharedHandle(reinterpret_cast<HANDLE>(dispatchDesc->acquireSemaphoreHandle), IID_PPV_ARGS(&acquireFence)) != S_OK ||
+            ctx->dx12Device->OpenSharedHandle(reinterpret_cast<HANDLE>(dispatchDesc->releaseSemaphoreHandle), IID_PPV_ARGS(&releaseFence)) != S_OK ||
             !presentRes || !framegenRes) {
-            if (presentRes) presentRes->Release();
-            if (framegenRes) framegenRes->Release();
+            cleanupDx12Imports();
             setContextError(ctx, "dx12_bridge failed to import frame generation resources");
             return -1;
         }
-        ctx->dx12CommandAllocator->Reset();
-        ctx->dx12CommandList->Reset(ctx->dx12CommandAllocator, nullptr);
+        if (ctx->dx12CommandAllocator->Reset() != S_OK ||
+            ctx->dx12CommandList->Reset(ctx->dx12CommandAllocator, nullptr) != S_OK) {
+            cleanupDx12Imports();
+            setContextError(ctx, "dx12_bridge failed to reset DX12 command objects for frame generation dispatch");
+            return -1;
+        }
         fgDispatch.commandList = ctx->fns.getCommandListDX12(ctx->dx12CommandList);
         fgDispatch.presentColor = ctx->fns.getResourceDX12(presentRes, presentDesc, kPresentName, FFX_RESOURCE_STATE_COMPUTE_READ);
         fgDispatch.outputs[0] = ctx->fns.getResourceDX12(framegenRes, fgOutDesc, kInterpolatedName, FFX_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -1041,16 +1092,29 @@ WOWEE_FSR3_WRAPPER_EXPORT int32_t wowee_fsr3_wrapper_dispatch_framegen(WoweeFsr3
     const bool ok = (ctx->fns.fsr3DispatchFrameGeneration(&fgDispatch) == FFX_OK);
 #if defined(_WIN32)
     if (ctx->backend == WrapperBackend::Dx12Bridge) {
-        ctx->dx12CommandList->Close();
+        if (ctx->dx12CommandList->Close() != S_OK) {
+            cleanupDx12Imports();
+            setContextError(ctx, "dx12_bridge failed to close command list after frame generation dispatch");
+            return -1;
+        }
         ID3D12CommandList* lists[] = {ctx->dx12CommandList};
         ctx->dx12Queue->ExecuteCommandLists(1, lists);
         const uint64_t waitValue = ctx->dx12FenceValue++;
-        if (ctx->dx12Queue->Signal(ctx->dx12Fence, waitValue) == S_OK) {
-            if (ctx->dx12Fence->GetCompletedValue() < waitValue) {
-                ctx->dx12Fence->SetEventOnCompletion(waitValue, ctx->dx12FenceEvent);
-                WaitForSingleObject(ctx->dx12FenceEvent, INFINITE);
-            }
+        if (ctx->dx12Queue->Signal(ctx->dx12Fence, waitValue) != S_OK) {
+            cleanupDx12Imports();
+            setContextError(ctx, "dx12_bridge failed to signal internal completion fence after frame generation dispatch");
+            return -1;
         }
+        if (ctx->dx12Fence->GetCompletedValue() < waitValue) {
+            ctx->dx12Fence->SetEventOnCompletion(waitValue, ctx->dx12FenceEvent);
+            WaitForSingleObject(ctx->dx12FenceEvent, INFINITE);
+        }
+        if (releaseFence && ctx->dx12Queue->Signal(releaseFence, waitValue) != S_OK) {
+            cleanupDx12Imports();
+            setContextError(ctx, "dx12_bridge failed to signal shared release fence after frame generation dispatch");
+            return -1;
+        }
+        cleanupDx12Imports();
     }
 #endif
     if (!ok) {
