@@ -3945,7 +3945,12 @@ bool Renderer::initFSR2Resources() {
                     if (fsr2_.amdFsr3FramegenRuntimeReady) {
                         fsr2_.amdFsr3RuntimeLastError.clear();
                         if (fsr2_.amdFsr3Runtime->loadPathKind() == AmdFsr3Runtime::LoadPathKind::Wrapper) {
-                            fsr2_.amdFsr3RuntimePath = "Path B";
+                            const std::string& wrapperBackend = fsr2_.amdFsr3Runtime->wrapperBackendName();
+                            if (!wrapperBackend.empty()) {
+                                fsr2_.amdFsr3RuntimePath = "Path B (" + wrapperBackend + ")";
+                            } else {
+                                fsr2_.amdFsr3RuntimePath = "Path B";
+                            }
                         } else {
                             fsr2_.amdFsr3RuntimePath = "Path A";
                         }

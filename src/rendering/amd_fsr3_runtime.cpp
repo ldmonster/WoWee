@@ -28,6 +28,7 @@ namespace wowee::rendering {
 struct AmdFsr3Runtime::RuntimeFns {
     uint32_t (*wrapperGetAbiVersion)() = nullptr;
     const char* (*wrapperGetName)() = nullptr;
+    const char* (*wrapperGetBackend)(WoweeFsr3WrapperContext) = nullptr;
     int32_t (*wrapperInitialize)(const WoweeFsr3WrapperInitDesc*, WoweeFsr3WrapperContext*, char*, uint32_t) = nullptr;
     int32_t (*wrapperDispatchUpscale)(WoweeFsr3WrapperContext, const WoweeFsr3WrapperDispatchDesc*) = nullptr;
     int32_t (*wrapperDispatchFramegen)(WoweeFsr3WrapperContext, const WoweeFsr3WrapperDispatchDesc*) = nullptr;
@@ -158,6 +159,7 @@ bool AmdFsr3Runtime::initialize(const AmdFsr3RuntimeInitDesc& desc) {
     shutdown();
     lastError_.clear();
     loadPathKind_ = LoadPathKind::None;
+    wrapperBackendName_.clear();
     backend_ = RuntimeBackend::None;
 
 #if !WOWEE_HAS_AMD_FSR3_FRAMEGEN
@@ -235,6 +237,7 @@ bool AmdFsr3Runtime::initialize(const AmdFsr3RuntimeInitDesc& desc) {
     if (loadPathKind_ == LoadPathKind::Wrapper) {
         fns_->wrapperGetAbiVersion = reinterpret_cast<decltype(fns_->wrapperGetAbiVersion)>(resolveSym("wowee_fsr3_wrapper_get_abi_version"));
         fns_->wrapperGetName = reinterpret_cast<decltype(fns_->wrapperGetName)>(resolveSym("wowee_fsr3_wrapper_get_name"));
+        fns_->wrapperGetBackend = reinterpret_cast<decltype(fns_->wrapperGetBackend)>(resolveSym("wowee_fsr3_wrapper_get_backend"));
         fns_->wrapperInitialize = reinterpret_cast<decltype(fns_->wrapperInitialize)>(resolveSym("wowee_fsr3_wrapper_initialize"));
         fns_->wrapperDispatchUpscale = reinterpret_cast<decltype(fns_->wrapperDispatchUpscale)>(resolveSym("wowee_fsr3_wrapper_dispatch_upscale"));
         fns_->wrapperDispatchFramegen = reinterpret_cast<decltype(fns_->wrapperDispatchFramegen)>(resolveSym("wowee_fsr3_wrapper_dispatch_framegen"));
@@ -293,6 +296,10 @@ bool AmdFsr3Runtime::initialize(const AmdFsr3RuntimeInitDesc& desc) {
         frameGenerationReady_ = desc.enableFrameGeneration;
         ready_ = true;
         backend_ = RuntimeBackend::Wrapper;
+        if (fns_->wrapperGetBackend) {
+            const char* backendName = fns_->wrapperGetBackend(wrapperCtx);
+            if (backendName && *backendName) wrapperBackendName_ = backendName;
+        }
         if (fns_->wrapperGetName) {
             const char* wrapperName = fns_->wrapperGetName();
             if (wrapperName && *wrapperName) {
@@ -678,6 +685,7 @@ void AmdFsr3Runtime::shutdown() {
     libHandle_ = nullptr;
     loadedLibraryPath_.clear();
     loadPathKind_ = LoadPathKind::None;
+    wrapperBackendName_.clear();
     backend_ = RuntimeBackend::None;
 }
 

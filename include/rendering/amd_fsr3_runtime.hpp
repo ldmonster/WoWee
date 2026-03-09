@@ -76,6 +76,7 @@ public:
     bool isFrameGenerationReady() const { return frameGenerationReady_; }
     const std::string& loadedLibraryPath() const { return loadedLibraryPath_; }
     LoadPathKind loadPathKind() const { return loadPathKind_; }
+    const std::string& wrapperBackendName() const { return wrapperBackendName_; }
     const std::string& lastError() const { return lastError_; }
 
 private:
@@ -92,6 +93,7 @@ private:
     bool ready_ = false;
     bool frameGenerationReady_ = false;
     LoadPathKind loadPathKind_ = LoadPathKind::None;
+    std::string wrapperBackendName_;
     std::string lastError_;
 
     struct RuntimeFns;

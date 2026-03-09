@@ -116,6 +116,17 @@ WrapperBackend selectBackend() {
     return WrapperBackend::VulkanRuntime;
 }
 
+const char* backendName(WrapperBackend backend) {
+    switch (backend) {
+        case WrapperBackend::Dx12Bridge:
+            return "dx12_bridge";
+        case WrapperBackend::VulkanRuntime:
+            return "vulkan_runtime";
+        default:
+            return "unknown";
+    }
+}
+
 FfxErrorCode vkSwapchainConfigureNoop(const FfxFrameGenerationConfig*) {
     return FFX_OK;
 }
@@ -572,6 +583,17 @@ WOWEE_FSR3_WRAPPER_EXPORT uint32_t wowee_fsr3_wrapper_get_abi_version(void) {
 
 WOWEE_FSR3_WRAPPER_EXPORT const char* wowee_fsr3_wrapper_get_name(void) {
     return "WoWee FSR3 Wrapper";
+}
+
+WOWEE_FSR3_WRAPPER_EXPORT const char* wowee_fsr3_wrapper_get_backend(WoweeFsr3WrapperContext context) {
+#if WOWEE_HAS_AMD_FSR3_FRAMEGEN
+    WrapperContext* ctx = reinterpret_cast<WrapperContext*>(context);
+    if (!ctx) return "invalid";
+    return backendName(ctx->backend);
+#else
+    (void)context;
+    return "unavailable";
+#endif
 }
 
 WOWEE_FSR3_WRAPPER_EXPORT int32_t wowee_fsr3_wrapper_initialize(const WoweeFsr3WrapperInitDesc* initDesc,

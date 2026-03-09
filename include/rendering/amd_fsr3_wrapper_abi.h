@@ -80,6 +80,7 @@ enum {
 
 uint32_t wowee_fsr3_wrapper_get_abi_version(void);
 const char* wowee_fsr3_wrapper_get_name(void);
+const char* wowee_fsr3_wrapper_get_backend(WoweeFsr3WrapperContext context);
 int32_t wowee_fsr3_wrapper_initialize(const WoweeFsr3WrapperInitDesc* initDesc,
                                       WoweeFsr3WrapperContext* outContext,
                                       char* outErrorText,
