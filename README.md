@@ -210,7 +210,7 @@ make -j$(nproc)
     - Wrapper backend override (what the wrapper loads underneath): `WOWEE_FSR3_WRAPPER_BACKEND_LIB=/absolute/path/to/libffx_fsr3_vk.so`.
     - Wrapper backend mode:
       - `WOWEE_FSR3_WRAPPER_BACKEND=vulkan_runtime` (default on all platforms)
-      - `WOWEE_FSR3_WRAPPER_BACKEND=dx12_bridge` (opt-in; bridge dispatch wiring still in progress)
+      - `WOWEE_FSR3_WRAPPER_BACKEND=dx12_bridge` (opt-in; runs DX12 preflight and then selects a dispatch-capable runtime export set)
     - DX12 runtime override (for `dx12_bridge`):
       - `WOWEE_FSR3_DX12_RUNTIME_LIB=C:\\path\\to\\amd_fidelityfx_framegeneration_dx12.dll`
     - DX12 device validation probe (default on):

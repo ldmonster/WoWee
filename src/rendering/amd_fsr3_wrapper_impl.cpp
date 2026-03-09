@@ -258,6 +258,24 @@ void* resolveSymbol(void* handle, const char* symbol) {
 #endif
 }
 
+bool bindVulkanRuntimeFns(void* libHandle, RuntimeFns& outFns) {
+    outFns = RuntimeFns{};
+    outFns.getScratchMemorySizeVK = reinterpret_cast<decltype(outFns.getScratchMemorySizeVK)>(resolveSymbol(libHandle, "ffxGetScratchMemorySizeVK"));
+    outFns.getDeviceVK = reinterpret_cast<decltype(outFns.getDeviceVK)>(resolveSymbol(libHandle, "ffxGetDeviceVK"));
+    outFns.getInterfaceVK = reinterpret_cast<decltype(outFns.getInterfaceVK)>(resolveSymbol(libHandle, "ffxGetInterfaceVK"));
+    outFns.getCommandListVK = reinterpret_cast<decltype(outFns.getCommandListVK)>(resolveSymbol(libHandle, "ffxGetCommandListVK"));
+    outFns.getResourceVK = reinterpret_cast<decltype(outFns.getResourceVK)>(resolveSymbol(libHandle, "ffxGetResourceVK"));
+    outFns.fsr3ContextCreate = reinterpret_cast<decltype(outFns.fsr3ContextCreate)>(resolveSymbol(libHandle, "ffxFsr3ContextCreate"));
+    outFns.fsr3ContextDispatchUpscale = reinterpret_cast<decltype(outFns.fsr3ContextDispatchUpscale)>(resolveSymbol(libHandle, "ffxFsr3ContextDispatchUpscale"));
+    outFns.fsr3ConfigureFrameGeneration = reinterpret_cast<decltype(outFns.fsr3ConfigureFrameGeneration)>(resolveSymbol(libHandle, "ffxFsr3ConfigureFrameGeneration"));
+    outFns.fsr3DispatchFrameGeneration = reinterpret_cast<decltype(outFns.fsr3DispatchFrameGeneration)>(resolveSymbol(libHandle, "ffxFsr3DispatchFrameGeneration"));
+    outFns.fsr3ContextDestroy = reinterpret_cast<decltype(outFns.fsr3ContextDestroy)>(resolveSymbol(libHandle, "ffxFsr3ContextDestroy"));
+
+    return outFns.getScratchMemorySizeVK && outFns.getDeviceVK && outFns.getInterfaceVK &&
+           outFns.getCommandListVK && outFns.getResourceVK && outFns.fsr3ContextCreate &&
+           outFns.fsr3ContextDispatchUpscale && outFns.fsr3ContextDestroy;
+}
+
 void destroyContext(WrapperContext* ctx) {
     if (!ctx) return;
     if (ctx->fsr3ContextStorage && ctx->fns.fsr3ContextDestroy) {
@@ -482,9 +500,6 @@ WOWEE_FSR3_WRAPPER_EXPORT int32_t wowee_fsr3_wrapper_initialize(const WoweeFsr3W
             writeError(outErrorText, outErrorTextCapacity, preflightError.c_str());
             return -1;
         }
-        writeError(outErrorText, outErrorTextCapacity,
-                   "dx12_bridge preflight passed, but Vulkan<->DX12 interop dispatch is not implemented yet");
-        return -1;
 #endif
     }
 
@@ -496,6 +511,10 @@ WOWEE_FSR3_WRAPPER_EXPORT int32_t wowee_fsr3_wrapper_initialize(const WoweeFsr3W
         if (*runtimeEnv) candidates.emplace_back(runtimeEnv);
     }
 #if defined(_WIN32)
+    if (backend == WrapperBackend::Dx12Bridge) {
+        candidates.emplace_back("amd_fidelityfx_framegeneration_dx12.dll");
+        candidates.emplace_back("ffx_framegeneration_dx12.dll");
+    }
     candidates.emplace_back("ffx_fsr3_vk.dll");
     candidates.emplace_back("ffx_fsr3.dll");
     candidates.emplace_back("ffx_fsr3_bridge.dll");
@@ -513,31 +532,27 @@ WOWEE_FSR3_WRAPPER_EXPORT int32_t wowee_fsr3_wrapper_initialize(const WoweeFsr3W
     WrapperContext* ctx = new WrapperContext{};
     ctx->backend = backend;
     for (const std::string& path : candidates) {
-        ctx->backendLibHandle = openLibrary(path.c_str());
-        if (ctx->backendLibHandle) break;
+        void* candidateHandle = openLibrary(path.c_str());
+        if (!candidateHandle) continue;
+
+        RuntimeFns candidateFns{};
+        if (!bindVulkanRuntimeFns(candidateHandle, candidateFns)) {
+            closeLibrary(candidateHandle);
+            continue;
+        }
+
+        ctx->backendLibHandle = candidateHandle;
+        ctx->fns = candidateFns;
+        break;
     }
     if (!ctx->backendLibHandle) {
         destroyContext(ctx);
-        writeError(outErrorText, outErrorTextCapacity, "no FSR3 backend runtime found for wrapper");
-        return -1;
-    }
-
-    ctx->fns.getScratchMemorySizeVK = reinterpret_cast<decltype(ctx->fns.getScratchMemorySizeVK)>(resolveSymbol(ctx->backendLibHandle, "ffxGetScratchMemorySizeVK"));
-    ctx->fns.getDeviceVK = reinterpret_cast<decltype(ctx->fns.getDeviceVK)>(resolveSymbol(ctx->backendLibHandle, "ffxGetDeviceVK"));
-    ctx->fns.getInterfaceVK = reinterpret_cast<decltype(ctx->fns.getInterfaceVK)>(resolveSymbol(ctx->backendLibHandle, "ffxGetInterfaceVK"));
-    ctx->fns.getCommandListVK = reinterpret_cast<decltype(ctx->fns.getCommandListVK)>(resolveSymbol(ctx->backendLibHandle, "ffxGetCommandListVK"));
-    ctx->fns.getResourceVK = reinterpret_cast<decltype(ctx->fns.getResourceVK)>(resolveSymbol(ctx->backendLibHandle, "ffxGetResourceVK"));
-    ctx->fns.fsr3ContextCreate = reinterpret_cast<decltype(ctx->fns.fsr3ContextCreate)>(resolveSymbol(ctx->backendLibHandle, "ffxFsr3ContextCreate"));
-    ctx->fns.fsr3ContextDispatchUpscale = reinterpret_cast<decltype(ctx->fns.fsr3ContextDispatchUpscale)>(resolveSymbol(ctx->backendLibHandle, "ffxFsr3ContextDispatchUpscale"));
-    ctx->fns.fsr3ConfigureFrameGeneration = reinterpret_cast<decltype(ctx->fns.fsr3ConfigureFrameGeneration)>(resolveSymbol(ctx->backendLibHandle, "ffxFsr3ConfigureFrameGeneration"));
-    ctx->fns.fsr3DispatchFrameGeneration = reinterpret_cast<decltype(ctx->fns.fsr3DispatchFrameGeneration)>(resolveSymbol(ctx->backendLibHandle, "ffxFsr3DispatchFrameGeneration"));
-    ctx->fns.fsr3ContextDestroy = reinterpret_cast<decltype(ctx->fns.fsr3ContextDestroy)>(resolveSymbol(ctx->backendLibHandle, "ffxFsr3ContextDestroy"));
-
-    if (!ctx->fns.getScratchMemorySizeVK || !ctx->fns.getDeviceVK || !ctx->fns.getInterfaceVK ||
-        !ctx->fns.getCommandListVK || !ctx->fns.getResourceVK || !ctx->fns.fsr3ContextCreate ||
-        !ctx->fns.fsr3ContextDispatchUpscale || !ctx->fns.fsr3ContextDestroy) {
-        destroyContext(ctx);
-        writeError(outErrorText, outErrorTextCapacity, "backend missing required ffx symbols");
+        if (backend == WrapperBackend::Dx12Bridge) {
+            writeError(outErrorText, outErrorTextCapacity,
+                       "dx12_bridge requested, but no dispatch-capable runtime exports were found");
+        } else {
+            writeError(outErrorText, outErrorTextCapacity, "no FSR3 backend runtime found for wrapper");
+        }
         return -1;
     }
 
