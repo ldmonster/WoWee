@@ -197,7 +197,10 @@ make -j$(nproc)
   - `WOWEE_ENABLE_AMD_FSR3_FRAMEGEN=ON` enables a compile-probe target (`wowee_fsr3_framegen_amd_vk_probe`) that validates SDK FI/OF/FSR3/Vulkan interface headers at build time.
 - Runtime toggle:
   - In settings, `AMD FSR3 Frame Generation (Experimental)` persists to config.
-  - Current state is staging-only (`dispatch not linked yet`) until FidelityFX-SDK runtime component binaries are integrated.
+  - Runtime library auto-probe checks for `libffx_fsr3_vk`/`ffx_fsr3_vk` in default loader paths.
+  - Override runtime library path with:
+    - `WOWEE_FFX_SDK_RUNTIME_LIB=/absolute/path/to/libffx_fsr3_vk.so` (platform extension varies).
+  - Current state is still dispatch-staged until full FI/OF dispatch activation is linked.
 
 ### Current FSR Defaults
 

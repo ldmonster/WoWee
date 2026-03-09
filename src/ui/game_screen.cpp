@@ -6342,8 +6342,15 @@ void GameScreen::renderSettingsWindow() {
                                     renderer->setAmdFsr3FramegenEnabled(pendingAMDFramegen);
                                     saveSettings();
                                 }
-                                ImGui::TextDisabled("Runtime: %s",
-                                    renderer->isAmdFsr3FramegenRuntimeActive() ? "Active" : "Staged (dispatch not linked yet)");
+                                const char* runtimeStatus = "Unavailable";
+                                if (renderer->isAmdFsr3FramegenRuntimeActive()) {
+                                    runtimeStatus = "Active";
+                                } else if (renderer->isAmdFsr3FramegenRuntimeReady()) {
+                                    runtimeStatus = "Library loaded (dispatch staged)";
+                                } else {
+                                    runtimeStatus = "Library missing";
+                                }
+                                ImGui::TextDisabled("Runtime: %s", runtimeStatus);
                             } else {
                                 ImGui::BeginDisabled();
                                 bool disabledFg = false;

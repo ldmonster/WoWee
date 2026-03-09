@@ -291,6 +291,7 @@ public:
     bool isAmdFsr3FramegenSdkAvailable() const { return false; }
 #endif
     bool isAmdFsr3FramegenRuntimeActive() const { return fsr2_.amdFsr3FramegenRuntimeActive; }
+    bool isAmdFsr3FramegenRuntimeReady() const { return fsr2_.amdFsr3FramegenRuntimeReady; }
 
     void setWaterRefractionEnabled(bool enabled);
     bool isWaterRefractionEnabled() const;

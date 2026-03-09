@@ -71,6 +71,13 @@
 #include <unordered_set>
 #include <set>
 #include <future>
+#if WOWEE_HAS_AMD_FSR3_FRAMEGEN
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+#endif
 
 namespace wowee {
 namespace rendering {
@@ -108,6 +115,63 @@ static int envIntOrDefault(const char* key, int defaultValue) {
     if (end == raw) return defaultValue;
     return static_cast<int>(n);
 }
+
+#if WOWEE_HAS_AMD_FSR3_FRAMEGEN
+struct AmdFsr3RuntimeApi {
+    void* libHandle = nullptr;
+    std::string loadedPath;
+
+    bool load() {
+        if (libHandle) return true;
+
+        std::vector<std::string> candidates;
+        if (const char* envPath = std::getenv("WOWEE_FFX_SDK_RUNTIME_LIB")) {
+            if (*envPath) candidates.emplace_back(envPath);
+        }
+#if defined(_WIN32)
+        candidates.emplace_back("ffx_fsr3_vk.dll");
+        candidates.emplace_back("ffx_fsr3.dll");
+#elif defined(__APPLE__)
+        candidates.emplace_back("libffx_fsr3_vk.dylib");
+        candidates.emplace_back("libffx_fsr3.dylib");
+#else
+        candidates.emplace_back("libffx_fsr3_vk.so");
+        candidates.emplace_back("libffx_fsr3.so");
+#endif
+
+        for (const std::string& path : candidates) {
+#if defined(_WIN32)
+            HMODULE h = LoadLibraryA(path.c_str());
+            if (!h) continue;
+            libHandle = reinterpret_cast<void*>(h);
+#else
+            void* h = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+            if (!h) continue;
+            libHandle = h;
+#endif
+            loadedPath = path;
+            return true;
+        }
+        return false;
+    }
+
+    void unload() {
+        if (!libHandle) return;
+#if defined(_WIN32)
+        FreeLibrary(reinterpret_cast<HMODULE>(libHandle));
+#else
+        dlclose(libHandle);
+#endif
+        libHandle = nullptr;
+        loadedPath.clear();
+    }
+};
+
+static AmdFsr3RuntimeApi& getAmdFsr3RuntimeApi() {
+    static AmdFsr3RuntimeApi s_runtimeApi;
+    return s_runtimeApi;
+}
+#endif
 
 static std::vector<std::string> parseEmoteCommands(const std::string& raw) {
     std::vector<std::string> out;
@@ -3843,11 +3907,15 @@ bool Renderer::initFSR2Resources() {
                 LOG_INFO("FSR2 AMD: context created successfully.");
 #if WOWEE_HAS_AMD_FSR3_FRAMEGEN
                 if (fsr2_.amdFsr3FramegenEnabled) {
-                    // Runtime dispatch path is staged behind SDK runtime binary integration.
-                    // Keep the user toggle persisted, but report inactive runtime for now.
                     fsr2_.amdFsr3FramegenRuntimeActive = false;
-                    fsr2_.amdFsr3FramegenRuntimeReady = false;
-                    LOG_WARNING("FSR3 framegen is enabled in settings, but runtime dispatch is not linked yet; running FSR2-only.");
+                    fsr2_.amdFsr3FramegenRuntimeReady = getAmdFsr3RuntimeApi().load();
+                    if (fsr2_.amdFsr3FramegenRuntimeReady) {
+                        LOG_INFO("FSR3 framegen runtime library loaded from ", getAmdFsr3RuntimeApi().loadedPath,
+                                 " (dispatch staged)");
+                    } else {
+                        LOG_WARNING("FSR3 framegen toggle is enabled, but runtime library was not found. ",
+                                    "Set WOWEE_FFX_SDK_RUNTIME_LIB to the SDK runtime binary path.");
+                    }
                 }
 #endif
             } else {
@@ -4149,6 +4217,9 @@ void Renderer::destroyFSR2Resources() {
 #endif
     fsr2_.amdFsr3FramegenRuntimeActive = false;
     fsr2_.amdFsr3FramegenRuntimeReady = false;
+#if WOWEE_HAS_AMD_FSR3_FRAMEGEN
+    getAmdFsr3RuntimeApi().unload();
+#endif
 
     if (fsr2_.sharpenPipeline) { vkDestroyPipeline(device, fsr2_.sharpenPipeline, nullptr); fsr2_.sharpenPipeline = VK_NULL_HANDLE; }
     if (fsr2_.sharpenPipelineLayout) { vkDestroyPipelineLayout(device, fsr2_.sharpenPipelineLayout, nullptr); fsr2_.sharpenPipelineLayout = VK_NULL_HANDLE; }
@@ -4377,10 +4448,13 @@ void Renderer::dispatchAmdFsr3Framegen() {
     // The integration hook is intentionally placed here (right after FSR2 dispatch),
     // so we can enable real frame generation without refactoring the frame pipeline.
     if (!fsr2_.amdFsr3FramegenRuntimeReady) {
+        fsr2_.amdFsr3FramegenRuntimeReady = getAmdFsr3RuntimeApi().load();
+    }
+    if (!fsr2_.amdFsr3FramegenRuntimeReady) {
         static bool warnedMissingRuntime = false;
         if (!warnedMissingRuntime) {
             warnedMissingRuntime = true;
-            LOG_WARNING("FSR3 framegen is staged, but runtime binaries are not linked; skipping frame generation dispatch.");
+            LOG_WARNING("FSR3 framegen runtime library not found; skipping frame generation dispatch.");
         }
     }
     fsr2_.amdFsr3FramegenRuntimeActive = false;
@@ -4469,11 +4543,18 @@ void Renderer::setAmdFsr3FramegenEnabled(bool enabled) {
 #if WOWEE_HAS_AMD_FSR3_FRAMEGEN
     if (enabled) {
         fsr2_.amdFsr3FramegenRuntimeActive = false;
-        fsr2_.amdFsr3FramegenRuntimeReady = false;
-        LOG_WARNING("FSR3 framegen toggle enabled, but runtime dispatch is not linked yet; running FSR2-only.");
+        fsr2_.amdFsr3FramegenRuntimeReady = getAmdFsr3RuntimeApi().load();
+        if (fsr2_.amdFsr3FramegenRuntimeReady) {
+            LOG_INFO("FSR3 framegen runtime library loaded from ", getAmdFsr3RuntimeApi().loadedPath,
+                     " (dispatch staged).");
+        } else {
+            LOG_WARNING("FSR3 framegen enabled, but runtime library not found. ",
+                        "Set WOWEE_FFX_SDK_RUNTIME_LIB to the runtime binary path.");
+        }
     } else {
         fsr2_.amdFsr3FramegenRuntimeActive = false;
         fsr2_.amdFsr3FramegenRuntimeReady = false;
+        getAmdFsr3RuntimeApi().unload();
     }
 #else
     fsr2_.amdFsr3FramegenRuntimeActive = false;

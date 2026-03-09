@@ -36,7 +36,10 @@ Detection expects:
 Runtime note:
 
 - Renderer/UI now expose a persisted experimental framegen toggle.
-- Current runtime status is `staged` (no FI/OF dispatch yet) until FidelityFX-SDK runtime implementation/shader blob linking is completed.
+- Runtime loader now probes for AMD FSR3 SDK runtime binaries.
+- You can point to an explicit runtime binary with:
+  - `WOWEE_FFX_SDK_RUNTIME_LIB=/absolute/path/to/libffx_fsr3_vk.so` (or `.dll` / `.dylib`).
+- Current runtime status is still `dispatch staged` (FI/OF dispatch activation pending).
 
 ## Current Status
 
