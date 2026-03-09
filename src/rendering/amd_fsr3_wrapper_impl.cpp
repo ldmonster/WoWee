@@ -211,6 +211,10 @@ FfxResourceDescription makeResourceDescription(VkFormat format,
     return description;
 }
 
+bool hasKnownSurfaceFormat(const FfxResourceDescription& description) {
+    return description.format != FFX_SURFACE_FORMAT_UNKNOWN;
+}
+
 struct RuntimeFns {
     decltype(&ffxGetScratchMemorySizeVK) getScratchMemorySizeVK = nullptr;
     decltype(&ffxGetDeviceVK) getDeviceVK = nullptr;
@@ -913,6 +917,16 @@ WOWEE_FSR3_WRAPPER_EXPORT int32_t wowee_fsr3_wrapper_dispatch_upscale(WoweeFsr3W
         dispatchDesc->motionVectorFormat, dispatchDesc->renderWidth, dispatchDesc->renderHeight, FFX_RESOURCE_USAGE_READ_ONLY);
     FfxResourceDescription outDesc = makeResourceDescription(
         dispatchDesc->outputFormat, dispatchDesc->outputWidth, dispatchDesc->outputHeight, FFX_RESOURCE_USAGE_UAV);
+    if (dispatchDesc->renderWidth == 0 || dispatchDesc->renderHeight == 0 ||
+        dispatchDesc->outputWidth == 0 || dispatchDesc->outputHeight == 0) {
+        setContextError(ctx, "invalid dispatch dimensions for upscale");
+        return -1;
+    }
+    if (!hasKnownSurfaceFormat(colorDesc) || !hasKnownSurfaceFormat(depthDesc) ||
+        !hasKnownSurfaceFormat(mvDesc) || !hasKnownSurfaceFormat(outDesc)) {
+        setContextError(ctx, "unsupported image format in upscale dispatch");
+        return -1;
+    }
 
     static wchar_t kColorName[] = L"FSR3_Color";
     static wchar_t kDepthName[] = L"FSR3_Depth";
@@ -1082,6 +1096,14 @@ WOWEE_FSR3_WRAPPER_EXPORT int32_t wowee_fsr3_wrapper_dispatch_framegen(WoweeFsr3
         dispatchDesc->outputFormat, dispatchDesc->outputWidth, dispatchDesc->outputHeight, FFX_RESOURCE_USAGE_READ_ONLY);
     FfxResourceDescription fgOutDesc = makeResourceDescription(
         dispatchDesc->outputFormat, dispatchDesc->outputWidth, dispatchDesc->outputHeight, FFX_RESOURCE_USAGE_UAV);
+    if (dispatchDesc->outputWidth == 0 || dispatchDesc->outputHeight == 0) {
+        setContextError(ctx, "invalid dispatch dimensions for frame generation");
+        return -1;
+    }
+    if (!hasKnownSurfaceFormat(presentDesc) || !hasKnownSurfaceFormat(fgOutDesc)) {
+        setContextError(ctx, "unsupported image format in frame generation dispatch");
+        return -1;
+    }
 
     static wchar_t kPresentName[] = L"FSR3_PresentColor";
     static wchar_t kInterpolatedName[] = L"FSR3_InterpolatedOutput";
