@@ -94,6 +94,66 @@ bool hasExternalImageInteropSupport(VkPhysicalDevice physicalDevice, VkFormat fo
 }
 #endif
 
+#if defined(__linux__)
+bool hasExtensionLinux(const std::vector<VkExtensionProperties>& extensions, const char* name) {
+    for (const VkExtensionProperties& ext : extensions) {
+        if (std::strcmp(ext.extensionName, name) == 0) return true;
+    }
+    return false;
+}
+
+bool runLinuxBridgePreflight(const WoweeFsr3WrapperInitDesc* initDesc, std::string& errorMessage) {
+    std::vector<std::string> missing;
+    if (!initDesc || !initDesc->device || !initDesc->getDeviceProcAddr || !initDesc->physicalDevice) {
+        missing.emplace_back("valid Vulkan device/getDeviceProcAddr");
+    } else {
+        const char* requiredVkInteropFns[] = {
+            "vkGetMemoryFdKHR",
+            "vkGetSemaphoreFdKHR"
+        };
+        for (const char* fn : requiredVkInteropFns) {
+            PFN_vkVoidFunction fp = initDesc->getDeviceProcAddr(initDesc->device, fn);
+            if (!fp) missing.emplace_back(fn);
+        }
+
+        uint32_t extCount = 0;
+        VkResult extErr = vkEnumerateDeviceExtensionProperties(initDesc->physicalDevice, nullptr, &extCount, nullptr);
+        if (extErr != VK_SUCCESS || extCount == 0) {
+            missing.emplace_back("vkEnumerateDeviceExtensionProperties");
+        } else {
+            std::vector<VkExtensionProperties> extensions(extCount);
+            extErr = vkEnumerateDeviceExtensionProperties(
+                initDesc->physicalDevice, nullptr, &extCount, extensions.data());
+            if (extErr != VK_SUCCESS) {
+                missing.emplace_back("vkEnumerateDeviceExtensionProperties(data)");
+            } else {
+                const char* requiredVkExtensions[] = {
+                    VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
+                    VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+                    VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
+                    VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME
+                };
+                for (const char* extName : requiredVkExtensions) {
+                    if (!hasExtensionLinux(extensions, extName)) {
+                        missing.emplace_back(extName);
+                    }
+                }
+            }
+        }
+    }
+
+    if (missing.empty()) return true;
+    std::ostringstream oss;
+    oss << "dx12_bridge preflight failed (linux), missing: ";
+    for (size_t i = 0; i < missing.size(); ++i) {
+        if (i) oss << ", ";
+        oss << missing[i];
+    }
+    errorMessage = oss.str();
+    return false;
+}
+#endif
+
 enum class WrapperBackend {
     VulkanRuntime,
     Dx12Bridge
@@ -658,9 +718,11 @@ WOWEE_FSR3_WRAPPER_EXPORT int32_t wowee_fsr3_wrapper_initialize(const WoweeFsr3W
             return -1;
         }
 #elif defined(__linux__)
-        // Linux bridge mode currently routes dispatch through Vulkan runtime symbols
-        // while preserving external interop metadata for wrapper-side diagnostics.
-        (void)initDesc;
+        std::string preflightError;
+        if (!runLinuxBridgePreflight(initDesc, preflightError)) {
+            writeError(outErrorText, outErrorTextCapacity, preflightError.c_str());
+            return -1;
+        }
 #endif
     }
 
@@ -953,6 +1015,24 @@ WOWEE_FSR3_WRAPPER_EXPORT int32_t wowee_fsr3_wrapper_dispatch_upscale(WoweeFsr3W
             return -1;
         }
     }
+#elif defined(__linux__)
+    if (ctx->backend == WrapperBackend::Dx12Bridge) {
+        const uint32_t requiredMask =
+            WOWEE_FSR3_WRAPPER_EXTERNAL_COLOR_MEMORY |
+            WOWEE_FSR3_WRAPPER_EXTERNAL_DEPTH_MEMORY |
+            WOWEE_FSR3_WRAPPER_EXTERNAL_MOTION_MEMORY |
+            WOWEE_FSR3_WRAPPER_EXTERNAL_OUTPUT_MEMORY |
+            WOWEE_FSR3_WRAPPER_EXTERNAL_ACQUIRE_SEMAPHORE |
+            WOWEE_FSR3_WRAPPER_EXTERNAL_RELEASE_SEMAPHORE;
+        if ((dispatchDesc->externalFlags & requiredMask) != requiredMask ||
+            dispatchDesc->colorMemoryHandle == 0 || dispatchDesc->depthMemoryHandle == 0 ||
+            dispatchDesc->motionVectorMemoryHandle == 0 || dispatchDesc->outputMemoryHandle == 0 ||
+            dispatchDesc->acquireSemaphoreHandle == 0 || dispatchDesc->releaseSemaphoreHandle == 0 ||
+            dispatchDesc->acquireSemaphoreValue == 0 || dispatchDesc->releaseSemaphoreValue == 0) {
+            setContextError(ctx, "dx12_bridge dispatch missing required external FDs for upscale");
+            return -1;
+        }
+    }
 #endif
 
     FfxResourceDescription colorDesc = makeResourceDescription(
@@ -1132,6 +1212,21 @@ WOWEE_FSR3_WRAPPER_EXPORT int32_t wowee_fsr3_wrapper_dispatch_framegen(WoweeFsr3
             !openSharedFenceHandle(ctx->dx12Device, dispatchDesc->acquireSemaphoreHandle, "acquire semaphore", importError) ||
             !openSharedFenceHandle(ctx->dx12Device, dispatchDesc->releaseSemaphoreHandle, "release semaphore", importError)) {
             setContextError(ctx, importError.c_str());
+            return -1;
+        }
+    }
+#elif defined(__linux__)
+    if (ctx->backend == WrapperBackend::Dx12Bridge) {
+        const uint32_t requiredMask =
+            WOWEE_FSR3_WRAPPER_EXTERNAL_OUTPUT_MEMORY |
+            WOWEE_FSR3_WRAPPER_EXTERNAL_FRAMEGEN_OUTPUT_MEMORY |
+            WOWEE_FSR3_WRAPPER_EXTERNAL_ACQUIRE_SEMAPHORE |
+            WOWEE_FSR3_WRAPPER_EXTERNAL_RELEASE_SEMAPHORE;
+        if ((dispatchDesc->externalFlags & requiredMask) != requiredMask ||
+            dispatchDesc->outputMemoryHandle == 0 || dispatchDesc->frameGenOutputMemoryHandle == 0 ||
+            dispatchDesc->acquireSemaphoreHandle == 0 || dispatchDesc->releaseSemaphoreHandle == 0 ||
+            dispatchDesc->acquireSemaphoreValue == 0 || dispatchDesc->releaseSemaphoreValue == 0) {
+            setContextError(ctx, "dx12_bridge dispatch missing required external FDs for frame generation");
             return -1;
         }
     }

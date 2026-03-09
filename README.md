@@ -218,6 +218,9 @@ make -j$(nproc)
       - Set to `0` to skip adapter/device preflight.
     - Windows `dx12_bridge` preflight checks Vulkan Win32 interop funcs/extensions before enabling DX12 path.
     - Linux `dx12_bridge` is enabled for wrapper runtime compatibility mode and uses Vulkan dispatch symbols in this build.
+    - Linux `dx12_bridge` preflight validates Vulkan FD interop funcs/extensions:
+      - `vkGetMemoryFdKHR`, `vkGetSemaphoreFdKHR`
+      - `VK_KHR_external_memory`, `VK_KHR_external_memory_fd`, `VK_KHR_external_semaphore`, `VK_KHR_external_semaphore_fd`
   - Path B wrapper libraries must export the clean wrapper ABI (`include/rendering/amd_fsr3_wrapper_abi.h`):
     - ABI version is currently `3` (dispatch includes external-memory/semaphore handles plus acquire/release fence values for bridge sync).
     - `wowee_fsr3_wrapper_get_abi_version`

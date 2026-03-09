@@ -59,6 +59,9 @@ Runtime note:
 - `dx12_bridge` is opt-in.
 - On Windows: `dx12_bridge` performs DX12/Vulkan preflight, then loads the first runtime library exposing the required FSR3 dispatch exports.
 - On Linux: `dx12_bridge` is enabled for wrapper runtime compatibility mode and uses Vulkan dispatch symbols in this build.
+- Linux bridge preflight validates Vulkan FD interop support:
+  - required device functions: `vkGetMemoryFdKHR`, `vkGetSemaphoreFdKHR`
+  - required device extensions: `VK_KHR_external_memory`, `VK_KHR_external_memory_fd`, `VK_KHR_external_semaphore`, `VK_KHR_external_semaphore_fd`
 - DX12 bridge runtime override:
   - `WOWEE_FSR3_DX12_RUNTIME_LIB=<path-to-amd_fidelityfx_framegeneration_dx12.dll>`
 - DX12 bridge device preflight toggle:
