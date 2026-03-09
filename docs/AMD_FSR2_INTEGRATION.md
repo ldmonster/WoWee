@@ -15,6 +15,8 @@ Detection expects:
 
 - `extern/FidelityFX-FSR2/src/ffx-fsr2-api/ffx_fsr2.h`
 - `extern/FidelityFX-FSR2/src/ffx-fsr2-api/vk/shaders/ffx_fsr2_accumulate_pass_permutations.h`
+- If permutation headers are missing in the SDK checkout, WoWee CMake copies a vendored snapshot from:
+  - `third_party/fsr2_vk_permutations`
 
 ## Build Flags
 
@@ -44,4 +46,5 @@ Detection expects:
 
 - `build-linux-amd-fsr2` clones AMD's repository and configures with `WOWEE_ENABLE_AMD_FSR2=ON`.
 - Some upstream SDK checkouts do not include generated Vulkan permutation headers.
-- In that case, WoWee CMake intentionally falls back to the internal backend so CI remains buildable.
+- WoWee bootstraps those headers from the vendored snapshot so AMD backend builds remain cross-platform and deterministic.
+- If SDK headers are missing entirely, WoWee still falls back to the internal backend.

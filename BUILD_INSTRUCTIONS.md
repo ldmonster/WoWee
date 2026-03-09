@@ -220,5 +220,7 @@ You can also specify an expansion: `.\extract_assets.ps1 "C:\Games\WoW\Data" wot
 - AMD FSR2 SDK is fetched automatically by `build.sh` / `rebuild.sh` / `build.ps1` / `rebuild.ps1` from:
   - `https://github.com/GPUOpen-Effects/FidelityFX-FSR2.git`
   - target path: `extern/FidelityFX-FSR2`
-- AMD backend is enabled only when SDK headers and generated Vulkan permutation headers are present.
-  If generated permutation headers are missing, the build uses the internal FSR2 fallback path.
+- AMD backend is enabled when SDK headers and Vulkan permutation headers are available.
+- If upstream SDK checkout is missing generated Vulkan permutation headers, CMake bootstraps them from:
+  - `third_party/fsr2_vk_permutations`
+- If SDK headers are missing, the build uses the internal FSR2 fallback path.

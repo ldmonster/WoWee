@@ -177,7 +177,8 @@ make -j$(nproc)
 - The renderer enables the AMD backend only when both are present:
   - `extern/FidelityFX-FSR2/src/ffx-fsr2-api/ffx_fsr2.h`
   - `extern/FidelityFX-FSR2/src/ffx-fsr2-api/vk/shaders/ffx_fsr2_accumulate_pass_permutations.h`
-- If SDK files or generated Vulkan permutation headers are missing, CMake falls back to the internal non-AMD FSR2 path automatically.
+- If the SDK checkout is missing generated Vulkan permutation headers, CMake auto-bootstraps them from `third_party/fsr2_vk_permutations`.
+- If SDK files are missing entirely, CMake falls back to the internal non-AMD FSR2 path automatically.
 
 ### Current FSR Defaults
 

@@ -119,7 +119,7 @@ jobs:
             echo "AMD FSR2 Vulkan permutation headers detected."
           else
             echo "WARNING: AMD FSR2 Vulkan permutation headers not found in SDK checkout."
-            echo "Build will continue; WoWee CMake will fall back to internal FSR2 backend."
+            echo "Build will continue; WoWee CMake will bootstrap vendored headers."
           fi
 
       - name: Configure (AMD ON)

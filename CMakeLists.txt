@@ -28,6 +28,20 @@ option(WOWEE_ENABLE_AMD_FSR2 "Enable AMD FidelityFX FSR2 backend when SDK is pre
 set(WOWEE_AMD_FSR2_DIR ${CMAKE_SOURCE_DIR}/extern/FidelityFX-FSR2)
 set(WOWEE_AMD_FSR2_HEADER ${WOWEE_AMD_FSR2_DIR}/src/ffx-fsr2-api/ffx_fsr2.h)
 set(WOWEE_AMD_FSR2_VK_PERM_HEADER ${WOWEE_AMD_FSR2_DIR}/src/ffx-fsr2-api/vk/shaders/ffx_fsr2_accumulate_pass_permutations.h)
+set(WOWEE_AMD_FSR2_VK_VENDOR_DIR ${CMAKE_SOURCE_DIR}/third_party/fsr2_vk_permutations)
+
+# Upstream SDK checkouts may not ship generated Vulkan permutation headers.
+# If we have a vendored snapshot, copy it into the SDK tree before detection.
+if(WOWEE_ENABLE_AMD_FSR2 AND EXISTS ${WOWEE_AMD_FSR2_HEADER} AND NOT EXISTS ${WOWEE_AMD_FSR2_VK_PERM_HEADER} AND EXISTS ${WOWEE_AMD_FSR2_VK_VENDOR_DIR})
+    file(GLOB WOWEE_AMD_FSR2_VK_VENDOR_HEADERS "${WOWEE_AMD_FSR2_VK_VENDOR_DIR}/ffx_fsr2_*pass*.h")
+    list(LENGTH WOWEE_AMD_FSR2_VK_VENDOR_HEADERS WOWEE_AMD_FSR2_VK_VENDOR_COUNT)
+    if(WOWEE_AMD_FSR2_VK_VENDOR_COUNT GREATER 0)
+        file(MAKE_DIRECTORY ${WOWEE_AMD_FSR2_DIR}/src/ffx-fsr2-api/vk/shaders)
+        file(COPY ${WOWEE_AMD_FSR2_VK_VENDOR_HEADERS} DESTINATION ${WOWEE_AMD_FSR2_DIR}/src/ffx-fsr2-api/vk/shaders)
+        message(STATUS "AMD FSR2: bootstrapped ${WOWEE_AMD_FSR2_VK_VENDOR_COUNT} vendored Vulkan permutation headers")
+    endif()
+endif()
+
 if(WOWEE_ENABLE_AMD_FSR2 AND EXISTS ${WOWEE_AMD_FSR2_HEADER} AND EXISTS ${WOWEE_AMD_FSR2_VK_PERM_HEADER})
     message(STATUS "AMD FSR2 SDK detected at ${WOWEE_AMD_FSR2_DIR}")
     add_compile_definitions(WOWEE_HAS_AMD_FSR2=1)
