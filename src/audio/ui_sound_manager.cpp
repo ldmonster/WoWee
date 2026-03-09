@@ -105,6 +105,13 @@ bool UiSoundManager::initialize(pipeline::AssetManager* assets) {
     levelUpSounds_.resize(1);
     bool levelUpLoaded = loadSound("Sound\\Interface\\LevelUp.wav", levelUpSounds_[0], assets);
 
+    // Load achievement sound (WotLK: Sound\Interface\AchievementSound.wav)
+    achievementSounds_.resize(1);
+    if (!loadSound("Sound\\Interface\\AchievementSound.wav", achievementSounds_[0], assets)) {
+        // Fallback to level-up sound if achievement sound is missing
+        achievementSounds_ = levelUpSounds_;
+    }
+
     // Load error/feedback sounds
     errorSounds_.resize(1);
     loadSound("Sound\\Interface\\Error.wav", errorSounds_[0], assets);
@@ -209,6 +216,9 @@ void UiSoundManager::playDrinking() { playSound(drinkingSounds_); }
 
 // Level up
 void UiSoundManager::playLevelUp() { playSound(levelUpSounds_); }
+
+// Achievement
+void UiSoundManager::playAchievementAlert() { playSound(achievementSounds_); }
 
 // Error/feedback
 void UiSoundManager::playError() { playSound(errorSounds_); }

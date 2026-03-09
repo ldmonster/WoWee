@@ -2089,6 +2089,13 @@ void Application::setupUICallbacks() {
         }
     });
 
+    // Achievement earned callback — show toast banner
+    gameHandler->setAchievementEarnedCallback([this](uint32_t achievementId) {
+        if (uiManager) {
+            uiManager->getGameScreen().triggerAchievementToast(achievementId);
+        }
+    });
+
     // Other player level-up callback — trigger 3D effect + chat notification
     gameHandler->setOtherPlayerLevelUpCallback([this](uint64_t guid, uint32_t newLevel) {
         if (!gameHandler || !renderer) return;

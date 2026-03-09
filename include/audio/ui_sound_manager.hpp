@@ -67,6 +67,9 @@ public:
     // Level up
     void playLevelUp();
 
+    // Achievement
+    void playAchievementAlert();
+
     // Error/feedback
     void playError();
     void playTargetSelect();
@@ -114,6 +117,7 @@ private:
     std::vector<UISample> drinkingSounds_;
 
     std::vector<UISample> levelUpSounds_;
+    std::vector<UISample> achievementSounds_;
 
     std::vector<UISample> errorSounds_;
     std::vector<UISample> selectTargetSounds_;

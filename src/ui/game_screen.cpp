@@ -421,6 +421,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderEscapeMenu();
     renderSettingsWindow();
     renderDingEffect();
+    renderAchievementToast();
 
     // World map (M key toggle handled inside)
     renderWorldMap(gameHandler);
@@ -8876,6 +8877,75 @@ void GameScreen::renderDingEffect() {
         draw->AddText(font, dingSize, ImVec2(dx, dy),
                       IM_COL32(255, 255, 150, (int)(alpha * 255)), ding);
     }
+}
+
+void GameScreen::triggerAchievementToast(uint32_t achievementId) {
+    achievementToastId_    = achievementId;
+    achievementToastTimer_ = ACHIEVEMENT_TOAST_DURATION;
+
+    // Play a UI sound if available
+    auto* renderer = core::Application::getInstance().getRenderer();
+    if (renderer) {
+        if (auto* sfx = renderer->getUiSoundManager()) {
+            sfx->playAchievementAlert();
+        }
+    }
+}
+
+void GameScreen::renderAchievementToast() {
+    if (achievementToastTimer_ <= 0.0f) return;
+
+    float dt = ImGui::GetIO().DeltaTime;
+    achievementToastTimer_ -= dt;
+    if (achievementToastTimer_ < 0.0f) achievementToastTimer_ = 0.0f;
+
+    auto* window = core::Application::getInstance().getWindow();
+    float screenW = window ? static_cast<float>(window->getWidth())  : 1280.0f;
+    float screenH = window ? static_cast<float>(window->getHeight()) :  720.0f;
+
+    // Slide in from the right — fully visible for most of the duration, slides out at end
+    constexpr float SLIDE_TIME = 0.4f;
+    float  slideIn  = std::min(achievementToastTimer_, ACHIEVEMENT_TOAST_DURATION - achievementToastTimer_);
+    float  slideFrac = (ACHIEVEMENT_TOAST_DURATION > 0.0f && SLIDE_TIME > 0.0f)
+                         ? std::min(slideIn / SLIDE_TIME, 1.0f)
+                         : 1.0f;
+
+    constexpr float TOAST_W = 280.0f;
+    constexpr float TOAST_H =  60.0f;
+    float xFull   = screenW - TOAST_W - 20.0f;
+    float xHidden = screenW + 10.0f;
+    float toastX  = xHidden + (xFull - xHidden) * slideFrac;
+    float toastY  = screenH - TOAST_H - 80.0f;  // above action bar area
+
+    float alpha = std::min(1.0f, achievementToastTimer_ / 0.5f);  // fade at very end
+
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+
+    // Background panel (gold border, dark fill)
+    ImVec2 tl(toastX,            toastY);
+    ImVec2 br(toastX + TOAST_W,  toastY + TOAST_H);
+    draw->AddRectFilled(tl, br, IM_COL32(30, 20, 10, (int)(alpha * 230)), 6.0f);
+    draw->AddRect(tl, br, IM_COL32(200, 170, 50, (int)(alpha * 255)), 6.0f, 0, 2.0f);
+
+    // Title
+    ImFont* font = ImGui::GetFont();
+    float   titleSize = 14.0f;
+    float   bodySize  = 12.0f;
+    const char* title = "Achievement Earned!";
+    float titleW = font->CalcTextSizeA(titleSize, FLT_MAX, 0.0f, title).x;
+    float titleX = toastX + (TOAST_W - titleW) * 0.5f;
+    draw->AddText(font, titleSize, ImVec2(titleX + 1, toastY + 8 + 1),
+                  IM_COL32(0, 0, 0, (int)(alpha * 180)), title);
+    draw->AddText(font, titleSize, ImVec2(titleX, toastY + 8),
+                  IM_COL32(255, 215, 0, (int)(alpha * 255)), title);
+
+    // Achievement ID line (until we have Achievement.dbc name lookup)
+    char idBuf[64];
+    std::snprintf(idBuf, sizeof(idBuf), "Achievement #%u", achievementToastId_);
+    float idW = font->CalcTextSizeA(bodySize, FLT_MAX, 0.0f, idBuf).x;
+    float idX = toastX + (TOAST_W - idW) * 0.5f;
+    draw->AddText(font, bodySize, ImVec2(idX, toastY + 28),
+                  IM_COL32(220, 200, 150, (int)(alpha * 255)), idBuf);
 }
 
 // ---------------------------------------------------------------------------

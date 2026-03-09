@@ -326,8 +326,15 @@ private:
     uint32_t dingLevel_ = 0;
     void renderDingEffect();
 
+    // Achievement toast banner
+    static constexpr float ACHIEVEMENT_TOAST_DURATION = 5.0f;
+    float achievementToastTimer_ = 0.0f;
+    uint32_t achievementToastId_ = 0;
+    void renderAchievementToast();
+
 public:
     void triggerDing(uint32_t newLevel);
+    void triggerAchievementToast(uint32_t achievementId);
 };
 
 } // namespace ui

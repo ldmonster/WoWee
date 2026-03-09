@@ -834,6 +834,10 @@ public:
     using OtherPlayerLevelUpCallback = std::function<void(uint64_t guid, uint32_t newLevel)>;
     void setOtherPlayerLevelUpCallback(OtherPlayerLevelUpCallback cb) { otherPlayerLevelUpCallback_ = std::move(cb); }
 
+    // Achievement earned callback — fires when SMSG_ACHIEVEMENT_EARNED is received
+    using AchievementEarnedCallback = std::function<void(uint32_t achievementId)>;
+    void setAchievementEarnedCallback(AchievementEarnedCallback cb) { achievementEarnedCallback_ = std::move(cb); }
+
     // Mount state
     using MountCallback = std::function<void(uint32_t mountDisplayId)>;  // 0 = dismount
     void setMountCallback(MountCallback cb) { mountCallback_ = std::move(cb); }
@@ -1166,6 +1170,7 @@ private:
     void handleSpellGo(network::Packet& packet);
     void handleSpellCooldown(network::Packet& packet);
     void handleCooldownEvent(network::Packet& packet);
+    void handleAchievementEarned(network::Packet& packet);
     void handleAuraUpdate(network::Packet& packet, bool isAll);
     void handleLearnedSpell(network::Packet& packet);
     void handleSupercededSpell(network::Packet& packet);
@@ -1873,6 +1878,7 @@ private:
     ChargeCallback chargeCallback_;
     LevelUpCallback levelUpCallback_;
     OtherPlayerLevelUpCallback otherPlayerLevelUpCallback_;
+    AchievementEarnedCallback achievementEarnedCallback_;
     MountCallback mountCallback_;
     TaxiPrecacheCallback taxiPrecacheCallback_;
     TaxiOrientationCallback taxiOrientationCallback_;

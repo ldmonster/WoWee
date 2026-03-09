@@ -1825,6 +1825,12 @@ void GameHandler::handlePacket(network::Packet& packet) {
             }
             break;
         }
+        case Opcode::SMSG_ACHIEVEMENT_EARNED:
+            handleAchievementEarned(packet);
+            break;
+        case Opcode::SMSG_ALL_ACHIEVEMENT_DATA:
+            // Initial data burst on login — ignored for now (no achievement tracker UI).
+            break;
         case Opcode::SMSG_CANCEL_AUTO_REPEAT:
             break; // Server signals to stop a repeating spell (wand/shoot); no client action needed
         case Opcode::SMSG_AURA_UPDATE:
@@ -14868,6 +14874,55 @@ void GameHandler::handleAuctionCommandResult(network::Packet& packet) {
     }
     LOG_INFO("SMSG_AUCTION_COMMAND_RESULT: action=", actionName,
              " error=", result.errorCode);
+}
+
+// ---------------------------------------------------------------------------
+// SMSG_ACHIEVEMENT_EARNED (WotLK 3.3.5a wire 0x4AB)
+//   uint64 guid          — player who earned it (may be another player)
+//   uint32 achievementId — Achievement.dbc ID
+//   PackedTime date      — uint32 bitfield (seconds since epoch)
+//   uint32 realmFirst    — how many on realm also got it (0 = realm first)
+// ---------------------------------------------------------------------------
+void GameHandler::handleAchievementEarned(network::Packet& packet) {
+    size_t remaining = packet.getSize() - packet.getReadPos();
+    if (remaining < 16) return;  // guid(8) + id(4) + date(4)
+
+    uint64_t guid          = packet.readUInt64();
+    uint32_t achievementId = packet.readUInt32();
+    /*uint32_t date =*/ packet.readUInt32();  // PackedTime — not displayed
+
+    // Show chat notification
+    bool isSelf = (guid == playerGuid);
+    if (isSelf) {
+        char buf[128];
+        std::snprintf(buf, sizeof(buf),
+                      "Achievement earned! (ID %u)", achievementId);
+        addSystemChatMessage(buf);
+
+        if (achievementEarnedCallback_) {
+            achievementEarnedCallback_(achievementId);
+        }
+    } else {
+        // Another player in the zone earned an achievement
+        std::string senderName;
+        auto entity = entityManager.getEntity(guid);
+        if (auto* unit = dynamic_cast<Unit*>(entity.get())) {
+            senderName = unit->getName();
+        }
+        if (senderName.empty()) {
+            char tmp[32];
+            std::snprintf(tmp, sizeof(tmp), "0x%llX",
+                          static_cast<unsigned long long>(guid));
+            senderName = tmp;
+        }
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+                      "%s has earned an achievement! (ID %u)", senderName.c_str(), achievementId);
+        addSystemChatMessage(buf);
+    }
+
+    LOG_INFO("SMSG_ACHIEVEMENT_EARNED: guid=0x", std::hex, guid, std::dec,
+             " achievementId=", achievementId, " self=", isSelf);
 }
 
 } // namespace game
