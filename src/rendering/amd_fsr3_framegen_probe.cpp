@@ -1,15 +1,8 @@
 #include <cstddef>
-#if WOWEE_AMD_FFX_SDK_KITS
 #include <ffx_fsr3upscaler.h>
 #include <ffx_frameinterpolation.h>
 #include <ffx_opticalflow.h>
 #include <ffx_vk.h>
-#else
-#include <FidelityFX/host/ffx_fsr3upscaler.h>
-#include <FidelityFX/host/ffx_frameinterpolation.h>
-#include <FidelityFX/host/ffx_opticalflow.h>
-#include <FidelityFX/host/backends/vk/ffx_vk.h>
-#endif
 
 namespace wowee::rendering {
 
@@ -21,11 +14,7 @@ bool amdFsr3FramegenCompileProbe() {
     FfxFrameInterpolationContext fiContext{};
     FfxOpticalflowContext ofContext{};
     FfxInterface backend{};
-#if WOWEE_AMD_FFX_SDK_KITS
     FfxApiDimensions2D renderSize{};
-#else
-    FfxDimensions2D renderSize{};
-#endif
 
     static_assert(FFX_FSR3UPSCALER_VERSION_MAJOR >= 3, "Expected FSR3 upscaler v3+");
     static_assert(FFX_FRAMEINTERPOLATION_VERSION_MAJOR >= 1, "Expected frame interpolation v1+");

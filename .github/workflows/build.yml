@@ -82,30 +82,15 @@ jobs:
             echo "WoWee CMake will bootstrap vendored headers."
           fi
 
-      - name: Check FidelityFX-SDK Vulkan framegen files
+      - name: Check FidelityFX-SDK Kits framegen headers
         run: |
           set -euo pipefail
-          SDK_DIR="$PWD/extern/FidelityFX-SDK/sdk"
           KITS_DIR="$PWD/extern/FidelityFX-SDK/Kits/FidelityFX"
-          LEGACY_OK=0
-          KITS_OK=0
-          if [ -f "$SDK_DIR/include/FidelityFX/host/ffx_frameinterpolation.h" ]; then
-            LEGACY_OK=1
-          fi
-          if [ -f "$KITS_DIR/framegeneration/include/ffx_framegeneration.h" ]; then
-            KITS_OK=1
-          fi
-
-          if [ "$LEGACY_OK" -eq 1 ] && [ -f "$SDK_DIR/include/FidelityFX/gpu/frameinterpolation/ffx_frameinterpolation_callbacks_glsl.h" ] \
-             && [ -f "$SDK_DIR/include/FidelityFX/gpu/opticalflow/ffx_opticalflow_callbacks_glsl.h" ] \
-             && [ -f "$SDK_DIR/src/backends/vk/CMakeShadersFrameinterpolation.txt" ] \
-             && [ -f "$SDK_DIR/src/backends/vk/CMakeShadersOpticalflow.txt" ]; then
-            echo "FidelityFX-SDK legacy Vulkan framegen files detected."
-          elif [ "$KITS_OK" -eq 1 ]; then
-            echo "FidelityFX-SDK Kits layout detected (DX12-focused framegeneration APIs available)."
-          else
-            echo "FidelityFX-SDK Vulkan framegen files are missing in this checkout; build continues."
-          fi
+          test -f "$KITS_DIR/upscalers/fsr3/include/ffx_fsr3upscaler.h"
+          test -f "$KITS_DIR/framegeneration/fsr3/include/ffx_frameinterpolation.h"
+          test -f "$KITS_DIR/framegeneration/fsr3/include/ffx_opticalflow.h"
+          test -f "$KITS_DIR/backend/vk/ffx_vk.h"
+          echo "FidelityFX-SDK Kits framegen headers detected."
 
       - name: Configure (AMD ON)
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DWOWEE_ENABLE_AMD_FSR2=ON

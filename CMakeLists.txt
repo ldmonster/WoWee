@@ -95,21 +95,8 @@ else()
 endif()
 
 # AMD FidelityFX SDK (FSR3 frame generation interfaces) detection under extern/FidelityFX-SDK
-set(WOWEE_AMD_FFX_SDK_DIR ${CMAKE_SOURCE_DIR}/extern/FidelityFX-SDK/sdk)
 set(WOWEE_AMD_FFX_SDK_KITS_DIR ${CMAKE_SOURCE_DIR}/extern/FidelityFX-SDK/Kits/FidelityFX)
-set(WOWEE_AMD_FFX_SDK_FI_HEADER ${WOWEE_AMD_FFX_SDK_DIR}/include/FidelityFX/host/ffx_frameinterpolation.h)
-set(WOWEE_AMD_FFX_SDK_OF_HEADER ${WOWEE_AMD_FFX_SDK_DIR}/include/FidelityFX/host/ffx_opticalflow.h)
-set(WOWEE_AMD_FFX_SDK_FSR3_HEADER ${WOWEE_AMD_FFX_SDK_DIR}/include/FidelityFX/host/ffx_fsr3upscaler.h)
-set(WOWEE_AMD_FFX_SDK_VK_HEADER ${WOWEE_AMD_FFX_SDK_DIR}/include/FidelityFX/host/backends/vk/ffx_vk.h)
 set(WOWEE_AMD_FFX_SDK_KITS_FG_HEADER ${WOWEE_AMD_FFX_SDK_KITS_DIR}/framegeneration/include/ffx_framegeneration.h)
-
-set(WOWEE_AMD_FFX_SDK_LEGACY_READY FALSE)
-if(EXISTS ${WOWEE_AMD_FFX_SDK_FI_HEADER}
-   AND EXISTS ${WOWEE_AMD_FFX_SDK_OF_HEADER}
-   AND EXISTS ${WOWEE_AMD_FFX_SDK_FSR3_HEADER}
-   AND EXISTS ${WOWEE_AMD_FFX_SDK_VK_HEADER})
-    set(WOWEE_AMD_FFX_SDK_LEGACY_READY TRUE)
-endif()
 
 set(WOWEE_AMD_FFX_SDK_KITS_READY FALSE)
 if(EXISTS ${WOWEE_AMD_FFX_SDK_KITS_DIR}/upscalers/fsr3/include/ffx_fsr3upscaler.h
@@ -119,14 +106,9 @@ if(EXISTS ${WOWEE_AMD_FFX_SDK_KITS_DIR}/upscalers/fsr3/include/ffx_fsr3upscaler.
     set(WOWEE_AMD_FFX_SDK_KITS_READY TRUE)
 endif()
 
-if(WOWEE_ENABLE_AMD_FSR3_FRAMEGEN AND (WOWEE_AMD_FFX_SDK_LEGACY_READY OR WOWEE_AMD_FFX_SDK_KITS_READY))
-    if(WOWEE_AMD_FFX_SDK_LEGACY_READY)
-        message(STATUS "AMD FidelityFX-SDK framegen headers detected at ${WOWEE_AMD_FFX_SDK_DIR} (legacy layout)")
-        add_compile_definitions(WOWEE_AMD_FFX_SDK_KITS=0)
-    else()
-        message(STATUS "AMD FidelityFX-SDK framegen headers detected at ${WOWEE_AMD_FFX_SDK_KITS_DIR} (Kits layout)")
-        add_compile_definitions(WOWEE_AMD_FFX_SDK_KITS=1)
-    endif()
+if(WOWEE_ENABLE_AMD_FSR3_FRAMEGEN AND WOWEE_AMD_FFX_SDK_KITS_READY)
+    message(STATUS "AMD FidelityFX-SDK framegen headers detected at ${WOWEE_AMD_FFX_SDK_KITS_DIR} (Kits layout)")
+    add_compile_definitions(WOWEE_AMD_FFX_SDK_KITS=1)
     add_compile_definitions(WOWEE_HAS_AMD_FSR3_FRAMEGEN=1)
     add_library(wowee_fsr3_framegen_amd_vk_probe STATIC
         src/rendering/amd_fsr3_framegen_probe.cpp
@@ -135,23 +117,17 @@ if(WOWEE_ENABLE_AMD_FSR3_FRAMEGEN AND (WOWEE_AMD_FFX_SDK_LEGACY_READY OR WOWEE_A
         CXX_STANDARD 17
         CXX_STANDARD_REQUIRED ON
     )
-    if(WOWEE_AMD_FFX_SDK_LEGACY_READY)
-        target_include_directories(wowee_fsr3_framegen_amd_vk_probe PUBLIC
-            ${WOWEE_AMD_FFX_SDK_DIR}/include
-        )
-    else()
-        target_include_directories(wowee_fsr3_framegen_amd_vk_probe PUBLIC
-            ${WOWEE_AMD_FFX_SDK_KITS_DIR}/upscalers/fsr3/include
-            ${WOWEE_AMD_FFX_SDK_KITS_DIR}/framegeneration/fsr3/include
-            ${WOWEE_AMD_FFX_SDK_KITS_DIR}/framegeneration/include
-            ${WOWEE_AMD_FFX_SDK_KITS_DIR}/backend/vk
-            ${WOWEE_AMD_FFX_SDK_KITS_DIR}/api/internal
-            ${WOWEE_AMD_FFX_SDK_KITS_DIR}/api/include
-        )
-    endif()
+    target_include_directories(wowee_fsr3_framegen_amd_vk_probe PUBLIC
+        ${WOWEE_AMD_FFX_SDK_KITS_DIR}/upscalers/fsr3/include
+        ${WOWEE_AMD_FFX_SDK_KITS_DIR}/framegeneration/fsr3/include
+        ${WOWEE_AMD_FFX_SDK_KITS_DIR}/framegeneration/include
+        ${WOWEE_AMD_FFX_SDK_KITS_DIR}/backend/vk
+        ${WOWEE_AMD_FFX_SDK_KITS_DIR}/api/internal
+        ${WOWEE_AMD_FFX_SDK_KITS_DIR}/api/include
+    )
     target_link_libraries(wowee_fsr3_framegen_amd_vk_probe PUBLIC Vulkan::Vulkan)
 
-    if(WOWEE_BUILD_AMD_FSR3_RUNTIME AND WOWEE_AMD_FFX_SDK_KITS_READY)
+    if(WOWEE_BUILD_AMD_FSR3_RUNTIME)
         message(STATUS "AMD FSR3 Path A runtime target enabled: build with target 'wowee_fsr3_official_runtime_copy'")
         set(WOWEE_AMD_FSR3_RUNTIME_BUILD_DIR ${CMAKE_BINARY_DIR}/ffx_sdk_runtime_build)
         if(WIN32)
@@ -211,12 +187,9 @@ else()
     add_compile_definitions(WOWEE_AMD_FFX_SDK_KITS=0)
     if(WOWEE_ENABLE_AMD_FSR3_FRAMEGEN)
         if(EXISTS ${WOWEE_AMD_FFX_SDK_KITS_FG_HEADER})
-            message(STATUS "FidelityFX-SDK Kits layout detected at ${WOWEE_AMD_FFX_SDK_KITS_DIR}, "
-                           "but legacy sdk/include headers required by WoWee FSR3 probe/runtime are not present. "
-                           "FSR3 framegen interface probe disabled.")
+            message(STATUS "FidelityFX-SDK Kits layout detected at ${WOWEE_AMD_FFX_SDK_KITS_DIR}, but required FSR3 headers are incomplete. FSR3 framegen interface probe disabled.")
         else()
-            message(WARNING "AMD FidelityFX-SDK framegen headers not found at ${WOWEE_AMD_FFX_SDK_DIR}; "
-                            "FSR3 framegen interface probe disabled.")
+            message(WARNING "AMD FidelityFX-SDK Kits headers not found at ${WOWEE_AMD_FFX_SDK_KITS_DIR}; FSR3 framegen interface probe disabled.")
         endif()
     endif()
 endif()
