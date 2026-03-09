@@ -3024,7 +3024,49 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_SET_PCT_SPELL_MODIFIER:
         case Opcode::SMSG_SPELL_DELAYED:
         case Opcode::SMSG_EQUIPMENT_SET_SAVED:
-        case Opcode::SMSG_PERIODICAURALOG:
+        case Opcode::SMSG_PERIODICAURALOG: {
+            // packed_guid victim, packed_guid caster, uint32 spellId, uint32 count, then per-effect
+            if (packet.getSize() - packet.getReadPos() < 2) break;
+            uint64_t victimGuid = UpdateObjectParser::readPackedGuid(packet);
+            if (packet.getSize() - packet.getReadPos() < 2) break;
+            uint64_t casterGuid = UpdateObjectParser::readPackedGuid(packet);
+            if (packet.getSize() - packet.getReadPos() < 8) break;
+            uint32_t spellId = packet.readUInt32();
+            uint32_t count   = packet.readUInt32();
+            bool isPlayerVictim = (victimGuid == playerGuid);
+            bool isPlayerCaster = (casterGuid == playerGuid);
+            if (!isPlayerVictim && !isPlayerCaster) {
+                packet.setReadPos(packet.getSize());
+                break;
+            }
+            for (uint32_t i = 0; i < count && packet.getSize() - packet.getReadPos() >= 1; ++i) {
+                uint8_t auraType = packet.readUInt8();
+                if (auraType == 3 || auraType == 89) {
+                    // PERIODIC_DAMAGE / PERIODIC_DAMAGE_PERCENT: damage+school+absorbed+resisted
+                    if (packet.getSize() - packet.getReadPos() < 16) break;
+                    uint32_t dmg      = packet.readUInt32();
+                    /*uint32_t school=*/ packet.readUInt32();
+                    /*uint32_t abs=*/    packet.readUInt32();
+                    /*uint32_t res=*/    packet.readUInt32();
+                    addCombatText(CombatTextEntry::PERIODIC_DAMAGE, static_cast<int32_t>(dmg),
+                                  spellId, isPlayerCaster);
+                } else if (auraType == 8 || auraType == 124 || auraType == 45) {
+                    // PERIODIC_HEAL / PERIODIC_HEAL_PCT / OBS_MOD_HEALTH: heal+maxHeal+overHeal
+                    if (packet.getSize() - packet.getReadPos() < 12) break;
+                    uint32_t heal    = packet.readUInt32();
+                    /*uint32_t max=*/  packet.readUInt32();
+                    /*uint32_t over=*/ packet.readUInt32();
+                    addCombatText(CombatTextEntry::PERIODIC_HEAL, static_cast<int32_t>(heal),
+                                  spellId, isPlayerCaster);
+                } else {
+                    // Unknown/untracked aura type — stop parsing this event safely
+                    packet.setReadPos(packet.getSize());
+                    break;
+                }
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
         case Opcode::SMSG_SPELLENERGIZELOG:
         case Opcode::SMSG_ENVIRONMENTAL_DAMAGE_LOG:
         case Opcode::SMSG_SET_PROFICIENCY:
