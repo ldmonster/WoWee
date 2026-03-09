@@ -2193,6 +2193,39 @@ void GameHandler::handlePacket(network::Packet& packet) {
             }
             break;
 
+        case Opcode::SMSG_SERVER_MESSAGE: {
+            // uint32 type, string message
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                /*uint32_t msgType =*/ packet.readUInt32();
+                std::string msg = packet.readString();
+                if (!msg.empty()) addSystemChatMessage("[Server] " + msg);
+            }
+            break;
+        }
+        case Opcode::SMSG_CHAT_SERVER_MESSAGE: {
+            // uint32 type + string text
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                /*uint32_t msgType =*/ packet.readUInt32();
+                std::string msg = packet.readString();
+                if (!msg.empty()) addSystemChatMessage("[Announcement] " + msg);
+            }
+            break;
+        }
+        case Opcode::SMSG_AREA_TRIGGER_MESSAGE: {
+            // uint32 size, then string
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                /*uint32_t len =*/ packet.readUInt32();
+                std::string msg = packet.readString();
+                if (!msg.empty()) addSystemChatMessage(msg);
+            }
+            break;
+        }
+        case Opcode::SMSG_TRIGGER_CINEMATIC:
+            // uint32 cinematicId — we don't play cinematics; consume and skip.
+            packet.setReadPos(packet.getSize());
+            LOG_DEBUG("SMSG_TRIGGER_CINEMATIC: skipped");
+            break;
+
         case Opcode::SMSG_LOOT_MONEY_NOTIFY: {
             // Format: uint32 money + uint8 soleLooter
             if (packet.getSize() - packet.getReadPos() >= 4) {
