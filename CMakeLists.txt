@@ -156,23 +156,53 @@ if(WOWEE_ENABLE_AMD_FSR3_FRAMEGEN AND WOWEE_AMD_FFX_SDK_KITS_READY)
             set(WOWEE_AMD_FSR3_RUNTIME_BUILD_TYPE Release)
         endif()
 
-        add_custom_target(wowee_fsr3_official_runtime_build
-            COMMAND ${CMAKE_COMMAND}
-                -S ${WOWEE_AMD_FFX_SDK_KITS_DIR}
-                -B ${WOWEE_AMD_FSR3_RUNTIME_BUILD_DIR}
-                -DCMAKE_BUILD_TYPE=${WOWEE_AMD_FSR3_RUNTIME_BUILD_TYPE}
-                -DFFX_BUILD_VK=ON
-                -DFFX_BUILD_FRAMEGENERATION=ON
-                -DFFX_BUILD_UPSCALER=ON
-            COMMAND bash ${CMAKE_SOURCE_DIR}/tools/generate_ffx_sdk_vk_permutations.sh
-                ${CMAKE_SOURCE_DIR}/extern/FidelityFX-SDK
-            COMMAND ${CMAKE_COMMAND}
-                --build ${WOWEE_AMD_FSR3_RUNTIME_BUILD_DIR}
-                --config $<CONFIG>
-                --parallel
-            COMMENT "Building native AMD FSR3 runtime (Path A) from FidelityFX-SDK Kits"
-            VERBATIM
+        # Locate bash at configure time so the build-time COMMAND works on Windows
+        # (cmake custom commands run via cmd.exe on Windows, so bare 'bash' is not found).
+        find_program(BASH_EXECUTABLE bash
+            HINTS
+                /usr/bin
+                /bin
+                "${MSYS2_PATH}/usr/bin"
+                "$ENV{MSYS2_PATH}/usr/bin"
+                "C:/msys64/usr/bin"
+                "D:/msys64/usr/bin"
         )
+        if(BASH_EXECUTABLE)
+            add_custom_target(wowee_fsr3_official_runtime_build
+                COMMAND ${CMAKE_COMMAND}
+                    -S ${WOWEE_AMD_FFX_SDK_KITS_DIR}
+                    -B ${WOWEE_AMD_FSR3_RUNTIME_BUILD_DIR}
+                    -DCMAKE_BUILD_TYPE=${WOWEE_AMD_FSR3_RUNTIME_BUILD_TYPE}
+                    -DFFX_BUILD_VK=ON
+                    -DFFX_BUILD_FRAMEGENERATION=ON
+                    -DFFX_BUILD_UPSCALER=ON
+                COMMAND ${BASH_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/generate_ffx_sdk_vk_permutations.sh
+                    ${CMAKE_SOURCE_DIR}/extern/FidelityFX-SDK
+                COMMAND ${CMAKE_COMMAND}
+                    --build ${WOWEE_AMD_FSR3_RUNTIME_BUILD_DIR}
+                    --config $<CONFIG>
+                    --parallel
+                COMMENT "Building native AMD FSR3 runtime (Path A) from FidelityFX-SDK Kits"
+                VERBATIM
+            )
+        else()
+            message(STATUS "bash not found; VK permutation headers will not be auto-generated")
+            add_custom_target(wowee_fsr3_official_runtime_build
+                COMMAND ${CMAKE_COMMAND}
+                    -S ${WOWEE_AMD_FFX_SDK_KITS_DIR}
+                    -B ${WOWEE_AMD_FSR3_RUNTIME_BUILD_DIR}
+                    -DCMAKE_BUILD_TYPE=${WOWEE_AMD_FSR3_RUNTIME_BUILD_TYPE}
+                    -DFFX_BUILD_VK=ON
+                    -DFFX_BUILD_FRAMEGENERATION=ON
+                    -DFFX_BUILD_UPSCALER=ON
+                COMMAND ${CMAKE_COMMAND}
+                    --build ${WOWEE_AMD_FSR3_RUNTIME_BUILD_DIR}
+                    --config $<CONFIG>
+                    --parallel
+                COMMENT "Building native AMD FSR3 runtime (Path A) from FidelityFX-SDK Kits (no permutation bootstrap)"
+                VERBATIM
+            )
+        endif()
 
         add_custom_target(wowee_fsr3_official_runtime_copy
             COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}

@@ -35,6 +35,13 @@ if [[ -z "${DXC:-}" ]]; then
   elif command -v dxc >/dev/null 2>&1; then
     export DXC="$(command -v dxc)"
   elif [[ "$(uname -s)" == "Linux" ]]; then
+    _arch="$(uname -m)"
+    if [[ "$_arch" == "aarch64" || "$_arch" == "arm64" ]]; then
+      echo "Linux aarch64: no official arm64 DXC release available." >&2
+      echo "Install 'directx-shader-compiler' via apt or set DXC=/path/to/dxc to regenerate." >&2
+      echo "Skipping VK permutation codegen (permutations may be pre-built in the SDK checkout)."
+      exit 0
+    fi
     echo "DXC not found; downloading Linux DXC release to /tmp/dxc ..."
     tmp_json="$(mktemp)"
     curl -sS https://api.github.com/repos/microsoft/DirectXShaderCompiler/releases/latest > "$tmp_json"
