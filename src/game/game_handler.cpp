@@ -1791,6 +1791,40 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_COOLDOWN_EVENT:
             handleCooldownEvent(packet);
             break;
+        case Opcode::SMSG_CLEAR_COOLDOWN: {
+            // spellId(u32) + guid(u64): clear cooldown for the given spell/guid
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                uint32_t spellId = packet.readUInt32();
+                // guid is present but we only track per-spell for the local player
+                spellCooldowns.erase(spellId);
+                for (auto& slot : actionBar) {
+                    if (slot.type == ActionBarSlot::SPELL && slot.id == spellId) {
+                        slot.cooldownRemaining = 0.0f;
+                    }
+                }
+                LOG_DEBUG("SMSG_CLEAR_COOLDOWN: spellId=", spellId);
+            }
+            break;
+        }
+        case Opcode::SMSG_MODIFY_COOLDOWN: {
+            // spellId(u32) + diffMs(i32): adjust cooldown remaining by diffMs
+            if (packet.getSize() - packet.getReadPos() >= 8) {
+                uint32_t spellId = packet.readUInt32();
+                int32_t  diffMs  = static_cast<int32_t>(packet.readUInt32());
+                float diffSec = diffMs / 1000.0f;
+                auto it = spellCooldowns.find(spellId);
+                if (it != spellCooldowns.end()) {
+                    it->second = std::max(0.0f, it->second + diffSec);
+                    for (auto& slot : actionBar) {
+                        if (slot.type == ActionBarSlot::SPELL && slot.id == spellId) {
+                            slot.cooldownRemaining = std::max(0.0f, slot.cooldownRemaining + diffSec);
+                        }
+                    }
+                }
+                LOG_DEBUG("SMSG_MODIFY_COOLDOWN: spellId=", spellId, " diff=", diffMs, "ms");
+            }
+            break;
+        }
         case Opcode::SMSG_CANCEL_AUTO_REPEAT:
             break; // Server signals to stop a repeating spell (wand/shoot); no client action needed
         case Opcode::SMSG_AURA_UPDATE:
