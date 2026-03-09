@@ -51,6 +51,7 @@ class WorldMap;
 class QuestMarkerRenderer;
 class CharacterPreview;
 class Shader;
+class AmdFsr3Runtime;
 
 class Renderer {
 public:
@@ -450,6 +451,7 @@ private:
         void* amdScratchBuffer = nullptr;
         size_t amdScratchBufferSize = 0;
 #endif
+        std::unique_ptr<AmdFsr3Runtime> amdFsr3Runtime;
 
         // Convergent accumulation: jitter for N frames then freeze
         int convergenceFrame = 0;

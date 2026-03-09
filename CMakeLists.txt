@@ -397,6 +397,7 @@ set(WOWEE_SOURCES
 
     # Rendering
     src/rendering/renderer.cpp
+    src/rendering/amd_fsr3_runtime.cpp
     src/rendering/shader.cpp
     src/rendering/texture.cpp
     src/rendering/mesh.cpp

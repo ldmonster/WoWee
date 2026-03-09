@@ -57,6 +57,7 @@
 #include "rendering/vk_shader.hpp"
 #include "rendering/vk_pipeline.hpp"
 #include "rendering/vk_utils.hpp"
+#include "rendering/amd_fsr3_runtime.hpp"
 #include <imgui.h>
 #include <imgui_impl_vulkan.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -71,13 +72,6 @@
 #include <unordered_set>
 #include <set>
 #include <future>
-#if WOWEE_HAS_AMD_FSR3_FRAMEGEN
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
-#endif
 
 namespace wowee {
 namespace rendering {
@@ -115,63 +109,6 @@ static int envIntOrDefault(const char* key, int defaultValue) {
     if (end == raw) return defaultValue;
     return static_cast<int>(n);
 }
-
-#if WOWEE_HAS_AMD_FSR3_FRAMEGEN
-struct AmdFsr3RuntimeApi {
-    void* libHandle = nullptr;
-    std::string loadedPath;
-
-    bool load() {
-        if (libHandle) return true;
-
-        std::vector<std::string> candidates;
-        if (const char* envPath = std::getenv("WOWEE_FFX_SDK_RUNTIME_LIB")) {
-            if (*envPath) candidates.emplace_back(envPath);
-        }
-#if defined(_WIN32)
-        candidates.emplace_back("ffx_fsr3_vk.dll");
-        candidates.emplace_back("ffx_fsr3.dll");
-#elif defined(__APPLE__)
-        candidates.emplace_back("libffx_fsr3_vk.dylib");
-        candidates.emplace_back("libffx_fsr3.dylib");
-#else
-        candidates.emplace_back("libffx_fsr3_vk.so");
-        candidates.emplace_back("libffx_fsr3.so");
-#endif
-
-        for (const std::string& path : candidates) {
-#if defined(_WIN32)
-            HMODULE h = LoadLibraryA(path.c_str());
-            if (!h) continue;
-            libHandle = reinterpret_cast<void*>(h);
-#else
-            void* h = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
-            if (!h) continue;
-            libHandle = h;
-#endif
-            loadedPath = path;
-            return true;
-        }
-        return false;
-    }
-
-    void unload() {
-        if (!libHandle) return;
-#if defined(_WIN32)
-        FreeLibrary(reinterpret_cast<HMODULE>(libHandle));
-#else
-        dlclose(libHandle);
-#endif
-        libHandle = nullptr;
-        loadedPath.clear();
-    }
-};
-
-static AmdFsr3RuntimeApi& getAmdFsr3RuntimeApi() {
-    static AmdFsr3RuntimeApi s_runtimeApi;
-    return s_runtimeApi;
-}
-#endif
 
 static std::vector<std::string> parseEmoteCommands(const std::string& raw) {
     std::vector<std::string> out;
@@ -1223,8 +1160,15 @@ void Renderer::endFrame() {
         if (fsr2_.useAmdBackend) {
             // Compute passes: motion vectors -> temporal accumulation
             dispatchMotionVectors();
-            dispatchAmdFsr2();
-            dispatchAmdFsr3Framegen();
+            if (fsr2_.amdFsr3FramegenEnabled && fsr2_.amdFsr3FramegenRuntimeReady) {
+                dispatchAmdFsr3Framegen();
+                if (!fsr2_.amdFsr3FramegenRuntimeActive) {
+                    dispatchAmdFsr2();
+                }
+            } else {
+                dispatchAmdFsr2();
+                dispatchAmdFsr3Framegen();
+            }
 
             // Transition history output: GENERAL -> SHADER_READ_ONLY for sharpen pass
             transitionImageLayout(currentCmd, fsr2_.history[fsr2_.currentHistory].image,
@@ -3908,10 +3852,22 @@ bool Renderer::initFSR2Resources() {
 #if WOWEE_HAS_AMD_FSR3_FRAMEGEN
                 if (fsr2_.amdFsr3FramegenEnabled) {
                     fsr2_.amdFsr3FramegenRuntimeActive = false;
-                    fsr2_.amdFsr3FramegenRuntimeReady = getAmdFsr3RuntimeApi().load();
+                    if (!fsr2_.amdFsr3Runtime) fsr2_.amdFsr3Runtime = std::make_unique<AmdFsr3Runtime>();
+                    AmdFsr3RuntimeInitDesc fgInit{};
+                    fgInit.physicalDevice = vkCtx->getPhysicalDevice();
+                    fgInit.device = vkCtx->getDevice();
+                    fgInit.getDeviceProcAddr = vkGetDeviceProcAddr;
+                    fgInit.maxRenderWidth = fsr2_.internalWidth;
+                    fgInit.maxRenderHeight = fsr2_.internalHeight;
+                    fgInit.displayWidth = swapExtent.width;
+                    fgInit.displayHeight = swapExtent.height;
+                    fgInit.colorFormat = vkCtx->getSwapchainFormat();
+                    fgInit.hdrInput = false;
+                    fgInit.depthInverted = false;
+                    fsr2_.amdFsr3FramegenRuntimeReady = fsr2_.amdFsr3Runtime->initialize(fgInit);
                     if (fsr2_.amdFsr3FramegenRuntimeReady) {
-                        LOG_INFO("FSR3 framegen runtime library loaded from ", getAmdFsr3RuntimeApi().loadedPath,
-                                 " (dispatch staged)");
+                        LOG_INFO("FSR3 framegen runtime library loaded from ", fsr2_.amdFsr3Runtime->loadedLibraryPath(),
+                                 " (upscale dispatch enabled)");
                     } else {
                         LOG_WARNING("FSR3 framegen toggle is enabled, but runtime library was not found. ",
                                     "Set WOWEE_FFX_SDK_RUNTIME_LIB to the SDK runtime binary path.");
@@ -4218,7 +4174,10 @@ void Renderer::destroyFSR2Resources() {
     fsr2_.amdFsr3FramegenRuntimeActive = false;
     fsr2_.amdFsr3FramegenRuntimeReady = false;
 #if WOWEE_HAS_AMD_FSR3_FRAMEGEN
-    getAmdFsr3RuntimeApi().unload();
+    if (fsr2_.amdFsr3Runtime) {
+        fsr2_.amdFsr3Runtime->shutdown();
+        fsr2_.amdFsr3Runtime.reset();
+    }
 #endif
 
     if (fsr2_.sharpenPipeline) { vkDestroyPipeline(device, fsr2_.sharpenPipeline, nullptr); fsr2_.sharpenPipeline = VK_NULL_HANDLE; }
@@ -4444,20 +4403,47 @@ void Renderer::dispatchAmdFsr3Framegen() {
         return;
     }
 #if WOWEE_HAS_AMD_FSR3_FRAMEGEN
-    // Runtime FI/OF dispatch requires linked FidelityFX-SDK implementation binaries.
-    // The integration hook is intentionally placed here (right after FSR2 dispatch),
-    // so we can enable real frame generation without refactoring the frame pipeline.
-    if (!fsr2_.amdFsr3FramegenRuntimeReady) {
-        fsr2_.amdFsr3FramegenRuntimeReady = getAmdFsr3RuntimeApi().load();
+    if (!fsr2_.amdFsr3Runtime || !fsr2_.amdFsr3FramegenRuntimeReady) {
+        fsr2_.amdFsr3FramegenRuntimeActive = false;
+        return;
     }
-    if (!fsr2_.amdFsr3FramegenRuntimeReady) {
-        static bool warnedMissingRuntime = false;
-        if (!warnedMissingRuntime) {
-            warnedMissingRuntime = true;
-            LOG_WARNING("FSR3 framegen runtime library not found; skipping frame generation dispatch.");
+
+    AmdFsr3RuntimeDispatchDesc fgDispatch{};
+    fgDispatch.commandBuffer = currentCmd;
+    fgDispatch.colorImage = fsr2_.sceneColor.image;
+    fgDispatch.depthImage = fsr2_.sceneDepth.image;
+    fgDispatch.motionVectorImage = fsr2_.motionVectors.image;
+    fgDispatch.outputImage = fsr2_.history[fsr2_.currentHistory].image;
+    fgDispatch.renderWidth = fsr2_.internalWidth;
+    fgDispatch.renderHeight = fsr2_.internalHeight;
+    fgDispatch.outputWidth = vkCtx->getSwapchainExtent().width;
+    fgDispatch.outputHeight = vkCtx->getSwapchainExtent().height;
+    fgDispatch.colorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    fgDispatch.depthFormat = vkCtx->getDepthFormat();
+    fgDispatch.motionVectorFormat = VK_FORMAT_R16G16_SFLOAT;
+    fgDispatch.outputFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    glm::vec2 jitterNdc = camera ? camera->getJitter() : glm::vec2(0.0f);
+    fgDispatch.jitterX = jitterNdc.x * 0.5f * static_cast<float>(fsr2_.internalWidth);
+    fgDispatch.jitterY = jitterNdc.y * 0.5f * static_cast<float>(fsr2_.internalHeight);
+    fgDispatch.motionScaleX = static_cast<float>(fsr2_.internalWidth) * fsr2_.motionVecScaleX;
+    fgDispatch.motionScaleY = static_cast<float>(fsr2_.internalHeight) * fsr2_.motionVecScaleY;
+    fgDispatch.frameTimeDeltaMs = glm::max(0.001f, lastDeltaTime_ * 1000.0f);
+    fgDispatch.cameraNear = camera ? camera->getNearPlane() : 0.1f;
+    fgDispatch.cameraFar = camera ? camera->getFarPlane() : 1000.0f;
+    fgDispatch.cameraFovYRadians = camera ? glm::radians(camera->getFovDegrees()) : 1.0f;
+    fgDispatch.reset = fsr2_.needsHistoryReset;
+
+    bool ok = fsr2_.amdFsr3Runtime->dispatchUpscale(fgDispatch);
+    if (!ok) {
+        static bool warnedRuntimeDispatch = false;
+        if (!warnedRuntimeDispatch) {
+            warnedRuntimeDispatch = true;
+            LOG_WARNING("FSR3 runtime dispatch failed; falling back to FSR2 dispatch output.");
         }
+        fsr2_.amdFsr3FramegenRuntimeActive = false;
+        return;
     }
-    fsr2_.amdFsr3FramegenRuntimeActive = false;
+    fsr2_.amdFsr3FramegenRuntimeActive = true;
 #else
     fsr2_.amdFsr3FramegenRuntimeActive = false;
 #endif
@@ -4543,18 +4529,16 @@ void Renderer::setAmdFsr3FramegenEnabled(bool enabled) {
 #if WOWEE_HAS_AMD_FSR3_FRAMEGEN
     if (enabled) {
         fsr2_.amdFsr3FramegenRuntimeActive = false;
-        fsr2_.amdFsr3FramegenRuntimeReady = getAmdFsr3RuntimeApi().load();
-        if (fsr2_.amdFsr3FramegenRuntimeReady) {
-            LOG_INFO("FSR3 framegen runtime library loaded from ", getAmdFsr3RuntimeApi().loadedPath,
-                     " (dispatch staged).");
-        } else {
-            LOG_WARNING("FSR3 framegen enabled, but runtime library not found. ",
-                        "Set WOWEE_FFX_SDK_RUNTIME_LIB to the runtime binary path.");
-        }
+        fsr2_.needsRecreate = true;
+        fsr2_.amdFsr3FramegenRuntimeReady = false;
+        LOG_INFO("FSR3 framegen requested; runtime will initialize on next FSR2 resource creation.");
     } else {
         fsr2_.amdFsr3FramegenRuntimeActive = false;
         fsr2_.amdFsr3FramegenRuntimeReady = false;
-        getAmdFsr3RuntimeApi().unload();
+        if (fsr2_.amdFsr3Runtime) {
+            fsr2_.amdFsr3Runtime->shutdown();
+            fsr2_.amdFsr3Runtime.reset();
+        }
     }
 #else
     fsr2_.amdFsr3FramegenRuntimeActive = false;
