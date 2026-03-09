@@ -1880,6 +1880,51 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_AURA_UPDATE_ALL:
             handleAuraUpdate(packet, true);
             break;
+        case Opcode::SMSG_DISPEL_FAILED: {
+            // casterGuid(8) + victimGuid(8) + spellId(4) [+ failing spellId(4)...]
+            if (packet.getSize() - packet.getReadPos() >= 20) {
+                /*uint64_t casterGuid =*/ packet.readUInt64();
+                /*uint64_t victimGuid =*/ packet.readUInt64();
+                uint32_t spellId = packet.readUInt32();
+                char buf[128];
+                std::snprintf(buf, sizeof(buf), "Dispel failed! (spell %u)", spellId);
+                addSystemChatMessage(buf);
+            }
+            break;
+        }
+        case Opcode::SMSG_TOTEM_CREATED: {
+            // uint8 slot + uint64 guid + uint32 duration + uint32 spellId
+            if (packet.getSize() - packet.getReadPos() >= 17) {
+                uint8_t  slot     = packet.readUInt8();
+                /*uint64_t guid =*/ packet.readUInt64();
+                uint32_t duration = packet.readUInt32();
+                uint32_t spellId  = packet.readUInt32();
+                LOG_DEBUG("SMSG_TOTEM_CREATED: slot=", (int)slot,
+                          " spellId=", spellId, " duration=", duration, "ms");
+            }
+            break;
+        }
+        case Opcode::SMSG_AREA_SPIRIT_HEALER_TIME: {
+            // uint64 guid + uint32 timeLeftMs
+            if (packet.getSize() - packet.getReadPos() >= 12) {
+                /*uint64_t guid =*/ packet.readUInt64();
+                uint32_t timeMs = packet.readUInt32();
+                uint32_t secs   = timeMs / 1000;
+                char buf[128];
+                std::snprintf(buf, sizeof(buf),
+                              "You will be able to resurrect in %u seconds.", secs);
+                addSystemChatMessage(buf);
+            }
+            break;
+        }
+        case Opcode::SMSG_DURABILITY_DAMAGE_DEATH: {
+            // uint32 percent (how much durability was lost due to death)
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                /*uint32_t pct =*/ packet.readUInt32();
+                addSystemChatMessage("You have lost 10% of your gear's durability due to death.");
+            }
+            break;
+        }
         case Opcode::SMSG_LEARNED_SPELL:
             handleLearnedSpell(packet);
             break;
