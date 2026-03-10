@@ -12430,6 +12430,14 @@ void GameHandler::handleSpellStart(network::Packet& packet) {
                 ssm->playPrecast(school, audio::SpellSoundManager::SpellPower::MEDIUM);
             }
         }
+
+        // Hearthstone cast: begin pre-loading terrain at bind point during cast time
+        // so tiles are ready when the teleport fires (avoids falling through un-loaded terrain).
+        // Spell IDs: 6948 = Vanilla Hearthstone (rank 1), 8690 = TBC/WotLK Hearthstone
+        const bool isHearthstone = (data.spellId == 6948 || data.spellId == 8690);
+        if (isHearthstone && hasHomeBind_ && hearthstonePreloadCallback_) {
+            hearthstonePreloadCallback_(homeBindMapId_, homeBindPos_.x, homeBindPos_.y, homeBindPos_.z);
+        }
     }
 }
 

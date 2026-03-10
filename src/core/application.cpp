@@ -1710,6 +1710,10 @@ void Application::setupUICallbacks() {
                 renderer->getCameraController()->clearMovementInputs();
                 renderer->getCameraController()->suppressMovementFor(0.5f);
             }
+            // Flush any tiles that finished background parsing during the cast
+            // (e.g. Hearthstone pre-loaded them) so they're GPU-uploaded before
+            // the first frame at the new position.
+            renderer->getTerrainManager()->processAllReadyTiles();
             return;
         }
 
@@ -1948,6 +1952,51 @@ void Application::setupUICallbacks() {
     // Bind point update (innkeeper) — position stored in gameHandler->getHomeBind()
     gameHandler->setBindPointCallback([this](uint32_t mapId, float x, float y, float z) {
         LOG_INFO("Bindpoint set: mapId=", mapId, " pos=(", x, ", ", y, ", ", z, ")");
+    });
+
+    // Hearthstone preload callback: begin loading terrain at the bind point as soon as
+    // the player starts casting Hearthstone.  The ~10 s cast gives enough time for
+    // the background streaming workers to bring tiles into the cache so the player
+    // lands on solid ground instead of falling through un-loaded terrain.
+    gameHandler->setHearthstonePreloadCallback([this](uint32_t mapId, float x, float y, float z) {
+        if (!renderer || !assetManager) return;
+
+        auto* terrainMgr = renderer->getTerrainManager();
+        if (!terrainMgr) return;
+
+        // Resolve map name from the cached Map.dbc table
+        std::string mapName;
+        if (auto it = mapNameById_.find(mapId); it != mapNameById_.end()) {
+            mapName = it->second;
+        } else {
+            mapName = mapIdToName(mapId);
+        }
+        if (mapName.empty()) mapName = "Azeroth";
+
+        if (mapId == loadedMapId_) {
+            // Same map: pre-enqueue tiles around the bind point so workers start
+            // loading them now. Uses render-space coords (canonicalToRender).
+            glm::vec3 renderPos = core::coords::canonicalToRender(glm::vec3(x, y, z));
+            auto [tileX, tileY] = core::coords::worldToTile(renderPos.x, renderPos.y);
+
+            std::vector<std::pair<int,int>> tiles;
+            tiles.reserve(25);
+            for (int dy = -2; dy <= 2; dy++)
+                for (int dx = -2; dx <= 2; dx++)
+                    tiles.push_back({tileX + dx, tileY + dy});
+
+            terrainMgr->precacheTiles(tiles);
+            LOG_INFO("Hearthstone preload: enqueued ", tiles.size(),
+                     " tiles around bind point (same map) tile=[", tileX, ",", tileY, "]");
+        } else {
+            // Different map: warm the file cache so ADT parsing is fast when
+            // loadOnlineWorldTerrain runs its blocking load loop.
+            // homeBindPos_ is canonical; startWorldPreload expects server coords.
+            glm::vec3 server = core::coords::canonicalToServer(glm::vec3(x, y, z));
+            startWorldPreload(mapId, mapName, server.x, server.y);
+            LOG_INFO("Hearthstone preload: started file cache warm for map '", mapName,
+                     "' (id=", mapId, ")");
+        }
     });
 
     // Faction hostility map is built in buildFactionHostilityMap() when character enters world

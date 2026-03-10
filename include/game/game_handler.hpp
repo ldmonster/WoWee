@@ -610,6 +610,12 @@ public:
     using BindPointCallback = std::function<void(uint32_t mapId, float x, float y, float z)>;
     void setBindPointCallback(BindPointCallback cb) { bindPointCallback_ = std::move(cb); }
 
+    // Called when the player starts casting Hearthstone so terrain at the bind
+    // point can be pre-loaded during the cast time.
+    // Parameters: mapId and canonical (x, y, z) of the bind location.
+    using HearthstonePreloadCallback = std::function<void(uint32_t mapId, float x, float y, float z)>;
+    void setHearthstonePreloadCallback(HearthstonePreloadCallback cb) { hearthstonePreloadCallback_ = std::move(cb); }
+
     // Creature spawn callback (online mode - triggered when creature enters view)
     // Parameters: guid, displayId, x, y, z (canonical), orientation
     using CreatureSpawnCallback = std::function<void(uint64_t guid, uint32_t displayId, float x, float y, float z, float orientation)>;
@@ -1683,6 +1689,7 @@ private:
     UnstuckCallback unstuckGyCallback_;
     UnstuckCallback unstuckHearthCallback_;
     BindPointCallback bindPointCallback_;
+    HearthstonePreloadCallback hearthstonePreloadCallback_;
     CreatureSpawnCallback creatureSpawnCallback_;
     CreatureDespawnCallback creatureDespawnCallback_;
     PlayerSpawnCallback playerSpawnCallback_;
