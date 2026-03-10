@@ -1831,8 +1831,15 @@ void GameScreen::renderPetFrame(game::GameHandler& gameHandler) {
     auto* petUnit = dynamic_cast<game::Unit*>(petEntity.get());
     if (!petUnit) return;
 
-    // Position below the player frame (player frame is at y=30)
-    ImGui::SetNextWindowPos(ImVec2(10.0f, 135.0f), ImGuiCond_Always);
+    // Position below player frame. If in a group, push below party frames
+    // (party frame at y=120, each member ~50px, up to 4 members → max ~320px + y=120 = ~440).
+    // When not grouped, the player frame ends at ~110px so y=125 is fine.
+    const int partyMemberCount = gameHandler.isInGroup()
+        ? static_cast<int>(gameHandler.getPartyData().members.size()) : 0;
+    float petY = (partyMemberCount > 0)
+        ? 120.0f + partyMemberCount * 52.0f + 8.0f
+        : 125.0f;
+    ImGui::SetNextWindowPos(ImVec2(10.0f, petY), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(200.0f, 0.0f), ImGuiCond_Always);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
