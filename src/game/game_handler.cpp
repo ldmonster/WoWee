@@ -2646,9 +2646,12 @@ void GameHandler::handlePacket(network::Packet& packet) {
             addSystemChatMessage("Your fish escaped!");
             break;
         case Opcode::MSG_MINIMAP_PING: {
-            // SMSG: packed_guid + float posX (canonical WoW Y=west) + float posY (canonical WoW X=north)
-            if (packet.getSize() - packet.getReadPos() < 1) break;
-            uint64_t senderGuid = UpdateObjectParser::readPackedGuid(packet);
+            // WotLK: packed_guid + float posX + float posY
+            // TBC/Classic: uint64 + float posX + float posY
+            const bool mmTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+            if (packet.getSize() - packet.getReadPos() < (mmTbcLike ? 8u : 1u)) break;
+            uint64_t senderGuid = mmTbcLike
+                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
             if (packet.getSize() - packet.getReadPos() < 8) break;
             float pingX = packet.readFloat(); // server sends map-coord X (east-west)
             float pingY = packet.readFloat(); // server sends map-coord Y (north-south)
@@ -13259,7 +13262,11 @@ void GameHandler::handlePartyMemberStats(network::Packet& packet, bool isFull) {
         packet.readUInt8();
     }
 
-    uint64_t memberGuid = UpdateObjectParser::readPackedGuid(packet);
+    // WotLK uses packed GUID; TBC/Classic use full uint64
+    const bool pmsTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    if (remaining() < (pmsTbcLike ? 8u : 1u)) return;
+    uint64_t memberGuid = pmsTbcLike
+        ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
     if (remaining() < 4) return;
     uint32_t updateFlags = packet.readUInt32();
 
