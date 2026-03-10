@@ -516,6 +516,67 @@ bool ClassicPacketParsers::parseSpellHealLog(network::Packet& packet, SpellHealL
 }
 
 // ============================================================================
+// Classic parseAuraUpdate — Vanilla 1.12 SMSG_AURA_UPDATE / SMSG_AURA_UPDATE_ALL
+//
+// Classic has SMSG_AURA_UPDATE (TBC does not — TBC uses a different aura system
+// and the TBC override returns false with a warning).  Classic inherits TBC's
+// override by default, so this override is needed to restore aura tracking.
+//
+// Classic aura flags differ from WotLK:
+//   0x01/0x02/0x04 = effect indices active   (same as WotLK)
+//   0x08 = CANCELABLE / NOT-NEGATIVE         (WotLK: 0x08 = NOT_CASTER)
+//   0x10 = DURATION                          (WotLK: 0x20 = DURATION)
+//   0x20 = NOT_CASTER                        (WotLK: no caster GUID at all if 0x08)
+//   0x40 = POSITIVE                          (WotLK: 0x40 = EFFECT_AMOUNTS)
+//
+// Key differences from WotLK parser:
+//   - No caster GUID field in Classic SMSG_AURA_UPDATE packets
+//   - DURATION bit is 0x10, not 0x20
+//   - No effect amounts field (WotLK 0x40 = EFFECT_AMOUNTS does not exist here)
+//
+// Format: PackedGuid(entity) + [uint8(slot) + uint32(spellId)
+//         [+ uint8(flags) + uint8(level) + uint8(charges)
+//          + [uint32(maxDuration) + uint32(duration) if flags & 0x10]]*
+// ============================================================================
+bool ClassicPacketParsers::parseAuraUpdate(network::Packet& packet, AuraUpdateData& data, bool isAll) {
+    auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
+    if (rem() < 1) return false;
+
+    data.guid = UpdateObjectParser::readPackedGuid(packet);
+
+    while (rem() > 0) {
+        if (rem() < 1) break;
+        uint8_t slot = packet.readUInt8();
+        if (rem() < 4) break;
+        uint32_t spellId = packet.readUInt32();
+
+        AuraSlot aura;
+        if (spellId != 0) {
+            aura.spellId = spellId;
+            if (rem() < 3) { data.updates.push_back({slot, aura}); break; }
+            aura.flags   = packet.readUInt8();
+            aura.level   = packet.readUInt8();
+            aura.charges = packet.readUInt8();
+
+            // Classic DURATION flag is 0x10 (WotLK uses 0x20)
+            if ((aura.flags & 0x10) && rem() >= 8) {
+                aura.maxDurationMs = static_cast<int32_t>(packet.readUInt32());
+                aura.durationMs    = static_cast<int32_t>(packet.readUInt32());
+            }
+            // No caster GUID field in Classic (WotLK added it gated by 0x08 NOT_CASTER)
+            // No effect amounts field in Classic (WotLK added it gated by 0x40)
+        }
+
+        data.updates.push_back({slot, aura});
+        if (!isAll) break;
+    }
+
+    LOG_DEBUG("[Classic] Aura update for 0x", std::hex, data.guid, std::dec,
+              ": ", data.updates.size(), " slots");
+    return true;
+}
+
+// ============================================================================
 // Classic SMSG_CAST_FAILED: no castCount byte (added in TBC/WotLK)
 // Format: spellId(u32) + result(u8)
 // ============================================================================

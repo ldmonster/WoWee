@@ -412,6 +412,9 @@ public:
     bool parseAttackerStateUpdate(network::Packet& packet, AttackerStateUpdateData& data) override;
     bool parseSpellDamageLog(network::Packet& packet, SpellDamageLogData& data) override;
     bool parseSpellHealLog(network::Packet& packet, SpellHealLogData& data) override;
+    // Classic 1.12 has SMSG_AURA_UPDATE (unlike TBC which doesn't);
+    // format differs from WotLK: no caster GUID, DURATION flag is 0x10 not 0x20
+    bool parseAuraUpdate(network::Packet& packet, AuraUpdateData& data, bool isAll = false) override;
 };
 
 /**
