@@ -232,6 +232,7 @@ private:
     void renderDeathScreen(game::GameHandler& gameHandler);
     void renderReclaimCorpseButton(game::GameHandler& gameHandler);
     void renderResurrectDialog(game::GameHandler& gameHandler);
+    void renderTalentWipeConfirmDialog(game::GameHandler& gameHandler);
     void renderEscapeMenu();
     void renderSettingsWindow();
     void renderQuestMarkers(game::GameHandler& gameHandler);

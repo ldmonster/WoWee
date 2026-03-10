@@ -835,6 +835,10 @@ public:
     bool showDeathDialog() const { return playerDead_ && !releasedSpirit_; }
     bool showResurrectDialog() const { return resurrectRequestPending_; }
     const std::string& getResurrectCasterName() const { return resurrectCasterName_; }
+    bool showTalentWipeConfirmDialog() const { return talentWipePending_; }
+    uint32_t getTalentWipeCost() const { return talentWipeCost_; }
+    void confirmTalentWipe();
+    void cancelTalentWipe() { talentWipePending_ = false; }
     /** True when ghost is within 40 yards of corpse position (same map). */
     bool canReclaimCorpse() const;
     /** Send CMSG_RECLAIM_CORPSE; noop if not a ghost or not near corpse. */
@@ -2326,6 +2330,10 @@ private:
     uint64_t pendingSpiritHealerGuid_ = 0;
     bool resurrectPending_ = false;
     bool resurrectRequestPending_ = false;
+    // ---- Talent wipe confirm dialog ----
+    bool talentWipePending_ = false;
+    uint64_t talentWipeNpcGuid_ = 0;
+    uint32_t talentWipeCost_ = 0;
     bool resurrectIsSpiritHealer_ = false;  // true = SMSG_SPIRIT_HEALER_CONFIRM, false = SMSG_RESURRECT_REQUEST
     uint64_t resurrectCasterGuid_ = 0;
     std::string resurrectCasterName_;

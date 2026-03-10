@@ -436,6 +436,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderDeathScreen(gameHandler);
     renderReclaimCorpseButton(gameHandler);
     renderResurrectDialog(gameHandler);
+    renderTalentWipeConfirmDialog(gameHandler);
     renderChatBubbles(gameHandler);
     renderEscapeMenu();
     renderSettingsWindow();
@@ -7517,6 +7518,80 @@ void GameScreen::renderResurrectDialog(game::GameHandler& gameHandler) {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
         if (ImGui::Button("Decline", ImVec2(btnW, 30))) {
             gameHandler.declineResurrect();
+        }
+        ImGui::PopStyleColor(2);
+    }
+    ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar();
+}
+
+// ============================================================
+// Talent Wipe Confirm Dialog
+// ============================================================
+
+void GameScreen::renderTalentWipeConfirmDialog(game::GameHandler& gameHandler) {
+    if (!gameHandler.showTalentWipeConfirmDialog()) return;
+
+    auto* window = core::Application::getInstance().getWindow();
+    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
+    float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
+
+    float dlgW = 340.0f;
+    float dlgH = 130.0f;
+    ImGui::SetNextWindowPos(ImVec2(screenW / 2 - dlgW / 2, screenH * 0.3f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(dlgW, dlgH), ImGuiCond_Always);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.15f, 0.95f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.8f, 0.7f, 0.2f, 1.0f));
+
+    if (ImGui::Begin("##TalentWipeDialog", nullptr,
+            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar)) {
+
+        ImGui::Spacing();
+        uint32_t cost = gameHandler.getTalentWipeCost();
+        uint32_t gold = cost / 10000;
+        uint32_t silver = (cost % 10000) / 100;
+        uint32_t copper = cost % 100;
+        char costStr[64];
+        if (gold > 0)
+            std::snprintf(costStr, sizeof(costStr), "%ug %us %uc", gold, silver, copper);
+        else if (silver > 0)
+            std::snprintf(costStr, sizeof(costStr), "%us %uc", silver, copper);
+        else
+            std::snprintf(costStr, sizeof(costStr), "%uc", copper);
+
+        std::string text = "Reset your talents for ";
+        text += costStr;
+        text += "?";
+        float textW = ImGui::CalcTextSize(text.c_str()).x;
+        ImGui::SetCursorPosX(std::max(4.0f, (dlgW - textW) / 2));
+        ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.4f, 1.0f), "%s", text.c_str());
+
+        ImGui::Spacing();
+        ImGui::SetCursorPosX(8.0f);
+        ImGui::TextDisabled("All talent points will be refunded.");
+        ImGui::Spacing();
+
+        float btnW = 110.0f;
+        float spacing = 20.0f;
+        ImGui::SetCursorPosX((dlgW - btnW * 2 - spacing) / 2);
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
+        if (ImGui::Button("Confirm", ImVec2(btnW, 30))) {
+            gameHandler.confirmTalentWipe();
+        }
+        ImGui::PopStyleColor(2);
+
+        ImGui::SameLine(0, spacing);
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.2f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.3f, 0.3f, 1.0f));
+        if (ImGui::Button("Cancel", ImVec2(btnW, 30))) {
+            gameHandler.cancelTalentWipe();
         }
         ImGui::PopStyleColor(2);
     }

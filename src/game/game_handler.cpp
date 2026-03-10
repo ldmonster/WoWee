@@ -1530,10 +1530,22 @@ void GameHandler::handlePacket(network::Packet& packet) {
             // Classic 1.12 and TBC friend list (WotLK uses SMSG_CONTACT_LIST instead)
             handleFriendList(packet);
             break;
-        case Opcode::SMSG_IGNORE_LIST:
-            // Ignore list: consume to avoid spurious warnings; not parsed.
-            packet.setReadPos(packet.getSize());
+        case Opcode::SMSG_IGNORE_LIST: {
+            // uint8 count + count × (uint64 guid + string name)
+            // Populate ignoreCache so /unignore works for pre-existing ignores.
+            if (packet.getSize() - packet.getReadPos() < 1) break;
+            uint8_t ignCount = packet.readUInt8();
+            for (uint8_t i = 0; i < ignCount; ++i) {
+                if (packet.getSize() - packet.getReadPos() < 8) break;
+                uint64_t ignGuid = packet.readUInt64();
+                std::string ignName = packet.readString();
+                if (!ignName.empty() && ignGuid != 0) {
+                    ignoreCache[ignName] = ignGuid;
+                }
+            }
+            LOG_DEBUG("SMSG_IGNORE_LIST: loaded ", (int)ignCount, " ignored players");
             break;
+        }
 
         case Opcode::MSG_RANDOM_ROLL:
             if (state == WorldState::IN_WORLD) {
@@ -4452,10 +4464,20 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::MSG_INSPECT_ARENA_TEAMS:
             LOG_INFO("Received MSG_INSPECT_ARENA_TEAMS");
             break;
-        case Opcode::MSG_TALENT_WIPE_CONFIRM:
-            // Talent reset confirmation payload is not needed client-side right now.
-            packet.setReadPos(packet.getSize());
+        case Opcode::MSG_TALENT_WIPE_CONFIRM: {
+            // Server sends: uint64 npcGuid + uint32 cost
+            // Client must respond with the same opcode containing uint64 npcGuid to confirm.
+            if (packet.getSize() - packet.getReadPos() < 12) {
+                packet.setReadPos(packet.getSize());
+                break;
+            }
+            talentWipeNpcGuid_ = packet.readUInt64();
+            talentWipeCost_    = packet.readUInt32();
+            talentWipePending_ = true;
+            LOG_INFO("MSG_TALENT_WIPE_CONFIRM: npc=0x", std::hex, talentWipeNpcGuid_,
+                     std::dec, " cost=", talentWipeCost_);
             break;
+        }
 
         // ---- MSG_MOVE_* opcodes (server relays other players' movement) ----
         case Opcode::MSG_MOVE_START_FORWARD:
@@ -13566,6 +13588,24 @@ void GameHandler::switchTalentSpec(uint8_t newSpec) {
         msg += ")";
     }
     addSystemChatMessage(msg);
+}
+
+void GameHandler::confirmTalentWipe() {
+    if (!talentWipePending_) return;
+    talentWipePending_ = false;
+
+    if (state != WorldState::IN_WORLD || !socket) return;
+
+    // Respond to MSG_TALENT_WIPE_CONFIRM with the trainer GUID to trigger the reset.
+    // Packet: opcode(2) + uint64 npcGuid = 10 bytes.
+    network::Packet pkt(wireOpcode(Opcode::MSG_TALENT_WIPE_CONFIRM));
+    pkt.writeUInt64(talentWipeNpcGuid_);
+    socket->send(pkt);
+
+    LOG_INFO("confirmTalentWipe: sent confirm for npc=0x", std::hex, talentWipeNpcGuid_, std::dec);
+    addSystemChatMessage("Talent reset confirmed. The server will update your talents.");
+    talentWipeNpcGuid_ = 0;
+    talentWipeCost_ = 0;
 }
 
 // ============================================================
