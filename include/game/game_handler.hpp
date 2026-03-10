@@ -1156,6 +1156,7 @@ public:
     float getServerSwimSpeed() const { return serverSwimSpeed_; }
     float getServerSwimBackSpeed() const { return serverSwimBackSpeed_; }
     float getServerFlightSpeed() const { return serverFlightSpeed_; }
+    float getServerFlightBackSpeed() const { return serverFlightBackSpeed_; }
     float getServerRunBackSpeed() const { return serverRunBackSpeed_; }
     bool isPlayerRooted() const {
         return (movementInfo.flags & static_cast<uint32_t>(MovementFlags::ROOT)) != 0;

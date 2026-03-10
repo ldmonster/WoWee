@@ -722,9 +722,13 @@ void CameraController::update(float deltaTime) {
                 if (flyDescend)    flyMove.z -= 1.0f;
                 if (glm::length(flyMove) > 0.001f) {
                     flyMove = glm::normalize(flyMove);
-                    float flySpeed = (flightSpeedOverride_ > 0.0f && flightSpeedOverride_ < 200.0f
-                                      && !std::isnan(flightSpeedOverride_))
-                                         ? flightSpeedOverride_ : speed;
+                    float flyFwdSpeed = (flightSpeedOverride_ > 0.0f && flightSpeedOverride_ < 200.0f
+                                         && !std::isnan(flightSpeedOverride_))
+                                            ? flightSpeedOverride_ : speed;
+                    float flyBackSpeed = (flightBackSpeedOverride_ > 0.0f && flightBackSpeedOverride_ < 200.0f
+                                          && !std::isnan(flightBackSpeedOverride_))
+                                             ? flightBackSpeedOverride_ : flyFwdSpeed * 0.5f;
+                    float flySpeed = (nowBackward && !nowForward) ? flyBackSpeed : flyFwdSpeed;
                     targetPos += flyMove * flySpeed * physicsDeltaTime;
                 }
                 targetPos.z += verticalVelocity * physicsDeltaTime;
