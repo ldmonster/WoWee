@@ -750,6 +750,7 @@ void Application::logoutToLogin() {
     creatureWeaponsAttached_.clear();
     creatureWeaponAttachAttempts_.clear();
     creatureWasMoving_.clear();
+    creatureSwimmingState_.clear();
     deadCreatureGuids_.clear();
     nonRenderableCreatureDisplayIds_.clear();
     creaturePermanentFailureGuids_.clear();
@@ -1476,18 +1477,23 @@ void Application::update(float deltaTime) {
                         }
                         posIt->second = renderPos;
 
-                        // Drive movement animation: Run (anim 5) when moving, Stand (0) when idle.
-                        // WoW M2 animation IDs: 4=Walk, 5=Run. Use Run for all server-driven NPC movement.
+                        // Drive movement animation: Run/Swim (5/42) when moving, Stand/SwimIdle (0/41) when idle.
+                        // WoW M2 animation IDs: 4=Walk, 5=Run, 41=SwimIdle, 42=Swim.
                         // Only switch on transitions to avoid resetting animation time.
                         // Don't override Death (1) animation.
+                        const bool isSwimmingNow = creatureSwimmingState_.count(guid) > 0;
                         bool prevMoving = creatureWasMoving_[guid];
                         if (isMovingNow != prevMoving) {
                             creatureWasMoving_[guid] = isMovingNow;
                             uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
                             bool gotState = charRenderer->getAnimationState(instanceId, curAnimId, curT, curDur);
                             if (!gotState || curAnimId != 1 /*Death*/) {
-                                charRenderer->playAnimation(instanceId,
-                                    isMovingNow ? 5u : 0u, /*loop=*/true);
+                                uint32_t targetAnim;
+                                if (isMovingNow)
+                                    targetAnim = isSwimmingNow ? 42u : 5u; // Swim vs Run
+                                else
+                                    targetAnim = isSwimmingNow ? 41u : 0u; // SwimIdle vs Stand
+                                charRenderer->playAnimation(instanceId, targetAnim, /*loop=*/true);
                             }
                         }
                     }
@@ -2771,10 +2777,20 @@ void Application::setupUICallbacks() {
         }
     });
 
-    // Unit animation hint callback — play jump (38) or swim (42) on other players/NPCs
-    // when MSG_MOVE_JUMP or MSG_MOVE_START_SWIM arrives.  The per-frame sync handles the
-    // return to Stand/Run once the unit lands or exits water.
+    // Unit animation hint callback — play jump (38) or swim (42) on other players/NPCs.
+    // animId=42 (Swim): marks entity as swimming; per-frame sync will use SwimIdle(41) when stopped.
+    // animId=0:         clears swim state (MSG_MOVE_STOP_SWIM); per-frame sync reverts to Stand(0).
+    // animId=38 (JumpMid): airborne jump animation; land detection is via per-frame sync.
     gameHandler->setUnitAnimHintCallback([this](uint64_t guid, uint32_t animId) {
+        // Track swim state regardless of whether the instance is visible yet.
+        if (animId == 42u) {
+            creatureSwimmingState_[guid] = true;
+        } else if (animId == 0u) {
+            creatureSwimmingState_.erase(guid);
+            // Don't play Stand here — per-frame sync will do it when movement ceases.
+            return;
+        }
+
         if (!renderer) return;
         auto* cr = renderer->getCharacterRenderer();
         if (!cr) return;
@@ -6910,6 +6926,7 @@ void Application::despawnOnlinePlayer(uint64_t guid) {
     playerInstances_.erase(it);
     onlinePlayerAppearance_.erase(guid);
     pendingOnlinePlayerEquipment_.erase(guid);
+    creatureSwimmingState_.erase(guid);
 }
 
 void Application::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_t displayId, float x, float y, float z, float orientation) {
@@ -8503,6 +8520,7 @@ void Application::despawnOnlineCreature(uint64_t guid) {
     creatureWeaponsAttached_.erase(guid);
     creatureWeaponAttachAttempts_.erase(guid);
     creatureWasMoving_.erase(guid);
+    creatureSwimmingState_.erase(guid);
 
     LOG_DEBUG("Despawned creature: guid=0x", std::hex, guid, std::dec);
 }

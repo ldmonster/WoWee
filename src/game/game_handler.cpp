@@ -12190,9 +12190,12 @@ void GameHandler::handleOtherPlayerMovement(network::Packet& packet) {
 
     // Signal specific animation transitions that the per-frame sync can't detect reliably.
     // WoW M2 animation IDs: 38=JumpMid (loops during airborne), 42=Swim
+    // animId=0 signals "exit swim mode" (MSG_MOVE_STOP_SWIM) so per-frame sync reverts to Stand.
+    const bool isStopSwimOpcode = (wireOp == wireOpcode(Opcode::MSG_MOVE_STOP_SWIM));
     if (unitAnimHintCallback_) {
-        if (isJumpOpcode)  unitAnimHintCallback_(moverGuid, 38u);
-        else if (isSwimOpcode) unitAnimHintCallback_(moverGuid, 42u);
+        if (isJumpOpcode)         unitAnimHintCallback_(moverGuid, 38u);
+        else if (isSwimOpcode)    unitAnimHintCallback_(moverGuid, 42u);
+        else if (isStopSwimOpcode) unitAnimHintCallback_(moverGuid, 0u);
     }
 }
 

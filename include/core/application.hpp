@@ -188,6 +188,7 @@ private:
     std::unordered_map<uint64_t, uint32_t> creatureModelIds_;   // guid → loaded modelId
     std::unordered_map<uint64_t, glm::vec3> creatureRenderPosCache_; // guid -> last synced render position
     std::unordered_map<uint64_t, bool> creatureWasMoving_;       // guid -> previous-frame movement state
+    std::unordered_map<uint64_t, bool> creatureSwimmingState_;   // guid -> currently in swim mode
     std::unordered_set<uint64_t> creatureWeaponsAttached_;       // guid set when NPC virtual weapons attached
     std::unordered_map<uint64_t, uint8_t> creatureWeaponAttachAttempts_; // guid -> attach attempts
     std::unordered_map<uint32_t, bool> modelIdIsWolfLike_;     // modelId → cached wolf/worg check
