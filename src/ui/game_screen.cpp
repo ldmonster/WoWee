@@ -1417,14 +1417,16 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             SDL_SCANCODE_5, SDL_SCANCODE_6, SDL_SCANCODE_7, SDL_SCANCODE_8,
             SDL_SCANCODE_9, SDL_SCANCODE_0, SDL_SCANCODE_MINUS, SDL_SCANCODE_EQUALS
         };
-        for (int i = 0; i < 12; ++i) {
+        const bool shiftDown = input.isKeyPressed(SDL_SCANCODE_LSHIFT) || input.isKeyPressed(SDL_SCANCODE_RSHIFT);
+        const auto& bar = gameHandler.getActionBar();
+        for (int i = 0; i < game::GameHandler::SLOTS_PER_BAR; ++i) {
             if (input.isKeyJustPressed(actionBarKeys[i])) {
-                const auto& bar = gameHandler.getActionBar();
-                if (bar[i].type == game::ActionBarSlot::SPELL && bar[i].isReady()) {
+                int slotIdx = shiftDown ? (game::GameHandler::SLOTS_PER_BAR + i) : i;
+                if (bar[slotIdx].type == game::ActionBarSlot::SPELL && bar[slotIdx].isReady()) {
                     uint64_t target = gameHandler.hasTarget() ? gameHandler.getTargetGuid() : 0;
-                    gameHandler.castSpell(bar[i].id, target);
-                } else if (bar[i].type == game::ActionBarSlot::ITEM && bar[i].id != 0) {
-                    gameHandler.useItemById(bar[i].id);
+                    gameHandler.castSpell(bar[slotIdx].id, target);
+                } else if (bar[slotIdx].type == game::ActionBarSlot::ITEM && bar[slotIdx].id != 0) {
+                    gameHandler.useItemById(bar[slotIdx].id);
                 }
             }
         }
@@ -3842,262 +3844,250 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.05f, 0.05f, 0.9f));
 
-    if (ImGui::Begin("##ActionBar", nullptr, flags)) {
-        const auto& bar = gameHandler.getActionBar();
-        static const char* keyLabels[] = {"1","2","3","4","5","6","7","8","9","0","-","="};
+    // Per-slot rendering lambda — shared by both action bars
+    const auto& bar = gameHandler.getActionBar();
+    static const char* keyLabels1[] = {"1","2","3","4","5","6","7","8","9","0","-","="};
+    // "⇧N" labels for bar 2 (UTF-8: E2 87 A7 = U+21E7 UPWARDS WHITE ARROW)
+    static const char* keyLabels2[] = {
+        "\xe2\x87\xa7" "1", "\xe2\x87\xa7" "2", "\xe2\x87\xa7" "3",
+        "\xe2\x87\xa7" "4", "\xe2\x87\xa7" "5", "\xe2\x87\xa7" "6",
+        "\xe2\x87\xa7" "7", "\xe2\x87\xa7" "8", "\xe2\x87\xa7" "9",
+        "\xe2\x87\xa7" "0", "\xe2\x87\xa7" "-", "\xe2\x87\xa7" "="
+    };
 
-        for (int i = 0; i < 12; ++i) {
-            if (i > 0) ImGui::SameLine(0, spacing);
+    auto renderBarSlot = [&](int absSlot, const char* keyLabel) {
+        ImGui::BeginGroup();
+        ImGui::PushID(absSlot);
 
-            ImGui::BeginGroup();
-            ImGui::PushID(i);
+        const auto& slot = bar[absSlot];
+        bool onCooldown = !slot.isReady();
 
-            const auto& slot = bar[i];
-            bool onCooldown = !slot.isReady();
+        auto getSpellName = [&](uint32_t spellId) -> std::string {
+            std::string name = spellbookScreen.lookupSpellName(spellId, assetMgr);
+            if (!name.empty()) return name;
+            return "Spell #" + std::to_string(spellId);
+        };
 
-            auto getSpellName = [&](uint32_t spellId) -> std::string {
-                std::string name = spellbookScreen.lookupSpellName(spellId, assetMgr);
-                if (!name.empty()) return name;
-                return "Spell #" + std::to_string(spellId);
-            };
-
-            // Try to get icon texture for this slot
-            VkDescriptorSet iconTex = VK_NULL_HANDLE;
-            const game::ItemDef* barItemDef = nullptr;
-            uint32_t itemDisplayInfoId = 0;
-            std::string itemNameFromQuery;
-            if (slot.type == game::ActionBarSlot::SPELL && slot.id != 0) {
-                iconTex = getSpellIcon(slot.id, assetMgr);
-            } else if (slot.type == game::ActionBarSlot::ITEM && slot.id != 0) {
-                // Search backpack
-                auto& inv = gameHandler.getInventory();
-                for (int bi = 0; bi < inv.getBackpackSize(); bi++) {
-                    const auto& bs = inv.getBackpackSlot(bi);
-                    if (!bs.empty() && bs.item.itemId == slot.id) {
-                        barItemDef = &bs.item;
-                        break;
-                    }
-                }
-                // Search equipped slots
-                if (!barItemDef) {
-                    for (int ei = 0; ei < game::Inventory::NUM_EQUIP_SLOTS; ei++) {
-                        const auto& es = inv.getEquipSlot(static_cast<game::EquipSlot>(ei));
-                        if (!es.empty() && es.item.itemId == slot.id) {
-                            barItemDef = &es.item;
-                            break;
-                        }
-                    }
-                }
-                // Search extra bags
-                if (!barItemDef) {
-                    for (int bag = 0; bag < game::Inventory::NUM_BAG_SLOTS && !barItemDef; bag++) {
-                        for (int si = 0; si < inv.getBagSize(bag); si++) {
-                            const auto& bs = inv.getBagSlot(bag, si);
-                            if (!bs.empty() && bs.item.itemId == slot.id) {
-                                barItemDef = &bs.item;
-                                break;
-                            }
-                        }
-                    }
-                }
-                if (barItemDef && barItemDef->displayInfoId != 0) {
-                    itemDisplayInfoId = barItemDef->displayInfoId;
-                }
-                // Fallback: use item info cache (from server query responses)
-                if (itemDisplayInfoId == 0) {
-                    if (auto* info = gameHandler.getItemInfo(slot.id)) {
-                        itemDisplayInfoId = info->displayInfoId;
-                        if (itemNameFromQuery.empty() && !info->name.empty())
-                            itemNameFromQuery = info->name;
-                    }
-                }
-                if (itemDisplayInfoId != 0) {
-                    iconTex = inventoryScreen.getItemIcon(itemDisplayInfoId);
+        // Try to get icon texture for this slot
+        VkDescriptorSet iconTex = VK_NULL_HANDLE;
+        const game::ItemDef* barItemDef = nullptr;
+        uint32_t itemDisplayInfoId = 0;
+        std::string itemNameFromQuery;
+        if (slot.type == game::ActionBarSlot::SPELL && slot.id != 0) {
+            iconTex = getSpellIcon(slot.id, assetMgr);
+        } else if (slot.type == game::ActionBarSlot::ITEM && slot.id != 0) {
+            auto& inv = gameHandler.getInventory();
+            for (int bi = 0; bi < inv.getBackpackSize(); bi++) {
+                const auto& bs = inv.getBackpackSlot(bi);
+                if (!bs.empty() && bs.item.itemId == slot.id) { barItemDef = &bs.item; break; }
+            }
+            if (!barItemDef) {
+                for (int ei = 0; ei < game::Inventory::NUM_EQUIP_SLOTS; ei++) {
+                    const auto& es = inv.getEquipSlot(static_cast<game::EquipSlot>(ei));
+                    if (!es.empty() && es.item.itemId == slot.id) { barItemDef = &es.item; break; }
                 }
             }
-
-            bool clicked = false;
-            if (iconTex) {
-                // Render icon-based button
-                ImVec4 tintColor(1, 1, 1, 1);
-                ImVec4 bgColor(0.1f, 0.1f, 0.1f, 0.9f);
-                if (onCooldown) {
-                    tintColor = ImVec4(0.4f, 0.4f, 0.4f, 0.8f);
-                    bgColor = ImVec4(0.1f, 0.1f, 0.1f, 0.8f);
+            if (!barItemDef) {
+                for (int bag = 0; bag < game::Inventory::NUM_BAG_SLOTS && !barItemDef; bag++) {
+                    for (int si = 0; si < inv.getBagSize(bag); si++) {
+                        const auto& bs = inv.getBagSlot(bag, si);
+                        if (!bs.empty() && bs.item.itemId == slot.id) { barItemDef = &bs.item; break; }
+                    }
                 }
-                clicked = ImGui::ImageButton("##icon",
-                    (ImTextureID)(uintptr_t)iconTex,
-                    ImVec2(slotSize, slotSize),
-                    ImVec2(0, 0), ImVec2(1, 1),
-                    bgColor, tintColor);
+            }
+            if (barItemDef && barItemDef->displayInfoId != 0)
+                itemDisplayInfoId = barItemDef->displayInfoId;
+            if (itemDisplayInfoId == 0) {
+                if (auto* info = gameHandler.getItemInfo(slot.id)) {
+                    itemDisplayInfoId = info->displayInfoId;
+                    if (itemNameFromQuery.empty() && !info->name.empty())
+                        itemNameFromQuery = info->name;
+                }
+            }
+            if (itemDisplayInfoId != 0)
+                iconTex = inventoryScreen.getItemIcon(itemDisplayInfoId);
+        }
+
+        bool clicked = false;
+        if (iconTex) {
+            ImVec4 tintColor(1, 1, 1, 1);
+            ImVec4 bgColor(0.1f, 0.1f, 0.1f, 0.9f);
+            if (onCooldown) { tintColor = ImVec4(0.4f, 0.4f, 0.4f, 0.8f); }
+            clicked = ImGui::ImageButton("##icon",
+                (ImTextureID)(uintptr_t)iconTex,
+                ImVec2(slotSize, slotSize),
+                ImVec2(0, 0), ImVec2(1, 1),
+                bgColor, tintColor);
+        } else {
+            if (onCooldown)         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.8f));
+            else if (slot.isEmpty())ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.15f, 0.15f, 0.8f));
+            else                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.5f, 0.9f));
+
+            char label[32];
+            if (slot.type == game::ActionBarSlot::SPELL) {
+                std::string spellName = getSpellName(slot.id);
+                if (spellName.size() > 6) spellName = spellName.substr(0, 6);
+                snprintf(label, sizeof(label), "%s", spellName.c_str());
+            } else if (slot.type == game::ActionBarSlot::ITEM && barItemDef) {
+                std::string itemName = barItemDef->name;
+                if (itemName.size() > 6) itemName = itemName.substr(0, 6);
+                snprintf(label, sizeof(label), "%s", itemName.c_str());
+            } else if (slot.type == game::ActionBarSlot::ITEM) {
+                snprintf(label, sizeof(label), "Item");
+            } else if (slot.type == game::ActionBarSlot::MACRO) {
+                snprintf(label, sizeof(label), "Macro");
             } else {
-                // Fallback to text button
-                if (onCooldown) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.8f));
-                } else if (slot.isEmpty()) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.15f, 0.15f, 0.8f));
-                } else {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.5f, 0.9f));
-                }
-
-                char label[32];
-                if (slot.type == game::ActionBarSlot::SPELL) {
-                    std::string spellName = getSpellName(slot.id);
-                    if (spellName.size() > 6) spellName = spellName.substr(0, 6);
-                    snprintf(label, sizeof(label), "%s", spellName.c_str());
-                } else if (slot.type == game::ActionBarSlot::ITEM && barItemDef) {
-                    std::string itemName = barItemDef->name;
-                    if (itemName.size() > 6) itemName = itemName.substr(0, 6);
-                    snprintf(label, sizeof(label), "%s", itemName.c_str());
-                } else if (slot.type == game::ActionBarSlot::ITEM) {
-                    snprintf(label, sizeof(label), "Item");
-                } else if (slot.type == game::ActionBarSlot::MACRO) {
-                    snprintf(label, sizeof(label), "Macro");
-                } else {
-                    snprintf(label, sizeof(label), "--");
-                }
-
-                clicked = ImGui::Button(label, ImVec2(slotSize, slotSize));
-                ImGui::PopStyleColor();
+                snprintf(label, sizeof(label), "--");
             }
+            clicked = ImGui::Button(label, ImVec2(slotSize, slotSize));
+            ImGui::PopStyleColor();
+        }
 
-            bool rightClicked = ImGui::IsItemClicked(ImGuiMouseButton_Right);
-            bool hoveredOnRelease = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
-                                    ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+        bool rightClicked = ImGui::IsItemClicked(ImGuiMouseButton_Right);
+        bool hoveredOnRelease = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+                                ImGui::IsMouseReleased(ImGuiMouseButton_Left);
 
-            // Drop dragged spell from spellbook onto this slot
-            // (mouse release over slot — button click won't fire since press was in spellbook)
-            if (hoveredOnRelease && spellbookScreen.isDraggingSpell()) {
-                gameHandler.setActionBarSlot(i, game::ActionBarSlot::SPELL,
-                    spellbookScreen.getDragSpellId());
-                spellbookScreen.consumeDragSpell();
-            } else if (hoveredOnRelease && inventoryScreen.isHoldingItem()) {
-                // Drop held item from inventory onto action bar
-                const auto& held = inventoryScreen.getHeldItem();
-                gameHandler.setActionBarSlot(i, game::ActionBarSlot::ITEM, held.itemId);
-                inventoryScreen.returnHeldItem(gameHandler.getInventory());
-            } else if (clicked && actionBarDragSlot_ >= 0) {
-                // Dropping a dragged action bar slot onto another slot - swap or place
-                if (i != actionBarDragSlot_) {
-                    const auto& dragSrc = bar[actionBarDragSlot_];
-                    auto srcType = dragSrc.type;
-                    auto srcId = dragSrc.id;
-                    gameHandler.setActionBarSlot(actionBarDragSlot_, slot.type, slot.id);
-                    gameHandler.setActionBarSlot(i, srcType, srcId);
-                }
-                actionBarDragSlot_ = -1;
-                actionBarDragIcon_ = 0;
-            } else if (clicked && !slot.isEmpty()) {
-                // Left-click on non-empty slot: cast spell or use item
-                if (slot.type == game::ActionBarSlot::SPELL && slot.isReady()) {
-                    uint64_t target = gameHandler.hasTarget() ? gameHandler.getTargetGuid() : 0;
-                    gameHandler.castSpell(slot.id, target);
-                } else if (slot.type == game::ActionBarSlot::ITEM && slot.id != 0) {
-                    gameHandler.useItemById(slot.id);
-                }
-            } else if (rightClicked && !slot.isEmpty()) {
-                // Right-click on non-empty slot: pick up for dragging
-                actionBarDragSlot_ = i;
-                actionBarDragIcon_ = iconTex;
+        if (hoveredOnRelease && spellbookScreen.isDraggingSpell()) {
+            gameHandler.setActionBarSlot(absSlot, game::ActionBarSlot::SPELL,
+                spellbookScreen.getDragSpellId());
+            spellbookScreen.consumeDragSpell();
+        } else if (hoveredOnRelease && inventoryScreen.isHoldingItem()) {
+            const auto& held = inventoryScreen.getHeldItem();
+            gameHandler.setActionBarSlot(absSlot, game::ActionBarSlot::ITEM, held.itemId);
+            inventoryScreen.returnHeldItem(gameHandler.getInventory());
+        } else if (clicked && actionBarDragSlot_ >= 0) {
+            if (absSlot != actionBarDragSlot_) {
+                const auto& dragSrc = bar[actionBarDragSlot_];
+                gameHandler.setActionBarSlot(actionBarDragSlot_, slot.type, slot.id);
+                gameHandler.setActionBarSlot(absSlot, dragSrc.type, dragSrc.id);
             }
+            actionBarDragSlot_ = -1;
+            actionBarDragIcon_ = 0;
+        } else if (clicked && !slot.isEmpty()) {
+            if (slot.type == game::ActionBarSlot::SPELL && slot.isReady()) {
+                uint64_t target = gameHandler.hasTarget() ? gameHandler.getTargetGuid() : 0;
+                gameHandler.castSpell(slot.id, target);
+            } else if (slot.type == game::ActionBarSlot::ITEM && slot.id != 0) {
+                gameHandler.useItemById(slot.id);
+            }
+        } else if (rightClicked && !slot.isEmpty()) {
+            actionBarDragSlot_ = absSlot;
+            actionBarDragIcon_ = iconTex;
+        }
 
-            // Tooltip
-            if (ImGui::IsItemHovered() && !slot.isEmpty() && slot.id != 0) {
-                ImGui::BeginTooltip();
-                if (slot.type == game::ActionBarSlot::SPELL) {
-                    std::string fullName = getSpellName(slot.id);
-                    ImGui::Text("%s", fullName.c_str());
-                    // Hearthstone: show bind point info
-                    if (slot.id == 8690) {
-                        uint32_t mapId = 0;
-                        glm::vec3 pos;
-                        if (gameHandler.getHomeBind(mapId, pos)) {
-                            const char* mapName = "Unknown";
-                            switch (mapId) {
-                                case 0:   mapName = "Eastern Kingdoms"; break;
-                                case 1:   mapName = "Kalimdor"; break;
-                                case 530:  mapName = "Outland"; break;
-                                case 571:  mapName = "Northrend"; break;
-                            }
-                            ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f),
-                                "Home: %s", mapName);
+        // Tooltip
+        if (ImGui::IsItemHovered() && !slot.isEmpty() && slot.id != 0) {
+            ImGui::BeginTooltip();
+            if (slot.type == game::ActionBarSlot::SPELL) {
+                ImGui::Text("%s", getSpellName(slot.id).c_str());
+                if (slot.id == 8690) {
+                    uint32_t mapId = 0; glm::vec3 pos;
+                    if (gameHandler.getHomeBind(mapId, pos)) {
+                        const char* mapName = "Unknown";
+                        switch (mapId) {
+                            case 0: mapName = "Eastern Kingdoms"; break;
+                            case 1: mapName = "Kalimdor"; break;
+                            case 530: mapName = "Outland"; break;
+                            case 571: mapName = "Northrend"; break;
                         }
-                        ImGui::TextDisabled("Use: Teleport home");
+                        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Home: %s", mapName);
                     }
-                } else if (slot.type == game::ActionBarSlot::ITEM) {
-                    if (barItemDef && !barItemDef->name.empty()) {
-                        ImGui::Text("%s", barItemDef->name.c_str());
-                    } else if (!itemNameFromQuery.empty()) {
-                        ImGui::Text("%s", itemNameFromQuery.c_str());
-                    } else {
-                        ImGui::Text("Item #%u", slot.id);
-                    }
+                    ImGui::TextDisabled("Use: Teleport home");
                 }
-                // Show cooldown time remaining
-                if (onCooldown) {
-                    float cd = slot.cooldownRemaining;
-                    if (cd >= 60.0f) {
-                        int mins = static_cast<int>(cd) / 60;
-                        int secs = static_cast<int>(cd) % 60;
-                        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
-                            "Cooldown: %d min %d sec", mins, secs);
-                    } else {
-                        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
-                            "Cooldown: %.1f sec", cd);
-                    }
-                }
-                ImGui::EndTooltip();
+            } else if (slot.type == game::ActionBarSlot::ITEM) {
+                if (barItemDef && !barItemDef->name.empty())
+                    ImGui::Text("%s", barItemDef->name.c_str());
+                else if (!itemNameFromQuery.empty())
+                    ImGui::Text("%s", itemNameFromQuery.c_str());
+                else
+                    ImGui::Text("Item #%u", slot.id);
             }
-
-            // Cooldown overlay: WoW-style clock-sweep + time text
             if (onCooldown) {
-                ImVec2 btnMin = ImGui::GetItemRectMin();
-                ImVec2 btnMax = ImGui::GetItemRectMax();
-                float cx = (btnMin.x + btnMax.x) * 0.5f;
-                float cy = (btnMin.y + btnMax.y) * 0.5f;
-                float r  = (btnMax.x - btnMin.x) * 0.5f;
-
-                auto* dl = ImGui::GetWindowDrawList();
-
-                // Dark sweep over the elapsed fraction, starting at 12 o'clock
-                float total       = (slot.cooldownTotal > 0.0f) ? slot.cooldownTotal : 1.0f;
-                float elapsed     = total - slot.cooldownRemaining;
-                float elapsedFrac = std::min(1.0f, std::max(0.0f, elapsed / total));
-
-                if (elapsedFrac > 0.005f) {
-                    constexpr int N_SEGS = 32;
-                    float startAngle = -IM_PI * 0.5f;
-                    float endAngle   = startAngle + elapsedFrac * 2.0f * IM_PI;
-                    float fanR       = r * 1.5f; // reach the icon corners
-                    ImVec2 pts[N_SEGS + 2];
-                    pts[0] = ImVec2(cx, cy);
-                    for (int s = 0; s <= N_SEGS; ++s) {
-                        float a = startAngle + (endAngle - startAngle) * s / static_cast<float>(N_SEGS);
-                        pts[s + 1] = ImVec2(cx + std::cos(a) * fanR, cy + std::sin(a) * fanR);
-                    }
-                    dl->AddConvexPolyFilled(pts, N_SEGS + 2, IM_COL32(0, 0, 0, 170));
-                }
-
-                // Remaining-time text: white with drop-shadow
-                char cdText[16];
                 float cd = slot.cooldownRemaining;
-                if (cd >= 60.0f) {
-                    snprintf(cdText, sizeof(cdText), "%dm", static_cast<int>(cd) / 60);
-                } else {
-                    snprintf(cdText, sizeof(cdText), "%.0f", cd);
+                if (cd >= 60.0f)
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f),
+                        "Cooldown: %d min %d sec", (int)cd/60, (int)cd%60);
+                else
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Cooldown: %.1f sec", cd);
+            }
+            ImGui::EndTooltip();
+        }
+
+        // Cooldown overlay: WoW-style clock-sweep + time text
+        if (onCooldown) {
+            ImVec2 btnMin = ImGui::GetItemRectMin();
+            ImVec2 btnMax = ImGui::GetItemRectMax();
+            float cx = (btnMin.x + btnMax.x) * 0.5f;
+            float cy = (btnMin.y + btnMax.y) * 0.5f;
+            float r  = (btnMax.x - btnMin.x) * 0.5f;
+            auto* dl = ImGui::GetWindowDrawList();
+
+            float total       = (slot.cooldownTotal > 0.0f) ? slot.cooldownTotal : 1.0f;
+            float elapsed     = total - slot.cooldownRemaining;
+            float elapsedFrac = std::min(1.0f, std::max(0.0f, elapsed / total));
+            if (elapsedFrac > 0.005f) {
+                constexpr int N_SEGS = 32;
+                float startAngle = -IM_PI * 0.5f;
+                float endAngle   = startAngle + elapsedFrac * 2.0f * IM_PI;
+                float fanR       = r * 1.5f;
+                ImVec2 pts[N_SEGS + 2];
+                pts[0] = ImVec2(cx, cy);
+                for (int s = 0; s <= N_SEGS; ++s) {
+                    float a = startAngle + (endAngle - startAngle) * s / static_cast<float>(N_SEGS);
+                    pts[s + 1] = ImVec2(cx + std::cos(a) * fanR, cy + std::sin(a) * fanR);
                 }
-                ImVec2 textSize = ImGui::CalcTextSize(cdText);
-                float tx = cx - textSize.x * 0.5f;
-                float ty = cy - textSize.y * 0.5f;
-                dl->AddText(ImVec2(tx + 1.0f, ty + 1.0f), IM_COL32(0, 0, 0, 220), cdText);
-                dl->AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, 255), cdText);
+                dl->AddConvexPolyFilled(pts, N_SEGS + 2, IM_COL32(0, 0, 0, 170));
             }
 
-            // Key label below
-            ImGui::TextDisabled("%s", keyLabels[i]);
+            char cdText[16];
+            float cd = slot.cooldownRemaining;
+            if (cd >= 60.0f) snprintf(cdText, sizeof(cdText), "%dm", (int)cd / 60);
+            else             snprintf(cdText, sizeof(cdText), "%.0f", cd);
+            ImVec2 textSize = ImGui::CalcTextSize(cdText);
+            float tx = cx - textSize.x * 0.5f;
+            float ty = cy - textSize.y * 0.5f;
+            dl->AddText(ImVec2(tx + 1.0f, ty + 1.0f), IM_COL32(0, 0, 0, 220), cdText);
+            dl->AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, 255), cdText);
+        }
 
-            ImGui::PopID();
-            ImGui::EndGroup();
+        // Key label below
+        ImGui::TextDisabled("%s", keyLabel);
+
+        ImGui::PopID();
+        ImGui::EndGroup();
+    };
+
+    // Bar 2 (slots 12-23) — only show if at least one slot is populated
+    {
+        bool bar2HasContent = false;
+        for (int i = 0; i < game::GameHandler::SLOTS_PER_BAR; ++i)
+            if (!bar[game::GameHandler::SLOTS_PER_BAR + i].isEmpty()) { bar2HasContent = true; break; }
+
+        float bar2Y = barY - barH - 2.0f;
+        ImGui::SetNextWindowPos(ImVec2(barX, bar2Y), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(barW, barH), ImGuiCond_Always);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding, padding));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg,
+            bar2HasContent ? ImVec4(0.05f, 0.05f, 0.05f, 0.85f) : ImVec4(0.05f, 0.05f, 0.05f, 0.4f));
+        if (ImGui::Begin("##ActionBar2", nullptr, flags)) {
+            for (int i = 0; i < game::GameHandler::SLOTS_PER_BAR; ++i) {
+                if (i > 0) ImGui::SameLine(0, spacing);
+                renderBarSlot(game::GameHandler::SLOTS_PER_BAR + i, keyLabels2[i]);
+            }
+        }
+        ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(4);
+    }
+
+    // Bar 1 (slots 0-11)
+    if (ImGui::Begin("##ActionBar", nullptr, flags)) {
+        for (int i = 0; i < game::GameHandler::SLOTS_PER_BAR; ++i) {
+            if (i > 0) ImGui::SameLine(0, spacing);
+            renderBarSlot(i, keyLabels1[i]);
         }
     }
     ImGui::End();

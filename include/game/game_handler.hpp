@@ -588,8 +588,10 @@ public:
     const std::unordered_map<uint32_t, TalentTabEntry>& getAllTalentTabs() const { return talentTabCache_; }
     void loadTalentDbc();
 
-    // Action bar
-    static constexpr int ACTION_BAR_SLOTS = 12;
+    // Action bar — 2 bars × 12 slots = 24 total
+    static constexpr int SLOTS_PER_BAR    = 12;
+    static constexpr int ACTION_BARS      = 2;
+    static constexpr int ACTION_BAR_SLOTS = SLOTS_PER_BAR * ACTION_BARS;   // 24
     std::array<ActionBarSlot, ACTION_BAR_SLOTS>& getActionBar() { return actionBar; }
     const std::array<ActionBarSlot, ACTION_BAR_SLOTS>& getActionBar() const { return actionBar; }
     void setActionBarSlot(int slot, ActionBarSlot::Type type, uint32_t id);
@@ -1839,7 +1841,7 @@ private:
     bool areaTriggerSuppressFirst_ = false;  // suppress first check after map transfer
 
     float castTimeTotal = 0.0f;
-    std::array<ActionBarSlot, 12> actionBar{};
+    std::array<ActionBarSlot, ACTION_BAR_SLOTS> actionBar{};
     std::vector<AuraSlot> playerAuras;
     std::vector<AuraSlot> targetAuras;
     uint64_t petGuid_ = 0;

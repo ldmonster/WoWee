@@ -3333,12 +3333,11 @@ void GameHandler::handlePacket(network::Packet& packet) {
             /*uint8_t mode =*/ packet.readUInt8();
             rem--;
             constexpr int SERVER_BAR_SLOTS = 144;
-            constexpr int OUR_BAR_SLOTS    = 12;   // our actionBar array size
             for (int i = 0; i < SERVER_BAR_SLOTS; ++i) {
                 if (rem < 4) break;
                 uint32_t packed = packet.readUInt32();
                 rem -= 4;
-                if (i >= OUR_BAR_SLOTS) continue;  // only load first bar
+                if (i >= ACTION_BAR_SLOTS) continue;  // only load bars 1 and 2
                 if (packed == 0) {
                     // Empty slot — only clear if not already set to Attack/Hearthstone defaults
                     // so we don't wipe hardcoded fallbacks when the server sends zeros.
