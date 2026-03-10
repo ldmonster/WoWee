@@ -11491,15 +11491,22 @@ void GameHandler::handleMoveKnockBack(network::Packet& packet) {
         ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
     if (packet.getSize() - packet.getReadPos() < 20) return;  // counter(4) + vcos(4) + vsin(4) + hspeed(4) + vspeed(4)
     uint32_t counter = packet.readUInt32();
-    [[maybe_unused]] float vcos = packet.readFloat();
-    [[maybe_unused]] float vsin = packet.readFloat();
-    [[maybe_unused]] float hspeed = packet.readFloat();
-    [[maybe_unused]] float vspeed = packet.readFloat();
+    float vcos    = packet.readFloat();
+    float vsin    = packet.readFloat();
+    float hspeed  = packet.readFloat();
+    float vspeed  = packet.readFloat();
 
     LOG_INFO("SMSG_MOVE_KNOCK_BACK: guid=0x", std::hex, guid, std::dec,
-             " counter=", counter, " hspeed=", hspeed, " vspeed=", vspeed);
+             " counter=", counter, " vcos=", vcos, " vsin=", vsin,
+             " hspeed=", hspeed, " vspeed=", vspeed);
 
     if (guid != playerGuid) return;
+
+    // Apply knockback physics locally so the player visually flies through the air.
+    // The callback forwards to CameraController::applyKnockBack().
+    if (knockBackCallback_) {
+        knockBackCallback_(vcos, vsin, hspeed, vspeed);
+    }
 
     if (!socket) return;
     uint16_t ackWire = wireOpcode(Opcode::CMSG_MOVE_KNOCK_BACK_ACK);

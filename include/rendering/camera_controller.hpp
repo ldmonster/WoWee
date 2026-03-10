@@ -103,6 +103,12 @@ public:
     // Trigger mount jump (applies vertical velocity for physics hop)
     void triggerMountJump();
 
+    // Apply server-driven knockback impulse.
+    // dir: render-space 2D direction unit vector (from vcos/vsin in packet)
+    // hspeed: horizontal speed magnitude (units/s)
+    // vspeed: raw packet vspeed field (server sends negative for upward launch)
+    void applyKnockBack(float vcos, float vsin, float hspeed, float vspeed);
+
     // For first-person player hiding
     void setCharacterRenderer(class CharacterRenderer* cr, uint32_t playerId) {
         characterRenderer = cr;
@@ -313,6 +319,14 @@ private:
     float cachedFloorHeight_ = 0.0f;
     bool hasCachedFloor_ = false;
     static constexpr float COLLISION_CACHE_DISTANCE = 0.15f;  // Re-check every 15cm
+
+    // Server-driven knockback state.
+    // When the server sends SMSG_MOVE_KNOCK_BACK, we apply horizontal + vertical
+    // impulse here and let the normal physics loop (gravity, collision) resolve it.
+    bool knockbackActive_ = false;
+    glm::vec2 knockbackHorizVel_ = glm::vec2(0.0f); // render-space horizontal velocity (units/s)
+    // Horizontal velocity decays via WoW-like drag so the player doesn't slide forever.
+    static constexpr float KNOCKBACK_HORIZ_DRAG = 4.5f; // exponential decay rate (1/s)
 };
 
 } // namespace rendering

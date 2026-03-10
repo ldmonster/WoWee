@@ -693,6 +693,11 @@ public:
     using WorldEntryCallback = std::function<void(uint32_t mapId, float x, float y, float z, bool isInitialEntry)>;
     void setWorldEntryCallback(WorldEntryCallback cb) { worldEntryCallback_ = std::move(cb); }
 
+    // Knockback callback: called when server sends SMSG_MOVE_KNOCK_BACK for the player.
+    // Parameters: vcos, vsin (render-space direction), hspeed, vspeed (raw from packet).
+    using KnockBackCallback = std::function<void(float vcos, float vsin, float hspeed, float vspeed)>;
+    void setKnockBackCallback(KnockBackCallback cb) { knockBackCallback_ = std::move(cb); }
+
     // Unstuck callback (resets player Z to floor height)
     using UnstuckCallback = std::function<void()>;
     void setUnstuckCallback(UnstuckCallback cb) { unstuckCallback_ = std::move(cb); }
@@ -1812,6 +1817,7 @@ private:
 
     // ---- Phase 3: Spells ----
     WorldEntryCallback worldEntryCallback_;
+    KnockBackCallback knockBackCallback_;
     UnstuckCallback unstuckCallback_;
     UnstuckCallback unstuckGyCallback_;
     UnstuckCallback unstuckHearthCallback_;

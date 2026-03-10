@@ -685,6 +685,20 @@ void CameraController::update(float deltaTime) {
                 targetPos += movement * speed * physicsDeltaTime;
             }
 
+            // Apply server-driven knockback horizontal velocity (decays over time).
+            if (knockbackActive_) {
+                targetPos.x += knockbackHorizVel_.x * physicsDeltaTime;
+                targetPos.y += knockbackHorizVel_.y * physicsDeltaTime;
+                // Exponential drag: reduce each frame so the player decelerates naturally.
+                float drag = std::exp(-KNOCKBACK_HORIZ_DRAG * physicsDeltaTime);
+                knockbackHorizVel_ *= drag;
+                // Once negligible, clear the flag so collision/grounding work normally.
+                if (glm::length(knockbackHorizVel_) < 0.05f) {
+                    knockbackActive_ = false;
+                    knockbackHorizVel_ = glm::vec2(0.0f);
+                }
+            }
+
             // Jump with input buffering and coyote time
             if (nowJump) jumpBufferTimer = JUMP_BUFFER_TIME;
             if (grounded) coyoteTimer = COYOTE_TIME;
@@ -2094,6 +2108,22 @@ void CameraController::triggerMountJump() {
         grounded = false;
         coyoteTimer = 0.0f;
     }
+}
+
+void CameraController::applyKnockBack(float vcos, float vsin, float hspeed, float vspeed) {
+    // The server sends (vcos, vsin) as the 2D direction vector in server/wire
+    // coordinate space.  After the server→canonical→render swaps, the direction
+    // in render space is simply (vcos, vsin) — the two swaps cancel each other.
+    knockbackHorizVel_ = glm::vec2(vcos, vsin) * hspeed;
+    knockbackActive_ = true;
+
+    // vspeed in the wire packet is negative when the server wants to launch the
+    // player upward (matches TrinityCore: data << float(-speedZ)).  Negate it
+    // here to obtain the correct upward initial velocity.
+    verticalVelocity = -vspeed;
+    grounded = false;
+    coyoteTimer = 0.0f;
+    jumpBufferTimer = 0.0f;
 }
 
 } // namespace rendering

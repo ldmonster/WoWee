@@ -636,6 +636,11 @@ void Application::setState(AppState newState) {
                         renderer->triggerMeleeSwing();
                     }
                 });
+                gameHandler->setKnockBackCallback([this](float vcos, float vsin, float hspeed, float vspeed) {
+                    if (renderer && renderer->getCameraController()) {
+                        renderer->getCameraController()->applyKnockBack(vcos, vsin, hspeed, vspeed);
+                    }
+                });
             }
             // Load quest marker models
             loadQuestMarkerModels();
