@@ -752,6 +752,7 @@ void Application::logoutToLogin() {
     creatureWasMoving_.clear();
     creatureSwimmingState_.clear();
     creatureWalkingState_.clear();
+    creatureFlyingState_.clear();
     deadCreatureGuids_.clear();
     nonRenderableCreatureDisplayIds_.clear();
     creaturePermanentFailureGuids_.clear();
@@ -1485,6 +1486,7 @@ void Application::update(float deltaTime) {
                         // Don't override Death (1) animation.
                         const bool isSwimmingNow = creatureSwimmingState_.count(guid) > 0;
                         const bool isWalkingNow  = creatureWalkingState_.count(guid) > 0;
+                        const bool isFlyingNow   = creatureFlyingState_.count(guid) > 0;
                         bool prevMoving = creatureWasMoving_[guid];
                         if (isMovingNow != prevMoving) {
                             creatureWasMoving_[guid] = isMovingNow;
@@ -1492,10 +1494,16 @@ void Application::update(float deltaTime) {
                             bool gotState = charRenderer->getAnimationState(instanceId, curAnimId, curT, curDur);
                             if (!gotState || curAnimId != 1 /*Death*/) {
                                 uint32_t targetAnim;
-                                if (isMovingNow)
-                                    targetAnim = isSwimmingNow ? 42u : (isWalkingNow ? 4u : 5u); // Swim/Walk/Run
-                                else
-                                    targetAnim = isSwimmingNow ? 41u : 0u; // SwimIdle vs Stand
+                                if (isMovingNow) {
+                                    if (isFlyingNow)       targetAnim = 61u; // Fly (FlyForward)
+                                    else if (isSwimmingNow) targetAnim = 42u; // Swim
+                                    else if (isWalkingNow)  targetAnim = 4u;  // Walk
+                                    else                    targetAnim = 5u;  // Run
+                                } else {
+                                    if (isFlyingNow)        targetAnim = 60u; // FlyIdle (hover)
+                                    else if (isSwimmingNow) targetAnim = 41u; // SwimIdle
+                                    else                    targetAnim = 0u;  // Stand
+                                }
                                 charRenderer->playAnimation(instanceId, targetAnim, /*loop=*/true);
                             }
                         }
@@ -2810,10 +2818,13 @@ void Application::setupUICallbacks() {
     gameHandler->setUnitMoveFlagsCallback([this](uint64_t guid, uint32_t moveFlags) {
         const bool isSwimming = (moveFlags & static_cast<uint32_t>(game::MovementFlags::SWIMMING)) != 0;
         const bool isWalking  = (moveFlags & static_cast<uint32_t>(game::MovementFlags::WALKING))  != 0;
+        const bool isFlying   = (moveFlags & static_cast<uint32_t>(game::MovementFlags::FLYING))   != 0;
         if (isSwimming) creatureSwimmingState_[guid] = true;
         else            creatureSwimmingState_.erase(guid);
         if (isWalking)  creatureWalkingState_[guid] = true;
         else            creatureWalkingState_.erase(guid);
+        if (isFlying)   creatureFlyingState_[guid] = true;
+        else            creatureFlyingState_.erase(guid);
     });
 
     // Emote animation callback — play server-driven emote animations on NPCs and other players
