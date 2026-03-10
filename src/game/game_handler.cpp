@@ -4854,16 +4854,78 @@ void GameHandler::handlePacket(network::Packet& packet) {
             uint32_t spellId   = packet.readUInt32();
             uint32_t remainMs  = packet.readUInt32();
             uint32_t totalMs   = packet.readUInt32();
-            if (caster == playerGuid && totalMs > 0) {
-                casting              = true;
-                currentCastSpellId   = spellId;
-                castTimeTotal        = totalMs   / 1000.0f;
-                castTimeRemaining    = remainMs  / 1000.0f;
-                LOG_DEBUG("SMSG_RESUME_CAST_BAR: spell=", spellId,
-                          " remaining=", remainMs, "ms total=", totalMs, "ms");
+            if (totalMs > 0) {
+                if (caster == playerGuid) {
+                    casting            = true;
+                    currentCastSpellId = spellId;
+                    castTimeTotal      = totalMs  / 1000.0f;
+                    castTimeRemaining  = remainMs / 1000.0f;
+                } else {
+                    auto& s = unitCastStates_[caster];
+                    s.casting       = true;
+                    s.spellId       = spellId;
+                    s.timeTotal     = totalMs  / 1000.0f;
+                    s.timeRemaining = remainMs / 1000.0f;
+                }
+                LOG_DEBUG("SMSG_RESUME_CAST_BAR: caster=0x", std::hex, caster, std::dec,
+                          " spell=", spellId, " remaining=", remainMs, "ms total=", totalMs, "ms");
             }
             break;
         }
+        // ---- Channeled spell start/tick (WotLK: packed GUIDs; TBC/Classic: full uint64) ----
+        case Opcode::MSG_CHANNEL_START: {
+            // casterGuid + uint32 spellId + uint32 totalDurationMs
+            const bool tbcOrClassic = isClassicLikeExpansion() || isActiveExpansion("tbc");
+            uint64_t chanCaster = tbcOrClassic
+                ? (packet.getSize() - packet.getReadPos() >= 8 ? packet.readUInt64() : 0)
+                : UpdateObjectParser::readPackedGuid(packet);
+            if (packet.getSize() - packet.getReadPos() < 8) break;
+            uint32_t chanSpellId = packet.readUInt32();
+            uint32_t chanTotalMs = packet.readUInt32();
+            if (chanTotalMs > 0 && chanCaster != 0) {
+                if (chanCaster == playerGuid) {
+                    casting            = true;
+                    currentCastSpellId = chanSpellId;
+                    castTimeTotal      = chanTotalMs / 1000.0f;
+                    castTimeRemaining  = castTimeTotal;
+                } else {
+                    auto& s = unitCastStates_[chanCaster];
+                    s.casting       = true;
+                    s.spellId       = chanSpellId;
+                    s.timeTotal     = chanTotalMs / 1000.0f;
+                    s.timeRemaining = s.timeTotal;
+                }
+                LOG_DEBUG("MSG_CHANNEL_START: caster=0x", std::hex, chanCaster, std::dec,
+                          " spell=", chanSpellId, " total=", chanTotalMs, "ms");
+            }
+            break;
+        }
+        case Opcode::MSG_CHANNEL_UPDATE: {
+            // casterGuid + uint32 remainingMs
+            const bool tbcOrClassic2 = isClassicLikeExpansion() || isActiveExpansion("tbc");
+            uint64_t chanCaster2 = tbcOrClassic2
+                ? (packet.getSize() - packet.getReadPos() >= 8 ? packet.readUInt64() : 0)
+                : UpdateObjectParser::readPackedGuid(packet);
+            if (packet.getSize() - packet.getReadPos() < 4) break;
+            uint32_t chanRemainMs = packet.readUInt32();
+            if (chanCaster2 == playerGuid) {
+                castTimeRemaining = chanRemainMs / 1000.0f;
+                if (chanRemainMs == 0) {
+                    casting = false;
+                    currentCastSpellId = 0;
+                }
+            } else if (chanCaster2 != 0) {
+                auto it = unitCastStates_.find(chanCaster2);
+                if (it != unitCastStates_.end()) {
+                    it->second.timeRemaining = chanRemainMs / 1000.0f;
+                    if (chanRemainMs == 0) unitCastStates_.erase(it);
+                }
+            }
+            LOG_DEBUG("MSG_CHANNEL_UPDATE: caster=0x", std::hex, chanCaster2, std::dec,
+                      " remaining=", chanRemainMs, "ms");
+            break;
+        }
+
         case Opcode::SMSG_THREAT_UPDATE: {
             // packed_guid (unit) + packed_guid (target) + uint32 count
             // + count × (packed_guid victim + uint32 threat) — consume to suppress warnings

@@ -4937,6 +4937,21 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                 ImGui::PopStyleColor();
             }
 
+            // Party member cast bar — shows when the party member is casting
+            if (auto* cs = gameHandler.getUnitCastState(member.guid)) {
+                float castPct = (cs->timeTotal > 0.0f)
+                    ? (cs->timeTotal - cs->timeRemaining) / cs->timeTotal : 0.0f;
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.8f, 0.8f, 0.2f, 1.0f));
+                char pcastLabel[48];
+                const std::string& spellNm = gameHandler.getSpellName(cs->spellId);
+                if (!spellNm.empty())
+                    snprintf(pcastLabel, sizeof(pcastLabel), "%s (%.1fs)", spellNm.c_str(), cs->timeRemaining);
+                else
+                    snprintf(pcastLabel, sizeof(pcastLabel), "Casting... (%.1fs)", cs->timeRemaining);
+                ImGui::ProgressBar(castPct, ImVec2(-1, 10), pcastLabel);
+                ImGui::PopStyleColor();
+            }
+
             ImGui::Separator();
             ImGui::PopID();
         }
