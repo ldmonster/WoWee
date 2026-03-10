@@ -415,6 +415,9 @@ public:
     // Classic 1.12 has SMSG_AURA_UPDATE (unlike TBC which doesn't);
     // format differs from WotLK: no caster GUID, DURATION flag is 0x10 not 0x20
     bool parseAuraUpdate(network::Packet& packet, AuraUpdateData& data, bool isAll = false) override;
+    // Classic 1.12 SMSG_NAME_QUERY_RESPONSE: full uint64 guid + name + realmName CString +
+    // uint32 race + uint32 gender + uint32 class (TBC Variant A skips the realmName CString)
+    bool parseNameQueryResponse(network::Packet& packet, NameQueryResponseData& data) override;
 };
 
 /**

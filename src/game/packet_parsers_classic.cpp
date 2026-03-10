@@ -577,6 +577,46 @@ bool ClassicPacketParsers::parseAuraUpdate(network::Packet& packet, AuraUpdateDa
 }
 
 // ============================================================================
+// Classic SMSG_NAME_QUERY_RESPONSE format (1.12 / vmangos):
+//   uint64 guid (full, GetObjectGuid)
+//   CString name
+//   CString realmName (usually empty = single \0 byte)
+//   uint32 race
+//   uint32 gender
+//   uint32 class
+//
+// TBC Variant A (inherited from TbcPacketParsers) skips the realmName CString,
+// causing it to misread the uint32 race field (absorbs the realmName \0 byte
+// as the low byte), producing race=0 and shifted gender/class values.
+// ============================================================================
+bool ClassicPacketParsers::parseNameQueryResponse(network::Packet& packet, NameQueryResponseData& data) {
+    data = NameQueryResponseData{};
+
+    auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
+    if (rem() < 8) return false;
+
+    data.guid = packet.readUInt64();     // full uint64, not PackedGuid
+    data.name = packet.readString();     // null-terminated name
+    if (rem() == 0) return !data.name.empty();
+
+    data.realmName = packet.readString(); // null-terminated realm name (usually "")
+    if (rem() < 12) return !data.name.empty();
+
+    uint32_t race   = packet.readUInt32();
+    uint32_t gender = packet.readUInt32();
+    uint32_t cls    = packet.readUInt32();
+    data.race    = static_cast<uint8_t>(race   & 0xFF);
+    data.gender  = static_cast<uint8_t>(gender & 0xFF);
+    data.classId = static_cast<uint8_t>(cls    & 0xFF);
+    data.found   = 0;
+
+    LOG_DEBUG("[Classic] Name query response: ", data.name,
+              " (race=", (int)data.race, " gender=", (int)data.gender,
+              " class=", (int)data.classId, ")");
+    return !data.name.empty();
+}
+
+// ============================================================================
 // Classic SMSG_CAST_FAILED: no castCount byte (added in TBC/WotLK)
 // Format: spellId(u32) + result(u8)
 // ============================================================================
