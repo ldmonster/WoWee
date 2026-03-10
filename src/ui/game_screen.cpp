@@ -4824,17 +4824,17 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         auto* unit = dynamic_cast<game::Unit*>(entityPtr.get());
         if (!unit || unit->getMaxHealth() == 0) continue;
 
-        // Only show nameplate for the currently targeted unit
-        if (guid != targetGuid) continue;
+        bool isTarget = (guid == targetGuid);
 
         // Convert canonical WoW position → render space, raise to head height
         glm::vec3 renderPos = core::coords::canonicalToRender(
             glm::vec3(unit->getX(), unit->getY(), unit->getZ()));
         renderPos.z += 2.3f;
 
-        // Cull if too far (render units ≈ WoW yards)
+        // Cull distance: target up to 40 units; others up to 20 units
         float dist = glm::length(renderPos - camPos);
-        if (dist > 40.0f) continue;
+        float cullDist = isTarget ? 40.0f : 20.0f;
+        if (dist > cullDist) continue;
 
         // Project to clip space
         glm::vec4 clipPos = viewProj * glm::vec4(renderPos, 1.0f);
@@ -4863,7 +4863,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             barColor = IM_COL32(60,  200, 80,  A(200));
             bgColor  = IM_COL32(25,  100, 35,  A(160));
         }
-        ImU32 borderColor = (guid == targetGuid)
+        ImU32 borderColor = isTarget
             ? IM_COL32(255, 215, 0,  A(255))
             : IM_COL32(20,  20,  20, A(180));
 
