@@ -3181,10 +3181,18 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_FEATURE_SYSTEM_STATUS:
         case Opcode::SMSG_SET_FLAT_SPELL_MODIFIER:
         case Opcode::SMSG_SET_PCT_SPELL_MODIFIER:
+            // Different formats than SMSG_SPELL_DELAYED — consume and ignore
+            packet.setReadPos(packet.getSize());
+            break;
+
         case Opcode::SMSG_SPELL_DELAYED: {
-            // packed_guid (caster) + uint32 delayMs — spell cast was pushed back
-            if (packet.getSize() - packet.getReadPos() < 1) break;
-            uint64_t caster = UpdateObjectParser::readPackedGuid(packet);
+            // WotLK: packed_guid (caster) + uint32 delayMs
+            // TBC/Classic: uint64 (caster) + uint32 delayMs
+            const bool spellDelayTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+            if (packet.getSize() - packet.getReadPos() < (spellDelayTbcLike ? 8u : 1u)) break;
+            uint64_t caster = spellDelayTbcLike
+                ? packet.readUInt64()
+                : UpdateObjectParser::readPackedGuid(packet);
             if (packet.getSize() - packet.getReadPos() < 4) break;
             uint32_t delayMs = packet.readUInt32();
             if (delayMs == 0) break;
@@ -3205,11 +3213,16 @@ void GameHandler::handlePacket(network::Packet& packet) {
             LOG_DEBUG("Equipment set saved");
             break;
         case Opcode::SMSG_PERIODICAURALOG: {
-            // packed_guid victim, packed_guid caster, uint32 spellId, uint32 count, then per-effect
-            if (packet.getSize() - packet.getReadPos() < 2) break;
-            uint64_t victimGuid = UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 2) break;
-            uint64_t casterGuid = UpdateObjectParser::readPackedGuid(packet);
+            // WotLK: packed_guid victim + packed_guid caster + uint32 spellId + uint32 count + effects
+            // TBC/Classic: uint64 victim + uint64 caster + uint32 spellId + uint32 count + effects
+            const bool periodicTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+            const size_t guidMinSz = periodicTbcLike ? 8u : 2u;
+            if (packet.getSize() - packet.getReadPos() < guidMinSz) break;
+            uint64_t victimGuid = periodicTbcLike
+                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+            if (packet.getSize() - packet.getReadPos() < guidMinSz) break;
+            uint64_t casterGuid = periodicTbcLike
+                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
             if (packet.getSize() - packet.getReadPos() < 8) break;
             uint32_t spellId = packet.readUInt32();
             uint32_t count   = packet.readUInt32();
@@ -3248,11 +3261,15 @@ void GameHandler::handlePacket(network::Packet& packet) {
             break;
         }
         case Opcode::SMSG_SPELLENERGIZELOG: {
-            // packed victim GUID, packed caster GUID, uint32 spellId, uint8 powerType, int32 amount
+            // WotLK: packed_guid victim + packed_guid caster + uint32 spellId + uint8 powerType + int32 amount
+            // TBC/Classic: uint64 victim + uint64 caster + uint32 spellId + uint8 powerType + int32 amount
+            const bool energizeTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
             size_t rem = packet.getSize() - packet.getReadPos();
-            if (rem < 4) { packet.setReadPos(packet.getSize()); break; }
-            uint64_t victimGuid = UpdateObjectParser::readPackedGuid(packet);
-            uint64_t casterGuid = UpdateObjectParser::readPackedGuid(packet);
+            if (rem < (energizeTbcLike ? 8u : 2u)) { packet.setReadPos(packet.getSize()); break; }
+            uint64_t victimGuid = energizeTbcLike
+                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+            uint64_t casterGuid = energizeTbcLike
+                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
             rem = packet.getSize() - packet.getReadPos();
             if (rem < 6) { packet.setReadPos(packet.getSize()); break; }
             uint32_t spellId   = packet.readUInt32();
