@@ -1173,6 +1173,9 @@ public:
                                  static_cast<uint32_t>(MovementFlags::FLYING);
         return (movementInfo.flags & flyMask) == flyMask;
     }
+    bool isHovering() const {
+        return (movementInfo.flags & static_cast<uint32_t>(MovementFlags::HOVER)) != 0;
+    }
     void dismount();
 
     // Taxi / Flight Paths

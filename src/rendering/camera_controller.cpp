@@ -1249,7 +1249,10 @@ void CameraController::update(float deltaTime) {
                                    dz >= -0.25f && dz <= stepUp * 1.5f);
 
                 if (dz >= -fallCatch && (nearGround || airFalling || slopeGrace)) {
-                    targetPos.z = *groundH;
+                    // HOVER: float at fixed height above ground instead of standing on it
+                    static constexpr float HOVER_HEIGHT = 4.0f;  // ~4 yards above ground
+                    const float snapH = hoverActive_ ? (*groundH + HOVER_HEIGHT) : *groundH;
+                    targetPos.z = snapH;
                     verticalVelocity = 0.0f;
                     grounded = true;
                     lastGroundZ = *groundH;

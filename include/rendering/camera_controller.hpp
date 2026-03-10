@@ -102,6 +102,7 @@ public:
     void setFeatherFallActive(bool active) { featherFallActive_ = active; }
     void setWaterWalkActive(bool active) { waterWalkActive_ = active; }
     void setFlyingActive(bool active) { flyingActive_ = active; }
+    void setHoverActive(bool active) { hoverActive_ = active; }
     void setMounted(bool m) { mounted_ = m; }
     void setMountHeightOffset(float offset) { mountHeightOffset_ = offset; }
     void setExternalFollow(bool enabled) { externalFollow_ = enabled; }
@@ -292,6 +293,8 @@ private:
     bool waterWalkActive_ = false;
     // Player-controlled flight (CAN_FLY + FLYING): 3D movement, no gravity.
     bool flyingActive_ = false;
+    // Server-driven hover (HOVER flag): float at fixed height above ground.
+    bool hoverActive_ = false;
     bool mounted_ = false;
     float mountHeightOffset_ = 0.0f;
     bool externalMoving_ = false;

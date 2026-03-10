@@ -1018,6 +1018,7 @@ void Application::update(float deltaTime) {
                     renderer->getCameraController()->setFeatherFallActive(gameHandler->isFeatherFalling());
                     renderer->getCameraController()->setWaterWalkActive(gameHandler->isWaterWalking());
                     renderer->getCameraController()->setFlyingActive(gameHandler->isPlayerFlying());
+                    renderer->getCameraController()->setHoverActive(gameHandler->isHovering());
                 }
 
                 bool onTaxi = gameHandler &&
