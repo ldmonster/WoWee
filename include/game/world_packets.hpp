@@ -1855,7 +1855,9 @@ public:
 /** SMSG_GROUP_LIST parser */
 class GroupListParser {
 public:
-    static bool parse(network::Packet& packet, GroupListData& data);
+    // hasRoles: WotLK 3.3.5a added a roles byte at group level and per-member for LFD.
+    //           Classic 1.12 and TBC 2.4.3 do not send this byte.
+    static bool parse(network::Packet& packet, GroupListData& data, bool hasRoles = true);
 };
 
 /** SMSG_PARTY_COMMAND_RESULT data */

@@ -3090,47 +3090,82 @@ network::Packet GroupDeclinePacket::build() {
     return packet;
 }
 
-bool GroupListParser::parse(network::Packet& packet, GroupListData& data) {
-    data.groupType = packet.readUInt8();
-    data.subGroup = packet.readUInt8();
-    data.flags = packet.readUInt8();
-    data.roles = packet.readUInt8();
+bool GroupListParser::parse(network::Packet& packet, GroupListData& data, bool hasRoles) {
+    auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
 
-    // Skip LFG data if present
-    if (data.groupType & 0x04) {
-        packet.readUInt8(); // lfg state
-        packet.readUInt32(); // lfg entry
-        packet.readUInt8(); // lfg flags (3.3.5a may not have this)
+    if (rem() < 3) return false;
+    data.groupType = packet.readUInt8();
+    data.subGroup  = packet.readUInt8();
+    data.flags     = packet.readUInt8();
+
+    // WotLK 3.3.5a added a roles byte (tank/healer/dps) for the dungeon finder.
+    // Classic 1.12 and TBC 2.4.3 do not have this byte.
+    if (hasRoles) {
+        if (rem() < 1) return false;
+        data.roles = packet.readUInt8();
+    } else {
+        data.roles = 0;
     }
 
-    packet.readUInt64(); // group GUID
-    packet.readUInt32(); // counter
+    // WotLK: LFG data gated by groupType bit 0x04 (LFD group type)
+    if (hasRoles && (data.groupType & 0x04)) {
+        if (rem() < 5) return false;
+        packet.readUInt8();  // lfg state
+        packet.readUInt32(); // lfg entry
+        // WotLK 3.3.5a may or may not send the lfg flags byte — read it only if present
+        if (rem() >= 13) { // enough for lfgFlags(1)+groupGuid(8)+counter(4)
+            packet.readUInt8(); // lfg flags
+        }
+    }
 
+    if (rem() < 12) return false;
+    packet.readUInt64(); // group GUID
+    packet.readUInt32(); // update counter
+
+    if (rem() < 4) return false;
     data.memberCount = packet.readUInt32();
+    if (data.memberCount > 40) {
+        LOG_WARNING("GroupListParser: implausible memberCount=", data.memberCount, ", clamping");
+        data.memberCount = 40;
+    }
     data.members.reserve(data.memberCount);
 
     for (uint32_t i = 0; i < data.memberCount; ++i) {
+        if (rem() == 0) break;
         GroupMember member;
-        member.name = packet.readString();
-        member.guid = packet.readUInt64();
+        member.name     = packet.readString();
+        if (rem() < 8) break;
+        member.guid     = packet.readUInt64();
+        if (rem() < 3) break;
         member.isOnline = packet.readUInt8();
         member.subGroup = packet.readUInt8();
-        member.flags = packet.readUInt8();
-        member.roles = packet.readUInt8();
+        member.flags    = packet.readUInt8();
+        // WotLK added per-member roles byte; Classic/TBC do not have it.
+        if (hasRoles) {
+            if (rem() < 1) break;
+            member.roles = packet.readUInt8();
+        } else {
+            member.roles = 0;
+        }
         data.members.push_back(member);
     }
 
+    if (rem() < 8) {
+        LOG_INFO("Group list: ", data.memberCount, " members (no leader GUID in packet)");
+        return true;
+    }
     data.leaderGuid = packet.readUInt64();
 
-    if (data.memberCount > 0 && packet.getReadPos() < packet.getSize()) {
-        data.lootMethod = packet.readUInt8();
-        data.looterGuid = packet.readUInt64();
+    if (data.memberCount > 0 && rem() >= 10) {
+        data.lootMethod   = packet.readUInt8();
+        data.looterGuid   = packet.readUInt64();
         data.lootThreshold = packet.readUInt8();
-        data.difficultyId = packet.readUInt8();
-        data.raidDifficultyId = packet.readUInt8();
-        if (packet.getReadPos() < packet.getSize()) {
-            packet.readUInt8(); // unknown byte
-        }
+        // Dungeon difficulty (heroic/normal) — Classic doesn't send this; TBC/WotLK do
+        if (rem() >= 1) data.difficultyId     = packet.readUInt8();
+        // Raid difficulty — WotLK only
+        if (rem() >= 1) data.raidDifficultyId = packet.readUInt8();
+        // Extra byte in some 3.3.5a builds
+        if (hasRoles && rem() >= 1) packet.readUInt8();
     }
 
     LOG_INFO("Group list: ", data.memberCount, " members, leader=0x",

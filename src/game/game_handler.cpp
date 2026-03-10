@@ -13260,7 +13260,10 @@ void GameHandler::handleGroupDecline(network::Packet& packet) {
 }
 
 void GameHandler::handleGroupList(network::Packet& packet) {
-    if (!GroupListParser::parse(packet, partyData)) return;
+    // WotLK 3.3.5a added a roles byte (group level + per-member) for the dungeon finder.
+    // Classic 1.12 and TBC 2.4.3 do not send the roles byte.
+    const bool hasRoles = isActiveExpansion("wotlk");
+    if (!GroupListParser::parse(packet, partyData, hasRoles)) return;
 
     if (partyData.isEmpty()) {
         LOG_INFO("No longer in a group");
