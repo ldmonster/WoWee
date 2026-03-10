@@ -4420,10 +4420,47 @@ void GameHandler::handlePacket(network::Packet& packet) {
             break;
         }
         case Opcode::SMSG_INIT_EXTRA_AURA_INFO_OBSOLETE:
-        case Opcode::SMSG_SET_EXTRA_AURA_INFO_OBSOLETE:
-            // Extra aura metadata (icons/durations) not yet consumed by aura UI.
+        case Opcode::SMSG_SET_EXTRA_AURA_INFO_OBSOLETE: {
+            // TBC 2.4.3 aura tracking: replaces SMSG_AURA_UPDATE which doesn't exist in TBC.
+            // Format: uint64 targetGuid + uint8 count + N×{uint8 slot, uint32 spellId,
+            //         uint8 effectIndex, uint8 flags, uint32 durationMs, uint32 maxDurationMs}
+            const bool isInit = (*logicalOp == Opcode::SMSG_INIT_EXTRA_AURA_INFO_OBSOLETE);
+            auto remaining = [&]() { return packet.getSize() - packet.getReadPos(); };
+            if (remaining() < 9) { packet.setReadPos(packet.getSize()); break; }
+            uint64_t auraTargetGuid = packet.readUInt64();
+            uint8_t count = packet.readUInt8();
+
+            std::vector<AuraSlot>* auraList = nullptr;
+            if (auraTargetGuid == playerGuid)       auraList = &playerAuras;
+            else if (auraTargetGuid == targetGuid)  auraList = &targetAuras;
+
+            if (auraList && isInit) auraList->clear();
+
+            uint64_t nowMs = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count());
+
+            for (uint8_t i = 0; i < count && remaining() >= 13; i++) {
+                uint8_t  slot        = packet.readUInt8();
+                uint32_t spellId     = packet.readUInt32();
+                (void)               packet.readUInt8();   // effectIndex (unused for slot display)
+                uint8_t  flags       = packet.readUInt8();
+                uint32_t durationMs  = packet.readUInt32();
+                uint32_t maxDurMs    = packet.readUInt32();
+
+                if (auraList) {
+                    while (auraList->size() <= slot) auraList->push_back(AuraSlot{});
+                    AuraSlot& a = (*auraList)[slot];
+                    a.spellId      = spellId;
+                    a.flags        = flags;
+                    a.durationMs   = (durationMs == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(durationMs);
+                    a.maxDurationMs= (maxDurMs   == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(maxDurMs);
+                    a.receivedAtMs = nowMs;
+                }
+            }
             packet.setReadPos(packet.getSize());
             break;
+        }
         case Opcode::MSG_MOVE_WORLDPORT_ACK:
             // Client uses this outbound; treat inbound variant as no-op for robustness.
             packet.setReadPos(packet.getSize());
@@ -4729,8 +4766,24 @@ void GameHandler::handlePacket(network::Packet& packet) {
             packet.setReadPos(packet.getSize());
             break;
 
+        case Opcode::SMSG_CLEAR_EXTRA_AURA_INFO: {
+            // TBC 2.4.3: clear a single aura slot for a unit
+            // Format: uint64 targetGuid + uint8 slot
+            if (packet.getSize() - packet.getReadPos() >= 9) {
+                uint64_t clearGuid  = packet.readUInt64();
+                uint8_t  slot       = packet.readUInt8();
+                std::vector<AuraSlot>* auraList = nullptr;
+                if (clearGuid == playerGuid)      auraList = &playerAuras;
+                else if (clearGuid == targetGuid) auraList = &targetAuras;
+                if (auraList && slot < auraList->size()) {
+                    (*auraList)[slot] = AuraSlot{};
+                }
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+
         // ---- Misc consume ----
-        case Opcode::SMSG_CLEAR_EXTRA_AURA_INFO:
         case Opcode::SMSG_COMPLAIN_RESULT:
         case Opcode::SMSG_ITEM_REFUND_INFO_RESPONSE:
         case Opcode::SMSG_ITEM_ENCHANT_TIME_UPDATE:
