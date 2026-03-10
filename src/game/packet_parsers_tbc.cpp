@@ -978,6 +978,21 @@ bool TbcPacketParsers::parseMailList(network::Packet& packet, std::vector<MailMe
 }
 
 // ============================================================================
+// TbcPacketParsers::parseCastResult — TBC 2.4.3 SMSG_CAST_RESULT
+//
+// TBC format: spellId(u32) + result(u8) = 5 bytes
+// WotLK adds a castCount(u8) prefix making it 6 bytes.
+// Without this override, WotLK parser reads spellId[0] as castCount,
+// then the remaining 4 bytes as spellId (off by one), producing wrong result.
+// ============================================================================
+bool TbcPacketParsers::parseCastResult(network::Packet& packet, uint32_t& spellId, uint8_t& result) {
+    if (packet.getSize() - packet.getReadPos() < 5) return false;
+    spellId = packet.readUInt32();   // No castCount prefix in TBC
+    result  = packet.readUInt8();
+    return true;
+}
+
+// ============================================================================
 // TbcPacketParsers::parseAttackerStateUpdate — TBC 2.4.3 SMSG_ATTACKERSTATEUPDATE
 //
 // TBC uses full uint64 GUIDs for attacker and target.

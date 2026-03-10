@@ -1742,28 +1742,28 @@ void GameHandler::handlePacket(network::Packet& packet) {
         }
 
         // ---- Cast result (WotLK extended cast failed) ----
-        case Opcode::SMSG_CAST_RESULT:
-            // WotLK: uint8 castCount + uint32 spellId + uint8 result [+ optional extra]
+        case Opcode::SMSG_CAST_RESULT: {
+            // WotLK: castCount(u8) + spellId(u32) + result(u8)
+            // TBC/Classic: spellId(u32) + result(u8)  (no castCount prefix)
             // If result == 0, the spell successfully began; otherwise treat like SMSG_CAST_FAILED.
-            if (packet.getSize() - packet.getReadPos() >= 6) {
-                /*uint8_t castCount =*/ packet.readUInt8();
-                /*uint32_t spellId  =*/ packet.readUInt32();
-                uint8_t  result    = packet.readUInt8();
-                if (result != 0) {
-                    // Failure — clear cast bar and show message
+            uint32_t castResultSpellId = 0;
+            uint8_t  castResult        = 0;
+            if (packetParsers_->parseCastResult(packet, castResultSpellId, castResult)) {
+                if (castResult != 0) {
                     casting = false;
                     currentCastSpellId = 0;
                     castTimeRemaining  = 0.0f;
-                    const char* reason = getSpellCastResultString(result, -1);
+                    const char* reason = getSpellCastResultString(castResult, -1);
                     MessageChatData msg;
                     msg.type     = ChatType::SYSTEM;
                     msg.language = ChatLanguage::UNIVERSAL;
                     msg.message  = reason ? reason
-                                          : ("Spell cast failed (error " + std::to_string(result) + ")");
+                                          : ("Spell cast failed (error " + std::to_string(castResult) + ")");
                     addLocalChatMessage(msg);
                 }
             }
             break;
+        }
 
         // ---- Spell failed on another unit ----
         case Opcode::SMSG_SPELL_FAILED_OTHER:
