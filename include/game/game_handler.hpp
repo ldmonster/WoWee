@@ -457,6 +457,15 @@ public:
     bool hasPet() const { return petGuid_ != 0; }
     uint64_t getPetGuid() const { return petGuid_; }
     const std::unordered_set<uint32_t>& getKnownSpells() const { return knownSpells; }
+
+    // Player proficiency bitmasks (from SMSG_SET_PROFICIENCY)
+    // itemClass 2 = Weapon (subClassMask bits: 0=Axe1H,1=Axe2H,2=Bow,3=Gun,4=Mace1H,5=Mace2H,6=Polearm,7=Sword1H,8=Sword2H,10=Staff,13=Fist,14=Misc,15=Dagger,16=Thrown,17=Crossbow,18=Wand,19=Fishing)
+    // itemClass 4 = Armor (subClassMask bits: 1=Cloth,2=Leather,3=Mail,4=Plate,6=Shield)
+    uint32_t getWeaponProficiency() const { return weaponProficiency_; }
+    uint32_t getArmorProficiency()  const { return armorProficiency_; }
+    bool canUseWeaponSubclass(uint32_t subClass) const { return (weaponProficiency_ >> subClass) & 1u; }
+    bool canUseArmorSubclass(uint32_t subClass)  const { return (armorProficiency_  >> subClass) & 1u; }
+
     bool isCasting() const { return casting; }
     bool isGameObjectInteractionCasting() const {
         return casting && currentCastSpellId == 0 && pendingGameObjectInteractGuid_ != 0;
@@ -1687,6 +1696,8 @@ private:
     std::unique_ptr<TransportManager> transportManager_;  // Transport movement manager
     std::unordered_set<uint32_t> knownSpells;
     std::unordered_map<uint32_t, float> spellCooldowns;    // spellId -> remaining seconds
+    uint32_t weaponProficiency_ = 0;  // bitmask from SMSG_SET_PROFICIENCY itemClass=2
+    uint32_t armorProficiency_  = 0;  // bitmask from SMSG_SET_PROFICIENCY itemClass=4
     uint8_t castCount = 0;
     bool casting = false;
     uint32_t currentCastSpellId = 0;

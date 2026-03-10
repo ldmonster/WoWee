@@ -3118,9 +3118,20 @@ void GameHandler::handlePacket(network::Packet& packet) {
             packet.setReadPos(packet.getSize());
             break;
         }
-        case Opcode::SMSG_SET_PROFICIENCY:
-            packet.setReadPos(packet.getSize());
+        case Opcode::SMSG_SET_PROFICIENCY: {
+            // uint8 itemClass + uint32 itemSubClassMask
+            if (packet.getSize() - packet.getReadPos() < 5) break;
+            uint8_t  itemClass = packet.readUInt8();
+            uint32_t mask      = packet.readUInt32();
+            if (itemClass == 2) {      // Weapon
+                weaponProficiency_ = mask;
+                LOG_DEBUG("SMSG_SET_PROFICIENCY: weapon mask=0x", std::hex, mask, std::dec);
+            } else if (itemClass == 4) { // Armor
+                armorProficiency_ = mask;
+                LOG_DEBUG("SMSG_SET_PROFICIENCY: armor mask=0x", std::hex, mask, std::dec);
+            }
             break;
+        }
 
         case Opcode::SMSG_ACTION_BUTTONS: {
             // uint8 mode (0=initial, 1=update) + 144 × uint32 packed buttons
