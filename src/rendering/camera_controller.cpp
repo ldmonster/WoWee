@@ -2124,6 +2124,13 @@ void CameraController::applyKnockBack(float vcos, float vsin, float hspeed, floa
     grounded = false;
     coyoteTimer = 0.0f;
     jumpBufferTimer = 0.0f;
+
+    // Notify the server that the player left the ground so the FALLING flag is
+    // set in subsequent movement heartbeats.  The normal jump detection
+    // (nowJump && grounded) does not fire during a server-driven knockback.
+    if (movementCallback) {
+        movementCallback(static_cast<uint32_t>(game::Opcode::MSG_MOVE_JUMP));
+    }
 }
 
 } // namespace rendering
