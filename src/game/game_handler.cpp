@@ -1605,13 +1605,21 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_EXPLORATION_EXPERIENCE: {
             // uint32 areaId + uint32 xpGained
             if (packet.getSize() - packet.getReadPos() >= 8) {
-                /*uint32_t areaId =*/ packet.readUInt32();
+                uint32_t areaId   = packet.readUInt32();
                 uint32_t xpGained = packet.readUInt32();
                 if (xpGained > 0) {
-                    char buf[128];
-                    std::snprintf(buf, sizeof(buf),
-                                  "Discovered new area! Gained %u experience.", xpGained);
-                    addSystemChatMessage(buf);
+                    std::string areaName = getAreaName(areaId);
+                    std::string msg;
+                    if (!areaName.empty()) {
+                        msg = "Discovered " + areaName + "! Gained " +
+                              std::to_string(xpGained) + " experience.";
+                    } else {
+                        char buf[128];
+                        std::snprintf(buf, sizeof(buf),
+                                      "Discovered new area! Gained %u experience.", xpGained);
+                        msg = buf;
+                    }
+                    addSystemChatMessage(msg);
                     // XP is updated via PLAYER_XP update fields from the server.
                 }
             }
@@ -16494,16 +16502,23 @@ void GameHandler::handleWho(network::Packet& packet) {
         uint32_t raceId  = packet.readUInt32();
         if (hasGender && packet.getSize() - packet.getReadPos() >= 1)
             packet.readUInt8();  // gender (WotLK only, unused)
+        uint32_t zoneId = 0;
         if (packet.getSize() - packet.getReadPos() >= 4)
-            packet.readUInt32(); // zoneId (unused)
+            zoneId = packet.readUInt32();
 
         std::string msg = "  " + playerName;
         if (!guildName.empty())
             msg += " <" + guildName + ">";
         msg += " - Level " + std::to_string(level);
+        if (zoneId != 0) {
+            std::string zoneName = getAreaName(zoneId);
+            if (!zoneName.empty())
+                msg += " [" + zoneName + "]";
+        }
 
         addSystemChatMessage(msg);
-        LOG_INFO("  ", playerName, " (", guildName, ") Lv", level, " Class:", classId, " Race:", raceId);
+        LOG_INFO("  ", playerName, " (", guildName, ") Lv", level, " Class:", classId,
+                 " Race:", raceId, " Zone:", zoneId);
     }
 }
 
@@ -18270,6 +18285,45 @@ const std::string& GameHandler::getFactionNamePublic(uint32_t factionId) const {
     if (it != factionNameCache_.end()) return it->second;
     static const std::string empty;
     return empty;
+}
+
+// ---------------------------------------------------------------------------
+// Area name cache (lazy-loaded from WorldMapArea.dbc)
+// ---------------------------------------------------------------------------
+
+void GameHandler::loadAreaNameCache() {
+    if (areaNameCacheLoaded_) return;
+    areaNameCacheLoaded_ = true;
+
+    auto* am = core::Application::getInstance().getAssetManager();
+    if (!am || !am->isInitialized()) return;
+
+    auto dbc = am->loadDBC("WorldMapArea.dbc");
+    if (!dbc || !dbc->isLoaded()) return;
+
+    const auto* layout = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("WorldMapArea") : nullptr;
+    const uint32_t areaIdField   = layout ? (*layout)["AreaID"]   : 2;
+    const uint32_t areaNameField = layout ? (*layout)["AreaName"] : 3;
+
+    if (dbc->getFieldCount() <= areaNameField) return;
+
+    for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+        uint32_t areaId = dbc->getUInt32(i, areaIdField);
+        if (areaId == 0) continue;
+        std::string name = dbc->getString(i, areaNameField);
+        if (!name.empty() && !areaNameCache_.count(areaId)) {
+            areaNameCache_[areaId] = std::move(name);
+        }
+    }
+    LOG_INFO("WorldMapArea.dbc: loaded ", areaNameCache_.size(), " area names");
+}
+
+std::string GameHandler::getAreaName(uint32_t areaId) const {
+    if (areaId == 0) return {};
+    const_cast<GameHandler*>(this)->loadAreaNameCache();
+    auto it = areaNameCache_.find(areaId);
+    return (it != areaNameCache_.end()) ? it->second : std::string{};
 }
 
 // ---------------------------------------------------------------------------

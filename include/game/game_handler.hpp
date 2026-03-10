@@ -2147,6 +2147,12 @@ private:
     std::unordered_map<uint32_t, std::string> achievementNameCache_;
     bool achievementNameCacheLoaded_ = false;
     void loadAchievementNameCache();
+
+    // Area name cache (lazy-loaded from WorldMapArea.dbc; maps AreaTable ID → display name)
+    std::unordered_map<uint32_t, std::string> areaNameCache_;
+    bool areaNameCacheLoaded_ = false;
+    void loadAreaNameCache();
+    std::string getAreaName(uint32_t areaId) const;
     std::vector<TrainerTab> trainerTabs_;
     void handleTrainerList(network::Packet& packet);
     void loadSpellNameCache();
