@@ -7184,9 +7184,19 @@ void GameScreen::renderSettingsWindow() {
                         saveSettings();
                     }
                 }
-                if (ImGui::Checkbox("Water Refraction", &pendingWaterRefraction)) {
-                    if (renderer) renderer->setWaterRefractionEnabled(pendingWaterRefraction);
-                    saveSettings();
+                {
+                    bool fsrActive = renderer && (renderer->isFSREnabled() || renderer->isFSR2Enabled());
+                    if (!fsrActive && pendingWaterRefraction) {
+                        // FSR was disabled while refraction was on — auto-disable
+                        pendingWaterRefraction = false;
+                        if (renderer) renderer->setWaterRefractionEnabled(false);
+                    }
+                    if (!fsrActive) ImGui::BeginDisabled();
+                    if (ImGui::Checkbox("Water Refraction (requires FSR)", &pendingWaterRefraction)) {
+                        if (renderer) renderer->setWaterRefractionEnabled(pendingWaterRefraction);
+                        saveSettings();
+                    }
+                    if (!fsrActive) ImGui::EndDisabled();
                 }
                 {
                     const char* aaLabels[] = { "Off", "2x MSAA", "4x MSAA", "8x MSAA" };

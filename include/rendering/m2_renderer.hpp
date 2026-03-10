@@ -122,6 +122,7 @@ struct M2ModelGPU {
     bool isKoboldFlame = false;     // Model name matches kobold+(candle/torch/mine) (precomputed)
     bool isLavaModel = false;       // Model name contains lava/molten/magma (UV scroll fallback)
     bool hasTextureAnimation = false; // True if any batch has UV animation
+    bool hasTransparentBatches = false; // True if any batch uses alpha-blend or additive (blendMode >= 2)
     uint8_t availableLODs = 0;  // Bitmask: bit N set if any batch has submeshLevel==N
 
     // Particle emitter data (kept from M2Model)

@@ -885,13 +885,15 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
     }
 
     case FinalizationPhase::M2_INSTANCES: {
-        // Create all M2 instances (lightweight struct allocation, no GPU work)
-        if (m2Renderer) {
-            int loadedDoodads = 0;
-            int skippedDedup = 0;
-            for (const auto& p : pending->m2Placements) {
+        // Create M2 instances incrementally to avoid main-thread stalls.
+        // createInstance includes an O(n) bone-sibling scan that becomes expensive
+        // on dense tiles with many placements and a large existing instance list.
+        if (m2Renderer && ft.m2InstanceIndex < pending->m2Placements.size()) {
+            constexpr size_t kInstancesPerStep = 32;
+            size_t created = 0;
+            while (ft.m2InstanceIndex < pending->m2Placements.size() && created < kInstancesPerStep) {
+                const auto& p = pending->m2Placements[ft.m2InstanceIndex++];
                 if (p.uniqueId != 0 && placedDoodadIds.count(p.uniqueId)) {
-                    skippedDedup++;
                     continue;
                 }
                 uint32_t instId = m2Renderer->createInstance(p.modelId, p.position, p.rotation, p.scale);
@@ -901,12 +903,14 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
                         placedDoodadIds.insert(p.uniqueId);
                         ft.tileUniqueIds.push_back(p.uniqueId);
                     }
-                    loadedDoodads++;
+                    created++;
                 }
             }
+            if (ft.m2InstanceIndex < pending->m2Placements.size()) {
+                return false; // More instances to create — yield
+            }
             LOG_DEBUG("  Loaded doodads for tile [", x, ",", y, "]: ",
-                     loadedDoodads, " instances (", ft.uploadedM2ModelIds.size(), " new models, ",
-                     skippedDedup, " dedup skipped)");
+                     ft.m2InstanceIds.size(), " instances (", ft.uploadedM2ModelIds.size(), " new models)");
         }
         ft.phase = FinalizationPhase::WMO_MODELS;
         return false;
@@ -948,17 +952,15 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
     }
 
     case FinalizationPhase::WMO_INSTANCES: {
-        // Create all WMO instances + load WMO liquids
-        if (wmoRenderer) {
-            int loadedWMOs = 0;
-            int loadedLiquids = 0;
-            int skippedWmoDedup = 0;
-            for (auto& wmoReady : pending->wmoModels) {
+        // Create WMO instances incrementally to avoid stalls on tiles with many WMOs.
+        if (wmoRenderer && ft.wmoInstanceIndex < pending->wmoModels.size()) {
+            constexpr size_t kWmoInstancesPerStep = 4;
+            size_t created = 0;
+            while (ft.wmoInstanceIndex < pending->wmoModels.size() && created < kWmoInstancesPerStep) {
+                auto& wmoReady = pending->wmoModels[ft.wmoInstanceIndex++];
                 if (wmoReady.uniqueId != 0 && placedWmoIds.count(wmoReady.uniqueId)) {
-                    skippedWmoDedup++;
                     continue;
                 }
-
                 uint32_t wmoInstId = wmoRenderer->createInstance(wmoReady.modelId, wmoReady.position, wmoReady.rotation);
                 if (wmoInstId) {
                     ft.wmoInstanceIds.push_back(wmoInstId);
@@ -966,8 +968,6 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
                         placedWmoIds.insert(wmoReady.uniqueId);
                         ft.tileWmoUniqueIds.push_back(wmoReady.uniqueId);
                     }
-                    loadedWMOs++;
-
                     // Load WMO liquids (canals, pools, etc.)
                     if (waterRenderer) {
                         glm::mat4 modelMatrix = glm::mat4(1.0f);
@@ -977,25 +977,21 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
                         modelMatrix = glm::rotate(modelMatrix, wmoReady.rotation.x, glm::vec3(1.0f, 0.0f, 0.0f));
                         for (const auto& group : wmoReady.model.groups) {
                             if (!group.liquid.hasLiquid()) continue;
-                            // Skip interior water/ocean but keep magma/slime (e.g. Ironforge lava)
                             if (group.flags & 0x2000) {
                                 uint16_t lt = group.liquid.materialId;
                                 uint8_t basicType = (lt == 0) ? 0 : ((lt - 1) % 4);
                                 if (basicType < 2) continue;
                             }
                             waterRenderer->loadFromWMO(group.liquid, modelMatrix, wmoInstId);
-                            loadedLiquids++;
                         }
                     }
+                    created++;
                 }
             }
-            if (loadedWMOs > 0 || skippedWmoDedup > 0) {
-                LOG_DEBUG("  Loaded WMOs for tile [", x, ",", y, "]: ",
-                         loadedWMOs, " instances, ", skippedWmoDedup, " dedup skipped");
+            if (ft.wmoInstanceIndex < pending->wmoModels.size()) {
+                return false; // More WMO instances to create — yield
             }
-            if (loadedLiquids > 0) {
-                LOG_DEBUG("  Loaded WMO liquids for tile [", x, ",", y, "]: ", loadedLiquids);
-            }
+            LOG_DEBUG("  Loaded WMOs for tile [", x, ",", y, "]: ", ft.wmoInstanceIds.size(), " instances");
         }
         ft.phase = FinalizationPhase::WMO_DOODADS;
         return false;
@@ -2213,9 +2209,15 @@ void TerrainManager::streamTiles() {
         return false;
     };
 
-    // Enqueue tiles in radius around current tile for async loading
+    // Enqueue tiles in radius around current tile for async loading.
+    // Collect all newly-needed tiles, then sort by distance so the closest
+    // (most visible) tiles get loaded first.  This is critical during taxi
+    // flight where new tiles enter the radius faster than they can load.
     {
         std::lock_guard<std::mutex> lock(queueMutex);
+
+        struct PendingEntry { TileCoord coord; int distSq; };
+        std::vector<PendingEntry> newTiles;
 
         for (int dy = -loadRadius; dy <= loadRadius; dy++) {
             for (int dx = -loadRadius; dx <= loadRadius; dx++) {
@@ -2240,9 +2242,18 @@ void TerrainManager::streamTiles() {
                 if (failedTiles.find(coord) != failedTiles.end()) continue;
                 if (shouldSkipMissingAdt(coord)) continue;
 
-                loadQueue.push_back(coord);
+                newTiles.push_back({coord, dx*dx + dy*dy});
                 pendingTiles[coord] = true;
             }
+        }
+
+        // Sort nearest tiles first so workers service the most visible tiles
+        std::sort(newTiles.begin(), newTiles.end(),
+                  [](const PendingEntry& a, const PendingEntry& b) { return a.distSq < b.distSq; });
+
+        // Insert at front so new close tiles preempt any distant tiles already queued
+        for (auto it = newTiles.rbegin(); it != newTiles.rend(); ++it) {
+            loadQueue.push_front(it->coord);
         }
     }
 

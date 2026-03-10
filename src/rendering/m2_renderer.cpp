@@ -1357,6 +1357,7 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
             if (batch.materialIndex < model.materials.size()) {
                 bgpu.blendMode = model.materials[batch.materialIndex].blendMode;
                 bgpu.materialFlags = model.materials[batch.materialIndex].flags;
+                if (bgpu.blendMode >= 2) gpuModel.hasTransparentBatches = true;
             }
 
             // Copy LOD level from batch
@@ -2349,7 +2350,11 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         sortedVisible_.push_back({i, instance.modelId, distSq, effectiveMaxDistSq});
     }
 
-    // Sort by modelId to minimize vertex/index buffer rebinds
+    // Two-pass rendering: opaque/alpha-test first (depth write ON), then transparent/additive
+    // (depth write OFF, sorted back-to-front) so transparent geometry composites correctly
+    // against all opaque geometry rather than only against what was rendered before it.
+
+    // Pass 1: sort by modelId for minimum buffer rebinds (opaque batches)
     std::sort(sortedVisible_.begin(), sortedVisible_.end(),
               [](const VisibleEntry& a, const VisibleEntry& b) { return a.modelId < b.modelId; });
 
@@ -2377,6 +2382,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     // Start with opaque pipeline
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, opaquePipeline_);
     currentPipeline = opaquePipeline_;
+    bool opaquePass = true; // Pass 1 = opaque, pass 2 = transparent (set below for second pass)
 
     for (const auto& entry : sortedVisible_) {
         if (entry.index >= instances.size()) continue;
@@ -2474,6 +2480,15 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             if (batch.indexCount == 0) continue;
             if (!model.isGroundDetail && batch.submeshLevel != targetLOD) continue;
             if (batch.batchOpacity < 0.01f) continue;
+
+            // Two-pass gate: pass 1 = opaque/cutout only, pass 2 = transparent/additive only.
+            // Alpha-test (blendMode==1) and spell effects that force-additive are handled
+            // by their effective blend mode below; gate on raw blendMode here.
+            {
+                const bool rawTransparent = (batch.blendMode >= 2) || model.isSpellEffect;
+                if (opaquePass && rawTransparent) continue;   // skip transparent in opaque pass
+                if (!opaquePass && !rawTransparent) continue; // skip opaque in transparent pass
+            }
 
             const bool koboldFlameCard = batch.colorKeyBlack && model.isKoboldFlame;
             const bool smallCardLikeBatch =
@@ -2623,6 +2638,163 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             }
             vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
 
+            vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
+            lastDrawCallCount++;
+        }
+    }
+
+    // Pass 2: transparent/additive batches — sort back-to-front by distance so
+    // overlapping transparent geometry composites in the correct painter's order.
+    opaquePass = false;
+    std::sort(sortedVisible_.begin(), sortedVisible_.end(),
+              [](const VisibleEntry& a, const VisibleEntry& b) { return a.distSq > b.distSq; });
+
+    currentModelId = UINT32_MAX;
+    currentModel = nullptr;
+    // Reset pipeline to opaque so the first transparent bind always sets explicitly
+    currentPipeline = opaquePipeline_;
+
+    for (const auto& entry : sortedVisible_) {
+        if (entry.index >= instances.size()) continue;
+        auto& instance = instances[entry.index];
+
+        // Quick skip: if model has no transparent batches at all, skip it entirely
+        if (entry.modelId != currentModelId) {
+            auto mdlIt = models.find(entry.modelId);
+            if (mdlIt == models.end()) continue;
+            if (!mdlIt->second.hasTransparentBatches && !mdlIt->second.isSpellEffect) continue;
+        }
+
+        // Reuse the same rendering logic as pass 1 (via fallthrough — the batch gate
+        // `!opaquePass && !rawTransparent → continue` handles opaque skipping)
+        if (entry.modelId != currentModelId) {
+            currentModelId = entry.modelId;
+            auto mdlIt = models.find(currentModelId);
+            if (mdlIt == models.end()) continue;
+            currentModel = &mdlIt->second;
+            if (!currentModel->vertexBuffer) continue;
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &currentModel->vertexBuffer, &offset);
+            vkCmdBindIndexBuffer(cmd, currentModel->indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+        }
+
+        const M2ModelGPU& model = *currentModel;
+
+        // Distance-based fade alpha (same as pass 1)
+        float fadeAlpha = 1.0f;
+        float fadeFrac = model.disableAnimation ? 0.55f : fadeStartFraction;
+        float fadeStartDistSq = entry.effectiveMaxDistSq * fadeFrac * fadeFrac;
+        if (entry.distSq > fadeStartDistSq) {
+            fadeAlpha = std::clamp((entry.effectiveMaxDistSq - entry.distSq) /
+                                  (entry.effectiveMaxDistSq - fadeStartDistSq), 0.0f, 1.0f);
+        }
+        float instanceFadeAlpha = fadeAlpha;
+        if (model.isGroundDetail) instanceFadeAlpha *= 0.82f;
+        if (model.isInstancePortal) instanceFadeAlpha *= 0.12f;
+
+        bool modelNeedsAnimation = model.hasAnimation && !model.disableAnimation;
+        if (modelNeedsAnimation && instance.boneMatrices.empty()) continue;
+        bool needsBones = modelNeedsAnimation && !instance.boneMatrices.empty();
+        if (needsBones && (!instance.boneBuffer[frameIndex] || !instance.boneSet[frameIndex])) continue;
+        bool useBones = needsBones;
+        if (useBones && instance.boneSet[frameIndex]) {
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipelineLayout_, 2, 1, &instance.boneSet[frameIndex], 0, nullptr);
+        }
+
+        uint16_t desiredLOD = 0;
+        if (entry.distSq > 150.0f * 150.0f) desiredLOD = 3;
+        else if (entry.distSq > 80.0f * 80.0f) desiredLOD = 2;
+        else if (entry.distSq > 40.0f * 40.0f) desiredLOD = 1;
+        uint16_t targetLOD = desiredLOD;
+        if (desiredLOD > 0 && !(model.availableLODs & (1u << desiredLOD))) targetLOD = 0;
+
+        const bool foliageLikeModel = model.isFoliageLike;
+        const bool particleDominantEffect = model.isSpellEffect &&
+            !model.particleEmitters.empty() && model.batches.size() <= 2;
+
+        for (const auto& batch : model.batches) {
+            if (batch.indexCount == 0) continue;
+            if (!model.isGroundDetail && batch.submeshLevel != targetLOD) continue;
+            if (batch.batchOpacity < 0.01f) continue;
+
+            // Pass 2 gate: only transparent/additive batches
+            {
+                const bool rawTransparent = (batch.blendMode >= 2) || model.isSpellEffect;
+                if (!rawTransparent) continue;
+            }
+
+            // Skip glow sprites (handled after loop)
+            const bool batchUnlit = (batch.materialFlags & 0x01) != 0;
+            const bool shouldUseGlowSprite =
+                !batch.colorKeyBlack &&
+                (model.isElvenLike || model.isLanternLike) &&
+                !model.isSpellEffect &&
+                (batch.glowSize <= 1.35f || (batch.lanternGlowHint && batch.glowSize <= 6.0f)) &&
+                (batch.lanternGlowHint || (batch.blendMode >= 3) ||
+                 (batch.colorKeyBlack && batchUnlit && batch.blendMode >= 1));
+            if (shouldUseGlowSprite) {
+                const bool cardLikeSkipMesh = (batch.blendMode >= 3) || batch.colorKeyBlack || batchUnlit;
+                if ((batch.glowCardLike && model.isLanternLike) || (cardLikeSkipMesh && !model.isLanternLike))
+                    continue;
+            }
+
+            glm::vec2 uvOffset(0.0f, 0.0f);
+            if (batch.textureAnimIndex != 0xFFFF && model.hasTextureAnimation) {
+                uint16_t lookupIdx = batch.textureAnimIndex;
+                if (lookupIdx < model.textureTransformLookup.size()) {
+                    uint16_t transformIdx = model.textureTransformLookup[lookupIdx];
+                    if (transformIdx < model.textureTransforms.size()) {
+                        const auto& tt = model.textureTransforms[transformIdx];
+                        glm::vec3 trans = interpVec3(tt.translation,
+                            instance.currentSequenceIndex, instance.animTime,
+                            glm::vec3(0.0f), model.globalSequenceDurations);
+                        uvOffset = glm::vec2(trans.x, trans.y);
+                    }
+                }
+            }
+            if (model.isLavaModel && uvOffset == glm::vec2(0.0f)) {
+                static auto startTime2 = std::chrono::steady_clock::now();
+                float t = std::chrono::duration<float>(std::chrono::steady_clock::now() - startTime2).count();
+                uvOffset = glm::vec2(t * 0.03f, -t * 0.08f);
+            }
+
+            uint8_t effectiveBlendMode = batch.blendMode;
+            if (model.isSpellEffect) {
+                if (effectiveBlendMode <= 1) effectiveBlendMode = 3;
+                else if (effectiveBlendMode == 4 || effectiveBlendMode == 5) effectiveBlendMode = 3;
+            }
+
+            VkPipeline desiredPipeline;
+            switch (effectiveBlendMode) {
+                case 2: desiredPipeline = alphaPipeline_; break;
+                default: desiredPipeline = additivePipeline_; break;
+            }
+            if (desiredPipeline != currentPipeline) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
+                currentPipeline = desiredPipeline;
+            }
+
+            if (batch.materialUBOMapped) {
+                auto* mat = static_cast<M2MaterialUBO*>(batch.materialUBOMapped);
+                mat->interiorDarken = insideInterior ? 1.0f : 0.0f;
+                if (batch.colorKeyBlack)
+                    mat->colorKeyThreshold = (effectiveBlendMode == 4 || effectiveBlendMode == 5) ? 0.7f : 0.08f;
+            }
+
+            if (!batch.materialSet) continue;
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipelineLayout_, 1, 1, &batch.materialSet, 0, nullptr);
+
+            M2PushConstants pc;
+            pc.model = instance.modelMatrix;
+            pc.uvOffset = uvOffset;
+            pc.texCoordSet = static_cast<int>(batch.textureUnit);
+            pc.useBones = useBones ? 1 : 0;
+            pc.isFoliage = model.shadowWindFoliage ? 1 : 0;
+            pc.fadeAlpha = instanceFadeAlpha;
+            if (particleDominantEffect) continue; // emission-only mesh
+            vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
             vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
             lastDrawCallCount++;
         }

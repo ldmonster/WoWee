@@ -152,9 +152,11 @@ struct FinalizingTile {
     FinalizationPhase phase = FinalizationPhase::TERRAIN;
 
     // Progress indices within current phase
-    size_t m2ModelIndex = 0;       // Next M2 model to upload
-    size_t wmoModelIndex = 0;      // Next WMO model to upload
-    size_t wmoDoodadIndex = 0;     // Next WMO doodad to upload
+    size_t m2ModelIndex     = 0;   // Next M2 model to upload
+    size_t m2InstanceIndex  = 0;   // Next M2 placement to instantiate
+    size_t wmoModelIndex    = 0;   // Next WMO model to upload
+    size_t wmoInstanceIndex = 0;   // Next WMO placement to instantiate
+    size_t wmoDoodadIndex   = 0;   // Next WMO doodad to upload
 
     // Incremental terrain upload state (splits TERRAIN phase across frames)
     bool terrainPreloaded = false;  // True after preloaded textures uploaded
