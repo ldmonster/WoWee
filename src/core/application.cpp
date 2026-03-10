@@ -1692,13 +1692,16 @@ void Application::setupUICallbacks() {
     });
 
     // World entry callback (online mode) - load terrain when entering world
-    gameHandler->setWorldEntryCallback([this](uint32_t mapId, float x, float y, float z) {
-        LOG_INFO("Online world entry: mapId=", mapId, " pos=(", x, ", ", y, ", ", z, ")");
+    gameHandler->setWorldEntryCallback([this](uint32_t mapId, float x, float y, float z, bool isInitialEntry) {
+        LOG_INFO("Online world entry: mapId=", mapId, " pos=(", x, ", ", y, ", ", z, ")"
+                 " initial=", isInitialEntry);
 
         // Same-map teleport (taxi landing, GM teleport on same continent):
         // just update position, let terrain streamer handle tile loading incrementally.
         // A full reload is only needed on first entry or map change.
-        if (mapId == loadedMapId_ && renderer && renderer->getTerrainManager()) {
+        // Exception: on reconnect to the same map (isInitialEntry=true), all online entities
+        // are stale and must be cleared so the server's fresh CREATE_OBJECTs re-spawn them.
+        if (mapId == loadedMapId_ && renderer && renderer->getTerrainManager() && !isInitialEntry) {
             LOG_INFO("Same-map teleport (map ", mapId, "), skipping full world reload");
             glm::vec3 canonical = core::coords::serverToCanonical(glm::vec3(x, y, z));
             glm::vec3 renderPos = core::coords::canonicalToRender(canonical);

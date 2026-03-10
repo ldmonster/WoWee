@@ -666,8 +666,8 @@ public:
     uint32_t getSkillCategory(uint32_t skillId) const;
 
     // World entry callback (online mode - triggered when entering world)
-    // Parameters: mapId, x, y, z (canonical WoW coordinates)
-    using WorldEntryCallback = std::function<void(uint32_t mapId, float x, float y, float z)>;
+    // Parameters: mapId, x, y, z (canonical WoW coords), isInitialEntry=true on first login or reconnect
+    using WorldEntryCallback = std::function<void(uint32_t mapId, float x, float y, float z, bool isInitialEntry)>;
     void setWorldEntryCallback(WorldEntryCallback cb) { worldEntryCallback_ = std::move(cb); }
 
     // Unstuck callback (resets player Z to floor height)

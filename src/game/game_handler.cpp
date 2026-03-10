@@ -499,6 +499,8 @@ void GameHandler::disconnect() {
     wardenModuleSize_ = 0;
     wardenModuleData_.clear();
     wardenLoadedModule_.reset();
+    // Clear entity state so reconnect sees fresh CREATE_OBJECT for all visible objects.
+    entityManager.clear();
     setState(WorldState::DISCONNECTED);
     LOG_INFO("Disconnected from world server");
 }
@@ -6074,7 +6076,7 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
 
     // Notify application to load terrain for this map/position (online mode)
     if (worldEntryCallback_) {
-        worldEntryCallback_(data.mapId, data.x, data.y, data.z);
+        worldEntryCallback_(data.mapId, data.x, data.y, data.z, initialWorldEntry);
     }
 
     // Auto-join default chat channels
@@ -15582,7 +15584,7 @@ void GameHandler::handleTeleportAck(network::Packet& packet) {
     // Notify application of teleport — the callback decides whether to do
     // a full world reload (map change) or just update position (same map).
     if (worldEntryCallback_) {
-        worldEntryCallback_(currentMapId_, serverX, serverY, serverZ);
+        worldEntryCallback_(currentMapId_, serverX, serverY, serverZ, false);
     }
 }
 
@@ -15689,7 +15691,7 @@ void GameHandler::handleNewWorld(network::Packet& packet) {
 
     // Reload terrain at new position
     if (worldEntryCallback_) {
-        worldEntryCallback_(mapId, serverX, serverY, serverZ);
+        worldEntryCallback_(mapId, serverX, serverY, serverZ, false);
     }
 }
 
