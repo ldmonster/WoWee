@@ -1805,6 +1805,15 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
     if (!bonusLine.empty()) {
         ImGui::TextColored(green, "%s", bonusLine.c_str());
     }
+    if (item.maxDurability > 0) {
+        float durPct = static_cast<float>(item.curDurability) / static_cast<float>(item.maxDurability);
+        ImVec4 durColor;
+        if (durPct > 0.5f)       durColor = ImVec4(0.1f, 1.0f, 0.1f, 1.0f);  // green
+        else if (durPct > 0.25f) durColor = ImVec4(1.0f, 1.0f, 0.0f, 1.0f);  // yellow
+        else                     durColor = ImVec4(1.0f, 0.2f, 0.2f, 1.0f);  // red
+        ImGui::TextColored(durColor, "Durability %u / %u",
+                           item.curDurability, item.maxDurability);
+    }
     if (item.sellPrice > 0) {
         uint32_t g = item.sellPrice / 10000;
         uint32_t s = (item.sellPrice / 100) % 100;

@@ -8023,10 +8023,16 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                 if (block.objectType == ObjectType::ITEM || block.objectType == ObjectType::CONTAINER) {
                     auto entryIt = block.fields.find(fieldIndex(UF::OBJECT_FIELD_ENTRY));
                     auto stackIt = block.fields.find(fieldIndex(UF::ITEM_FIELD_STACK_COUNT));
+                    auto durIt   = block.fields.find(fieldIndex(UF::ITEM_FIELD_DURABILITY));
+                    auto maxDurIt= block.fields.find(fieldIndex(UF::ITEM_FIELD_MAXDURABILITY));
                     if (entryIt != block.fields.end() && entryIt->second != 0) {
-                        OnlineItemInfo info;
+                        // Preserve existing info when doing partial updates
+                        OnlineItemInfo info = onlineItems_.count(block.guid)
+                            ? onlineItems_[block.guid] : OnlineItemInfo{};
                         info.entry = entryIt->second;
-                        info.stackCount = (stackIt != block.fields.end()) ? stackIt->second : 1;
+                        if (stackIt != block.fields.end()) info.stackCount = stackIt->second;
+                        if (durIt   != block.fields.end()) info.curDurability  = durIt->second;
+                        if (maxDurIt!= block.fields.end()) info.maxDurability  = maxDurIt->second;
                         bool isNew = (onlineItems_.find(block.guid) == onlineItems_.end());
                         onlineItems_[block.guid] = info;
                         if (isNew) newItemCreated = true;
@@ -8427,17 +8433,29 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                         extractExploredZoneFields(lastPlayerFields_);
                     }
 
-                    // Update item stack count for online items
+                    // Update item stack count / durability for online items
                     if (entity->getType() == ObjectType::ITEM || entity->getType() == ObjectType::CONTAINER) {
                         bool inventoryChanged = false;
-                        const uint16_t itemStackField = fieldIndex(UF::ITEM_FIELD_STACK_COUNT);
+                        const uint16_t itemStackField   = fieldIndex(UF::ITEM_FIELD_STACK_COUNT);
+                        const uint16_t itemDurField     = fieldIndex(UF::ITEM_FIELD_DURABILITY);
+                        const uint16_t itemMaxDurField  = fieldIndex(UF::ITEM_FIELD_MAXDURABILITY);
                         const uint16_t containerNumSlotsField = fieldIndex(UF::CONTAINER_FIELD_NUM_SLOTS);
                         const uint16_t containerSlot1Field = fieldIndex(UF::CONTAINER_FIELD_SLOT_1);
                         for (const auto& [key, val] : block.fields) {
+                            auto it = onlineItems_.find(block.guid);
                             if (key == itemStackField) {
-                                auto it = onlineItems_.find(block.guid);
                                 if (it != onlineItems_.end() && it->second.stackCount != val) {
                                     it->second.stackCount = val;
+                                    inventoryChanged = true;
+                                }
+                            } else if (key == itemDurField) {
+                                if (it != onlineItems_.end() && it->second.curDurability != val) {
+                                    it->second.curDurability = val;
+                                    inventoryChanged = true;
+                                }
+                            } else if (key == itemMaxDurField) {
+                                if (it != onlineItems_.end() && it->second.maxDurability != val) {
+                                    it->second.maxDurability = val;
                                     inventoryChanged = true;
                                 }
                             }
@@ -10719,6 +10737,8 @@ void GameHandler::rebuildOnlineInventory() {
         ItemDef def;
         def.itemId = itemIt->second.entry;
         def.stackCount = itemIt->second.stackCount;
+        def.curDurability = itemIt->second.curDurability;
+        def.maxDurability = itemIt->second.maxDurability;
         def.maxStack = 1;
 
         auto infoIt = itemInfoCache_.find(itemIt->second.entry);
@@ -10757,6 +10777,8 @@ void GameHandler::rebuildOnlineInventory() {
         ItemDef def;
         def.itemId = itemIt->second.entry;
         def.stackCount = itemIt->second.stackCount;
+        def.curDurability = itemIt->second.curDurability;
+        def.maxDurability = itemIt->second.maxDurability;
         def.maxStack = 1;
 
         auto infoIt = itemInfoCache_.find(itemIt->second.entry);
@@ -10830,6 +10852,8 @@ void GameHandler::rebuildOnlineInventory() {
             ItemDef def;
             def.itemId = itemIt->second.entry;
             def.stackCount = itemIt->second.stackCount;
+        def.curDurability = itemIt->second.curDurability;
+        def.maxDurability = itemIt->second.maxDurability;
             def.maxStack = 1;
 
             auto infoIt = itemInfoCache_.find(itemIt->second.entry);
@@ -10870,6 +10894,8 @@ void GameHandler::rebuildOnlineInventory() {
         ItemDef def;
         def.itemId = itemIt->second.entry;
         def.stackCount = itemIt->second.stackCount;
+        def.curDurability = itemIt->second.curDurability;
+        def.maxDurability = itemIt->second.maxDurability;
         def.maxStack = 1;
 
         auto infoIt = itemInfoCache_.find(itemIt->second.entry);
@@ -10951,6 +10977,8 @@ void GameHandler::rebuildOnlineInventory() {
             ItemDef def;
             def.itemId = itemIt->second.entry;
             def.stackCount = itemIt->second.stackCount;
+        def.curDurability = itemIt->second.curDurability;
+        def.maxDurability = itemIt->second.maxDurability;
             def.maxStack = 1;
 
             auto infoIt = itemInfoCache_.find(itemIt->second.entry);
@@ -14863,6 +14891,26 @@ void GameHandler::buyBackItem(uint32_t buybackSlot) {
     network::Packet packet(kWotlkCmsgBuybackItemOpcode);
     packet.writeUInt64(currentVendorItems.vendorGuid);
     packet.writeUInt32(wireSlot);
+    socket->send(packet);
+}
+
+void GameHandler::repairItem(uint64_t vendorGuid, uint64_t itemGuid) {
+    if (state != WorldState::IN_WORLD || !socket) return;
+    // CMSG_REPAIR_ITEM: npcGuid(8) + itemGuid(8) + useGuildBank(uint8)
+    network::Packet packet(wireOpcode(Opcode::CMSG_REPAIR_ITEM));
+    packet.writeUInt64(vendorGuid);
+    packet.writeUInt64(itemGuid);
+    packet.writeUInt8(0);  // do not use guild bank
+    socket->send(packet);
+}
+
+void GameHandler::repairAll(uint64_t vendorGuid, bool useGuildBank) {
+    if (state != WorldState::IN_WORLD || !socket) return;
+    // itemGuid = 0 signals "repair all equipped" to the server
+    network::Packet packet(wireOpcode(Opcode::CMSG_REPAIR_ITEM));
+    packet.writeUInt64(vendorGuid);
+    packet.writeUInt64(0);
+    packet.writeUInt8(useGuildBank ? 1 : 0);
     socket->send(packet);
 }
 

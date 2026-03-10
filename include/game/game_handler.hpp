@@ -1258,6 +1258,8 @@ public:
         uint32_t count = 1;
     };
     void buyBackItem(uint32_t buybackSlot);
+    void repairItem(uint64_t vendorGuid, uint64_t itemGuid);
+    void repairAll(uint64_t vendorGuid, bool useGuildBank = false);
     const std::deque<BuybackItem>& getBuybackItems() const { return buybackItems_; }
     void autoEquipItemBySlot(int backpackIndex);
     void autoEquipItemInBag(int bagIndex, int slotIndex);
@@ -1269,6 +1271,7 @@ public:
     void useItemById(uint32_t itemId);
     bool isVendorWindowOpen() const { return vendorWindowOpen; }
     const ListInventoryData& getVendorItems() const { return currentVendorItems; }
+    void setVendorCanRepair(bool v) { currentVendorItems.canRepair = v; }
 
     // Mail
     bool isMailboxOpen() const { return mailboxOpen_; }
@@ -1831,6 +1834,8 @@ private:
     struct OnlineItemInfo {
         uint32_t entry = 0;
         uint32_t stackCount = 1;
+        uint32_t curDurability = 0;
+        uint32_t maxDurability = 0;
     };
     std::unordered_map<uint64_t, OnlineItemInfo> onlineItems_;
     std::unordered_map<uint32_t, ItemQueryResponseData> itemInfoCache_;

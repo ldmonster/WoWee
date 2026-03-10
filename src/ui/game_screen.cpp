@@ -6538,6 +6538,9 @@ void GameScreen::renderGossipWindow(game::GameHandler& gameHandler) {
             std::string processedText = replaceGenderPlaceholders(displayText, gameHandler);
             std::string label = std::string(icon) + " " + processedText;
             if (ImGui::Selectable(label.c_str())) {
+                if (opt.text == "GOSSIP_OPTION_ARMORER") {
+                    gameHandler.setVendorCanRepair(true);
+                }
                 gameHandler.selectGossipOption(opt.id);
             }
             ImGui::PopID();
@@ -6936,6 +6939,17 @@ void GameScreen::renderVendorWindow(game::GameHandler& gameHandler) {
         uint32_t ms = static_cast<uint32_t>((money / 100) % 100);
         uint32_t mc = static_cast<uint32_t>(money % 100);
         ImGui::Text("Your money: %ug %us %uc", mg, ms, mc);
+
+        if (vendor.canRepair) {
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8.0f);
+            if (ImGui::SmallButton("Repair All")) {
+                gameHandler.repairAll(vendor.vendorGuid, false);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Repair all equipped items");
+            }
+        }
         ImGui::Separator();
 
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Right-click bag items to sell");

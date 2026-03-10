@@ -1426,17 +1426,20 @@ void Application::update(float deltaTime) {
                         }
                     }
 
-                    // Use getLatestX/Y/Z (server-authoritative destination) for position sync
-                    // rather than getX/Y/Z (interpolated), which may be stale for entities
-                    // outside the 150-unit updateMovement() culling radius in GameHandler.
-                    glm::vec3 canonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());
+                    // Distance check uses getLatestX/Y/Z (server-authoritative destination) to
+                    // avoid false-culling entities that moved while getX/Y/Z was stale.
+                    // Position sync still uses getX/Y/Z to preserve smooth interpolation for
+                    // nearby entities; distant entities (> 150u) have planarDist≈0 anyway
+                    // so the renderer remains driven correctly by creatureMoveCallback_.
+                    glm::vec3 latestCanonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());
                     float canonDistSq = 0.0f;
                     if (havePlayerPos) {
-                        glm::vec3 d = canonical - playerPos;
+                        glm::vec3 d = latestCanonical - playerPos;
                         canonDistSq = glm::dot(d, d);
                         if (canonDistSq > syncRadiusSq) continue;
                     }
 
+                    glm::vec3 canonical(entity->getX(), entity->getY(), entity->getZ());
                     glm::vec3 renderPos = core::coords::canonicalToRender(canonical);
 
                     // Visual collision guard: keep hostile melee units from rendering inside the

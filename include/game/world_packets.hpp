@@ -2179,6 +2179,7 @@ struct VendorItem {
 struct ListInventoryData {
     uint64_t vendorGuid = 0;
     std::vector<VendorItem> items;
+    bool canRepair = false;  // Set when vendor was opened via GOSSIP_OPTION_ARMORER
 
     bool isValid() const { return true; }
 };
