@@ -637,6 +637,10 @@ public:
     using SpellCastAnimCallback = std::function<void(uint64_t guid, bool start, bool isChannel)>;
     void setSpellCastAnimCallback(SpellCastAnimCallback cb) { spellCastAnimCallback_ = std::move(cb); }
 
+    // Unit animation hint: signal jump (animId=38) or swim (animId=42) for other players/NPCs
+    using UnitAnimHintCallback = std::function<void(uint64_t guid, uint32_t animId)>;
+    void setUnitAnimHintCallback(UnitAnimHintCallback cb) { unitAnimHintCallback_ = std::move(cb); }
+
     // NPC swing callback (plays attack animation on NPC)
     using NpcSwingCallback = std::function<void(uint64_t guid)>;
     void setNpcSwingCallback(NpcSwingCallback cb) { npcSwingCallback_ = std::move(cb); }
@@ -2263,6 +2267,7 @@ private:
     GhostStateCallback ghostStateCallback_;
     MeleeSwingCallback meleeSwingCallback_;
     SpellCastAnimCallback spellCastAnimCallback_;
+    UnitAnimHintCallback unitAnimHintCallback_;
     NpcSwingCallback npcSwingCallback_;
     NpcGreetingCallback npcGreetingCallback_;
     NpcFarewellCallback npcFarewellCallback_;

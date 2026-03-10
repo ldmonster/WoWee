@@ -12165,11 +12165,34 @@ void GameHandler::handleOtherPlayerMovement(network::Packet& packet) {
     }
     otherPlayerMoveTimeMs_[moverGuid] = info.time;
 
-    entity->startMoveTo(canonical.x, canonical.y, canonical.z, canYaw, durationMs / 1000.0f);
+    // Classify the opcode so we can drive the correct entity update and animation.
+    const uint16_t wireOp = packet.getOpcode();
+    const bool isStopOpcode =
+        (wireOp == wireOpcode(Opcode::MSG_MOVE_STOP)) ||
+        (wireOp == wireOpcode(Opcode::MSG_MOVE_STOP_STRAFE)) ||
+        (wireOp == wireOpcode(Opcode::MSG_MOVE_STOP_TURN)) ||
+        (wireOp == wireOpcode(Opcode::MSG_MOVE_STOP_SWIM)) ||
+        (wireOp == wireOpcode(Opcode::MSG_MOVE_FALL_LAND));
+    const bool isJumpOpcode  = (wireOp == wireOpcode(Opcode::MSG_MOVE_JUMP));
+    const bool isSwimOpcode  = (wireOp == wireOpcode(Opcode::MSG_MOVE_START_SWIM));
 
-    // Notify renderer
+    // For stop opcodes snap the entity position (duration=0) so it doesn't keep interpolating,
+    // and pass durationMs=0 to the renderer so the Run-anim flash is suppressed.
+    // The per-frame sync will detect no movement and play Stand on the next frame.
+    const float entityDuration = isStopOpcode ? 0.0f : (durationMs / 1000.0f);
+    entity->startMoveTo(canonical.x, canonical.y, canonical.z, canYaw, entityDuration);
+
+    // Notify renderer of position change
     if (creatureMoveCallback_) {
-        creatureMoveCallback_(moverGuid, canonical.x, canonical.y, canonical.z, durationMs);
+        const uint32_t notifyDuration = isStopOpcode ? 0u : durationMs;
+        creatureMoveCallback_(moverGuid, canonical.x, canonical.y, canonical.z, notifyDuration);
+    }
+
+    // Signal specific animation transitions that the per-frame sync can't detect reliably.
+    // WoW M2 animation IDs: 38=JumpMid (loops during airborne), 42=Swim
+    if (unitAnimHintCallback_) {
+        if (isJumpOpcode)  unitAnimHintCallback_(moverGuid, 38u);
+        else if (isSwimOpcode) unitAnimHintCallback_(moverGuid, 42u);
     }
 }
 

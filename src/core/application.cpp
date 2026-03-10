@@ -2771,6 +2771,29 @@ void Application::setupUICallbacks() {
         }
     });
 
+    // Unit animation hint callback — play jump (38) or swim (42) on other players/NPCs
+    // when MSG_MOVE_JUMP or MSG_MOVE_START_SWIM arrives.  The per-frame sync handles the
+    // return to Stand/Run once the unit lands or exits water.
+    gameHandler->setUnitAnimHintCallback([this](uint64_t guid, uint32_t animId) {
+        if (!renderer) return;
+        auto* cr = renderer->getCharacterRenderer();
+        if (!cr) return;
+        uint32_t instanceId = 0;
+        {
+            auto it = playerInstances_.find(guid);
+            if (it != playerInstances_.end()) instanceId = it->second;
+        }
+        if (instanceId == 0) {
+            auto it = creatureInstances_.find(guid);
+            if (it != creatureInstances_.end()) instanceId = it->second;
+        }
+        if (instanceId == 0) return;
+        // Don't override Death animation (1)
+        uint32_t curAnim = 0; float curT = 0.0f, curDur = 0.0f;
+        if (cr->getAnimationState(instanceId, curAnim, curT, curDur) && curAnim == 1) return;
+        cr->playAnimation(instanceId, animId, /*loop=*/true);
+    });
+
     // Emote animation callback — play server-driven emote animations on NPCs and other players
     gameHandler->setEmoteAnimCallback([this](uint64_t guid, uint32_t emoteAnim) {
         if (!renderer || emoteAnim == 0) return;
