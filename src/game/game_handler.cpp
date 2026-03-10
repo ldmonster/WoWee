@@ -11952,13 +11952,18 @@ void GameHandler::handleLfgBootProposalUpdate(network::Packet& packet) {
     (void)myVote; (void)totalVotes; (void)bootVotes; (void)timeLeft; (void)votesNeeded;
 
     if (inProgress) {
+        lfgState_ = LfgState::Boot;
         addSystemChatMessage(
             std::string("Dungeon Finder: Vote to kick in progress (") +
             std::to_string(timeLeft) + "s remaining).");
-    } else if (myAnswer) {
-        addSystemChatMessage("Dungeon Finder: Vote kick passed — member removed.");
     } else {
-        addSystemChatMessage("Dungeon Finder: Vote kick failed.");
+        // Boot vote ended — return to InDungeon state regardless of outcome
+        lfgState_ = LfgState::InDungeon;
+        if (myAnswer) {
+            addSystemChatMessage("Dungeon Finder: Vote kick passed — member removed.");
+        } else {
+            addSystemChatMessage("Dungeon Finder: Vote kick failed.");
+        }
     }
 
     LOG_INFO("SMSG_LFG_BOOT_PROPOSAL_UPDATE: inProgress=", inProgress,
@@ -12025,6 +12030,18 @@ void GameHandler::lfgTeleport(bool toLfgDungeon) {
 
     socket->send(pkt);
     LOG_INFO("Sent CMSG_LFG_TELEPORT: toLfgDungeon=", toLfgDungeon);
+}
+
+void GameHandler::lfgSetBootVote(bool vote) {
+    if (!socket) return;
+    uint16_t wireOp = wireOpcode(Opcode::CMSG_LFG_SET_BOOT_VOTE);
+    if (wireOp == 0xFFFF) return;
+
+    network::Packet pkt(wireOp);
+    pkt.writeUInt8(vote ? 1 : 0);
+
+    socket->send(pkt);
+    LOG_INFO("Sent CMSG_LFG_SET_BOOT_VOTE: vote=", vote);
 }
 
 void GameHandler::loadAreaTriggerDbc() {

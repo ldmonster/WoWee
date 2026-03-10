@@ -944,6 +944,7 @@ public:
     void lfgJoin(uint32_t dungeonId, uint8_t roles);
     void lfgLeave();
     void lfgAcceptProposal(uint32_t proposalId, bool accept);
+    void lfgSetBootVote(bool vote);
     void lfgTeleport(bool toLfgDungeon = true);
     LfgState getLfgState() const { return lfgState_; }
     bool isLfgQueued()    const { return lfgState_ == LfgState::Queued; }

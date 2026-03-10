@@ -10583,6 +10583,20 @@ void GameScreen::renderDungeonFinderWindow(game::GameHandler& gameHandler) {
         ImGui::Separator();
     }
 
+    // ---- Vote-to-kick buttons ----
+    if (state == LfgState::Boot) {
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Vote to kick in progress:");
+        ImGui::Spacing();
+        if (ImGui::Button("Vote Yes (kick)", ImVec2(140, 0))) {
+            gameHandler.lfgSetBootVote(true);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Vote No (keep)", ImVec2(140, 0))) {
+            gameHandler.lfgSetBootVote(false);
+        }
+        ImGui::Separator();
+    }
+
     // ---- Teleport button (in dungeon) ----
     if (state == LfgState::InDungeon) {
         if (ImGui::Button("Teleport to Dungeon", ImVec2(-1, 0))) {
