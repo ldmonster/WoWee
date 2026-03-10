@@ -10997,8 +10997,10 @@ void GameHandler::dismount() {
 
 void GameHandler::handleForceSpeedChange(network::Packet& packet, const char* name,
                                           Opcode ackOpcode, float* speedStorage) {
-    // Packed GUID
-    uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
+    // WotLK: packed GUID; TBC/Classic: full uint64
+    const bool fscTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    uint64_t guid = fscTbcLike
+        ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
     // uint32 counter
     uint32_t counter = packet.readUInt32();
 
@@ -11144,8 +11146,11 @@ void GameHandler::handleForceMoveRootState(network::Packet& packet, bool rooted)
 
 void GameHandler::handleForceMoveFlagChange(network::Packet& packet, const char* name,
                                              Opcode ackOpcode, uint32_t flag, bool set) {
-    if (packet.getSize() - packet.getReadPos() < 2) return;
-    uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
+    // WotLK: packed GUID; TBC/Classic: full uint64
+    const bool fmfTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    if (packet.getSize() - packet.getReadPos() < (fmfTbcLike ? 8u : 2u)) return;
+    uint64_t guid = fmfTbcLike
+        ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
     if (packet.getSize() - packet.getReadPos() < 4) return;
     uint32_t counter = packet.readUInt32();
 
@@ -11200,8 +11205,11 @@ void GameHandler::handleForceMoveFlagChange(network::Packet& packet, const char*
 }
 
 void GameHandler::handleMoveKnockBack(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 2) return;
-    uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
+    // WotLK: packed GUID; TBC/Classic: full uint64
+    const bool mkbTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    if (packet.getSize() - packet.getReadPos() < (mkbTbc ? 8u : 2u)) return;
+    uint64_t guid = mkbTbc
+        ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
     if (packet.getSize() - packet.getReadPos() < 20) return;  // counter(4) + vcos(4) + vsin(4) + hspeed(4) + vspeed(4)
     uint32_t counter = packet.readUInt32();
     [[maybe_unused]] float vcos = packet.readFloat();
@@ -11940,8 +11948,10 @@ void GameHandler::handleArenaError(network::Packet& packet) {
 }
 
 void GameHandler::handleOtherPlayerMovement(network::Packet& packet) {
-    // Server relays MSG_MOVE_* for other players: PackedGuid + MovementInfo
-    uint64_t moverGuid = UpdateObjectParser::readPackedGuid(packet);
+    // Server relays MSG_MOVE_* for other players: packed GUID (WotLK) or full uint64 (TBC/Classic)
+    const bool otherMoveTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    uint64_t moverGuid = otherMoveTbc
+        ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
     if (moverGuid == playerGuid || moverGuid == 0) {
         return; // Skip our own echoes
     }
