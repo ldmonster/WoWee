@@ -4730,6 +4730,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_ITEM_REFUND_INFO_RESPONSE:
         case Opcode::SMSG_ITEM_ENCHANT_TIME_UPDATE:
         case Opcode::SMSG_LOOT_LIST:
+            // Consume — not yet processed
+            packet.setReadPos(packet.getSize());
+            break;
+
         case Opcode::SMSG_RESUME_CAST_BAR: {
             // packed_guid caster + packed_guid target + uint32 spellId
             // + uint32 remainingMs + uint32 totalMs + uint8 schoolMask
