@@ -1771,10 +1771,17 @@ void GameHandler::handlePacket(network::Packet& packet) {
             break;
 
         // ---- Spell proc resist log ----
-        case Opcode::SMSG_PROCRESIST:
-            // guid(8) + guid(8) + uint32 spellId + uint8 logSchoolMask — just consume
-            packet.setReadPos(packet.getSize());
+        case Opcode::SMSG_PROCRESIST: {
+            // casterGuid(8) + victimGuid(8) + uint32 spellId + uint8 logSchoolMask
+            if (packet.getSize() - packet.getReadPos() >= 17) {
+                /*uint64_t caster =*/ packet.readUInt64();
+                uint64_t victim = packet.readUInt64();
+                uint32_t spellId = packet.readUInt32();
+                if (victim == playerGuid)
+                    addCombatText(CombatTextEntry::MISS, 0, spellId, false);
+            }
             break;
+        }
 
         // ---- Loot start roll (Need/Greed popup trigger) ----
         case Opcode::SMSG_LOOT_START_ROLL: {
@@ -4802,7 +4809,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
 
         // ---- Multiple aggregated packets/moves ----
         case Opcode::SMSG_MULTIPLE_MOVES:
-            packet.setReadPos(packet.getSize());
+            // Same wire format as SMSG_COMPRESSED_MOVES: uint8 size + uint16 opcode + payload[]
+            handleCompressedMoves(packet);
             break;
 
         case Opcode::SMSG_MULTIPLE_PACKETS: {
