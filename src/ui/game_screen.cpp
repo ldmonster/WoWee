@@ -1198,6 +1198,12 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
             tsPrefix = tsBuf;
         }
 
+        // Build chat tag prefix: <GM>, <AFK>, <DND> from chatTag bitmask
+        std::string tagPrefix;
+        if (msg.chatTag & 0x04) tagPrefix = "<GM> ";
+        else if (msg.chatTag & 0x01) tagPrefix = "<AFK> ";
+        else if (msg.chatTag & 0x02) tagPrefix = "<DND> ";
+
         if (msg.type == game::ChatType::SYSTEM) {
             renderTextWithLinks(tsPrefix + processedMessage, color);
         } else if (msg.type == game::ChatType::TEXT_EMOTE) {
@@ -1205,14 +1211,14 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
         } else if (!msg.senderName.empty()) {
             if (msg.type == game::ChatType::SAY ||
                 msg.type == game::ChatType::MONSTER_SAY || msg.type == game::ChatType::MONSTER_PARTY) {
-                std::string fullMsg = tsPrefix + msg.senderName + " says: " + processedMessage;
+                std::string fullMsg = tsPrefix + tagPrefix + msg.senderName + " says: " + processedMessage;
                 renderTextWithLinks(fullMsg, color);
             } else if (msg.type == game::ChatType::YELL || msg.type == game::ChatType::MONSTER_YELL) {
-                std::string fullMsg = tsPrefix + msg.senderName + " yells: " + processedMessage;
+                std::string fullMsg = tsPrefix + tagPrefix + msg.senderName + " yells: " + processedMessage;
                 renderTextWithLinks(fullMsg, color);
             } else if (msg.type == game::ChatType::WHISPER ||
                        msg.type == game::ChatType::MONSTER_WHISPER || msg.type == game::ChatType::RAID_BOSS_WHISPER) {
-                std::string fullMsg = tsPrefix + msg.senderName + " whispers: " + processedMessage;
+                std::string fullMsg = tsPrefix + tagPrefix + msg.senderName + " whispers: " + processedMessage;
                 renderTextWithLinks(fullMsg, color);
             } else if (msg.type == game::ChatType::WHISPER_INFORM) {
                 // Outgoing whisper — show "To Name: message" (WoW-style)
@@ -1221,17 +1227,17 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                 renderTextWithLinks(fullMsg, color);
             } else if (msg.type == game::ChatType::EMOTE ||
                        msg.type == game::ChatType::MONSTER_EMOTE || msg.type == game::ChatType::RAID_BOSS_EMOTE) {
-                std::string fullMsg = tsPrefix + msg.senderName + " " + processedMessage;
+                std::string fullMsg = tsPrefix + tagPrefix + msg.senderName + " " + processedMessage;
                 renderTextWithLinks(fullMsg, color);
             } else if (msg.type == game::ChatType::CHANNEL && !msg.channelName.empty()) {
                 int chIdx = gameHandler.getChannelIndex(msg.channelName);
                 std::string chDisplay = chIdx > 0
                     ? "[" + std::to_string(chIdx) + ". " + msg.channelName + "]"
                     : "[" + msg.channelName + "]";
-                std::string fullMsg = tsPrefix + chDisplay + " [" + msg.senderName + "]: " + processedMessage;
+                std::string fullMsg = tsPrefix + chDisplay + " [" + tagPrefix + msg.senderName + "]: " + processedMessage;
                 renderTextWithLinks(fullMsg, color);
             } else {
-                std::string fullMsg = tsPrefix + "[" + std::string(getChatTypeName(msg.type)) + "] " + msg.senderName + ": " + processedMessage;
+                std::string fullMsg = tsPrefix + "[" + std::string(getChatTypeName(msg.type)) + "] " + tagPrefix + msg.senderName + ": " + processedMessage;
                 renderTextWithLinks(fullMsg, color);
             }
         } else {
