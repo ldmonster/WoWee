@@ -12770,7 +12770,6 @@ void GameHandler::handleInitialSpells(network::Packet& packet) {
 
     knownSpells = {data.spellIds.begin(), data.spellIds.end()};
 
-    LOG_INFO("SMSG_INITIAL_SPELLS: ", knownSpells.size(), " spells");
     LOG_DEBUG("Initial spells include: 527=", knownSpells.count(527u),
               " 988=", knownSpells.count(988u), " 1180=", knownSpells.count(1180u));
 

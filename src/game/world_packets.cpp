@@ -2839,8 +2839,8 @@ bool InitialSpellsParser::parse(network::Packet& packet, InitialSpellsData& data
     size_t remainingAfterHeader = packetSize - 3; // subtract talentSpec(1) + spellCount(2)
     bool vanillaFormat = remainingAfterHeader < static_cast<size_t>(spellCount) * 6 + 2;
 
-    LOG_INFO("SMSG_INITIAL_SPELLS: packetSize=", packetSize, " bytes, spellCount=", spellCount,
-             vanillaFormat ? " (vanilla uint16 format)" : " (WotLK uint32 format)");
+    LOG_DEBUG("SMSG_INITIAL_SPELLS: packetSize=", packetSize, " bytes, spellCount=", spellCount,
+              vanillaFormat ? " (vanilla uint16 format)" : " (WotLK uint32 format)");
 
     data.spellIds.reserve(spellCount);
     for (uint16_t i = 0; i < spellCount; ++i) {
@@ -2876,14 +2876,13 @@ bool InitialSpellsParser::parse(network::Packet& packet, InitialSpellsData& data
     LOG_INFO("Initial spells parsed: ", data.spellIds.size(), " spells, ",
              data.cooldowns.size(), " cooldowns");
 
-    // Log first 10 spell IDs for debugging
     if (!data.spellIds.empty()) {
         std::string first10;
         for (size_t i = 0; i < std::min(size_t(10), data.spellIds.size()); ++i) {
             if (!first10.empty()) first10 += ", ";
             first10 += std::to_string(data.spellIds[i]);
         }
-        LOG_INFO("First spells: ", first10);
+        LOG_DEBUG("Initial spell IDs (first 10): ", first10);
     }
 
     return true;
