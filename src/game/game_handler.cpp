@@ -482,6 +482,7 @@ void GameHandler::disconnect() {
     activeCharacterGuid_ = 0;
     playerNameCache.clear();
     pendingNameQueries.clear();
+    friendGuids_.clear();
     transportAttachments_.clear();
     serverUpdatedTransportGuids_.clear();
     requiresWarden_ = false;
@@ -1484,27 +1485,15 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 handleFriendStatus(packet);
             }
             break;
-        case Opcode::SMSG_CONTACT_LIST: {
-            // Known variants:
-            // - Full form: uint32 listMask, uint32 count, then variable-size entries.
-            // - Minimal/legacy keepalive-ish form observed on some servers: 1 byte.
-            size_t remaining = packet.getSize() - packet.getReadPos();
-            if (remaining >= 8) {
-                lastContactListMask_ = packet.readUInt32();
-                lastContactListCount_ = packet.readUInt32();
-            } else if (remaining == 1) {
-                /*uint8_t marker =*/ packet.readUInt8();
-                lastContactListMask_ = 0;
-                lastContactListCount_ = 0;
-            } else if (remaining > 0) {
-                // Unknown short variant: consume to keep stream aligned, no warning spam.
-                packet.setReadPos(packet.getSize());
-            }
+        case Opcode::SMSG_CONTACT_LIST:
+            handleContactList(packet);
             break;
-        }
         case Opcode::SMSG_FRIEND_LIST:
+            // Classic 1.12 and TBC friend list (WotLK uses SMSG_CONTACT_LIST instead)
+            handleFriendList(packet);
+            break;
         case Opcode::SMSG_IGNORE_LIST:
-            // Legacy social list variants; CONTACT_LIST is primary in modern flow.
+            // Ignore list: consume to avoid spurious warnings; not parsed.
             packet.setReadPos(packet.getSize());
             break;
 
@@ -9909,6 +9898,12 @@ void GameHandler::handleNameQueryResponse(network::Packet& packet) {
                 mail.senderName = data.name;
             }
         }
+
+        // Backfill friend list: if this GUID came from a friend list packet,
+        // register the name in friendsCache now that we know it.
+        if (friendGuids_.count(data.guid)) {
+            friendsCache[data.name] = data.guid;
+        }
     }
 }
 
@@ -16427,6 +16422,92 @@ void GameHandler::handleWho(network::Packet& packet) {
         addSystemChatMessage(msg);
         LOG_INFO("  ", playerName, " (", guildName, ") Lv", level, " Class:", classId, " Race:", raceId);
     }
+}
+
+void GameHandler::handleFriendList(network::Packet& packet) {
+    // Classic 1.12 / TBC 2.4.3 SMSG_FRIEND_LIST format:
+    //   uint8  count
+    //   for each entry:
+    //     uint64 guid (full)
+    //     uint8  status (0=offline, 1=online, 2=AFK, 3=DND)
+    //     if status != 0:
+    //       uint32 area
+    //       uint32 level
+    //       uint32 class
+    auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
+    if (rem() < 1) return;
+    uint8_t count = packet.readUInt8();
+    LOG_INFO("SMSG_FRIEND_LIST: ", (int)count, " entries");
+    for (uint8_t i = 0; i < count && rem() >= 9; ++i) {
+        uint64_t guid   = packet.readUInt64();
+        uint8_t  status = packet.readUInt8();
+        uint32_t area = 0, level = 0, classId = 0;
+        if (status != 0 && rem() >= 12) {
+            area    = packet.readUInt32();
+            level   = packet.readUInt32();
+            classId = packet.readUInt32();
+        }
+        (void)area; (void)level; (void)classId;
+        // Track as a friend GUID; resolve name via name query
+        friendGuids_.insert(guid);
+        auto nit = playerNameCache.find(guid);
+        if (nit != playerNameCache.end()) {
+            friendsCache[nit->second] = guid;
+            LOG_INFO("  Friend: ", nit->second, " status=", (int)status);
+        } else {
+            LOG_INFO("  Friend guid=0x", std::hex, guid, std::dec,
+                     " status=", (int)status, " (name pending)");
+            queryPlayerName(guid);
+        }
+    }
+}
+
+void GameHandler::handleContactList(network::Packet& packet) {
+    // WotLK SMSG_CONTACT_LIST format:
+    //   uint32 listMask  (1=friend, 2=ignore, 4=mute)
+    //   uint32 count
+    //   for each entry:
+    //     uint64 guid (full)
+    //     uint32 flags
+    //     string note (null-terminated)
+    //     if flags & 0x1 (friend):
+    //       uint8 status (0=offline, 1=online, 2=AFK, 3=DND)
+    //       if status != 0:
+    //         uint32 area, uint32 level, uint32 class
+    // Short/keepalive variant (1-7 bytes): consume silently.
+    auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
+    if (rem() < 8) {
+        packet.setReadPos(packet.getSize());
+        return;
+    }
+    lastContactListMask_  = packet.readUInt32();
+    lastContactListCount_ = packet.readUInt32();
+    for (uint32_t i = 0; i < lastContactListCount_ && rem() >= 8; ++i) {
+        uint64_t guid  = packet.readUInt64();
+        if (rem() < 4) break;
+        uint32_t flags = packet.readUInt32();
+        std::string note = packet.readString();  // may be empty
+        (void)note;
+        if (flags & 0x1) {  // SOCIAL_FLAG_FRIEND
+            if (rem() < 1) break;
+            uint8_t status = packet.readUInt8();
+            if (status != 0 && rem() >= 12) {
+                packet.readUInt32();  // area
+                packet.readUInt32();  // level
+                packet.readUInt32();  // class
+            }
+            friendGuids_.insert(guid);
+            auto nit = playerNameCache.find(guid);
+            if (nit != playerNameCache.end()) {
+                friendsCache[nit->second] = guid;
+            } else {
+                queryPlayerName(guid);
+            }
+        }
+        // ignore / mute entries: no additional fields beyond guid+flags+note
+    }
+    LOG_INFO("SMSG_CONTACT_LIST: mask=", lastContactListMask_,
+             " count=", lastContactListCount_);
 }
 
 void GameHandler::handleFriendStatus(network::Packet& packet) {

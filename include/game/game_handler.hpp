@@ -1537,6 +1537,8 @@ private:
     void handleWho(network::Packet& packet);
 
     // ---- Social handlers ----
+    void handleFriendList(network::Packet& packet);   // Classic SMSG_FRIEND_LIST
+    void handleContactList(network::Packet& packet);  // WotLK SMSG_CONTACT_LIST (full parse)
     void handleFriendStatus(network::Packet& packet);
     void handleRandomRoll(network::Packet& packet);
 
@@ -1656,6 +1658,7 @@ private:
 
     // ---- Friend list cache ----
     std::unordered_map<std::string, uint64_t> friendsCache;  // name -> guid
+    std::unordered_set<uint64_t> friendGuids_;               // all known friend GUIDs (for name backfill)
     uint32_t lastContactListMask_ = 0;
     uint32_t lastContactListCount_ = 0;
 
