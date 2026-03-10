@@ -977,5 +977,75 @@ bool TbcPacketParsers::parseMailList(network::Packet& packet, std::vector<MailMe
     return !inbox.empty();
 }
 
+// ============================================================================
+// TbcPacketParsers::parseAttackerStateUpdate — TBC 2.4.3 SMSG_ATTACKERSTATEUPDATE
+//
+// TBC uses full uint64 GUIDs for attacker and target.
+// WotLK uses packed (variable-length) GUIDs — using the WotLK reader here
+// would mis-parse TBC's GUIDs and corrupt all subsequent damage fields.
+// ============================================================================
+bool TbcPacketParsers::parseAttackerStateUpdate(network::Packet& packet, AttackerStateUpdateData& data) {
+    if (packet.getSize() - packet.getReadPos() < 21) return false;
+
+    data.hitInfo      = packet.readUInt32();
+    data.attackerGuid = packet.readUInt64();   // full GUID in TBC
+    data.targetGuid   = packet.readUInt64();   // full GUID in TBC
+    data.totalDamage  = static_cast<int32_t>(packet.readUInt32());
+    data.subDamageCount = packet.readUInt8();
+
+    for (uint8_t i = 0; i < data.subDamageCount; ++i) {
+        SubDamage sub;
+        sub.schoolMask = packet.readUInt32();
+        sub.damage     = packet.readFloat();
+        sub.intDamage  = packet.readUInt32();
+        sub.absorbed   = packet.readUInt32();
+        sub.resisted   = packet.readUInt32();
+        data.subDamages.push_back(sub);
+    }
+
+    data.victimState = packet.readUInt32();
+    data.overkill    = static_cast<int32_t>(packet.readUInt32());
+
+    if (packet.getReadPos() < packet.getSize()) {
+        data.blocked = packet.readUInt32();
+    }
+
+    LOG_INFO("[TBC] Melee hit: ", data.totalDamage, " damage",
+             data.isCrit() ? " (CRIT)" : "",
+             data.isMiss() ? " (MISS)" : "");
+    return true;
+}
+
+// ============================================================================
+// TbcPacketParsers::parseSpellDamageLog — TBC 2.4.3 SMSG_SPELLNONMELEEDAMAGELOG
+//
+// TBC uses full uint64 GUIDs; WotLK uses packed GUIDs.
+// ============================================================================
+bool TbcPacketParsers::parseSpellDamageLog(network::Packet& packet, SpellDamageLogData& data) {
+    if (packet.getSize() - packet.getReadPos() < 29) return false;
+
+    data.targetGuid  = packet.readUInt64();   // full GUID in TBC
+    data.attackerGuid = packet.readUInt64();  // full GUID in TBC
+    data.spellId     = packet.readUInt32();
+    data.damage      = packet.readUInt32();
+    data.schoolMask  = packet.readUInt8();
+    data.absorbed    = packet.readUInt32();
+    data.resisted    = packet.readUInt32();
+
+    uint8_t periodicLog = packet.readUInt8();
+    (void)periodicLog;
+    packet.readUInt8();    // unused
+    packet.readUInt32();   // blocked
+    uint32_t flags = packet.readUInt32();
+    data.isCrit = (flags & 0x02) != 0;
+
+    // TBC does not have an overkill field here
+    data.overkill = 0;
+
+    LOG_INFO("[TBC] Spell damage: spellId=", data.spellId, " dmg=", data.damage,
+             data.isCrit ? " CRIT" : "");
+    return true;
+}
+
 } // namespace game
 } // namespace wowee

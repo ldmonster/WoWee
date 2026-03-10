@@ -298,6 +298,10 @@ public:
     // TBC 2.4.3 SMSG_MAIL_LIST_RESULT: uint8 count (not uint32+uint8), no body field,
     // attachment uses uint64 itemGuid (not uint32), enchants are 7×u32 id-only (not 7×{id+dur+charges})
     bool parseMailList(network::Packet& packet, std::vector<MailMessage>& inbox) override;
+    // TBC 2.4.3 SMSG_ATTACKERSTATEUPDATE uses full uint64 GUIDs (WotLK uses packed GUIDs)
+    bool parseAttackerStateUpdate(network::Packet& packet, AttackerStateUpdateData& data) override;
+    // TBC 2.4.3 SMSG_SPELLNONMELEEDAMAGELOG uses full uint64 GUIDs (WotLK uses packed GUIDs)
+    bool parseSpellDamageLog(network::Packet& packet, SpellDamageLogData& data) override;
 };
 
 /**
