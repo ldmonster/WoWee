@@ -293,6 +293,8 @@ public:
     network::Packet buildUseItem(uint8_t bagIndex, uint8_t slotIndex, uint64_t itemGuid, uint32_t spellId = 0) override;
     // TBC 2.4.3 SMSG_MONSTER_MOVE has no unk byte after packed GUID (WotLK added it)
     bool parseMonsterMove(network::Packet& packet, MonsterMoveData& data) override;
+    // TBC 2.4.3 SMSG_GOSSIP_MESSAGE quests lack questFlags(u32)+isRepeatable(u8) (WotLK added them)
+    bool parseGossipMessage(network::Packet& packet, GossipMessageData& data) override;
 };
 
 /**

@@ -498,6 +498,53 @@ bool TbcPacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjectDa
 }
 
 // ============================================================================
+// TBC 2.4.3 SMSG_GOSSIP_MESSAGE
+// Identical to WotLK except each quest entry lacks questFlags(u32) and
+// isRepeatable(u8) that WotLK added. Without this override the WotLK parser
+// reads those 5 bytes as part of the quest title, corrupting all gossip quests.
+// ============================================================================
+bool TbcPacketParsers::parseGossipMessage(network::Packet& packet, GossipMessageData& data) {
+    if (packet.getSize() - packet.getReadPos() < 16) return false;
+
+    data.npcGuid = packet.readUInt64();
+    data.menuId = packet.readUInt32();      // TBC added menuId (Classic doesn't have it)
+    data.titleTextId = packet.readUInt32();
+    uint32_t optionCount = packet.readUInt32();
+
+    data.options.clear();
+    data.options.reserve(optionCount);
+    for (uint32_t i = 0; i < optionCount; ++i) {
+        GossipOption opt;
+        opt.id = packet.readUInt32();
+        opt.icon = packet.readUInt8();
+        opt.isCoded = (packet.readUInt8() != 0);
+        opt.boxMoney = packet.readUInt32();
+        opt.text = packet.readString();
+        opt.boxText = packet.readString();
+        data.options.push_back(opt);
+    }
+
+    uint32_t questCount = packet.readUInt32();
+    data.quests.clear();
+    data.quests.reserve(questCount);
+    for (uint32_t i = 0; i < questCount; ++i) {
+        GossipQuestItem quest;
+        quest.questId = packet.readUInt32();
+        quest.questIcon = packet.readUInt32();
+        quest.questLevel = static_cast<int32_t>(packet.readUInt32());
+        // TBC 2.4.3: NO questFlags(u32) and NO isRepeatable(u8) here
+        // WotLK adds these 5 bytes — reading them from TBC garbles the quest title
+        quest.questFlags = 0;
+        quest.isRepeatable = 0;
+        quest.title = normalizeWowTextTokens(packet.readString());
+        data.quests.push_back(quest);
+    }
+
+    LOG_INFO("[TBC] Gossip: ", optionCount, " options, ", questCount, " quests");
+    return true;
+}
+
+// ============================================================================
 // TBC 2.4.3 SMSG_MONSTER_MOVE
 // Identical to WotLK except WotLK added a uint8 unk byte immediately after the
 // packed GUID (toggles MOVEMENTFLAG2_UNK7). TBC does NOT have this byte.
