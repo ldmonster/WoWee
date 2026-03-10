@@ -7248,9 +7248,19 @@ void GameHandler::sendMovement(Opcode opcode) {
                 const float facingRad = movementInfo.orientation;
                 movementInfo.jumpCosAngle = std::cos(facingRad);
                 movementInfo.jumpSinAngle = std::sin(facingRad);
-                // Use server run speed as the horizontal speed at jump time.
-                const bool isWalking = (movementInfo.flags & static_cast<uint32_t>(MovementFlags::WALKING)) != 0;
-                movementInfo.jumpXYSpeed = isWalking ? 2.5f : (serverRunSpeed_ > 0.0f ? serverRunSpeed_ : 7.0f);
+                // Horizontal speed: only non-zero when actually moving at jump time.
+                const uint32_t horizFlags =
+                    static_cast<uint32_t>(MovementFlags::FORWARD) |
+                    static_cast<uint32_t>(MovementFlags::BACKWARD) |
+                    static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
+                    static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT);
+                const bool movingHoriz = (movementInfo.flags & horizFlags) != 0;
+                if (movingHoriz) {
+                    const bool isWalking = (movementInfo.flags & static_cast<uint32_t>(MovementFlags::WALKING)) != 0;
+                    movementInfo.jumpXYSpeed = isWalking ? 2.5f : (serverRunSpeed_ > 0.0f ? serverRunSpeed_ : 7.0f);
+                } else {
+                    movementInfo.jumpXYSpeed = 0.0f;
+                }
             }
             break;
         case Opcode::MSG_MOVE_START_TURN_LEFT:
