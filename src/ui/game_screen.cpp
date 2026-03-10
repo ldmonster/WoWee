@@ -4549,13 +4549,34 @@ void GameScreen::renderQuestObjectiveTracker(game::GameHandler& gameHandler) {
     constexpr float RIGHT_MARGIN = 10.0f;
     constexpr int   MAX_QUESTS = 5;
 
+    // Build display list: tracked quests only, or all quests if none tracked
+    const auto& trackedIds = gameHandler.getTrackedQuestIds();
+    std::vector<const game::GameHandler::QuestLogEntry*> toShow;
+    toShow.reserve(MAX_QUESTS);
+    if (!trackedIds.empty()) {
+        for (const auto& q : questLog) {
+            if (q.questId == 0) continue;
+            if (trackedIds.count(q.questId)) toShow.push_back(&q);
+            if (static_cast<int>(toShow.size()) >= MAX_QUESTS) break;
+        }
+    }
+    // Fallback: show all quests if nothing is tracked
+    if (toShow.empty()) {
+        for (const auto& q : questLog) {
+            if (q.questId == 0) continue;
+            toShow.push_back(&q);
+            if (static_cast<int>(toShow.size()) >= MAX_QUESTS) break;
+        }
+    }
+    if (toShow.empty()) return;
+
     float x = screenW - TRACKER_W - RIGHT_MARGIN;
     float y = 200.0f;  // below minimap area
 
     ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(TRACKER_W, 0), ImGuiCond_Always);
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration |
                              ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove |
                              ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoBringToFrontOnFocus;
 
@@ -4564,15 +4585,23 @@ void GameScreen::renderQuestObjectiveTracker(game::GameHandler& gameHandler) {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 2.0f));
 
     if (ImGui::Begin("##QuestTracker", nullptr, flags)) {
-        int shown = 0;
-        for (const auto& q : questLog) {
-            if (q.questId == 0) continue;
-            if (shown >= MAX_QUESTS) break;
+        for (int i = 0; i < static_cast<int>(toShow.size()); ++i) {
+            const auto& q = *toShow[i];
 
-            // Quest title in yellow (gold) if complete, white if in progress
+            // Clickable quest title — opens quest log
+            ImGui::PushID(q.questId);
             ImVec4 titleCol = q.complete ? ImVec4(1.0f, 0.84f, 0.0f, 1.0f)
                                          : ImVec4(1.0f, 1.0f, 0.85f, 1.0f);
-            ImGui::TextColored(titleCol, "%s", q.title.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Text, titleCol);
+            if (ImGui::Selectable(q.title.c_str(), false,
+                                   ImGuiSelectableFlags_None, ImVec2(TRACKER_W - 12.0f, 0))) {
+                questLogScreen.setOpen(true);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Click to open Quest Log");
+            }
+            ImGui::PopStyleColor();
+            ImGui::PopID();
 
             // Objectives line (condensed)
             if (q.complete) {
@@ -4599,7 +4628,6 @@ void GameScreen::renderQuestObjectiveTracker(game::GameHandler& gameHandler) {
                     }
                 }
                 if (q.killCounts.empty() && q.itemCounts.empty() && !q.objectives.empty()) {
-                    // Show the raw objectives text, truncated if needed
                     const std::string& obj = q.objectives;
                     if (obj.size() > 40) {
                         ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.75f, 1.0f),
@@ -4611,10 +4639,9 @@ void GameScreen::renderQuestObjectiveTracker(game::GameHandler& gameHandler) {
                 }
             }
 
-            if (shown < MAX_QUESTS - 1 && shown < static_cast<int>(questLog.size()) - 1) {
+            if (i < static_cast<int>(toShow.size()) - 1) {
                 ImGui::Spacing();
             }
-            ++shown;
         }
     }
     ImGui::End();

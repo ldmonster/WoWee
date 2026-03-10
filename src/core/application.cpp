@@ -1714,6 +1714,21 @@ void Application::setupUICallbacks() {
             // (e.g. Hearthstone pre-loaded them) so they're GPU-uploaded before
             // the first frame at the new position.
             renderer->getTerrainManager()->processAllReadyTiles();
+
+            // Queue all remaining tiles within the load radius (8 tiles = 17x17)
+            // at the new position. precacheTiles skips already-loaded/pending tiles,
+            // so this only enqueues tiles that aren't yet in the pipeline.
+            // This ensures background workers immediately start loading everything
+            // visible from the new position (hearthstone may land far from old location).
+            {
+                auto [tileX, tileY] = core::coords::worldToTile(renderPos.x, renderPos.y);
+                std::vector<std::pair<int,int>> nearbyTiles;
+                nearbyTiles.reserve(289);
+                for (int dy = -8; dy <= 8; dy++)
+                    for (int dx = -8; dx <= 8; dx++)
+                        nearbyTiles.push_back({tileX + dx, tileY + dy});
+                renderer->getTerrainManager()->precacheTiles(nearbyTiles);
+            }
             return;
         }
 
@@ -1976,13 +1991,15 @@ void Application::setupUICallbacks() {
         if (mapId == loadedMapId_) {
             // Same map: pre-enqueue tiles around the bind point so workers start
             // loading them now. Uses render-space coords (canonicalToRender).
+            // Use radius 4 (9x9=81 tiles) — hearthstone cast is ~10s, enough time
+            // for workers to parse most of these before the player arrives.
             glm::vec3 renderPos = core::coords::canonicalToRender(glm::vec3(x, y, z));
             auto [tileX, tileY] = core::coords::worldToTile(renderPos.x, renderPos.y);
 
             std::vector<std::pair<int,int>> tiles;
-            tiles.reserve(25);
-            for (int dy = -2; dy <= 2; dy++)
-                for (int dx = -2; dx <= 2; dx++)
+            tiles.reserve(81);
+            for (int dy = -4; dy <= 4; dy++)
+                for (int dx = -4; dx <= 4; dx++)
                     tiles.push_back({tileX + dx, tileY + dy});
 
             terrainMgr->precacheTiles(tiles);

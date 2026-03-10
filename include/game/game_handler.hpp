@@ -966,6 +966,12 @@ public:
     const std::vector<QuestLogEntry>& getQuestLog() const { return questLog_; }
     void abandonQuest(uint32_t questId);
     bool requestQuestQuery(uint32_t questId, bool force = false);
+    bool isQuestTracked(uint32_t questId) const { return trackedQuestIds_.count(questId) > 0; }
+    void setQuestTracked(uint32_t questId, bool tracked) {
+        if (tracked) trackedQuestIds_.insert(questId);
+        else trackedQuestIds_.erase(questId);
+    }
+    const std::unordered_set<uint32_t>& getTrackedQuestIds() const { return trackedQuestIds_; }
     bool isQuestQueryPending(uint32_t questId) const {
         return pendingQuestQueryIds_.count(questId) > 0;
     }
@@ -1981,6 +1987,7 @@ private:
     // Quest log
     std::vector<QuestLogEntry> questLog_;
     std::unordered_set<uint32_t> pendingQuestQueryIds_;
+    std::unordered_set<uint32_t> trackedQuestIds_;
     bool pendingLoginQuestResync_ = false;
     float pendingLoginQuestResyncTimeout_ = 0.0f;
 

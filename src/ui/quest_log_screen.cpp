@@ -373,11 +373,17 @@ void QuestLogScreen::render(game::GameHandler& gameHandler) {
                     }
                 }
 
-                // Abandon button
+                // Track / Abandon buttons
+                ImGui::Separator();
+                bool isTracked = gameHandler.isQuestTracked(sel.questId);
+                if (ImGui::Button(isTracked ? "Untrack" : "Track", ImVec2(100.0f, 0.0f))) {
+                    gameHandler.setQuestTracked(sel.questId, !isTracked);
+                }
                 if (!sel.complete) {
-                    ImGui::Separator();
+                    ImGui::SameLine();
                     if (ImGui::Button("Abandon Quest", ImVec2(150.0f, 0.0f))) {
                         gameHandler.abandonQuest(sel.questId);
+                        gameHandler.setQuestTracked(sel.questId, false);
                         selectedIndex = -1;
                     }
                 }
