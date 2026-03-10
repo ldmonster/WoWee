@@ -889,5 +889,93 @@ bool TbcPacketParsers::parseItemQueryResponse(network::Packet& packet, ItemQuery
     return true;
 }
 
+// ============================================================================
+// TbcPacketParsers::parseMailList — TBC 2.4.3 SMSG_MAIL_LIST_RESULT
+//
+// Differences from WotLK 3.3.5a (base implementation):
+//   - Header: uint8 count only (WotLK: uint32 totalCount + uint8 shownCount)
+//   - No body field — subject IS the full text (WotLK added body when mailTemplateId==0)
+//   - Attachment item GUID: full uint64 (WotLK: uint32 low GUID)
+//   - Attachment enchants: 7 × uint32 id only (WotLK: 7 × {id+duration+charges} = 84 bytes)
+//   - Header fields: cod + itemTextId + stationery (WotLK has extra unknown uint32 between
+//     itemTextId and stationery)
+// ============================================================================
+bool TbcPacketParsers::parseMailList(network::Packet& packet, std::vector<MailMessage>& inbox) {
+    size_t remaining = packet.getSize() - packet.getReadPos();
+    if (remaining < 1) return false;
+
+    uint8_t count = packet.readUInt8();
+    LOG_INFO("SMSG_MAIL_LIST_RESULT (TBC): count=", (int)count);
+
+    inbox.clear();
+    inbox.reserve(count);
+
+    for (uint8_t i = 0; i < count; ++i) {
+        remaining = packet.getSize() - packet.getReadPos();
+        if (remaining < 2) break;
+
+        uint16_t msgSize = packet.readUInt16();
+        size_t startPos = packet.getReadPos();
+
+        MailMessage msg;
+        if (remaining < static_cast<size_t>(msgSize) + 2) {
+            LOG_WARNING("[TBC] Mail entry ", i, " truncated");
+            break;
+        }
+
+        msg.messageId = packet.readUInt32();
+        msg.messageType = packet.readUInt8();
+
+        switch (msg.messageType) {
+            case 0: msg.senderGuid = packet.readUInt64(); break;
+            default: msg.senderEntry = packet.readUInt32(); break;
+        }
+
+        msg.cod          = packet.readUInt32();
+        packet.readUInt32();         // itemTextId
+        // NOTE: TBC has NO extra unknown uint32 here (WotLK added one between itemTextId and stationery)
+        msg.stationeryId = packet.readUInt32();
+        msg.money        = packet.readUInt32();
+        msg.flags        = packet.readUInt32();
+        msg.expirationTime = packet.readFloat();
+        msg.mailTemplateId = packet.readUInt32();
+        msg.subject      = packet.readString();
+        // TBC has no separate body field at all
+
+        uint8_t attachCount = packet.readUInt8();
+        msg.attachments.reserve(attachCount);
+        for (uint8_t j = 0; j < attachCount; ++j) {
+            MailAttachment att;
+            att.slot         = packet.readUInt8();
+            uint64_t itemGuid = packet.readUInt64();   // full 64-bit GUID (TBC)
+            att.itemGuidLow  = static_cast<uint32_t>(itemGuid & 0xFFFFFFFF);
+            att.itemId       = packet.readUInt32();
+            // TBC: 7 × uint32 enchant ID only (no duration/charges per slot)
+            for (int e = 0; e < 7; ++e) {
+                uint32_t enchId = packet.readUInt32();
+                if (e == 0) att.enchantId = enchId;
+            }
+            att.randomPropertyId     = packet.readUInt32();
+            att.randomSuffix         = packet.readUInt32();
+            att.stackCount           = packet.readUInt32();
+            att.chargesOrDurability  = packet.readUInt32();
+            att.maxDurability        = packet.readUInt32();
+            packet.readUInt32();  // current durability (separate from chargesOrDurability)
+            msg.attachments.push_back(att);
+        }
+
+        msg.read = (msg.flags & 0x01) != 0;
+        inbox.push_back(std::move(msg));
+
+        // Skip any unread bytes within this mail entry
+        size_t consumed = packet.getReadPos() - startPos;
+        if (consumed < static_cast<size_t>(msgSize)) {
+            packet.setReadPos(startPos + msgSize);
+        }
+    }
+
+    return !inbox.empty();
+}
+
 } // namespace game
 } // namespace wowee
