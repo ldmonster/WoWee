@@ -906,8 +906,8 @@ bool TbcPacketParsers::parseItemQueryResponse(network::Packet& packet, ItemQuery
 
     packet.readUInt32(); // AllowableClass
     packet.readUInt32(); // AllowableRace
-    packet.readUInt32(); // ItemLevel
-    packet.readUInt32(); // RequiredLevel
+    data.itemLevel = packet.readUInt32();
+    data.requiredLevel = packet.readUInt32();
     packet.readUInt32(); // RequiredSkill
     packet.readUInt32(); // RequiredSkillRank
     packet.readUInt32(); // RequiredSpell
@@ -962,6 +962,31 @@ bool TbcPacketParsers::parseItemQueryResponse(network::Packet& packet, ItemQuery
         packet.readUInt32(); // ArcaneRes
         data.delayMs = packet.readUInt32();
     }
+
+    // AmmoType + RangedModRange
+    if (packet.getSize() - packet.getReadPos() >= 8) {
+        packet.readUInt32(); // AmmoType
+        packet.readFloat();  // RangedModRange
+    }
+
+    // 5 item spells
+    for (int i = 0; i < 5; i++) {
+        if (packet.getReadPos() + 24 > packet.getSize()) break;
+        data.spells[i].spellId = packet.readUInt32();
+        data.spells[i].spellTrigger = packet.readUInt32();
+        packet.readUInt32(); // SpellCharges
+        packet.readUInt32(); // SpellCooldown
+        packet.readUInt32(); // SpellCategory
+        packet.readUInt32(); // SpellCategoryCooldown
+    }
+
+    // Bonding type
+    if (packet.getReadPos() + 4 <= packet.getSize())
+        data.bindType = packet.readUInt32();
+
+    // Flavor/lore text
+    if (packet.getReadPos() < packet.getSize())
+        data.description = packet.readString();
 
     data.valid = !data.name.empty();
     LOG_DEBUG("[TBC] Item query: ", data.name, " quality=", data.quality,
