@@ -114,6 +114,8 @@ private:
     std::vector<AmbientSample> windSounds_;
     std::vector<AmbientSample> tavernSounds_;
     std::vector<AmbientSample> blacksmithSounds_;
+    std::vector<AmbientSample> birdSounds_;
+    std::vector<AmbientSample> cricketSounds_;
 
     // Weather sound libraries
     std::vector<AmbientSample> rainLightSounds_;

@@ -83,6 +83,34 @@ bool AmbientSoundManager::initialize(pipeline::AssetManager* assets) {
     blacksmithSounds_.resize(1);
     bool blacksmithLoaded = loadSound("Sound\\Ambience\\WMOAmbience\\BlackSmith.wav", blacksmithSounds_[0], assets);
 
+    // Load bird chirp sounds (daytime periodic) — up to 6 variants
+    {
+        static const char* birdPaths[] = {
+            "Sound\\Ambience\\BirdAmbience\\BirdChirp01.wav",
+            "Sound\\Ambience\\BirdAmbience\\BirdChirp02.wav",
+            "Sound\\Ambience\\BirdAmbience\\BirdChirp03.wav",
+            "Sound\\Ambience\\BirdAmbience\\BirdChirp04.wav",
+            "Sound\\Ambience\\BirdAmbience\\BirdChirp05.wav",
+            "Sound\\Ambience\\BirdAmbience\\BirdChirp06.wav",
+        };
+        for (const char* p : birdPaths) {
+            birdSounds_.emplace_back();
+            if (!loadSound(p, birdSounds_.back(), assets)) birdSounds_.pop_back();
+        }
+    }
+
+    // Load cricket/insect sounds (nighttime periodic)
+    {
+        static const char* cricketPaths[] = {
+            "Sound\\Ambience\\Insect\\InsectMorning.wav",
+            "Sound\\Ambience\\Insect\\InsectNight.wav",
+        };
+        for (const char* p : cricketPaths) {
+            cricketSounds_.emplace_back();
+            if (!loadSound(p, cricketSounds_.back(), assets)) cricketSounds_.pop_back();
+        }
+    }
+
     // Load weather sounds
     rainLightSounds_.resize(1);
     bool rainLightLoaded = loadSound("Sound\\Ambience\\Weather\\RainLight.wav", rainLightSounds_[0], assets);
@@ -413,9 +441,13 @@ void AmbientSoundManager::updatePeriodicSounds(float deltaTime, bool isIndoor, b
     if (isDaytime()) {
         birdTimer_ += deltaTime;
         if (birdTimer_ >= randomFloat(BIRD_MIN_INTERVAL, BIRD_MAX_INTERVAL)) {
-            // Play a random bird chirp (we'll use wind sound as placeholder for now)
-            // TODO: Add actual bird sound files when available
             birdTimer_ = 0.0f;
+            if (!birdSounds_.empty()) {
+                std::uniform_int_distribution<size_t> pick(0, birdSounds_.size() - 1);
+                const auto& snd = birdSounds_[pick(gen)];
+                if (snd.loaded)
+                    AudioEngine::instance().playSound2D(snd.data, BIRD_VOLUME, 1.0f);
+            }
         }
     }
 
@@ -423,9 +455,13 @@ void AmbientSoundManager::updatePeriodicSounds(float deltaTime, bool isIndoor, b
     if (isNighttime()) {
         cricketTimer_ += deltaTime;
         if (cricketTimer_ >= randomFloat(CRICKET_MIN_INTERVAL, CRICKET_MAX_INTERVAL)) {
-            // Play cricket sounds
-            // TODO: Add actual cricket sound files when available
             cricketTimer_ = 0.0f;
+            if (!cricketSounds_.empty()) {
+                std::uniform_int_distribution<size_t> pick(0, cricketSounds_.size() - 1);
+                const auto& snd = cricketSounds_[pick(gen)];
+                if (snd.loaded)
+                    AudioEngine::instance().playSound2D(snd.data, CRICKET_VOLUME, 1.0f);
+            }
         }
     }
 }

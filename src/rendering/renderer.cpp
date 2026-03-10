@@ -730,9 +730,6 @@ bool Renderer::initialize(core::Window* win) {
     spellSoundManager = std::make_unique<audio::SpellSoundManager>();
     movementSoundManager = std::make_unique<audio::MovementSoundManager>();
 
-    // TODO Phase 6: Vulkan underwater overlay, post-process, and shadow map
-    // GL versions stubbed during migration
-
     // Create secondary command buffer resources for multithreaded rendering
     if (!createSecondaryCommandResources()) {
         LOG_WARNING("Failed to create secondary command buffers — falling back to single-threaded rendering");
