@@ -1644,9 +1644,12 @@ void GameHandler::handlePacket(network::Packet& packet) {
 
         // ---- Entity health/power delta updates ----
         case Opcode::SMSG_HEALTH_UPDATE: {
-            // packed_guid + uint32 health
-            if (packet.getSize() - packet.getReadPos() < 2) break;
-            uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
+            // WotLK: packed_guid + uint32 health
+            // TBC/Classic: uint64 + uint32 health
+            const bool huTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+            if (packet.getSize() - packet.getReadPos() < (huTbcLike ? 8u : 2u)) break;
+            uint64_t guid = huTbcLike
+                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
             if (packet.getSize() - packet.getReadPos() < 4) break;
             uint32_t hp = packet.readUInt32();
             auto entity = entityManager.getEntity(guid);
@@ -1656,9 +1659,12 @@ void GameHandler::handlePacket(network::Packet& packet) {
             break;
         }
         case Opcode::SMSG_POWER_UPDATE: {
-            // packed_guid + uint8 powerType + uint32 value
-            if (packet.getSize() - packet.getReadPos() < 2) break;
-            uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
+            // WotLK: packed_guid + uint8 powerType + uint32 value
+            // TBC/Classic: uint64 + uint8 powerType + uint32 value
+            const bool puTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+            if (packet.getSize() - packet.getReadPos() < (puTbcLike ? 8u : 2u)) break;
+            uint64_t guid = puTbcLike
+                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
             if (packet.getSize() - packet.getReadPos() < 5) break;
             uint8_t  powerType = packet.readUInt8();
             uint32_t value     = packet.readUInt32();
@@ -1703,9 +1709,12 @@ void GameHandler::handlePacket(network::Packet& packet) {
 
         // ---- Combo points ----
         case Opcode::SMSG_UPDATE_COMBO_POINTS: {
-            // packed_guid (target) + uint8 points
-            if (packet.getSize() - packet.getReadPos() < 2) break;
-            uint64_t target = UpdateObjectParser::readPackedGuid(packet);
+            // WotLK: packed_guid (target) + uint8 points
+            // TBC/Classic: uint64 (target) + uint8 points
+            const bool cpTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+            if (packet.getSize() - packet.getReadPos() < (cpTbcLike ? 8u : 2u)) break;
+            uint64_t target = cpTbcLike
+                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
             if (packet.getSize() - packet.getReadPos() < 1) break;
             comboPoints_ = packet.readUInt8();
             comboTarget_ = target;
