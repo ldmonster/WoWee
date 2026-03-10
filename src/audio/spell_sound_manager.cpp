@@ -2,6 +2,7 @@
 #include "audio/audio_engine.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "core/logger.hpp"
+#include <algorithm>
 #include <random>
 
 namespace wowee {
@@ -180,7 +181,7 @@ void SpellSoundManager::playRandomSound(const std::vector<SpellSample>& library,
 }
 
 void SpellSoundManager::setVolumeScale(float scale) {
-    volumeScale_ = std::max(0.0f, std::min(1.0f, scale));
+    volumeScale_ = std::clamp(scale, .0f, 1.f);
 }
 
 void SpellSoundManager::playPrecast(MagicSchool school, SpellPower power) {
