@@ -12280,16 +12280,6 @@ void GameHandler::handleMonsterMove(network::Packet& packet) {
             return;
         }
         decompressed.resize(destLen);
-        // Dump ALL bytes for format diagnosis (remove once confirmed)
-        static int dumpCount = 0;
-        if (dumpCount < 10) {
-            ++dumpCount;
-            std::string hex;
-            for (size_t i = 0; i < destLen; ++i) {
-                char buf[4]; snprintf(buf, sizeof(buf), "%02X ", decompressed[i]); hex += buf;
-            }
-            LOG_INFO("MonsterMove decomp[", destLen, "]: ", hex);
-        }
         std::vector<uint8_t> stripped;
         bool hasWrappedForm = stripWrappedSubpacket(decompressed, stripped);
 

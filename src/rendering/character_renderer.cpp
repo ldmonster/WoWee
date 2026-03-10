@@ -38,7 +38,6 @@
 #include <unordered_set>
 #include <chrono>
 #include <cstdlib>
-#include <fstream>
 #include <limits>
 #include <cstring>
 
@@ -1058,19 +1057,6 @@ VkTexture* CharacterRenderer::compositeTextures(const std::vector<std::string>& 
             } else {
                 blitOverlay(composite, width, height, overlay, dstX, dstY);
             }
-        }
-    }
-
-    // Debug: dump composite to temp dir for visual inspection
-    {
-        std::string dumpPath = (std::filesystem::temp_directory_path() / ("wowee_composite_debug_" +
-            std::to_string(width) + "x" + std::to_string(height) + ".raw")).string();
-        std::ofstream dump(dumpPath, std::ios::binary);
-        if (dump) {
-            dump.write(reinterpret_cast<const char*>(composite.data()),
-                       static_cast<std::streamsize>(composite.size()));
-            core::Logger::getInstance().info("Composite debug dump: ", dumpPath,
-                " (", width, "x", height, ", ", composite.size(), " bytes)");
         }
     }
 
@@ -2207,7 +2193,6 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 return whiteTexture_.get();
             };
 
-            // One-time debug dump of rendered batches per model
             // Draw batches (submeshes) with per-batch textures
             for (const auto& batch : gpuModel.data.batches) {
                 if (applyGeosetFilter) {
