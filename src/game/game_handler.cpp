@@ -11063,7 +11063,8 @@ void GameHandler::handleForceSpeedChange(network::Packet& packet, const char* na
     if (guid != playerGuid) return;
 
     // Always ACK the speed change to prevent server stall.
-    if (socket && !isClassicLikeExpansion()) {
+    // Classic/TBC use full uint64 GUID; WotLK uses packed GUID.
+    if (socket) {
         network::Packet ack(wireOpcode(ackOpcode));
         const bool legacyGuidAck =
             isActiveExpansion("classic") || isActiveExpansion("tbc") || isActiveExpansion("turtle");
@@ -11149,7 +11150,7 @@ void GameHandler::handleForceMoveRootState(network::Packet& packet, bool rooted)
         movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::ROOT);
     }
 
-    if (!socket || isClassicLikeExpansion()) return;
+    if (!socket) return;
     uint16_t ackWire = wireOpcode(rooted ? Opcode::CMSG_FORCE_MOVE_ROOT_ACK
                                          : Opcode::CMSG_FORCE_MOVE_UNROOT_ACK);
     if (ackWire == 0xFFFF) return;
@@ -11210,7 +11211,7 @@ void GameHandler::handleForceMoveFlagChange(network::Packet& packet, const char*
         }
     }
 
-    if (!socket || isClassicLikeExpansion()) return;
+    if (!socket) return;
     uint16_t ackWire = wireOpcode(ackOpcode);
     if (ackWire == 0xFFFF) return;
 
@@ -11265,7 +11266,7 @@ void GameHandler::handleMoveKnockBack(network::Packet& packet) {
 
     if (guid != playerGuid) return;
 
-    if (!socket || isClassicLikeExpansion()) return;
+    if (!socket) return;
     uint16_t ackWire = wireOpcode(Opcode::CMSG_MOVE_KNOCK_BACK_ACK);
     if (ackWire == 0xFFFF) return;
 
@@ -15467,12 +15468,13 @@ void GameHandler::handleTeleportAck(network::Packet& packet) {
 
     // Send the ack back to the server
     // Client→server MSG_MOVE_TELEPORT_ACK: u64 guid + u32 counter + u32 time
-    if (socket && !isClassicLikeExpansion()) {
+    // Classic/TBC use full uint64 GUID; WotLK uses packed GUID.
+    if (socket) {
         network::Packet ack(wireOpcode(Opcode::MSG_MOVE_TELEPORT_ACK));
         const bool legacyGuidAck =
             isActiveExpansion("classic") || isActiveExpansion("tbc") || isActiveExpansion("turtle");
         if (legacyGuidAck) {
-            ack.writeUInt64(playerGuid);  // CMaNGOS expects full GUID for teleport ACK
+            ack.writeUInt64(playerGuid);  // CMaNGOS/VMaNGOS expects full GUID for Classic/TBC
         } else {
             MovementPacket::writePackedGuid(ack, playerGuid);
         }
