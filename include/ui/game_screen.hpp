@@ -247,6 +247,7 @@ private:
     void renderDungeonFinderWindow(game::GameHandler& gameHandler);
     void renderInstanceLockouts(game::GameHandler& gameHandler);
     void renderNameplates(game::GameHandler& gameHandler);
+    void renderBattlegroundScore(game::GameHandler& gameHandler);
 
     /**
      * Inventory screen

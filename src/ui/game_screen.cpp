@@ -401,6 +401,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderMirrorTimers(gameHandler);
     renderQuestObjectiveTracker(gameHandler);
     if (showNameplates_) renderNameplates(gameHandler);
+    renderBattlegroundScore(gameHandler);
     renderCombatText(gameHandler);
     renderPartyFrames(gameHandler);
     renderBossFrames(gameHandler);
@@ -10294,6 +10295,124 @@ void GameScreen::renderInstanceLockouts(game::GameHandler& gameHandler) {
     }
 
     ImGui::End();
+}
+
+// ============================================================================
+// Battleground score frame
+//
+// Displays the current score for the player's battleground using world states.
+// Shown in the top-centre of the screen whenever SMSG_INIT_WORLD_STATES has
+// been received for a known BG map.  The layout adapts per battleground:
+//
+//   WSG  489 – Alliance / Horde flag captures (max 3)
+//   AB   529 – Alliance / Horde resource scores (max 1600)
+//   AV    30 – Alliance / Horde reinforcements
+//   EotS 566 – Alliance / Horde resource scores (max 1600)
+// ============================================================================
+void GameScreen::renderBattlegroundScore(game::GameHandler& gameHandler) {
+    // Only show when in a recognised battleground map
+    uint32_t mapId = gameHandler.getWorldStateMapId();
+
+    // World state key sets per battleground
+    // Keys from the WoW 3.3.5a WorldState.dbc / client source
+    struct BgScoreDef {
+        uint32_t mapId;
+        const char* name;
+        uint32_t allianceKey;   // world state key for Alliance value
+        uint32_t hordeKey;      // world state key for Horde value
+        uint32_t maxKey;        // max score world state key (0 = use hardcoded)
+        uint32_t hardcodedMax;  // used when maxKey == 0
+        const char* unit;       // suffix label (e.g. "flags", "resources")
+    };
+
+    static constexpr BgScoreDef kBgDefs[] = {
+        // Warsong Gulch: 3 flag captures wins
+        { 489, "Warsong Gulch", 1581, 1582, 0, 3, "flags" },
+        // Arathi Basin: 1600 resources wins
+        { 529, "Arathi Basin",  1218, 1219, 0, 1600, "resources" },
+        // Alterac Valley: reinforcements count down from 600 / 800 etc.
+        {  30, "Alterac Valley", 1322, 1323, 0, 600, "reinforcements" },
+        // Eye of the Storm: 1600 resources wins
+        { 566, "Eye of the Storm", 2757, 2758, 0, 1600, "resources" },
+        // Strand of the Ancients (WotLK)
+        { 607, "Strand of the Ancients", 3476, 3477, 0, 4, "" },
+    };
+
+    const BgScoreDef* def = nullptr;
+    for (const auto& d : kBgDefs) {
+        if (d.mapId == mapId) { def = &d; break; }
+    }
+    if (!def) return;
+
+    auto allianceOpt = gameHandler.getWorldState(def->allianceKey);
+    auto hordeOpt    = gameHandler.getWorldState(def->hordeKey);
+    if (!allianceOpt && !hordeOpt) return;
+
+    uint32_t allianceScore = allianceOpt.value_or(0);
+    uint32_t hordeScore    = hordeOpt.value_or(0);
+    uint32_t maxScore      = def->hardcodedMax;
+    if (def->maxKey != 0) {
+        if (auto mv = gameHandler.getWorldState(def->maxKey)) maxScore = *mv;
+    }
+
+    auto* window = core::Application::getInstance().getWindow();
+    float screenW = window ? static_cast<float>(window->getWidth())  : 1280.0f;
+
+    // Width scales with screen but stays reasonable
+    float frameW = 260.0f;
+    float frameH = 60.0f;
+    float posX   = screenW / 2.0f - frameW / 2.0f;
+    float posY   = 4.0f;
+
+    ImGui::SetNextWindowPos(ImVec2(posX, posY), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(frameW, frameH), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.75f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,  ImVec2(6.0f, 4.0f));
+
+    if (ImGui::Begin("##BGScore", nullptr,
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBringToFrontOnFocus |
+            ImGuiWindowFlags_NoSavedSettings)) {
+
+        // BG name centred at top
+        float nameW = ImGui::CalcTextSize(def->name).x;
+        ImGui::SetCursorPosX((frameW - nameW) / 2.0f);
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, 1.0f), "%s", def->name);
+
+        // Alliance score | separator | Horde score
+        float innerW  = frameW - 12.0f;
+        float halfW   = innerW / 2.0f - 4.0f;
+
+        ImGui::SetCursorPosX(6.0f);
+        ImGui::BeginGroup();
+        {
+            // Alliance (blue)
+            char aBuf[32];
+            if (maxScore > 0 && strlen(def->unit) > 0)
+                snprintf(aBuf, sizeof(aBuf), "\xF0\x9F\x94\xB5 %u / %u", allianceScore, maxScore);
+            else
+                snprintf(aBuf, sizeof(aBuf), "\xF0\x9F\x94\xB5 %u", allianceScore);
+            ImGui::TextColored(ImVec4(0.4f, 0.6f, 1.0f, 1.0f), "%s", aBuf);
+        }
+        ImGui::EndGroup();
+
+        ImGui::SameLine(halfW + 16.0f);
+
+        ImGui::BeginGroup();
+        {
+            // Horde (red)
+            char hBuf[32];
+            if (maxScore > 0 && strlen(def->unit) > 0)
+                snprintf(hBuf, sizeof(hBuf), "\xF0\x9F\x94\xB4 %u / %u", hordeScore, maxScore);
+            else
+                snprintf(hBuf, sizeof(hBuf), "\xF0\x9F\x94\xB4 %u", hordeScore);
+            ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", hBuf);
+        }
+        ImGui::EndGroup();
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
 }
 
 }} // namespace wowee::ui
