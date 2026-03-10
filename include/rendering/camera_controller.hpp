@@ -94,6 +94,7 @@ public:
     void setRunSpeedOverride(float speed) { runSpeedOverride_ = speed; }
     void setWalkSpeedOverride(float speed) { walkSpeedOverride_ = speed; }
     void setSwimSpeedOverride(float speed) { swimSpeedOverride_ = speed; }
+    void setFlightSpeedOverride(float speed) { flightSpeedOverride_ = speed; }
     void setMovementRooted(bool rooted) { movementRooted_ = rooted; }
     bool isMovementRooted() const { return movementRooted_; }
     void setGravityDisabled(bool disabled) { gravityDisabled_ = disabled; }
@@ -278,6 +279,7 @@ private:
     float runSpeedOverride_ = 0.0f;
     float walkSpeedOverride_ = 0.0f;
     float swimSpeedOverride_ = 0.0f;
+    float flightSpeedOverride_ = 0.0f;
     // Server-driven root state: when true, block all horizontal movement input.
     bool movementRooted_ = false;
     // Server-driven gravity disable (levitate/hover): skip gravity accumulation.

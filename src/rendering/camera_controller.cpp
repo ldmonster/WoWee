@@ -714,7 +714,10 @@ void CameraController::update(float deltaTime) {
                 if (flyDescend)    flyMove.z -= 1.0f;
                 if (glm::length(flyMove) > 0.001f) {
                     flyMove = glm::normalize(flyMove);
-                    targetPos += flyMove * speed * physicsDeltaTime;
+                    float flySpeed = (flightSpeedOverride_ > 0.0f && flightSpeedOverride_ < 200.0f
+                                      && !std::isnan(flightSpeedOverride_))
+                                         ? flightSpeedOverride_ : speed;
+                    targetPos += flyMove * flySpeed * physicsDeltaTime;
                 }
                 targetPos.z += verticalVelocity * physicsDeltaTime;
                 // Skip all ground physics — go straight to collision/WMO sections

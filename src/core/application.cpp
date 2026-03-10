@@ -1011,6 +1011,7 @@ void Application::update(float deltaTime) {
                     renderer->getCameraController()->setRunSpeedOverride(gameHandler->getServerRunSpeed());
                     renderer->getCameraController()->setWalkSpeedOverride(gameHandler->getServerWalkSpeed());
                     renderer->getCameraController()->setSwimSpeedOverride(gameHandler->getServerSwimSpeed());
+                    renderer->getCameraController()->setFlightSpeedOverride(gameHandler->getServerFlightSpeed());
                     renderer->getCameraController()->setMovementRooted(gameHandler->isPlayerRooted());
                     renderer->getCameraController()->setGravityDisabled(gameHandler->isGravityDisabled());
                     renderer->getCameraController()->setFeatherFallActive(gameHandler->isFeatherFalling());
