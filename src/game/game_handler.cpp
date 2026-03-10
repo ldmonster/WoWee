@@ -10044,8 +10044,8 @@ void GameHandler::queryItemInfo(uint32_t entry, uint64_t guid) {
         ? packetParsers_->buildItemQuery(entry, queryGuid)
         : ItemQueryPacket::build(entry, queryGuid);
     socket->send(packet);
-    LOG_INFO("queryItemInfo: entry=", entry, " guid=0x", std::hex, queryGuid, std::dec,
-             " pending=", pendingItemQueries_.size());
+    LOG_DEBUG("queryItemInfo: entry=", entry, " guid=0x", std::hex, queryGuid, std::dec,
+              " pending=", pendingItemQueries_.size());
 }
 
 void GameHandler::handleItemQueryResponse(network::Packet& packet) {
@@ -10059,9 +10059,8 @@ void GameHandler::handleItemQueryResponse(network::Packet& packet) {
     }
 
     pendingItemQueries_.erase(data.entry);
-    LOG_INFO("handleItemQueryResponse: entry=", data.entry, " valid=", data.valid,
-             " name='", data.name, "' displayInfoId=", data.displayInfoId,
-             " pending=", pendingItemQueries_.size());
+    LOG_DEBUG("handleItemQueryResponse: entry=", data.entry, " name='", data.name,
+              "' displayInfoId=", data.displayInfoId, " pending=", pendingItemQueries_.size());
 
     if (data.valid) {
         itemInfoCache_[data.entry] = data;
@@ -14694,12 +14693,12 @@ void GameHandler::useItemInBag(int bagIndex, int slotIndex) {
 
 void GameHandler::useItemById(uint32_t itemId) {
     if (itemId == 0) return;
-    LOG_INFO("useItemById: searching for itemId=", itemId, " in backpack (", inventory.getBackpackSize(), " slots)");
+    LOG_DEBUG("useItemById: searching for itemId=", itemId);
     // Search backpack first
     for (int i = 0; i < inventory.getBackpackSize(); i++) {
         const auto& slot = inventory.getBackpackSlot(i);
         if (!slot.empty() && slot.item.itemId == itemId) {
-            LOG_INFO("useItemById: found itemId=", itemId, " at backpack slot ", i);
+            LOG_DEBUG("useItemById: found itemId=", itemId, " at backpack slot ", i);
             useItemBySlot(i);
             return;
         }
@@ -14710,7 +14709,7 @@ void GameHandler::useItemById(uint32_t itemId) {
         for (int slot = 0; slot < bagSize; slot++) {
             const auto& bagSlot = inventory.getBagSlot(bag, slot);
             if (!bagSlot.empty() && bagSlot.item.itemId == itemId) {
-                LOG_INFO("useItemById: found itemId=", itemId, " in bag ", bag, " slot ", slot);
+                LOG_DEBUG("useItemById: found itemId=", itemId, " in bag ", bag, " slot ", slot);
                 useItemInBag(bag, slot);
                 return;
             }
