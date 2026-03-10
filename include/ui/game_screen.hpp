@@ -347,6 +347,13 @@ private:
     uint32_t achievementToastId_ = 0;
     void renderAchievementToast();
 
+    // Zone discovery text ("Entering: <ZoneName>")
+    static constexpr float ZONE_TEXT_DURATION = 5.0f;
+    float zoneTextTimer_ = 0.0f;
+    std::string zoneTextName_;
+    std::string lastKnownZoneName_;
+    void renderZoneText();
+
 public:
     void triggerDing(uint32_t newLevel);
     void triggerAchievementToast(uint32_t achievementId);

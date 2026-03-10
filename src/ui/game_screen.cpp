@@ -433,6 +433,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderSettingsWindow();
     renderDingEffect();
     renderAchievementToast();
+    renderZoneText();
 
     // World map (M key toggle handled inside)
     renderWorldMap(gameHandler);
@@ -9581,6 +9582,73 @@ void GameScreen::renderAchievementToast() {
     float idX = toastX + (TOAST_W - idW) * 0.5f;
     draw->AddText(font, bodySize, ImVec2(idX, toastY + 28),
                   IM_COL32(220, 200, 150, (int)(alpha * 255)), idBuf);
+}
+
+// ---------------------------------------------------------------------------
+// Zone discovery text — "Entering: <ZoneName>" fades in/out at screen centre
+// ---------------------------------------------------------------------------
+
+void GameScreen::renderZoneText() {
+    // Poll the renderer for zone name changes
+    auto* appRenderer = core::Application::getInstance().getRenderer();
+    if (appRenderer) {
+        const std::string& zoneName = appRenderer->getCurrentZoneName();
+        if (!zoneName.empty() && zoneName != lastKnownZoneName_) {
+            lastKnownZoneName_ = zoneName;
+            zoneTextName_  = zoneName;
+            zoneTextTimer_ = ZONE_TEXT_DURATION;
+        }
+    }
+
+    if (zoneTextTimer_ <= 0.0f || zoneTextName_.empty()) return;
+
+    float dt = ImGui::GetIO().DeltaTime;
+    zoneTextTimer_ -= dt;
+    if (zoneTextTimer_ < 0.0f) zoneTextTimer_ = 0.0f;
+
+    auto* window = core::Application::getInstance().getWindow();
+    float screenW = window ? static_cast<float>(window->getWidth())  : 1280.0f;
+    float screenH = window ? static_cast<float>(window->getHeight()) :  720.0f;
+
+    // Fade: ramp up in first 0.5 s, hold, fade out in last 1.0 s
+    float alpha;
+    if (zoneTextTimer_ > ZONE_TEXT_DURATION - 0.5f)
+        alpha = 1.0f - (zoneTextTimer_ - (ZONE_TEXT_DURATION - 0.5f)) / 0.5f;
+    else if (zoneTextTimer_ < 1.0f)
+        alpha = zoneTextTimer_;
+    else
+        alpha = 1.0f;
+    alpha = std::clamp(alpha, 0.0f, 1.0f);
+
+    ImFont* font = ImGui::GetFont();
+
+    // "Entering:" header
+    const char* header = "Entering:";
+    float headerSize = 16.0f;
+    float nameSize   = 26.0f;
+
+    ImVec2 headerDim = font->CalcTextSizeA(headerSize, FLT_MAX, 0.0f, header);
+    ImVec2 nameDim   = font->CalcTextSizeA(nameSize,   FLT_MAX, 0.0f, zoneTextName_.c_str());
+
+    float centreY = screenH * 0.30f;  // upper third, like WoW
+    float headerX = (screenW - headerDim.x) * 0.5f;
+    float nameX   = (screenW - nameDim.x)   * 0.5f;
+    float headerY = centreY;
+    float nameY   = centreY + headerDim.y + 4.0f;
+
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+
+    // "Entering:" in gold
+    draw->AddText(font, headerSize, ImVec2(headerX + 1, headerY + 1),
+                  IM_COL32(0, 0, 0, (int)(alpha * 160)), header);
+    draw->AddText(font, headerSize, ImVec2(headerX, headerY),
+                  IM_COL32(255, 215, 0, (int)(alpha * 255)), header);
+
+    // Zone name in white
+    draw->AddText(font, nameSize, ImVec2(nameX + 1, nameY + 1),
+                  IM_COL32(0, 0, 0, (int)(alpha * 160)), zoneTextName_.c_str());
+    draw->AddText(font, nameSize, ImVec2(nameX, nameY),
+                  IM_COL32(255, 255, 255, (int)(alpha * 255)), zoneTextName_.c_str());
 }
 
 // ---------------------------------------------------------------------------
