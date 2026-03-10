@@ -1616,6 +1616,9 @@ bool ClassicPacketParsers::parseQuestDetails(network::Packet& packet, QuestDetai
 
     if (packet.getReadPos() + 4 <= packet.getSize())
         data.rewardMoney = packet.readUInt32();
+    // Vanilla 1.12 includes rewardXp after rewardMoney (same as WotLK)
+    if (packet.getReadPos() + 4 <= packet.getSize())
+        data.rewardXp = packet.readUInt32();
 
     LOG_INFO("Quest details classic: id=", data.questId, " title='", data.title, "'");
     return true;
