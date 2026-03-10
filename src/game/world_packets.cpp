@@ -228,10 +228,10 @@ std::vector<uint8_t> AuthSessionPacket::computeAuthHash(
             }
             return s;
         };
-        LOG_INFO("AUTH HASH: account='", accountName, "' clientSeed=0x", std::hex, clientSeed,
-                 " serverSeed=0x", serverSeed, std::dec);
-        LOG_INFO("AUTH HASH: sessionKey=", toHex(sessionKey.data(), sessionKey.size()));
-        LOG_INFO("AUTH HASH: input(", hashInput.size(), ")=", toHex(hashInput.data(), hashInput.size()));
+        LOG_DEBUG("AUTH HASH: account='", accountName, "' clientSeed=0x", std::hex, clientSeed,
+                  " serverSeed=0x", serverSeed, std::dec);
+        LOG_DEBUG("AUTH HASH: sessionKey=", toHex(sessionKey.data(), sessionKey.size()));
+        LOG_DEBUG("AUTH HASH: input(", hashInput.size(), ")=", toHex(hashInput.data(), hashInput.size()));
     }
 
     // Compute SHA1 hash
@@ -245,7 +245,7 @@ std::vector<uint8_t> AuthSessionPacket::computeAuthHash(
             }
             return s;
         };
-        LOG_INFO("AUTH HASH: digest=", toHex(result.data(), result.size()));
+        LOG_DEBUG("AUTH HASH: digest=", toHex(result.data(), result.size()));
     }
 
     return result;
@@ -265,22 +265,22 @@ bool AuthChallengeParser::parse(network::Packet& packet, AuthChallengeData& data
         // Original vanilla/TBC format: just the server seed (4 bytes)
         data.unknown1 = 0;
         data.serverSeed = packet.readUInt32();
-        LOG_INFO("Parsed SMSG_AUTH_CHALLENGE (TBC format, 4 bytes):");
+        LOG_INFO("SMSG_AUTH_CHALLENGE: TBC format (", packet.getSize(), " bytes)");
     } else if (packet.getSize() < 40) {
         // Vanilla with encryption seeds (36 bytes): serverSeed + 32 bytes seeds
         // No "unknown1" prefix — first uint32 IS the server seed
         data.unknown1 = 0;
         data.serverSeed = packet.readUInt32();
-        LOG_INFO("Parsed SMSG_AUTH_CHALLENGE (Classic+seeds format, ", packet.getSize(), " bytes):");
+        LOG_INFO("SMSG_AUTH_CHALLENGE: Classic+seeds format (", packet.getSize(), " bytes)");
     } else {
         // WotLK format (40+ bytes): unknown1 + serverSeed + 32 bytes encryption seeds
         data.unknown1 = packet.readUInt32();
         data.serverSeed = packet.readUInt32();
-        LOG_INFO("Parsed SMSG_AUTH_CHALLENGE (WotLK format, ", packet.getSize(), " bytes):");
-        LOG_INFO("  Unknown1: 0x", std::hex, data.unknown1, std::dec);
+        LOG_INFO("SMSG_AUTH_CHALLENGE: WotLK format (", packet.getSize(), " bytes)");
+        LOG_DEBUG("  Unknown1: 0x", std::hex, data.unknown1, std::dec);
     }
 
-    LOG_INFO("  Server seed: 0x", std::hex, data.serverSeed, std::dec);
+    LOG_DEBUG("  Server seed: 0x", std::hex, data.serverSeed, std::dec);
 
     return true;
 }
@@ -586,8 +586,7 @@ bool MotdParser::parse(network::Packet& packet, MotdData& data) {
 
     uint32_t lineCount = packet.readUInt32();
 
-    LOG_INFO("Parsed SMSG_MOTD:");
-    LOG_INFO("  Line count: ", lineCount);
+    LOG_INFO("Parsed SMSG_MOTD: ", lineCount, " line(s)");
 
     data.lines.clear();
     data.lines.reserve(lineCount);
@@ -595,7 +594,7 @@ bool MotdParser::parse(network::Packet& packet, MotdData& data) {
     for (uint32_t i = 0; i < lineCount; ++i) {
         std::string line = packet.readString();
         data.lines.push_back(line);
-        LOG_INFO("  [", i + 1, "] ", line);
+        LOG_DEBUG("  MOTD[", i + 1, "]: ", line);
     }
 
     return true;
@@ -1021,9 +1020,9 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
         block.hasMovement = true;
 
         if (block.onTransport) {
-            LOG_INFO("  TRANSPORT POSITION UPDATE: guid=0x", std::hex, transportGuid, std::dec,
-                     " pos=(", block.x, ", ", block.y, ", ", block.z, "), o=", block.orientation,
-                     " offset=(", block.transportX, ", ", block.transportY, ", ", block.transportZ, ")");
+            LOG_DEBUG("  TRANSPORT POSITION UPDATE: guid=0x", std::hex, transportGuid, std::dec,
+                      " pos=(", block.x, ", ", block.y, ", ", block.z, "), o=", block.orientation,
+                      " offset=(", block.transportX, ", ", block.transportY, ", ", block.transportZ, ")");
         }
     }
     else if (updateFlags & UPDATEFLAG_STATIONARY_POSITION) {
