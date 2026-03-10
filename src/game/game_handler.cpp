@@ -4475,6 +4475,11 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::MSG_MOVE_STOP_SWIM:
         case Opcode::MSG_MOVE_SET_WALK_MODE:
         case Opcode::MSG_MOVE_SET_RUN_MODE:
+        case Opcode::MSG_MOVE_START_PITCH_UP:
+        case Opcode::MSG_MOVE_START_PITCH_DOWN:
+        case Opcode::MSG_MOVE_STOP_PITCH:
+        case Opcode::MSG_MOVE_START_ASCEND:
+        case Opcode::MSG_MOVE_STOP_ASCEND:
             if (state == WorldState::IN_WORLD) {
                 handleOtherPlayerMovement(packet);
             }
@@ -12240,7 +12245,7 @@ void GameHandler::handleCompressedMoves(network::Packet& packet) {
 
     // Player movement sub-opcodes (SMSG_MULTIPLE_MOVES carries MSG_MOVE_*)
     // Not static — wireOpcode() depends on runtime active opcode table.
-    const std::array<uint16_t, 17> kMoveOpcodes = {
+    const std::array<uint16_t, 22> kMoveOpcodes = {
         wireOpcode(Opcode::MSG_MOVE_START_FORWARD),
         wireOpcode(Opcode::MSG_MOVE_START_BACKWARD),
         wireOpcode(Opcode::MSG_MOVE_STOP),
@@ -12258,6 +12263,11 @@ void GameHandler::handleCompressedMoves(network::Packet& packet) {
         wireOpcode(Opcode::MSG_MOVE_STOP_SWIM),
         wireOpcode(Opcode::MSG_MOVE_SET_WALK_MODE),
         wireOpcode(Opcode::MSG_MOVE_SET_RUN_MODE),
+        wireOpcode(Opcode::MSG_MOVE_START_PITCH_UP),
+        wireOpcode(Opcode::MSG_MOVE_START_PITCH_DOWN),
+        wireOpcode(Opcode::MSG_MOVE_STOP_PITCH),
+        wireOpcode(Opcode::MSG_MOVE_START_ASCEND),
+        wireOpcode(Opcode::MSG_MOVE_STOP_ASCEND),
     };
 
     // Track unhandled sub-opcodes once per compressed packet (avoid log spam)
