@@ -12832,9 +12832,16 @@ void GameHandler::switchTalentSpec(uint8_t newSpec) {
         return;
     }
 
-    // For now, just switch locally. In a real implementation, we'd send
-    // MSG_TALENT_WIPE_CONFIRM to the server to trigger a spec switch.
-    // The server would respond with new SMSG_TALENTS_INFO for the new spec.
+    // Send CMSG_SET_ACTIVE_TALENT_GROUP_OBSOLETE (0x4C3) to the server.
+    // The server will validate the swap, apply the new spec's spells/auras,
+    // and respond with SMSG_TALENTS_INFO for the newly active group.
+    // We optimistically update the local state so the UI reflects the change
+    // immediately; the server response will correct us if needed.
+    if (state == WorldState::IN_WORLD && socket) {
+        auto pkt = ActivateTalentGroupPacket::build(static_cast<uint32_t>(newSpec));
+        socket->send(pkt);
+        LOG_INFO("Sent CMSG_SET_ACTIVE_TALENT_GROUP_OBSOLETE: group=", (int)newSpec);
+    }
     activeTalentSpec_ = newSpec;
 
     LOG_INFO("Switched to talent spec ", (int)newSpec,
