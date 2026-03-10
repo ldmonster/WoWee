@@ -5534,7 +5534,11 @@ void GameHandler::handlePacket(network::Packet& packet) {
 
         // ---- Player movement flag changes (server-pushed) ----
         case Opcode::SMSG_MOVE_GRAVITY_DISABLE:
+            handleForceMoveFlagChange(packet, "GRAVITY_DISABLE", Opcode::CMSG_MOVE_GRAVITY_DISABLE_ACK, 0, true);
+            break;
         case Opcode::SMSG_MOVE_GRAVITY_ENABLE:
+            handleForceMoveFlagChange(packet, "GRAVITY_ENABLE", Opcode::CMSG_MOVE_GRAVITY_ENABLE_ACK, 0, true);
+            break;
         case Opcode::SMSG_MOVE_LAND_WALK:
             handleForceMoveFlagChange(packet, "LAND_WALK", Opcode::CMSG_MOVE_WATER_WALK_ACK, 0, false);
             break;
