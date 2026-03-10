@@ -1426,7 +1426,10 @@ void Application::update(float deltaTime) {
                         }
                     }
 
-                    glm::vec3 canonical(entity->getX(), entity->getY(), entity->getZ());
+                    // Use getLatestX/Y/Z (server-authoritative destination) for position sync
+                    // rather than getX/Y/Z (interpolated), which may be stale for entities
+                    // outside the 150-unit updateMovement() culling radius in GameHandler.
+                    glm::vec3 canonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());
                     float canonDistSq = 0.0f;
                     if (havePlayerPos) {
                         glm::vec3 d = canonical - playerPos;
@@ -1514,13 +1517,22 @@ void Application::update(float deltaTime) {
                         auto unitPtr = std::static_pointer_cast<game::Unit>(entity);
                         const bool deadOrCorpse = unitPtr->getHealth() == 0;
                         const bool largeCorrection = (planarDist > 6.0f) || (dz > 3.0f);
-                        const bool isMovingNow = !deadOrCorpse && (planarDist > 0.03f || dz > 0.08f);
+                        // isEntityMoving() reflects server-authoritative move state set by
+                        // startMoveTo() in handleMonsterMove, regardless of distance-cull.
+                        // This correctly detects movement for distant creatures (> 150u)
+                        // where updateMovement() is not called and getX/Y/Z() stays stale.
+                        const bool entityIsMoving = entity->isEntityMoving();
+                        const bool isMovingNow = !deadOrCorpse && (entityIsMoving || planarDist > 0.03f || dz > 0.08f);
                         if (deadOrCorpse || largeCorrection) {
                             charRenderer->setInstancePosition(instanceId, renderPos);
-                        } else if (isMovingNow) {
+                        } else if (planarDist > 0.03f || dz > 0.08f) {
+                            // Position changed in entity coords → drive renderer toward it.
                             float duration = std::clamp(planarDist / 5.5f, 0.05f, 0.22f);
                             charRenderer->moveInstanceTo(instanceId, renderPos, duration);
                         }
+                        // When entity is moving but getX/Y/Z is stale (distance-culled),
+                        // don't call moveInstanceTo — creatureMoveCallback_ already drove
+                        // the renderer to the correct destination via the spline packet.
                         posIt->second = renderPos;
 
                         // Drive movement animation: Walk/Run/Swim (4/5/42) when moving,

@@ -10569,77 +10569,34 @@ void GameScreen::renderDingEffect() {
     dingTimer_ -= dt;
     if (dingTimer_ < 0.0f) dingTimer_ = 0.0f;
 
-    float alpha    = dingTimer_ < 0.8f ? (dingTimer_ / 0.8f) : 1.0f;  // fade out last 0.8s
-    float elapsed  = DING_DURATION - dingTimer_;   // 0 → DING_DURATION
+    // Show "You have reached level X!" for the first 2.5s, fade out over last 0.5s.
+    // The 3D visual effect is handled by Renderer::triggerLevelUpEffect (LevelUp.m2).
+    constexpr float kFadeTime = 0.5f;
+    float alpha = dingTimer_ < kFadeTime ? (dingTimer_ / kFadeTime) : 1.0f;
+    if (alpha <= 0.0f) return;
 
     ImGuiIO& io = ImGui::GetIO();
     float cx = io.DisplaySize.x * 0.5f;
-    float cy = io.DisplaySize.y * 0.5f;
+    float cy = io.DisplaySize.y * 0.38f;  // Upper-center, like WoW
 
     ImDrawList* draw = ImGui::GetForegroundDrawList();
+    ImFont* font = ImGui::GetFont();
+    float baseSize = ImGui::GetFontSize();
+    float fontSize = baseSize * 1.8f;
 
-    // ---- Golden radial ring burst (3 waves staggered by 0.45s) ----
-    {
-        constexpr float kMaxRadius  = 420.0f;
-        constexpr float kRingWidth  = 18.0f;
-        constexpr float kWaveLen    = 1.4f;   // each wave lasts 1.4s
-        constexpr int   kNumWaves   = 3;
-        constexpr float kStagger    = 0.45f;  // seconds between waves
+    char buf[64];
+    snprintf(buf, sizeof(buf), "You have reached level %u!", dingLevel_);
 
-        for (int w = 0; w < kNumWaves; ++w) {
-            float waveElapsed = elapsed - w * kStagger;
-            if (waveElapsed <= 0.0f || waveElapsed >= kWaveLen) continue;
+    ImVec2 sz = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, buf);
+    float tx = cx - sz.x * 0.5f;
+    float ty = cy - sz.y * 0.5f;
 
-            float t = waveElapsed / kWaveLen;          // 0 → 1
-            float radius = t * kMaxRadius;
-            float ringAlpha = (1.0f - t) * alpha;      // fades as it expands
-
-            ImU32 outerCol = IM_COL32(255, 215,  60, (int)(ringAlpha * 200));
-            ImU32 innerCol = IM_COL32(255, 255, 150, (int)(ringAlpha * 120));
-
-            draw->AddCircle(ImVec2(cx, cy), radius,            outerCol, 64, kRingWidth);
-            draw->AddCircle(ImVec2(cx, cy), radius * 0.92f,    innerCol, 64, kRingWidth * 0.5f);
-        }
-    }
-
-    // ---- Full-screen golden flash on first frame ----
-    if (elapsed < 0.15f) {
-        float flashA = (1.0f - elapsed / 0.15f) * 0.45f;
-        draw->AddRectFilled(ImVec2(0, 0), io.DisplaySize,
-                            IM_COL32(255, 200, 50, (int)(flashA * 255)));
-    }
-
-    // "LEVEL X!" text — visible for first 2.2s
-    if (dingTimer_ > 0.8f) {
-        ImFont* font = ImGui::GetFont();
-        float baseSize = ImGui::GetFontSize();
-        float fontSize = baseSize * 2.8f;
-
-        char buf[32];
-        snprintf(buf, sizeof(buf), "LEVEL %u!", dingLevel_);
-
-        ImVec2 sz = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, buf);
-        float tx = cx - sz.x * 0.5f;
-        float ty = cy - sz.y * 0.5f - 20.0f;
-
-        // Drop shadow
-        draw->AddText(font, fontSize, ImVec2(tx + 3, ty + 3),
-                      IM_COL32(0, 0, 0, (int)(alpha * 200)), buf);
-        // Gold text
-        draw->AddText(font, fontSize, ImVec2(tx, ty),
-                      IM_COL32(255, 215, 0, (int)(alpha * 255)), buf);
-
-        // "DING!" subtitle
-        const char* ding = "DING!";
-        float dingSize = baseSize * 1.8f;
-        ImVec2 dingSz = font->CalcTextSizeA(dingSize, FLT_MAX, 0.0f, ding);
-        float dx = cx - dingSz.x * 0.5f;
-        float dy = ty + sz.y + 6.0f;
-        draw->AddText(font, dingSize, ImVec2(dx + 2, dy + 2),
-                      IM_COL32(0, 0, 0, (int)(alpha * 180)), ding);
-        draw->AddText(font, dingSize, ImVec2(dx, dy),
-                      IM_COL32(255, 255, 150, (int)(alpha * 255)), ding);
-    }
+    // Slight black outline for readability
+    draw->AddText(font, fontSize, ImVec2(tx + 2, ty + 2),
+                  IM_COL32(0, 0, 0, (int)(alpha * 180)), buf);
+    // Gold text
+    draw->AddText(font, fontSize, ImVec2(tx, ty),
+                  IM_COL32(255, 210, 0, (int)(alpha * 255)), buf);
 }
 
 void GameScreen::triggerAchievementToast(uint32_t achievementId) {
