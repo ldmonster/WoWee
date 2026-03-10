@@ -7034,10 +7034,13 @@ void GameScreen::renderResurrectDialog(game::GameHandler& gameHandler) {
             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar)) {
 
         ImGui::Spacing();
-        const char* text = "Return to life?";
-        float textW = ImGui::CalcTextSize(text).x;
-        ImGui::SetCursorPosX((dlgW - textW) / 2);
-        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "%s", text);
+        const std::string& casterName = gameHandler.getResurrectCasterName();
+        std::string text = casterName.empty()
+            ? "Return to life?"
+            : casterName + " wishes to resurrect you.";
+        float textW = ImGui::CalcTextSize(text.c_str()).x;
+        ImGui::SetCursorPosX(std::max(4.0f, (dlgW - textW) / 2));
+        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "%s", text.c_str());
 
         ImGui::Spacing();
         ImGui::Spacing();

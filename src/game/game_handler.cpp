@@ -2942,6 +2942,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
             LOG_INFO("Spirit healer confirm from 0x", std::hex, npcGuid, std::dec);
             if (npcGuid) {
                 resurrectCasterGuid_ = npcGuid;
+                resurrectCasterName_ = "";
+                resurrectIsSpiritHealer_ = true;
                 resurrectRequestPending_ = true;
             }
             break;
@@ -2952,9 +2954,22 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 break;
             }
             uint64_t casterGuid = packet.readUInt64();
-            LOG_INFO("Resurrect request from 0x", std::hex, casterGuid, std::dec);
+            // Optional caster name (CString, may be absent on some server builds)
+            std::string casterName;
+            if (packet.getReadPos() < packet.getSize()) {
+                casterName = packet.readString();
+            }
+            LOG_INFO("Resurrect request from 0x", std::hex, casterGuid, std::dec,
+                     " name='", casterName, "'");
             if (casterGuid) {
                 resurrectCasterGuid_ = casterGuid;
+                resurrectIsSpiritHealer_ = false;
+                if (!casterName.empty()) {
+                    resurrectCasterName_ = casterName;
+                } else {
+                    auto nit = playerNameCache.find(casterGuid);
+                    resurrectCasterName_ = (nit != playerNameCache.end()) ? nit->second : "";
+                }
                 resurrectRequestPending_ = true;
             }
             break;
@@ -9455,11 +9470,19 @@ void GameHandler::activateSpiritHealer(uint64_t npcGuid) {
 
 void GameHandler::acceptResurrect() {
     if (state != WorldState::IN_WORLD || !socket || !resurrectRequestPending_) return;
-    // Send spirit healer activate (correct response to SMSG_SPIRIT_HEALER_CONFIRM)
-    auto activate = SpiritHealerActivatePacket::build(resurrectCasterGuid_);
-    socket->send(activate);
-    LOG_INFO("Sent CMSG_SPIRIT_HEALER_ACTIVATE (0x21C) for 0x",
-             std::hex, resurrectCasterGuid_, std::dec);
+    if (resurrectIsSpiritHealer_) {
+        // Spirit healer resurrection — SMSG_SPIRIT_HEALER_CONFIRM → CMSG_SPIRIT_HEALER_ACTIVATE
+        auto activate = SpiritHealerActivatePacket::build(resurrectCasterGuid_);
+        socket->send(activate);
+        LOG_INFO("Sent CMSG_SPIRIT_HEALER_ACTIVATE for 0x",
+                 std::hex, resurrectCasterGuid_, std::dec);
+    } else {
+        // Player-cast resurrection — SMSG_RESURRECT_REQUEST → CMSG_RESURRECT_RESPONSE (accept=1)
+        auto resp = ResurrectResponsePacket::build(resurrectCasterGuid_, true);
+        socket->send(resp);
+        LOG_INFO("Sent CMSG_RESURRECT_RESPONSE (accept) for 0x",
+                 std::hex, resurrectCasterGuid_, std::dec);
+    }
     resurrectRequestPending_ = false;
     resurrectPending_ = true;
 }

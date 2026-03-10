@@ -735,6 +735,7 @@ public:
     bool isPlayerGhost() const { return releasedSpirit_; }
     bool showDeathDialog() const { return playerDead_ && !releasedSpirit_; }
     bool showResurrectDialog() const { return resurrectRequestPending_; }
+    const std::string& getResurrectCasterName() const { return resurrectCasterName_; }
     void releaseSpirit();
     void acceptResurrect();
     void declineResurrect();
@@ -2160,7 +2161,9 @@ private:
     uint64_t pendingSpiritHealerGuid_ = 0;
     bool resurrectPending_ = false;
     bool resurrectRequestPending_ = false;
+    bool resurrectIsSpiritHealer_ = false;  // true = SMSG_SPIRIT_HEALER_CONFIRM, false = SMSG_RESURRECT_REQUEST
     uint64_t resurrectCasterGuid_ = 0;
+    std::string resurrectCasterName_;
     bool repopPending_ = false;
     uint64_t lastRepopRequestMs_ = 0;
 
