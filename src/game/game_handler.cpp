@@ -2724,7 +2724,9 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::MSG_RAID_READY_CHECK: {
             // Server is broadcasting a ready check (someone in the raid initiated it).
             // Payload: empty body, or optional uint64 initiator GUID in some builds.
-            pendingReadyCheck_ = true;
+            pendingReadyCheck_       = true;
+            readyCheckReadyCount_    = 0;
+            readyCheckNotReadyCount_ = 0;
             readyCheckInitiator_.clear();
             if (packet.getSize() - packet.getReadPos() >= 8) {
                 uint64_t initiatorGuid = packet.readUInt64();
@@ -2745,10 +2747,38 @@ void GameHandler::handlePacket(network::Packet& packet) {
             LOG_INFO("MSG_RAID_READY_CHECK: initiator=", readyCheckInitiator_);
             break;
         }
-        case Opcode::MSG_RAID_READY_CHECK_CONFIRM:
-            // Another member responded to the ready check — consume.
-            packet.setReadPos(packet.getSize());
+        case Opcode::MSG_RAID_READY_CHECK_CONFIRM: {
+            // guid (8) + uint8 isReady (0=not ready, 1=ready)
+            if (packet.getSize() - packet.getReadPos() < 9) { packet.setReadPos(packet.getSize()); break; }
+            uint64_t respGuid = packet.readUInt64();
+            uint8_t  isReady  = packet.readUInt8();
+            if (isReady) ++readyCheckReadyCount_;
+            else         ++readyCheckNotReadyCount_;
+            auto nit = playerNameCache.find(respGuid);
+            std::string rname;
+            if (nit != playerNameCache.end()) rname = nit->second;
+            else {
+                auto ent = entityManager.getEntity(respGuid);
+                if (ent) rname = std::static_pointer_cast<game::Unit>(ent)->getName();
+            }
+            if (!rname.empty()) {
+                char rbuf[128];
+                std::snprintf(rbuf, sizeof(rbuf), "%s is %s.", rname.c_str(), isReady ? "Ready" : "Not Ready");
+                addSystemChatMessage(rbuf);
+            }
             break;
+        }
+        case Opcode::MSG_RAID_READY_CHECK_FINISHED: {
+            // Ready check complete — summarize results
+            char fbuf[128];
+            std::snprintf(fbuf, sizeof(fbuf), "Ready check complete: %u ready, %u not ready.",
+                         readyCheckReadyCount_, readyCheckNotReadyCount_);
+            addSystemChatMessage(fbuf);
+            pendingReadyCheck_       = false;
+            readyCheckReadyCount_    = 0;
+            readyCheckNotReadyCount_ = 0;
+            break;
+        }
         case Opcode::SMSG_RAID_INSTANCE_INFO:
             handleRaidInstanceInfo(packet);
             break;

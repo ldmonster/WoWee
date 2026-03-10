@@ -1786,7 +1786,9 @@ private:
     uint32_t lfgTimeInQueueMs_= 0;   // ms already in queue
 
     // Ready check state
-    bool        pendingReadyCheck_     = false;
+    bool        pendingReadyCheck_       = false;
+    uint32_t    readyCheckReadyCount_    = 0;
+    uint32_t    readyCheckNotReadyCount_ = 0;
     std::string readyCheckInitiator_;
 
     // Faction standings (factionId → absolute standing value)
