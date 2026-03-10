@@ -696,7 +696,7 @@ private:
     // Rendering state
     bool wireframeMode = false;
     bool frustumCulling = true;
-    bool portalCulling = false;  // Disabled by default - needs debugging
+    bool portalCulling = true;   // AABB transform bug fixed; conservative frustum test (no plane-side check) is visually safe
     bool distanceCulling = false;  // Disabled - causes ground to disappear
     float maxGroupDistance = 500.0f;
     float maxGroupDistanceSq = 250000.0f;  // maxGroupDistance^2
