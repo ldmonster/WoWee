@@ -5536,7 +5536,11 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_MOVE_GRAVITY_DISABLE:
         case Opcode::SMSG_MOVE_GRAVITY_ENABLE:
         case Opcode::SMSG_MOVE_LAND_WALK:
+            handleForceMoveFlagChange(packet, "LAND_WALK", Opcode::CMSG_MOVE_WATER_WALK_ACK, 0, false);
+            break;
         case Opcode::SMSG_MOVE_NORMAL_FALL:
+            handleForceMoveFlagChange(packet, "NORMAL_FALL", Opcode::CMSG_MOVE_FEATHER_FALL_ACK, 0, false);
+            break;
         case Opcode::SMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY:
         case Opcode::SMSG_MOVE_UNSET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY:
         case Opcode::SMSG_MOVE_SET_COLLISION_HGT:
