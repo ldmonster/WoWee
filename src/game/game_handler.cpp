@@ -3085,7 +3085,20 @@ void GameHandler::handlePacket(network::Packet& packet) {
             packet.setReadPos(packet.getSize());
             break;
         }
-        case Opcode::SMSG_ENVIRONMENTAL_DAMAGE_LOG:
+        case Opcode::SMSG_ENVIRONMENTAL_DAMAGE_LOG: {
+            // packed_guid victim + uint32 envDmgType + uint32 damage + uint32 absorbed + uint32 resisted
+            // envDmgType: 1=Exhausted(fatigue), 2=Drowning, 3=Fall, 4=Lava, 5=Slime, 6=Fire
+            if (packet.getSize() - packet.getReadPos() < 2) { packet.setReadPos(packet.getSize()); break; }
+            uint64_t victimGuid = UpdateObjectParser::readPackedGuid(packet);
+            if (packet.getSize() - packet.getReadPos() < 12) { packet.setReadPos(packet.getSize()); break; }
+            /*uint32_t envType =*/ packet.readUInt32();
+            uint32_t dmg      = packet.readUInt32();
+            /*uint32_t abs =*/    packet.readUInt32();
+            if (victimGuid == playerGuid && dmg > 0)
+                addCombatText(CombatTextEntry::ENVIRONMENTAL, static_cast<int32_t>(dmg), 0, false);
+            packet.setReadPos(packet.getSize());
+            break;
+        }
         case Opcode::SMSG_SET_PROFICIENCY:
             packet.setReadPos(packet.getSize());
             break;

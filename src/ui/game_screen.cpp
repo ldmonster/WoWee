@@ -4637,8 +4637,12 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         ImVec2 textSize = ImGui::CalcTextSize(labelBuf);
         float nameX = sx - textSize.x * 0.5f;
         float nameY = sy - barH - 12.0f;
+        // Name color: hostile=red, non-hostile=yellow (WoW convention)
+        ImU32 nameColor = unit->isHostile()
+            ? IM_COL32(220, 80,  80,  A(230))
+            : IM_COL32(240, 200, 100, A(230));
         drawList->AddText(ImVec2(nameX + 1.0f, nameY + 1.0f), IM_COL32(0, 0, 0, A(160)), labelBuf);
-        drawList->AddText(ImVec2(nameX,         nameY),         IM_COL32(255, 255, 255, A(220)), labelBuf);
+        drawList->AddText(ImVec2(nameX,         nameY),         nameColor, labelBuf);
     }
 }
 
