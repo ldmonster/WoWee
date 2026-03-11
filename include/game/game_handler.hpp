@@ -2362,6 +2362,7 @@ private:
     void loadSkillLineAbilityDbc();
     void extractSkillFields(const std::map<uint16_t, uint32_t>& fields);
     void extractExploredZoneFields(const std::map<uint16_t, uint32_t>& fields);
+    void applyQuestStateFromFields(const std::map<uint16_t, uint32_t>& fields);
 
     NpcDeathCallback npcDeathCallback_;
     NpcAggroCallback npcAggroCallback_;

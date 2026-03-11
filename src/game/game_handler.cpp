@@ -8193,6 +8193,7 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                     maybeDetectVisibleItemLayout();
                     extractSkillFields(lastPlayerFields_);
                     extractExploredZoneFields(lastPlayerFields_);
+                    applyQuestStateFromFields(lastPlayerFields_);
                 }
                 break;
             }
@@ -8544,6 +8545,7 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                         if (slotsChanged) rebuildOnlineInventory();
                         extractSkillFields(lastPlayerFields_);
                         extractExploredZoneFields(lastPlayerFields_);
+                        applyQuestStateFromFields(lastPlayerFields_);
                     }
 
                     // Update item stack count / durability for online items
@@ -14805,14 +14807,37 @@ bool GameHandler::resyncQuestLogFromServerSlots(bool forceQueryMetadata) {
 
     const uint16_t ufQuestStart = fieldIndex(UF::PLAYER_QUEST_LOG_START);
     const uint8_t qStride = packetParsers_ ? packetParsers_->questLogStride() : 5;
-    std::unordered_set<uint32_t> serverQuestIds;
-    serverQuestIds.reserve(25);
+
+    // Collect quest IDs and their completion state from update fields.
+    // State field (slot*stride+1) uses the same QuestStatus enum across all expansions:
+    //   0 = none, 1 = complete (ready to turn in), 3 = incomplete/active, etc.
+    static constexpr uint32_t kQuestStatusComplete = 1;
+
+    std::unordered_map<uint32_t, bool> serverQuestComplete;  // questId → complete
+    serverQuestComplete.reserve(25);
     for (uint16_t slot = 0; slot < 25; ++slot) {
-        const uint16_t idField = ufQuestStart + slot * qStride;
+        const uint16_t idField    = ufQuestStart + slot * qStride;
+        const uint16_t stateField = ufQuestStart + slot * qStride + 1;
         auto it = lastPlayerFields_.find(idField);
         if (it == lastPlayerFields_.end()) continue;
-        if (it->second != 0) serverQuestIds.insert(it->second);
+        uint32_t questId = it->second;
+        if (questId == 0) continue;
+
+        bool complete = false;
+        if (qStride >= 2) {
+            auto stateIt = lastPlayerFields_.find(stateField);
+            if (stateIt != lastPlayerFields_.end()) {
+                // Lower byte is the quest state; treat any variant of "complete" as done.
+                uint32_t state = stateIt->second & 0xFF;
+                complete = (state == kQuestStatusComplete);
+            }
+        }
+        serverQuestComplete[questId] = complete;
     }
+
+    std::unordered_set<uint32_t> serverQuestIds;
+    serverQuestIds.reserve(serverQuestComplete.size());
+    for (const auto& [qid, _] : serverQuestComplete) serverQuestIds.insert(qid);
 
     const size_t localBefore = questLog_.size();
     std::erase_if(questLog_, [&](const QuestLogEntry& q) {
@@ -14827,6 +14852,20 @@ bool GameHandler::resyncQuestLogFromServerSlots(bool forceQueryMetadata) {
         ++added;
     }
 
+    // Apply server-authoritative completion state to all tracked quests.
+    // This initialises quest.complete correctly on login for quests that were
+    // already complete before the current session started.
+    size_t marked = 0;
+    for (auto& quest : questLog_) {
+        auto it = serverQuestComplete.find(quest.questId);
+        if (it == serverQuestComplete.end()) continue;
+        if (it->second && !quest.complete) {
+            quest.complete = true;
+            ++marked;
+            LOG_DEBUG("Quest ", quest.questId, " marked complete from update fields");
+        }
+    }
+
     if (forceQueryMetadata) {
         for (uint32_t questId : serverQuestIds) {
             requestQuestQuery(questId, false);
@@ -14834,8 +14873,44 @@ bool GameHandler::resyncQuestLogFromServerSlots(bool forceQueryMetadata) {
     }
 
     LOG_INFO("Quest log resync from server slots: server=", serverQuestIds.size(),
-             " localBefore=", localBefore, " removed=", removed, " added=", added);
+             " localBefore=", localBefore, " removed=", removed, " added=", added,
+             " markedComplete=", marked);
     return true;
+}
+
+// Apply quest completion state from player update fields to already-tracked local quests.
+// Called from VALUES update handler so quests that complete mid-session (or that were
+// complete on login) get quest.complete=true without waiting for SMSG_QUESTUPDATE_COMPLETE.
+void GameHandler::applyQuestStateFromFields(const std::map<uint16_t, uint32_t>& fields) {
+    const uint16_t ufQuestStart = fieldIndex(UF::PLAYER_QUEST_LOG_START);
+    if (ufQuestStart == 0xFFFF || questLog_.empty()) return;
+
+    const uint8_t qStride = packetParsers_ ? packetParsers_->questLogStride() : 5;
+    if (qStride < 2) return;  // Need at least 2 fields per slot (id + state)
+
+    static constexpr uint32_t kQuestStatusComplete = 1;
+
+    for (uint16_t slot = 0; slot < 25; ++slot) {
+        const uint16_t idField    = ufQuestStart + slot * qStride;
+        const uint16_t stateField = idField + 1;
+        auto idIt = fields.find(idField);
+        if (idIt == fields.end()) continue;
+        uint32_t questId = idIt->second;
+        if (questId == 0) continue;
+
+        auto stateIt = fields.find(stateField);
+        if (stateIt == fields.end()) continue;
+        bool serverComplete = ((stateIt->second & 0xFF) == kQuestStatusComplete);
+        if (!serverComplete) continue;
+
+        for (auto& quest : questLog_) {
+            if (quest.questId == questId && !quest.complete) {
+                quest.complete = true;
+                LOG_INFO("Quest ", questId, " marked complete from VALUES update field state");
+                break;
+            }
+        }
+    }
 }
 
 void GameHandler::clearPendingQuestAccept(uint32_t questId) {
