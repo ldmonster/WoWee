@@ -540,9 +540,25 @@ bool TbcPacketParsers::parseGossipMessage(network::Packet& packet, GossipMessage
     data.titleTextId = packet.readUInt32();
     uint32_t optionCount = packet.readUInt32();
 
+    // Cap option count to reasonable maximum
+    constexpr uint32_t kMaxGossipOptions = 256;
+    if (optionCount > kMaxGossipOptions) {
+        LOG_WARNING("[TBC] SMSG_GOSSIP_MESSAGE optionCount=", optionCount, " exceeds max ",
+                    kMaxGossipOptions, ", capping");
+        optionCount = kMaxGossipOptions;
+    }
+
     data.options.clear();
     data.options.reserve(optionCount);
     for (uint32_t i = 0; i < optionCount; ++i) {
+        // Sanity check: ensure minimum bytes available for option
+        // (id(4)+icon(1)+isCoded(1)+boxMoney(4)+text(1)+boxText(1))
+        size_t remaining = packet.getSize() - packet.getReadPos();
+        if (remaining < 12) {
+            LOG_WARNING("[TBC] gossip option ", i, " truncated (", remaining, " bytes left)");
+            break;
+        }
+
         GossipOption opt;
         opt.id = packet.readUInt32();
         opt.icon = packet.readUInt8();
@@ -553,10 +569,34 @@ bool TbcPacketParsers::parseGossipMessage(network::Packet& packet, GossipMessage
         data.options.push_back(opt);
     }
 
+    // Ensure we have at least 4 bytes for questCount
+    size_t remaining = packet.getSize() - packet.getReadPos();
+    if (remaining < 4) {
+        LOG_WARNING("[TBC] SMSG_GOSSIP_MESSAGE truncated before questCount");
+        return data.options.size() > 0;  // Return true if we got at least some options
+    }
+
     uint32_t questCount = packet.readUInt32();
+
+    // Cap quest count to reasonable maximum
+    constexpr uint32_t kMaxGossipQuests = 256;
+    if (questCount > kMaxGossipQuests) {
+        LOG_WARNING("[TBC] SMSG_GOSSIP_MESSAGE questCount=", questCount, " exceeds max ",
+                    kMaxGossipQuests, ", capping");
+        questCount = kMaxGossipQuests;
+    }
+
     data.quests.clear();
     data.quests.reserve(questCount);
     for (uint32_t i = 0; i < questCount; ++i) {
+        // Sanity check: ensure minimum bytes available for quest
+        // (id(4)+icon(4)+level(4)+title(1))
+        remaining = packet.getSize() - packet.getReadPos();
+        if (remaining < 13) {
+            LOG_WARNING("[TBC] gossip quest ", i, " truncated (", remaining, " bytes left)");
+            break;
+        }
+
         GossipQuestItem quest;
         quest.questId = packet.readUInt32();
         quest.questIcon = packet.readUInt32();

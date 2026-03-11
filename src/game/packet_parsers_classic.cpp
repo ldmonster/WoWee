@@ -1032,9 +1032,24 @@ bool ClassicPacketParsers::parseGossipMessage(network::Packet& packet, GossipMes
     data.titleTextId = packet.readUInt32();
     uint32_t optionCount = packet.readUInt32();
 
+    // Cap option count to reasonable maximum
+    constexpr uint32_t kMaxGossipOptions = 256;
+    if (optionCount > kMaxGossipOptions) {
+        LOG_WARNING("Classic SMSG_GOSSIP_MESSAGE optionCount=", optionCount, " exceeds max ",
+                    kMaxGossipOptions, ", capping");
+        optionCount = kMaxGossipOptions;
+    }
+
     data.options.clear();
     data.options.reserve(optionCount);
     for (uint32_t i = 0; i < optionCount; ++i) {
+        // Sanity check: ensure minimum bytes available for option (id(4)+icon(1)+isCoded(1)+text(1))
+        remaining = packet.getSize() - packet.getReadPos();
+        if (remaining < 7) {
+            LOG_WARNING("Classic gossip option ", i, " truncated (", remaining, " bytes left)");
+            break;
+        }
+
         GossipOption opt;
         opt.id = packet.readUInt32();
         opt.icon = packet.readUInt8();
@@ -1046,10 +1061,33 @@ bool ClassicPacketParsers::parseGossipMessage(network::Packet& packet, GossipMes
         data.options.push_back(opt);
     }
 
+    // Ensure we have at least 4 bytes for questCount
+    remaining = packet.getSize() - packet.getReadPos();
+    if (remaining < 4) {
+        LOG_WARNING("Classic SMSG_GOSSIP_MESSAGE truncated before questCount");
+        return data.options.size() > 0;  // Return true if we got at least some options
+    }
+
     uint32_t questCount = packet.readUInt32();
+
+    // Cap quest count to reasonable maximum
+    constexpr uint32_t kMaxGossipQuests = 256;
+    if (questCount > kMaxGossipQuests) {
+        LOG_WARNING("Classic SMSG_GOSSIP_MESSAGE questCount=", questCount, " exceeds max ",
+                    kMaxGossipQuests, ", capping");
+        questCount = kMaxGossipQuests;
+    }
+
     data.quests.clear();
     data.quests.reserve(questCount);
     for (uint32_t i = 0; i < questCount; ++i) {
+        // Sanity check: ensure minimum bytes available for quest (id(4)+icon(4)+level(4)+title(1))
+        remaining = packet.getSize() - packet.getReadPos();
+        if (remaining < 13) {
+            LOG_WARNING("Classic gossip quest ", i, " truncated (", remaining, " bytes left)");
+            break;
+        }
+
         GossipQuestItem quest;
         quest.questId = packet.readUInt32();
         quest.questIcon = packet.readUInt32();
