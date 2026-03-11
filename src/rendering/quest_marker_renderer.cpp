@@ -1,5 +1,6 @@
 #include "rendering/quest_marker_renderer.hpp"
 #include "rendering/camera.hpp"
+#include "rendering/frustum.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/vk_shader.hpp"
 #include "rendering/vk_pipeline.hpp"
@@ -374,6 +375,10 @@ void QuestMarkerRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
     glm::mat4 view = camera.getViewMatrix();
     glm::vec3 cameraPos = camera.getPosition();
 
+    // Extract frustum planes for visibility testing
+    Frustum frustum;
+    frustum.extractFromMatrix(camera.getViewProjectionMatrix());
+
     // Get camera right and up vectors for billboarding
     glm::vec3 cameraRight = glm::vec3(view[0][0], view[1][0], view[2][0]);
     glm::vec3 cameraUp = glm::vec3(view[0][1], view[1][1], view[2][1]);
@@ -398,6 +403,11 @@ void QuestMarkerRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
         glm::vec3 toCamera = cameraPos - marker.position;
         float distSq = glm::dot(toCamera, toCamera);
         if (distSq > CULL_DIST_SQ) continue;
+
+        // Frustum cull quest markers (small sphere for icon)
+        constexpr float markerCullRadius = 0.5f;
+        if (!frustum.intersectsSphere(marker.position, markerCullRadius)) continue;
+
         float dist = std::sqrt(distSq);
 
         // Calculate fade alpha
