@@ -3828,7 +3828,9 @@ network::Packet BuyItemPacket::build(uint64_t vendorGuid, uint32_t itemId, uint3
     packet.writeUInt32(itemId);  // item entry
     packet.writeUInt32(slot);    // vendor slot index from SMSG_LIST_INVENTORY
     packet.writeUInt32(count);
-    // WotLK/AzerothCore expects a trailing byte on CMSG_BUY_ITEM.
+    // Note: WotLK/AzerothCore expects a trailing byte; Classic/TBC do not.
+    // This static helper always adds it (appropriate for CMaNGOS/AzerothCore).
+    // For Classic/TBC, use the GameHandler::buyItem() path which checks expansion.
     packet.writeUInt8(0);
     return packet;
 }

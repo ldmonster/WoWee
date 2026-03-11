@@ -15821,8 +15821,11 @@ void GameHandler::buyItem(uint64_t vendorGuid, uint32_t itemId, uint32_t slot, u
     packet.writeUInt32(itemId); // item entry
     packet.writeUInt32(slot);   // vendor slot index
     packet.writeUInt32(count);
-    // WotLK/AzerothCore expects a trailing byte here.
-    packet.writeUInt8(0);
+    // WotLK/AzerothCore expects a trailing byte; Classic/TBC do not
+    const bool isWotLk = isActiveExpansion("wotlk");
+    if (isWotLk) {
+        packet.writeUInt8(0);
+    }
     socket->send(packet);
 }
 
