@@ -13517,6 +13517,15 @@ void GameHandler::handleAttackerStateUpdate(network::Packet& packet) {
         addCombatText(CombatTextEntry::PARRY, 0, 0, isPlayerAttacker);
     } else if (data.victimState == 4) {
         addCombatText(CombatTextEntry::BLOCK, 0, 0, isPlayerAttacker);
+    } else if (data.victimState == 5) {
+        // VICTIMSTATE_EVADE: NPC evaded (out of combat zone). Show as miss.
+        addCombatText(CombatTextEntry::MISS, 0, 0, isPlayerAttacker);
+    } else if (data.victimState == 6) {
+        // VICTIMSTATE_IS_IMMUNE: Target is immune to this attack.
+        addCombatText(CombatTextEntry::IMMUNE, 0, 0, isPlayerAttacker);
+    } else if (data.victimState == 7) {
+        // VICTIMSTATE_DEFLECT: Attack was deflected (e.g. shield slam reflect).
+        addCombatText(CombatTextEntry::MISS, 0, 0, isPlayerAttacker);
     } else {
         auto type = data.isCrit() ? CombatTextEntry::CRIT_DAMAGE : CombatTextEntry::MELEE_DAMAGE;
         addCombatText(type, data.totalDamage, 0, isPlayerAttacker);
