@@ -13487,20 +13487,35 @@ void GameHandler::handleSpellGo(network::Packet& packet) {
 }
 
 void GameHandler::handleSpellCooldown(network::Packet& packet) {
-    SpellCooldownData data;
-    if (!SpellCooldownParser::parse(packet, data)) return;
+    // Classic 1.12: guid(8) + N×[spellId(4) + itemId(4) + cooldown(4)]  — no flags byte, 12 bytes/entry
+    // TBC 2.4.3 / WotLK 3.3.5a: guid(8) + flags(1) + N×[spellId(4) + cooldown(4)]  — 8 bytes/entry
+    const bool isClassicFormat = isClassicLikeExpansion();
 
-    for (const auto& [spellId, cooldownMs] : data.cooldowns) {
+    if (packet.getSize() - packet.getReadPos() < 8) return;
+    /*data.guid =*/ packet.readUInt64();  // guid (not used further)
+
+    if (!isClassicFormat) {
+        if (packet.getSize() - packet.getReadPos() < 1) return;
+        /*data.flags =*/ packet.readUInt8();  // flags (consumed but not stored)
+    }
+
+    const size_t entrySize = isClassicFormat ? 12u : 8u;
+    while (packet.getSize() - packet.getReadPos() >= entrySize) {
+        uint32_t spellId    = packet.readUInt32();
+        if (isClassicFormat) packet.readUInt32();  // itemId — consumed, not used
+        uint32_t cooldownMs = packet.readUInt32();
+
         float seconds = cooldownMs / 1000.0f;
         spellCooldowns[spellId] = seconds;
-        // Update action bar cooldowns
         for (auto& slot : actionBar) {
             if (slot.type == ActionBarSlot::SPELL && slot.id == spellId) {
-                slot.cooldownTotal = seconds;
+                slot.cooldownTotal    = seconds;
                 slot.cooldownRemaining = seconds;
             }
         }
     }
+    LOG_DEBUG("handleSpellCooldown: parsed for ",
+              isClassicFormat ? "Classic" : "TBC/WotLK", " format");
 }
 
 void GameHandler::handleCooldownEvent(network::Packet& packet) {
