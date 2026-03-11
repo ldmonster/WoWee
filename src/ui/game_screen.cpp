@@ -6938,6 +6938,35 @@ void GameScreen::renderQuestOfferRewardWindow(game::GameHandler& gameHandler) {
         }
 
         // Choice rewards (pick one)
+        // Trigger item info fetch for all reward items
+        for (const auto& item : quest.choiceRewards) gameHandler.ensureItemInfo(item.itemId);
+        for (const auto& item : quest.fixedRewards)  gameHandler.ensureItemInfo(item.itemId);
+
+        // Helper: resolve icon tex + quality color for a reward item
+        auto resolveRewardItemVis = [&](const game::QuestRewardItem& ri)
+            -> std::pair<VkDescriptorSet, ImVec4>
+        {
+            auto* info = gameHandler.getItemInfo(ri.itemId);
+            uint32_t dispId = ri.displayInfoId;
+            if (info && info->valid && info->displayInfoId != 0) dispId = info->displayInfoId;
+            VkDescriptorSet iconTex = dispId ? inventoryScreen.getItemIcon(dispId) : VK_NULL_HANDLE;
+            ImVec4 col = (info && info->valid)
+                ? InventoryScreen::getQualityColor(static_cast<game::ItemQuality>(info->quality))
+                : ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+            return {iconTex, col};
+        };
+
+        // Helper: show item tooltip
+        auto rewardItemTooltip = [&](const game::QuestRewardItem& ri, ImVec4 nameCol) {
+            auto* info = gameHandler.getItemInfo(ri.itemId);
+            if (!info || !info->valid) return;
+            ImGui::BeginTooltip();
+            ImGui::TextColored(nameCol, "%s", info->name.c_str());
+            if (!info->description.empty())
+                ImGui::TextWrapped("%s", info->description.c_str());
+            ImGui::EndTooltip();
+        };
+
         if (!quest.choiceRewards.empty()) {
             ImGui::Spacing();
             ImGui::Separator();
@@ -6946,48 +6975,29 @@ void GameScreen::renderQuestOfferRewardWindow(game::GameHandler& gameHandler) {
             for (size_t i = 0; i < quest.choiceRewards.size(); ++i) {
                 const auto& item = quest.choiceRewards[i];
                 auto* info = gameHandler.getItemInfo(item.itemId);
+                auto [iconTex, qualityColor] = resolveRewardItemVis(item);
+
+                std::string label;
+                if (info && info->valid && !info->name.empty()) label = info->name;
+                else label = "Item " + std::to_string(item.itemId);
+                if (item.count > 1) label += " x" + std::to_string(item.count);
 
                 bool selected = (selectedChoice == static_cast<int>(i));
-
-                // Get item icon if we have displayInfoId
-                VkDescriptorSet iconTex = VK_NULL_HANDLE;
-                if (info && info->valid && info->displayInfoId != 0) {
-                    iconTex = inventoryScreen.getItemIcon(info->displayInfoId);
-                }
-
-                // Quality color
-                ImVec4 qualityColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f); // White (poor)
-                if (info && info->valid) {
-                    switch (info->quality) {
-                        case 1: qualityColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f); break; // Common (white)
-                        case 2: qualityColor = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); break; // Uncommon (green)
-                        case 3: qualityColor = ImVec4(0.0f, 0.5f, 1.0f, 1.0f); break; // Rare (blue)
-                        case 4: qualityColor = ImVec4(0.64f, 0.21f, 0.93f, 1.0f); break; // Epic (purple)
-                        case 5: qualityColor = ImVec4(1.0f, 0.5f, 0.0f, 1.0f); break; // Legendary (orange)
-                    }
-                }
-
-                // Render item with icon + visible selectable label
                 ImGui::PushID(static_cast<int>(i));
-                std::string label;
-                if (info && info->valid && !info->name.empty()) {
-                    label = info->name;
-                } else {
-                    label = "Item " + std::to_string(item.itemId);
+
+                // Icon then selectable on same line
+                if (iconTex) {
+                    ImGui::Image((void*)(intptr_t)iconTex, ImVec2(20, 20));
+                    if (ImGui::IsItemHovered()) rewardItemTooltip(item, qualityColor);
+                    ImGui::SameLine();
                 }
-                if (item.count > 1) {
-                    label += " x" + std::to_string(item.count);
-                }
-                if (ImGui::Selectable(label.c_str(), selected, 0, ImVec2(0, 24))) {
+                ImGui::PushStyleColor(ImGuiCol_Text, qualityColor);
+                if (ImGui::Selectable(label.c_str(), selected, 0, ImVec2(0, 20))) {
                     selectedChoice = static_cast<int>(i);
                 }
-                if (ImGui::IsItemHovered() && iconTex) {
-                    ImGui::SetTooltip("Reward option");
-                }
-                if (iconTex) {
-                    ImGui::SameLine();
-                    ImGui::Image((void*)(intptr_t)iconTex, ImVec2(18, 18));
-                }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) rewardItemTooltip(item, qualityColor);
+
                 ImGui::PopID();
             }
         }
@@ -6999,10 +7009,20 @@ void GameScreen::renderQuestOfferRewardWindow(game::GameHandler& gameHandler) {
             ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "You will also receive:");
             for (const auto& item : quest.fixedRewards) {
                 auto* info = gameHandler.getItemInfo(item.itemId);
-                if (info && info->valid)
-                    ImGui::Text("  %s x%u", info->name.c_str(), item.count);
-                else
-                    ImGui::Text("  Item %u x%u", item.itemId, item.count);
+                auto [iconTex, qualityColor] = resolveRewardItemVis(item);
+
+                std::string label;
+                if (info && info->valid && !info->name.empty()) label = info->name;
+                else label = "Item " + std::to_string(item.itemId);
+                if (item.count > 1) label += " x" + std::to_string(item.count);
+
+                if (iconTex) {
+                    ImGui::Image((void*)(intptr_t)iconTex, ImVec2(18, 18));
+                    if (ImGui::IsItemHovered()) rewardItemTooltip(item, qualityColor);
+                    ImGui::SameLine();
+                }
+                ImGui::TextColored(qualityColor, "  %s", label.c_str());
+                if (ImGui::IsItemHovered()) rewardItemTooltip(item, qualityColor);
             }
         }
 
