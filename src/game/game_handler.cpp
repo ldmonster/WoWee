@@ -12242,20 +12242,40 @@ void GameHandler::handleMoveKnockBack(network::Packet& packet) {
 // ============================================================
 
 void GameHandler::handleBattlefieldStatus(network::Packet& packet) {
+    // SMSG_BATTLEFIELD_STATUS wire format differs by expansion:
+    //
+    // Classic 1.12 (vmangos/cmangos):
+    //   queueSlot(4) bgTypeId(4) unk(2) instanceId(4) isRegistered(1) statusId(4) [status fields...]
+    //   STATUS_NONE sends only: queueSlot(4) bgTypeId(4)
+    //
+    // TBC 2.4.3 / WotLK 3.3.5a:
+    //   queueSlot(4) arenaType(1) unk(1) bgTypeId(4) unk2(2) instanceId(4) isRated(1) statusId(4) [status fields...]
+    //   STATUS_NONE sends only: queueSlot(4) arenaType(1)
+
     if (packet.getSize() - packet.getReadPos() < 4) return;
     uint32_t queueSlot = packet.readUInt32();
 
-    // Minimal packet = just queueSlot + arenaType(1) when status is NONE
-    if (packet.getSize() - packet.getReadPos() < 1) {
-        LOG_INFO("Battlefield status: queue slot ", queueSlot, " cleared");
-        return;
+    const bool classicFormat = isClassicLikeExpansion();
+
+    uint8_t arenaType = 0;
+    if (!classicFormat) {
+        // TBC/WotLK: arenaType(1) + unk(1) before bgTypeId
+        // STATUS_NONE sends only queueSlot + arenaType
+        if (packet.getSize() - packet.getReadPos() < 1) {
+            LOG_INFO("Battlefield status: queue slot ", queueSlot, " cleared");
+            return;
+        }
+        arenaType = packet.readUInt8();
+        if (packet.getSize() - packet.getReadPos() < 1) return;
+        packet.readUInt8();  // unk
+    } else {
+        // Classic STATUS_NONE sends only queueSlot + bgTypeId (4 bytes)
+        if (packet.getSize() - packet.getReadPos() < 4) {
+            LOG_INFO("Battlefield status: queue slot ", queueSlot, " cleared");
+            return;
+        }
     }
 
-    uint8_t arenaType = packet.readUInt8();
-    if (packet.getSize() - packet.getReadPos() < 1) return;
-
-    // Unknown byte
-    packet.readUInt8();
     if (packet.getSize() - packet.getReadPos() < 4) return;
     uint32_t bgTypeId = packet.readUInt32();
 
