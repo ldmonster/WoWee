@@ -1327,12 +1327,12 @@ VkTexture* CharacterRenderer::compositeWithRegions(const std::string& basePath,
                 blitOverlay(composite, width, height, overlay, dstX, dstY);
             }
         } else {
+            // Size mismatch — blit at natural size (may clip or leave gap)
+            core::Logger::getInstance().warning("compositeWithRegions: region ", regionIdx,
+                " at (", dstX, ",", dstY, ") overlay=", overlay.width, "x", overlay.height,
+                " expected=", expectedW, "x", expectedH, " from ", rl.second);
             blitOverlay(composite, width, height, overlay, dstX, dstY);
         }
-
-        core::Logger::getInstance().warning("compositeWithRegions: region ", regionIdx,
-            " at (", dstX, ",", dstY, ") overlay=", overlay.width, "x", overlay.height,
-            " expected=", expectedW, "x", expectedH, " from ", rl.second);
     }
 
     // Upload to GPU via VkTexture
@@ -1580,11 +1580,19 @@ void CharacterRenderer::playAnimation(uint32_t instanceId, uint32_t animationId,
     instance.animationTime = 0.0f;
     instance.animationLoop = loop;
 
+    // Prefer variationIndex==0 (primary animation); fall back to first match
+    int firstMatch = -1;
     for (size_t i = 0; i < model.sequences.size(); i++) {
         if (model.sequences[i].id == animationId) {
-            instance.currentSequenceIndex = static_cast<int>(i);
-            break;
+            if (firstMatch < 0) firstMatch = static_cast<int>(i);
+            if (model.sequences[i].variationIndex == 0) {
+                instance.currentSequenceIndex = static_cast<int>(i);
+                break;
+            }
         }
+    }
+    if (instance.currentSequenceIndex < 0 && firstMatch >= 0) {
+        instance.currentSequenceIndex = firstMatch;
     }
 
     if (instance.currentSequenceIndex < 0) {
