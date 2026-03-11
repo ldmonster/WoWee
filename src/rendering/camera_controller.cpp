@@ -369,12 +369,28 @@ void CameraController::update(float deltaTime) {
 
     // Toggle sit/crouch with X key (edge-triggered) — only when UI doesn't want keyboard
     // Blocked while mounted
+    bool prevSitting = sitting;
     bool xDown = !uiWantsKeyboard && input.isKeyPressed(SDL_SCANCODE_X);
     if (xDown && !xKeyWasDown && !mounted_) {
         sitting = !sitting;
     }
     if (mounted_) sitting = false;
     xKeyWasDown = xDown;
+
+    // Stand up on any movement key or jump while sitting (WoW behaviour)
+    if (!uiWantsKeyboard && sitting && !movementSuppressed) {
+        bool anyMoveKey =
+            input.isKeyPressed(SDL_SCANCODE_W) || input.isKeyPressed(SDL_SCANCODE_S) ||
+            input.isKeyPressed(SDL_SCANCODE_A) || input.isKeyPressed(SDL_SCANCODE_D) ||
+            input.isKeyPressed(SDL_SCANCODE_Q) || input.isKeyPressed(SDL_SCANCODE_E) ||
+            input.isKeyPressed(SDL_SCANCODE_SPACE);
+        if (anyMoveKey) sitting = false;
+    }
+
+    // Notify server when the player stands up via local input
+    if (prevSitting && !sitting && standUpCallback_) {
+        standUpCallback_();
+    }
 
     // Update eye height based on crouch state (smooth transition)
     float targetEyeHeight = sitting ? CROUCH_EYE_HEIGHT : STAND_EYE_HEIGHT;
@@ -388,11 +404,6 @@ void CameraController::update(float deltaTime) {
     if (nowBackward) movement -= forward;
     if (nowStrafeLeft) movement += right;
     if (nowStrafeRight) movement -= right;
-
-    // Stand up if jumping while crouched
-    if (!uiWantsKeyboard && sitting && input.isKeyPressed(SDL_SCANCODE_SPACE)) {
-        sitting = false;
-    }
 
     // Third-person orbit camera mode
     if (thirdPerson && followTarget) {

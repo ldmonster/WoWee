@@ -628,6 +628,11 @@ void Application::setState(AppState newState) {
                         gameHandler->sendMovement(static_cast<game::Opcode>(opcode));
                     }
                 });
+                cc->setStandUpCallback([this]() {
+                    if (gameHandler) {
+                        gameHandler->setStandState(0); // CMSG_STAND_STATE_CHANGE(STAND)
+                    }
+                });
                 cc->setUseWoWSpeed(true);
             }
             if (gameHandler) {

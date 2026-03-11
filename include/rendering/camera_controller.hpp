@@ -90,6 +90,11 @@ public:
     // Movement callback for sending opcodes to server
     using MovementCallback = std::function<void(uint32_t opcode)>;
     void setMovementCallback(MovementCallback cb) { movementCallback = std::move(cb); }
+
+    // Callback invoked when the player stands up via local input (space/X/movement key
+    // while server-sitting), so the caller can send CMSG_STAND_STATE_CHANGE(0).
+    using StandUpCallback = std::function<void()>;
+    void setStandUpCallback(StandUpCallback cb) { standUpCallback_ = std::move(cb); }
     void setUseWoWSpeed(bool use) { useWoWSpeed = use; }
     void setRunSpeedOverride(float speed) { runSpeedOverride_ = speed; }
     void setWalkSpeedOverride(float speed) { walkSpeedOverride_ = speed; }
@@ -265,6 +270,7 @@ private:
 
     // Movement callback
     MovementCallback movementCallback;
+    StandUpCallback standUpCallback_;
 
     // Movement speeds
     bool useWoWSpeed = false;

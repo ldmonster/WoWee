@@ -5108,9 +5108,13 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         // Player nameplates are always shown; NPC nameplates respect the V-key toggle
         if (!isPlayer && !showNameplates_) continue;
 
-        // Convert canonical WoW position → render space, raise to head height
-        glm::vec3 renderPos = core::coords::canonicalToRender(
-            glm::vec3(unit->getX(), unit->getY(), unit->getZ()));
+        // Prefer the renderer's actual instance position so the nameplate tracks the
+        // rendered model exactly (avoids drift from the parallel entity interpolator).
+        glm::vec3 renderPos;
+        if (!core::Application::getInstance().getRenderPositionForGuid(guid, renderPos)) {
+            renderPos = core::coords::canonicalToRender(
+                glm::vec3(unit->getX(), unit->getY(), unit->getZ()));
+        }
         renderPos.z += 2.3f;
 
         // Cull distance: target or other players up to 40 units; NPC others up to 20 units
