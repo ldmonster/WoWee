@@ -52,8 +52,37 @@ void SpellbookScreen::loadSpellDBC(pipeline::AssetManager* assetManager) {
 
     const auto* spellL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("Spell") : nullptr;
 
+    // Load SpellCastTimes.dbc: field 0=ID, field 1=Base(ms), field 2=PerLevel, field 3=Minimum
+    std::unordered_map<uint32_t, uint32_t> castTimeMap;  // index → base ms
+    auto castTimeDbc = assetManager->loadDBC("SpellCastTimes.dbc");
+    if (castTimeDbc && castTimeDbc->isLoaded()) {
+        for (uint32_t i = 0; i < castTimeDbc->getRecordCount(); ++i) {
+            uint32_t id   = castTimeDbc->getUInt32(i, 0);
+            int32_t  base = static_cast<int32_t>(castTimeDbc->getUInt32(i, 1));
+            if (id > 0 && base > 0)
+                castTimeMap[id] = static_cast<uint32_t>(base);
+        }
+    }
+
+    // Load SpellRange.dbc: field 0=ID, field 5=MaxRangeHostile (float)
+    std::unordered_map<uint32_t, float> rangeMap;  // index → max yards
+    auto rangeDbc = assetManager->loadDBC("SpellRange.dbc");
+    if (rangeDbc && rangeDbc->isLoaded()) {
+        uint32_t rangeFieldCount = rangeDbc->getFieldCount();
+        if (rangeFieldCount >= 6) {
+            for (uint32_t i = 0; i < rangeDbc->getRecordCount(); ++i) {
+                uint32_t id = rangeDbc->getUInt32(i, 0);
+                float maxRange = rangeDbc->getFloat(i, 5);
+                if (id > 0 && maxRange > 0.0f)
+                    rangeMap[id] = maxRange;
+            }
+        }
+    }
+
     auto tryLoad = [&](uint32_t idField, uint32_t attrField, uint32_t iconField,
                        uint32_t nameField, uint32_t rankField, uint32_t tooltipField,
+                       uint32_t powerTypeField, uint32_t manaCostField,
+                       uint32_t castTimeIndexField, uint32_t rangeIndexField,
                        const char* label) {
         spellData.clear();
         uint32_t count = dbc->getRecordCount();
@@ -68,6 +97,18 @@ void SpellbookScreen::loadSpellDBC(pipeline::AssetManager* assetManager) {
             info.name = dbc->getString(i, nameField);
             info.rank = dbc->getString(i, rankField);
             info.description = dbc->getString(i, tooltipField);
+            info.powerType = dbc->getUInt32(i, powerTypeField);
+            info.manaCost  = dbc->getUInt32(i, manaCostField);
+            uint32_t ctIdx = dbc->getUInt32(i, castTimeIndexField);
+            if (ctIdx > 0) {
+                auto ctIt = castTimeMap.find(ctIdx);
+                if (ctIt != castTimeMap.end()) info.castTimeMs = ctIt->second;
+            }
+            uint32_t rangeIdx = dbc->getUInt32(i, rangeIndexField);
+            if (rangeIdx > 0) {
+                auto rangeIt = rangeMap.find(rangeIdx);
+                if (rangeIt != rangeMap.end()) info.rangeIndex = static_cast<uint32_t>(rangeIt->second);
+            }
 
             if (!info.name.empty()) {
                 spellData[spellId] = std::move(info);
@@ -77,16 +118,26 @@ void SpellbookScreen::loadSpellDBC(pipeline::AssetManager* assetManager) {
     };
 
     if (spellL) {
-        uint32_t tooltipField = 139;
-        // Try to get Tooltip field from layout, fall back to 139
-        try { tooltipField = (*spellL)["Tooltip"]; } catch (...) {}
+        uint32_t tooltipField      = 139;
+        uint32_t powerTypeField    = 14;
+        uint32_t manaCostField     = 39;
+        uint32_t castTimeIdxField  = 47;
+        uint32_t rangeIdxField     = 49;
+        try { tooltipField     = (*spellL)["Tooltip"]; } catch (...) {}
+        try { powerTypeField   = (*spellL)["PowerType"]; } catch (...) {}
+        try { manaCostField    = (*spellL)["ManaCost"]; } catch (...) {}
+        try { castTimeIdxField = (*spellL)["CastingTimeIndex"]; } catch (...) {}
+        try { rangeIdxField    = (*spellL)["RangeIndex"]; } catch (...) {}
         tryLoad((*spellL)["ID"], (*spellL)["Attributes"], (*spellL)["IconID"],
-                (*spellL)["Name"], (*spellL)["Rank"], tooltipField, "expansion layout");
+                (*spellL)["Name"], (*spellL)["Rank"], tooltipField,
+                powerTypeField, manaCostField, castTimeIdxField, rangeIdxField,
+                "expansion layout");
     }
 
     if (spellData.empty() && fieldCount >= 200) {
         LOG_INFO("Spellbook: Retrying with WotLK field indices (DBC has ", fieldCount, " fields)");
-        tryLoad(0, 4, 133, 136, 153, 139, "WotLK fallback");
+        // WotLK Spell.dbc field indices (verified against 3.3.5a schema)
+        tryLoad(0, 4, 133, 136, 153, 139, 14, 39, 47, 49, "WotLK fallback");
     }
 
     dbcLoaded = !spellData.empty();
@@ -361,6 +412,55 @@ void SpellbookScreen::renderSpellTooltip(const SpellInfo* info, game::GameHandle
     // Passive indicator
     if (info->isPassive()) {
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Passive");
+    }
+
+    // Resource cost + cast time on same row (WoW style)
+    if (!info->isPassive()) {
+        // Left: resource cost
+        char costBuf[64] = "";
+        if (info->manaCost > 0) {
+            const char* powerName = "Mana";
+            switch (info->powerType) {
+                case 1: powerName = "Rage";   break;
+                case 3: powerName = "Energy"; break;
+                case 4: powerName = "Focus";  break;
+                default: break;
+            }
+            std::snprintf(costBuf, sizeof(costBuf), "%u %s", info->manaCost, powerName);
+        }
+
+        // Right: cast time
+        char castBuf[32] = "";
+        if (info->castTimeMs == 0) {
+            std::snprintf(castBuf, sizeof(castBuf), "Instant cast");
+        } else {
+            float secs = info->castTimeMs / 1000.0f;
+            std::snprintf(castBuf, sizeof(castBuf), "%.1f sec cast", secs);
+        }
+
+        if (costBuf[0] || castBuf[0]) {
+            float wrapW = 320.0f;
+            if (costBuf[0] && castBuf[0]) {
+                float castW = ImGui::CalcTextSize(castBuf).x;
+                ImGui::Text("%s", costBuf);
+                ImGui::SameLine(wrapW - castW);
+                ImGui::Text("%s", castBuf);
+            } else if (castBuf[0]) {
+                ImGui::Text("%s", castBuf);
+            } else {
+                ImGui::Text("%s", costBuf);
+            }
+        }
+
+        // Range
+        if (info->rangeIndex > 0) {
+            char rangeBuf[32];
+            if (info->rangeIndex <= 5)
+                std::snprintf(rangeBuf, sizeof(rangeBuf), "Melee range");
+            else
+                std::snprintf(rangeBuf, sizeof(rangeBuf), "%u yd range", info->rangeIndex);
+            ImGui::Text("%s", rangeBuf);
+        }
     }
 
     // Cooldown if active
