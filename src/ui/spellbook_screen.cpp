@@ -45,8 +45,10 @@ void SpellbookScreen::loadSpellDBC(pipeline::AssetManager* assetManager) {
     }
 
     uint32_t fieldCount = dbc->getFieldCount();
-    if (fieldCount < 154) {
-        LOG_WARNING("Spellbook: Spell.dbc has ", fieldCount, " fields, expected 234+");
+    // Classic 1.12 Spell.dbc has 148 fields (Tooltip at index 147), TBC has ~167, WotLK has 234.
+    // Require at least 148 fields so all expansions can load spell names/icons via the DBC layout.
+    if (fieldCount < 148) {
+        LOG_WARNING("Spellbook: Spell.dbc has ", fieldCount, " fields, too few to load");
         return;
     }
 
