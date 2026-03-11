@@ -4487,6 +4487,8 @@ bool TrainerListParser::parse(network::Packet& packet, TrainerListData& data, bo
     // Classic per-entry: spellId(4) + state(1) + cost(4) + reqLevel(1) +
     //                    reqSkill(4) + reqSkillValue(4) + chain×3(12) + unk(4) = 34 bytes
     data = TrainerListData{};
+    if (packet.getSize() - packet.getReadPos() < 16) return false; // guid(8) + type(4) + count(4)
+
     data.trainerGuid = packet.readUInt64();
     data.trainerType = packet.readUInt32();
     uint32_t spellCount = packet.readUInt32();
@@ -4498,6 +4500,13 @@ bool TrainerListParser::parse(network::Packet& packet, TrainerListData& data, bo
 
     data.spells.reserve(spellCount);
     for (uint32_t i = 0; i < spellCount; ++i) {
+        // Validate minimum entry size before reading
+        const size_t minEntrySize = isClassic ? 34 : 38;
+        if (packet.getReadPos() + minEntrySize > packet.getSize()) {
+            LOG_WARNING("TrainerListParser: truncated at spell ", i);
+            break;
+        }
+
         TrainerSpell spell;
         spell.spellId   = packet.readUInt32();
         spell.state     = packet.readUInt8();
@@ -4524,7 +4533,12 @@ bool TrainerListParser::parse(network::Packet& packet, TrainerListData& data, bo
         data.spells.push_back(spell);
     }
 
-    data.greeting = packet.readString();
+    if (packet.getReadPos() >= packet.getSize()) {
+        LOG_WARNING("TrainerListParser: truncated before greeting");
+        data.greeting.clear();
+    } else {
+        data.greeting = packet.readString();
+    }
 
     LOG_INFO("Trainer list (", isClassic ? "Classic" : "TBC/WotLK", "): ",
              spellCount, " spells, type=", data.trainerType,
