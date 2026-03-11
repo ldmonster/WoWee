@@ -1,4 +1,5 @@
 #include "ui/quest_log_screen.hpp"
+#include "ui/keybinding_manager.hpp"
 #include "core/application.hpp"
 #include "core/input.hpp"
 #include <imgui.h>
@@ -206,13 +207,14 @@ std::string cleanQuestTitleForUi(const std::string& raw, uint32_t questId) {
 } // anonymous namespace
 
 void QuestLogScreen::render(game::GameHandler& gameHandler) {
-    // L key toggle (edge-triggered)
-    ImGuiIO& io = ImGui::GetIO();
-    bool lDown = !io.WantTextInput && core::Input::getInstance().isKeyPressed(SDL_SCANCODE_L);
-    if (lDown && !lKeyWasDown) {
+    // Quests toggle via keybinding (edge-triggered)
+    // Customizable key (default: L) from KeybindingManager
+    bool questsDown = KeybindingManager::getInstance().isActionPressed(
+        KeybindingManager::Action::TOGGLE_QUESTS, false);
+    if (questsDown && !lKeyWasDown) {
         open = !open;
     }
-    lKeyWasDown = lDown;
+    lKeyWasDown = questsDown;
 
     if (!open) return;
 
