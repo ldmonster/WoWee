@@ -743,9 +743,10 @@ void M2Renderer::destroyModelGPU(M2ModelGPU& model) {
     VmaAllocator alloc = vkCtx_->getAllocator();
     if (model.vertexBuffer) { vmaDestroyBuffer(alloc, model.vertexBuffer, model.vertexAlloc); model.vertexBuffer = VK_NULL_HANDLE; }
     if (model.indexBuffer) { vmaDestroyBuffer(alloc, model.indexBuffer, model.indexAlloc); model.indexBuffer = VK_NULL_HANDLE; }
+    VkDevice device = vkCtx_->getDevice();
     for (auto& batch : model.batches) {
+        if (batch.materialSet) { vkFreeDescriptorSets(device, materialDescPool_, 1, &batch.materialSet); batch.materialSet = VK_NULL_HANDLE; }
         if (batch.materialUBO) { vmaDestroyBuffer(alloc, batch.materialUBO, batch.materialUBOAlloc); batch.materialUBO = VK_NULL_HANDLE; }
-        // materialSet freed when pool is reset/destroyed
     }
 }
 

@@ -124,6 +124,7 @@ bool WMORenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     poolInfo.maxSets = MAX_MATERIAL_SETS;
     poolInfo.poolSizeCount = 2;
     poolInfo.pPoolSizes = poolSizes;
@@ -1946,8 +1947,13 @@ void WMORenderer::destroyGroupGPU(GroupResources& group) {
         group.indexAlloc = VK_NULL_HANDLE;
     }
 
-    // Destroy material UBOs (descriptor sets are freed when pool is reset/destroyed)
+    // Destroy material UBOs and free descriptor sets back to pool
+    VkDevice device = vkCtx_->getDevice();
     for (auto& mb : group.mergedBatches) {
+        if (mb.materialSet) {
+            vkFreeDescriptorSets(device, materialDescPool_, 1, &mb.materialSet);
+            mb.materialSet = VK_NULL_HANDLE;
+        }
         if (mb.materialUBO) {
             vmaDestroyBuffer(allocator, mb.materialUBO, mb.materialUBOAlloc);
             mb.materialUBO = VK_NULL_HANDLE;
