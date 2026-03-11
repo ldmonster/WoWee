@@ -3666,10 +3666,18 @@ bool QuestOfferRewardParser::parse(network::Packet& packet, QuestOfferRewardData
     data.title = normalizeWowTextTokens(packet.readString());
     data.rewardText = normalizeWowTextTokens(packet.readString());
 
-    if (packet.getReadPos() + 10 > packet.getSize()) {
+    if (packet.getReadPos() + 8 > packet.getSize()) {
         LOG_DEBUG("Quest offer reward (short): id=", data.questId, " title='", data.title, "'");
         return true;
     }
+
+    // After the two strings the packet contains a variable prefix (autoFinish + optional fields)
+    // before the emoteCount.  Different expansions and server emulator versions differ:
+    //   Classic 1.12   : uint8 autoFinish + uint32 suggestedPlayers  = 5 bytes
+    //   TBC 2.4.3      : uint32 autoFinish + uint32 suggestedPlayers = 8 bytes (variable arrays)
+    //   WotLK 3.3.5a   : uint32 autoFinish + uint32 suggestedPlayers = 8 bytes (fixed 6/4 arrays)
+    // Some vanilla-family servers omit autoFinish entirely (0 bytes of prefix).
+    // We scan prefix sizes 0..16 bytes with both fixed and variable array layouts, scoring each.
 
     struct ParsedTail {
         uint32_t rewardMoney = 0;
@@ -3678,28 +3686,27 @@ bool QuestOfferRewardParser::parse(network::Packet& packet, QuestOfferRewardData
         std::vector<QuestRewardItem> fixedRewards;
         bool ok = false;
         int score = -1000;
+        size_t prefixSkip = 0;
+        bool fixedArrays = false;
     };
 
-    auto parseTail = [&](size_t startPos, bool hasFlags, bool fixedArrays) -> ParsedTail {
+    auto parseTail = [&](size_t startPos, size_t prefixSkip, bool fixedArrays) -> ParsedTail {
         ParsedTail out;
+        out.prefixSkip  = prefixSkip;
+        out.fixedArrays = fixedArrays;
         packet.setReadPos(startPos);
 
-        if (packet.getReadPos() + 1 > packet.getSize()) return out;
-        /*autoFinish*/ packet.readUInt8();
-        if (hasFlags) {
-            if (packet.getReadPos() + 4 > packet.getSize()) return out;
-            /*flags*/ packet.readUInt32();
-        }
-        if (packet.getReadPos() + 4 > packet.getSize()) return out;
-        /*suggestedPlayers*/ packet.readUInt32();
+        // Skip the prefix bytes (autoFinish + optional suggestedPlayers before emoteCount)
+        if (packet.getReadPos() + prefixSkip > packet.getSize()) return out;
+        packet.setReadPos(packet.getReadPos() + prefixSkip);
 
         if (packet.getReadPos() + 4 > packet.getSize()) return out;
         uint32_t emoteCount = packet.readUInt32();
-        if (emoteCount > 64) return out;  // guard against misalignment
+        if (emoteCount > 32) return out;  // guard against misalignment
         for (uint32_t i = 0; i < emoteCount; ++i) {
             if (packet.getReadPos() + 8 > packet.getSize()) return out;
             packet.readUInt32(); // delay
-            packet.readUInt32(); // emote
+            packet.readUInt32(); // emote type
         }
 
         if (packet.getReadPos() + 4 > packet.getSize()) return out;
@@ -3717,7 +3724,7 @@ bool QuestOfferRewardParser::parse(network::Packet& packet, QuestOfferRewardData
             item.choiceSlot = i;
             if (item.itemId > 0) {
                 out.choiceRewards.push_back(item);
-                nonZeroChoice++;
+                ++nonZeroChoice;
             }
         }
 
@@ -3735,7 +3742,7 @@ bool QuestOfferRewardParser::parse(network::Packet& packet, QuestOfferRewardData
             item.displayInfoId = packet.readUInt32();
             if (item.itemId > 0) {
                 out.fixedRewards.push_back(item);
-                nonZeroFixed++;
+                ++nonZeroFixed;
             }
         }
 
@@ -3746,43 +3753,56 @@ bool QuestOfferRewardParser::parse(network::Packet& packet, QuestOfferRewardData
 
         out.ok = true;
         out.score = 0;
-        if (hasFlags) out.score += 1;
-        if (fixedArrays) out.score += 1;
+        // Prefer the standard WotLK/TBC 8-byte prefix (uint32 autoFinish + uint32 suggestedPlayers)
+        if (prefixSkip == 8) out.score += 3;
+        else if (prefixSkip == 5) out.score += 1;  // Classic uint8 autoFinish + uint32 suggestedPlayers
+        // Prefer fixed arrays (WotLK/TBC servers always send 6+4 slots)
+        if (fixedArrays) out.score += 2;
+        // Valid counts
         if (choiceCount <= 6) out.score += 3;
         if (rewardCount <= 4) out.score += 3;
-        if (fixedArrays) {
-            if (nonZeroChoice <= choiceCount) out.score += 3;
-            if (nonZeroFixed <= rewardCount) out.score += 3;
-        } else {
-            out.score += 3;  // variable arrays align naturally with count
-        }
-        if (packet.getReadPos() <= packet.getSize()) out.score += 2;
+        // All non-zero items are within declared counts
+        if (nonZeroChoice <= choiceCount) out.score += 2;
+        if (nonZeroFixed <= rewardCount) out.score += 2;
+        // No bytes left over (or only a few)
         size_t remaining = packet.getSize() - packet.getReadPos();
-        if (remaining <= 32) out.score += 2;
+        if (remaining == 0) out.score += 5;
+        else if (remaining <= 4) out.score += 3;
+        else if (remaining <= 8) out.score += 2;
+        else if (remaining <= 16) out.score += 1;
+        else out.score -= static_cast<int>(remaining / 4);
+        // Plausible money/XP values
+        if (out.rewardMoney < 5000000u) out.score += 1;   // < 500g
+        if (out.rewardXp < 200000u) out.score += 1;       // < 200k XP
         return out;
     };
 
     size_t tailStart = packet.getReadPos();
-    ParsedTail a = parseTail(tailStart, true, true);    // WotLK-like (flags + fixed 6/4 arrays)
-    ParsedTail b = parseTail(tailStart, false, true);   // no flags + fixed 6/4 arrays
-    ParsedTail c = parseTail(tailStart, true, false);   // flags + variable arrays
-    ParsedTail d = parseTail(tailStart, false, false);  // classic-like variable arrays
+    // Try prefix sizes 0..16 bytes with both fixed and variable array layouts
+    std::vector<ParsedTail> candidates;
+    candidates.reserve(34);
+    for (size_t skip = 0; skip <= 16; ++skip) {
+        candidates.push_back(parseTail(tailStart, skip, true));   // fixed arrays
+        candidates.push_back(parseTail(tailStart, skip, false));  // variable arrays
+    }
 
     const ParsedTail* best = nullptr;
-    for (const ParsedTail* cand : {&a, &b, &c, &d}) {
-        if (!cand->ok) continue;
-        if (!best || cand->score > best->score) best = cand;
+    for (const auto& cand : candidates) {
+        if (!cand.ok) continue;
+        if (!best || cand.score > best->score) best = &cand;
     }
 
     if (best) {
         data.choiceRewards = best->choiceRewards;
-        data.fixedRewards = best->fixedRewards;
-        data.rewardMoney = best->rewardMoney;
-        data.rewardXp = best->rewardXp;
+        data.fixedRewards  = best->fixedRewards;
+        data.rewardMoney   = best->rewardMoney;
+        data.rewardXp      = best->rewardXp;
     }
 
     LOG_DEBUG("Quest offer reward: id=", data.questId, " title='", data.title,
-             "' choices=", data.choiceRewards.size(), " fixed=", data.fixedRewards.size());
+             "' choices=", data.choiceRewards.size(), " fixed=", data.fixedRewards.size(),
+             " prefix=", (best ? best->prefixSkip : size_t(0)),
+             (best && best->fixedArrays ? " fixed" : " var"));
     return true;
 }
 

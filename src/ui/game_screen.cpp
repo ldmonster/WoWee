@@ -7530,15 +7530,16 @@ void GameScreen::renderQuestOfferRewardWindow(game::GameHandler& gameHandler) {
             return {iconTex, col};
         };
 
-        // Helper: show item tooltip
-        auto rewardItemTooltip = [&](const game::QuestRewardItem& ri, ImVec4 nameCol) {
+        // Helper: show full item tooltip (reuses InventoryScreen's rich tooltip)
+        auto rewardItemTooltip = [&](const game::QuestRewardItem& ri, ImVec4 /*nameCol*/) {
             auto* info = gameHandler.getItemInfo(ri.itemId);
-            if (!info || !info->valid) return;
-            ImGui::BeginTooltip();
-            ImGui::TextColored(nameCol, "%s", info->name.c_str());
-            if (!info->description.empty())
-                ImGui::TextWrapped("%s", info->description.c_str());
-            ImGui::EndTooltip();
+            if (!info || !info->valid) {
+                ImGui::BeginTooltip();
+                ImGui::TextDisabled("Loading item data...");
+                ImGui::EndTooltip();
+                return;
+            }
+            inventoryScreen.renderItemTooltip(*info);
         };
 
         if (!quest.choiceRewards.empty()) {

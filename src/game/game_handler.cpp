@@ -19167,16 +19167,16 @@ void GameHandler::handleTradeStatusExtended(network::Packet& packet) {
         uint32_t displayId  = packet.readUInt32();
         uint32_t stackCount = packet.readUInt32();
 
-        // isWrapped + giftCreatorGuid + several enchant fields — skip them all
-        // We need at least 1+8+4*5 = 29 bytes for the rest of this slot entry
         bool isWrapped = false;
         if (packet.getSize() - packet.getReadPos() >= 1) {
             isWrapped = (packet.readUInt8() != 0);
         }
-        // Skip giftCreatorGuid (8) + enchantId*5 (20) + suffixFactor (4) + randPropId (4) + lockId (4)
-        // + maxDurability (4) + durability (4) = 49 bytes
-        // Plus if wrapped: giftCreatorGuid already consumed; additional guid = 0
-        constexpr size_t SLOT_TRAIL = 49;
+        // AzerothCore 3.3.5a SendUpdateTrade() field order after isWrapped:
+        //   giftCreatorGuid (8) + PERM enchant (4) + SOCK enchants×3 (12)
+        //   + BONUS enchant (4) + TEMP enchant (4) [total enchants: 24]
+        //   + randomPropertyId (4) + suffixFactor (4)
+        //   + durability (4) + maxDurability (4) + createPlayedTime (4) = 52 bytes
+        constexpr size_t SLOT_TRAIL = 52;
         if (packet.getSize() - packet.getReadPos() >= SLOT_TRAIL) {
             packet.setReadPos(packet.getReadPos() + SLOT_TRAIL);
         } else {
