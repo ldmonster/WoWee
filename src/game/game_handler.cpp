@@ -15318,6 +15318,12 @@ void GameHandler::abandonQuest(uint32_t questId) {
     if (localIndex >= 0) {
         questLog_.erase(questLog_.begin() + static_cast<ptrdiff_t>(localIndex));
     }
+
+    // Remove any quest POI minimap markers for this quest.
+    gossipPois_.erase(
+        std::remove_if(gossipPois_.begin(), gossipPois_.end(),
+            [questId](const GossipPoi& p) { return p.data == questId; }),
+        gossipPois_.end());
 }
 
 void GameHandler::handleQuestRequestItems(network::Packet& packet) {
