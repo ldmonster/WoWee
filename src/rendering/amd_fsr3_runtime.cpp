@@ -64,7 +64,7 @@ std::string narrowWString(const wchar_t* msg) {
     std::string out;
     for (const wchar_t* p = msg; *p; ++p) {
         const wchar_t wc = *p;
-        if (wc >= 0 && wc <= 0x7f) {
+        if (wc <= 0x7f) {
             out.push_back(static_cast<char>(wc));
         } else {
             out.push_back('?');
