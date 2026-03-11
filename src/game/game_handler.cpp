@@ -5019,13 +5019,13 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now().time_since_epoch()).count());
 
-            for (uint8_t i = 0; i < count && remaining() >= 13; i++) {
-                uint8_t  slot        = packet.readUInt8();
-                uint32_t spellId     = packet.readUInt32();
-                (void)               packet.readUInt8();   // effectIndex (unused for slot display)
-                uint8_t  flags       = packet.readUInt8();
-                uint32_t durationMs  = packet.readUInt32();
-                uint32_t maxDurMs    = packet.readUInt32();
+            for (uint8_t i = 0; i < count && remaining() >= 15; i++) {
+                uint8_t  slot        = packet.readUInt8();   // 1 byte
+                uint32_t spellId     = packet.readUInt32();  // 4 bytes
+                (void)               packet.readUInt8();     // effectIndex: 1 byte (unused for slot display)
+                uint8_t  flags       = packet.readUInt8();   // 1 byte
+                uint32_t durationMs  = packet.readUInt32();  // 4 bytes
+                uint32_t maxDurMs    = packet.readUInt32();  // 4 bytes — total 15 bytes per entry
 
                 if (auraList) {
                     while (auraList->size() <= slot) auraList->push_back(AuraSlot{});
