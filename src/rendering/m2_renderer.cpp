@@ -1997,7 +1997,7 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
     std::uniform_real_distribution<float> distDrift(-0.2f, 0.2f);
 
     smokeEmitAccum += deltaTime;
-    float emitInterval = 1.0f / 16.0f;  // 16 particles per second per emitter
+    float emitInterval = 1.0f / 32.0f;  // 32 particles per second per emitter (was 16; increased for denser lava/magma effects)
 
     if (smokeEmitAccum >= emitInterval &&
         static_cast<int>(smokeParticles.size()) < MAX_SMOKE_PARTICLES) {
