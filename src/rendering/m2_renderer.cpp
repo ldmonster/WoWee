@@ -748,6 +748,11 @@ void M2Renderer::destroyModelGPU(M2ModelGPU& model) {
         if (batch.materialSet) { vkFreeDescriptorSets(device, materialDescPool_, 1, &batch.materialSet); batch.materialSet = VK_NULL_HANDLE; }
         if (batch.materialUBO) { vmaDestroyBuffer(alloc, batch.materialUBO, batch.materialUBOAlloc); batch.materialUBO = VK_NULL_HANDLE; }
     }
+    // Free pre-allocated particle texture descriptor sets
+    for (auto& pSet : model.particleTexSets) {
+        if (pSet) { vkFreeDescriptorSets(device, materialDescPool_, 1, &pSet); pSet = VK_NULL_HANDLE; }
+    }
+    model.particleTexSets.clear();
 }
 
 void M2Renderer::destroyInstanceBones(M2Instance& inst) {
@@ -1346,6 +1351,31 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
         uint16_t texIdx = model.particleEmitters[ei].texture;
         if (texIdx < allTextures.size() && allTextures[texIdx] != nullptr) {
             gpuModel.particleTextures[ei] = allTextures[texIdx];
+        }
+    }
+
+    // Pre-allocate one stable descriptor set per particle emitter to avoid per-frame allocation.
+    // This prevents materialDescPool_ exhaustion when many emitters are active each frame.
+    if (particleTexLayout_ && materialDescPool_ && !model.particleEmitters.empty()) {
+        VkDevice device = vkCtx_->getDevice();
+        gpuModel.particleTexSets.resize(model.particleEmitters.size(), VK_NULL_HANDLE);
+        for (size_t ei = 0; ei < model.particleEmitters.size(); ei++) {
+            VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            ai.descriptorPool = materialDescPool_;
+            ai.descriptorSetCount = 1;
+            ai.pSetLayouts = &particleTexLayout_;
+            if (vkAllocateDescriptorSets(device, &ai, &gpuModel.particleTexSets[ei]) == VK_SUCCESS) {
+                VkTexture* tex = gpuModel.particleTextures[ei];
+                VkDescriptorImageInfo imgInfo = tex->descriptorInfo();
+                VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write.dstSet = gpuModel.particleTexSets[ei];
+                write.dstBinding = 0;
+                write.descriptorCount = 1;
+                write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                write.pImageInfo = &imgInfo;
+                vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+            }
         }
     }
 
@@ -3415,6 +3445,7 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
         uint8_t blendType;
         uint16_t tilesX;
         uint16_t tilesY;
+        VkDescriptorSet preAllocSet = VK_NULL_HANDLE;  // Pre-allocated stable set, avoids per-frame alloc
         std::vector<float> vertexData;  // 9 floats per particle
     };
     std::unordered_map<ParticleGroupKey, ParticleGroup, ParticleGroupKeyHash> groups;
@@ -3456,6 +3487,11 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             group.blendType = em.blendingType;
             group.tilesX = tilesX;
             group.tilesY = tilesY;
+            // Capture pre-allocated descriptor set on first insertion for this key
+            if (group.preAllocSet == VK_NULL_HANDLE &&
+                p.emitterIndex < static_cast<int>(gpu.particleTexSets.size())) {
+                group.preAllocSet = gpu.particleTexSets[p.emitterIndex];
+            }
 
             group.vertexData.push_back(p.position.x);
             group.vertexData.push_back(p.position.y);
@@ -3499,23 +3535,27 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             currentPipeline = desiredPipeline;
         }
 
-        // Allocate descriptor set for this group's texture
-        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-        ai.descriptorPool = materialDescPool_;
-        ai.descriptorSetCount = 1;
-        ai.pSetLayouts = &particleTexLayout_;
-        VkDescriptorSet texSet = VK_NULL_HANDLE;
-        if (vkAllocateDescriptorSets(vkCtx_->getDevice(), &ai, &texSet) == VK_SUCCESS) {
-            VkTexture* tex = group.texture ? group.texture : whiteTexture_.get();
-            VkDescriptorImageInfo imgInfo = tex->descriptorInfo();
-            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-            write.dstSet = texSet;
-            write.dstBinding = 0;
-            write.descriptorCount = 1;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            write.pImageInfo = &imgInfo;
-            vkUpdateDescriptorSets(vkCtx_->getDevice(), 1, &write, 0, nullptr);
-
+        // Use pre-allocated stable descriptor set; fall back to per-frame alloc only if unavailable
+        VkDescriptorSet texSet = group.preAllocSet;
+        if (texSet == VK_NULL_HANDLE) {
+            // Fallback: allocate per-frame (pool exhaustion risk — should not happen in practice)
+            VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            ai.descriptorPool = materialDescPool_;
+            ai.descriptorSetCount = 1;
+            ai.pSetLayouts = &particleTexLayout_;
+            if (vkAllocateDescriptorSets(vkCtx_->getDevice(), &ai, &texSet) == VK_SUCCESS) {
+                VkTexture* tex = group.texture ? group.texture : whiteTexture_.get();
+                VkDescriptorImageInfo imgInfo = tex->descriptorInfo();
+                VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                write.dstSet = texSet;
+                write.dstBinding = 0;
+                write.descriptorCount = 1;
+                write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                write.pImageInfo = &imgInfo;
+                vkUpdateDescriptorSets(vkCtx_->getDevice(), 1, &write, 0, nullptr);
+            }
+        }
+        if (texSet != VK_NULL_HANDLE) {
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     particlePipelineLayout_, 1, 1, &texSet, 0, nullptr);
         }

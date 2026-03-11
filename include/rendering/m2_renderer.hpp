@@ -127,7 +127,8 @@ struct M2ModelGPU {
 
     // Particle emitter data (kept from M2Model)
     std::vector<pipeline::M2ParticleEmitter> particleEmitters;
-    std::vector<VkTexture*> particleTextures;  // Resolved Vulkan textures per emitter
+    std::vector<VkTexture*> particleTextures;    // Resolved Vulkan textures per emitter
+    std::vector<VkDescriptorSet> particleTexSets; // Pre-allocated descriptor sets per emitter (stable, avoids per-frame alloc)
 
     // Texture transform data for UV animation
     std::vector<pipeline::M2TextureTransform> textureTransforms;
