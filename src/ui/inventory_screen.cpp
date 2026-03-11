@@ -1942,23 +1942,79 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
             }
             ImGui::TextColored(getQualityColor(eq->item.quality), "%s", eq->item.name.c_str());
 
-            if (isWeaponInventoryType(eq->item.inventoryType) &&
-                eq->item.damageMax > 0.0f && eq->item.delayMs > 0) {
-                float speed = static_cast<float>(eq->item.delayMs) / 1000.0f;
-                float dps = ((eq->item.damageMin + eq->item.damageMax) * 0.5f) / speed;
-                ImGui::Text("%.1f DPS", dps);
+            // Helper: render a numeric stat diff line
+            auto showDiff = [](const char* label, float newVal, float eqVal) {
+                if (newVal == 0.0f && eqVal == 0.0f) return;
+                float diff = newVal - eqVal;
+                char buf[128];
+                if (diff > 0.0f) {
+                    std::snprintf(buf, sizeof(buf), "%s: %.0f (▲%.0f)", label, newVal, diff);
+                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "%s", buf);
+                } else if (diff < 0.0f) {
+                    std::snprintf(buf, sizeof(buf), "%s: %.0f (▼%.0f)", label, newVal, -diff);
+                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", buf);
+                } else {
+                    std::snprintf(buf, sizeof(buf), "%s: %.0f", label, newVal);
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", buf);
+                }
+            };
+
+            // DPS comparison for weapons
+            if (isWeaponInventoryType(item.inventoryType) && isWeaponInventoryType(eq->item.inventoryType)) {
+                float newDps = 0.0f, eqDps = 0.0f;
+                if (item.damageMax > 0.0f && item.delayMs > 0)
+                    newDps = ((item.damageMin + item.damageMax) * 0.5f) / (item.delayMs / 1000.0f);
+                if (eq->item.damageMax > 0.0f && eq->item.delayMs > 0)
+                    eqDps = ((eq->item.damageMin + eq->item.damageMax) * 0.5f) / (eq->item.delayMs / 1000.0f);
+                showDiff("DPS", newDps, eqDps);
             }
-            if (eq->item.armor > 0) {
-                ImGui::Text("%d Armor", eq->item.armor);
+
+            // Armor
+            showDiff("Armor", static_cast<float>(item.armor), static_cast<float>(eq->item.armor));
+
+            // Primary stats
+            showDiff("Str",   static_cast<float>(item.strength),  static_cast<float>(eq->item.strength));
+            showDiff("Agi",   static_cast<float>(item.agility),   static_cast<float>(eq->item.agility));
+            showDiff("Sta",   static_cast<float>(item.stamina),   static_cast<float>(eq->item.stamina));
+            showDiff("Int",   static_cast<float>(item.intellect), static_cast<float>(eq->item.intellect));
+            showDiff("Spi",   static_cast<float>(item.spirit),    static_cast<float>(eq->item.spirit));
+
+            // Extra stats diff — union of stat types from both items
+            auto findExtraStat = [](const game::ItemDef& it, uint32_t type) -> int32_t {
+                for (const auto& es : it.extraStats)
+                    if (es.statType == type) return es.statValue;
+                return 0;
+            };
+            // Collect all extra stat types
+            std::vector<uint32_t> allTypes;
+            for (const auto& es : item.extraStats) allTypes.push_back(es.statType);
+            for (const auto& es : eq->item.extraStats) {
+                bool found = false;
+                for (uint32_t t : allTypes) if (t == es.statType) { found = true; break; }
+                if (!found) allTypes.push_back(es.statType);
             }
-            std::string eqBonusLine;
-            appendBonus(eqBonusLine, eq->item.strength, "Str");
-            appendBonus(eqBonusLine, eq->item.agility, "Agi");
-            appendBonus(eqBonusLine, eq->item.stamina, "Sta");
-            appendBonus(eqBonusLine, eq->item.intellect, "Int");
-            appendBonus(eqBonusLine, eq->item.spirit, "Spi");
-            if (!eqBonusLine.empty()) {
-                ImGui::TextColored(green, "%s", eqBonusLine.c_str());
+            for (uint32_t t : allTypes) {
+                int32_t nv = findExtraStat(item, t);
+                int32_t ev = findExtraStat(eq->item, t);
+                // Find a label for this stat type
+                const char* lbl = nullptr;
+                switch (t) {
+                    case 31: lbl = "Hit"; break;
+                    case 32: lbl = "Crit"; break;
+                    case 35: lbl = "Resilience"; break;
+                    case 36: lbl = "Haste"; break;
+                    case 37: lbl = "Expertise"; break;
+                    case 38: lbl = "Attack Power"; break;
+                    case 39: lbl = "Ranged AP"; break;
+                    case 43: lbl = "MP5"; break;
+                    case 44: lbl = "Armor Pen"; break;
+                    case 45: lbl = "Spell Power"; break;
+                    case 46: lbl = "HP5"; break;
+                    case 48: lbl = "Block Value"; break;
+                    default: lbl = nullptr; break;
+                }
+                if (!lbl) continue;
+                showDiff(lbl, static_cast<float>(nv), static_cast<float>(ev));
             }
         }
     }
