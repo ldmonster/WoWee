@@ -5292,8 +5292,45 @@ void GameHandler::handlePacket(network::Packet& packet) {
             break;
         }
         case Opcode::SMSG_SPELLSTEALLOG: {
-            // Similar to SPELLDISPELLOG but always isStolen=true; same wire format
-            // Just consume — SPELLDISPELLOG handles the player-facing case above
+            // Sent to the CASTER (Mage) when Spellsteal succeeds.
+            // Wire format mirrors SPELLDISPELLOG:
+            // WotLK: packed victim + packed caster + uint32 spellId + uint8 isStolen + uint32 count
+            //        + count × (uint32 stolenSpellId + uint8 isPositive)
+            // TBC/Classic: full uint64 victim + full uint64 caster + same tail
+            const bool stealTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+            if (packet.getSize() - packet.getReadPos() < (stealTbcLike ? 8u : 2u)) {
+                packet.setReadPos(packet.getSize()); break;
+            }
+            /*uint64_t stealVictim =*/ stealTbcLike
+                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+            if (packet.getSize() - packet.getReadPos() < (stealTbcLike ? 8u : 2u)) {
+                packet.setReadPos(packet.getSize()); break;
+            }
+            uint64_t stealCaster = stealTbcLike
+                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+            if (packet.getSize() - packet.getReadPos() < 9) {
+                packet.setReadPos(packet.getSize()); break;
+            }
+            /*uint32_t stealSpellId =*/ packet.readUInt32();
+            /*uint8_t  isStolen    =*/ packet.readUInt8();
+            uint32_t stealCount   = packet.readUInt32();
+            // Show feedback only when we are the caster (we stole something)
+            if (stealCaster == playerGuid) {
+                std::string stolenName;
+                for (uint32_t i = 0; i < stealCount && packet.getSize() - packet.getReadPos() >= 5; ++i) {
+                    uint32_t stolenId = packet.readUInt32();
+                    /*uint8_t isPos  =*/ packet.readUInt8();
+                    if (i == 0) {
+                        const std::string& nm = getSpellName(stolenId);
+                        stolenName = nm.empty() ? ("spell " + std::to_string(stolenId)) : nm;
+                    }
+                }
+                if (!stolenName.empty()) {
+                    char buf[256];
+                    std::snprintf(buf, sizeof(buf), "You stole %s.", stolenName.c_str());
+                    addSystemChatMessage(buf);
+                }
+            }
             packet.setReadPos(packet.getSize());
             break;
         }
@@ -14042,6 +14079,7 @@ void GameHandler::handleAuraUpdate(network::Packet& packet, bool isAll) {
 }
 
 void GameHandler::handleLearnedSpell(network::Packet& packet) {
+    if (packet.getSize() - packet.getReadPos() < 4) return;
     uint32_t spellId = packet.readUInt32();
     knownSpells.insert(spellId);
     LOG_INFO("Learned spell: ", spellId);
@@ -14070,6 +14108,7 @@ void GameHandler::handleLearnedSpell(network::Packet& packet) {
 }
 
 void GameHandler::handleRemovedSpell(network::Packet& packet) {
+    if (packet.getSize() - packet.getReadPos() < 4) return;
     uint32_t spellId = packet.readUInt32();
     knownSpells.erase(spellId);
     LOG_INFO("Removed spell: ", spellId);
@@ -14077,6 +14116,7 @@ void GameHandler::handleRemovedSpell(network::Packet& packet) {
 
 void GameHandler::handleSupercededSpell(network::Packet& packet) {
     // Old spell replaced by new rank (e.g., Fireball Rank 1 -> Fireball Rank 2)
+    if (packet.getSize() - packet.getReadPos() < 8) return;
     uint32_t oldSpellId = packet.readUInt32();
     uint32_t newSpellId = packet.readUInt32();
 
@@ -14096,6 +14136,7 @@ void GameHandler::handleSupercededSpell(network::Packet& packet) {
 
 void GameHandler::handleUnlearnSpells(network::Packet& packet) {
     // Sent when unlearning multiple spells (e.g., spec change, respec)
+    if (packet.getSize() - packet.getReadPos() < 4) return;
     uint32_t spellCount = packet.readUInt32();
     LOG_INFO("Unlearning ", spellCount, " spells");
 
