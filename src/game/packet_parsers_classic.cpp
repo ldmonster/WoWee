@@ -634,6 +634,22 @@ bool ClassicPacketParsers::parseCastFailed(network::Packet& packet, CastFailedDa
 }
 
 // ============================================================================
+// Classic SMSG_CAST_RESULT: same layout as parseCastFailed (spellId + result),
+// but the result enum starts at 0=AFFECTING_COMBAT (no SUCCESS entry).
+// Apply the same +1 shift used in parseCastFailed so the result codes
+// align with WotLK's getSpellCastResultString table.
+// ============================================================================
+bool ClassicPacketParsers::parseCastResult(network::Packet& packet, uint32_t& spellId, uint8_t& result) {
+    if (packet.getSize() - packet.getReadPos() < 5) return false;
+    spellId = packet.readUInt32();
+    uint8_t vanillaResult = packet.readUInt8();
+    // Shift +1: Vanilla result 0=AFFECTING_COMBAT maps to WotLK result 1=AFFECTING_COMBAT
+    result = vanillaResult + 1;
+    LOG_DEBUG("[Classic] Cast result: spell=", spellId, " vanillaResult=", (int)vanillaResult);
+    return true;
+}
+
+// ============================================================================
 // Classic 1.12.1 parseCharEnum
 // Differences from TBC:
 // - Equipment: 20 items, but NO enchantment field per slot

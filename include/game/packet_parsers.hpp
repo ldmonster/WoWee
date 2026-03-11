@@ -389,6 +389,7 @@ public:
     network::Packet buildCastSpell(uint32_t spellId, uint64_t targetGuid, uint8_t castCount) override;
     network::Packet buildUseItem(uint8_t bagIndex, uint8_t slotIndex, uint64_t itemGuid, uint32_t spellId = 0) override;
     bool parseCastFailed(network::Packet& packet, CastFailedData& data) override;
+    bool parseCastResult(network::Packet& packet, uint32_t& spellId, uint8_t& result) override;
     bool parseMessageChat(network::Packet& packet, MessageChatData& data) override;
     bool parseGameObjectQueryResponse(network::Packet& packet, GameObjectQueryResponseData& data) override;
     // Classic 1.12 SMSG_CREATURE_QUERY_RESPONSE lacks the iconName string that TBC/WotLK include
