@@ -18567,6 +18567,8 @@ void GameHandler::handleLootRoll(network::Packet& packet) {
         pendingLootRoll_.objectGuid        = objectGuid;
         pendingLootRoll_.slot              = slot;
         pendingLootRoll_.itemId            = itemId;
+        // Ensure item info is in cache; query if not
+        queryItemInfo(itemId, 0);
         // Look up item name from cache
         auto* info = getItemInfo(itemId);
         pendingLootRoll_.itemName  = info ? info->name : std::to_string(itemId);

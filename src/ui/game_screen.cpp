@@ -5775,7 +5775,19 @@ void GameScreen::renderLootRollPopup(game::GameHandler& gameHandler) {
         ImVec4 col = (q < 6) ? kQualityColors[q] : kQualityColors[1];
 
         ImGui::Text("An item is up for rolls:");
+
+        // Show item icon if available
+        const auto* rollInfo = gameHandler.getItemInfo(roll.itemId);
+        uint32_t rollDisplayId = rollInfo ? rollInfo->displayInfoId : 0;
+        VkDescriptorSet rollIcon = rollDisplayId ? inventoryScreen.getItemIcon(rollDisplayId) : VK_NULL_HANDLE;
+        if (rollIcon) {
+            ImGui::Image((ImTextureID)(uintptr_t)rollIcon, ImVec2(24, 24));
+            ImGui::SameLine();
+        }
         ImGui::TextColored(col, "[%s]", roll.itemName.c_str());
+        if (ImGui::IsItemHovered() && rollInfo && rollInfo->valid) {
+            inventoryScreen.renderItemTooltip(*rollInfo);
+        }
         ImGui::Spacing();
 
         if (ImGui::Button("Need", ImVec2(80, 30))) {
@@ -7229,24 +7241,7 @@ void GameScreen::renderVendorWindow(game::GameHandler& gameHandler) {
                         ImGui::TextColored(qualityColors[q], "%s", info->name.c_str());
                         // Tooltip with stats on hover
                         if (ImGui::IsItemHovered()) {
-                            ImGui::BeginTooltip();
-                            ImGui::TextColored(qualityColors[q], "%s", info->name.c_str());
-                            if (info->damageMax > 0.0f) {
-                                ImGui::Text("%.0f - %.0f Damage", info->damageMin, info->damageMax);
-                                if (info->delayMs > 0) {
-                                    float speed = static_cast<float>(info->delayMs) / 1000.0f;
-                                    float dps = ((info->damageMin + info->damageMax) * 0.5f) / speed;
-                                    ImGui::Text("Speed %.2f", speed);
-                                    ImGui::Text("%.1f damage per second", dps);
-                                }
-                            }
-                            if (info->armor > 0) ImGui::Text("Armor: %d", info->armor);
-                            if (info->stamina > 0) ImGui::Text("+%d Stamina", info->stamina);
-                            if (info->strength > 0) ImGui::Text("+%d Strength", info->strength);
-                            if (info->agility > 0) ImGui::Text("+%d Agility", info->agility);
-                            if (info->intellect > 0) ImGui::Text("+%d Intellect", info->intellect);
-                            if (info->spirit > 0) ImGui::Text("+%d Spirit", info->spirit);
-                            ImGui::EndTooltip();
+                            inventoryScreen.renderItemTooltip(*info);
                         }
                     } else {
                         ImGui::Text("Item %u", item.itemId);
