@@ -2335,9 +2335,9 @@ void Application::setupUICallbacks() {
     });
 
     // Achievement earned callback — show toast banner
-    gameHandler->setAchievementEarnedCallback([this](uint32_t achievementId) {
+    gameHandler->setAchievementEarnedCallback([this](uint32_t achievementId, const std::string& name) {
         if (uiManager) {
-            uiManager->getGameScreen().triggerAchievementToast(achievementId);
+            uiManager->getGameScreen().triggerAchievementToast(achievementId, name);
         }
     });
 

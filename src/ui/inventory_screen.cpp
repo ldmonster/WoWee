@@ -2027,5 +2027,167 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
     ImGui::EndTooltip();
 }
 
+// ---------------------------------------------------------------------------
+// Tooltip overload for ItemQueryResponseData (used by loot window, etc.)
+// ---------------------------------------------------------------------------
+void InventoryScreen::renderItemTooltip(const game::ItemQueryResponseData& info) {
+    ImGui::BeginTooltip();
+
+    ImVec4 qColor = getQualityColor(static_cast<game::ItemQuality>(info.quality));
+    ImGui::TextColored(qColor, "%s", info.name.c_str());
+    if (info.itemLevel > 0) {
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 0.7f), "Item Level %u", info.itemLevel);
+    }
+
+    // Binding type
+    switch (info.bindType) {
+        case 1: ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Binds when picked up"); break;
+        case 2: ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Binds when equipped"); break;
+        case 3: ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Binds when used"); break;
+        case 4: ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Quest Item"); break;
+        default: break;
+    }
+
+    // Slot / subclass
+    if (info.inventoryType > 0) {
+        const char* slotName = "";
+        switch (info.inventoryType) {
+            case 1:  slotName = "Head"; break;
+            case 2:  slotName = "Neck"; break;
+            case 3:  slotName = "Shoulder"; break;
+            case 4:  slotName = "Shirt"; break;
+            case 5:  slotName = "Chest"; break;
+            case 6:  slotName = "Waist"; break;
+            case 7:  slotName = "Legs"; break;
+            case 8:  slotName = "Feet"; break;
+            case 9:  slotName = "Wrist"; break;
+            case 10: slotName = "Hands"; break;
+            case 11: slotName = "Finger"; break;
+            case 12: slotName = "Trinket"; break;
+            case 13: slotName = "One-Hand"; break;
+            case 14: slotName = "Shield"; break;
+            case 15: slotName = "Ranged"; break;
+            case 16: slotName = "Back"; break;
+            case 17: slotName = "Two-Hand"; break;
+            case 18: slotName = "Bag"; break;
+            case 19: slotName = "Tabard"; break;
+            case 20: slotName = "Robe"; break;
+            case 21: slotName = "Main Hand"; break;
+            case 22: slotName = "Off Hand"; break;
+            case 23: slotName = "Held In Off-hand"; break;
+            case 25: slotName = "Thrown"; break;
+            case 26: slotName = "Ranged"; break;
+            default: break;
+        }
+        if (slotName[0]) {
+            if (!info.subclassName.empty())
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s  %s", slotName, info.subclassName.c_str());
+            else
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", slotName);
+        }
+    }
+
+    // Weapon stats
+    auto isWeaponInvType = [](uint32_t t) {
+        return t == 13 || t == 15 || t == 17 || t == 21 || t == 25 || t == 26;
+    };
+    ImVec4 green(0.0f, 1.0f, 0.0f, 1.0f);
+    if (isWeaponInvType(info.inventoryType) && info.damageMax > 0.0f && info.delayMs > 0) {
+        float speed = static_cast<float>(info.delayMs) / 1000.0f;
+        float dps = ((info.damageMin + info.damageMax) * 0.5f) / speed;
+        ImGui::Text("%.0f - %.0f Damage", info.damageMin, info.damageMax);
+        ImGui::SameLine(160.0f);
+        ImGui::TextDisabled("Speed %.2f", speed);
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(%.1f damage per second)", dps);
+    }
+
+    if (info.armor > 0) ImGui::Text("%d Armor", info.armor);
+
+    auto appendBonus = [](std::string& out, int32_t val, const char* name) {
+        if (val <= 0) return;
+        if (!out.empty()) out += "  ";
+        out += "+" + std::to_string(val) + " " + name;
+    };
+    std::string bonusLine;
+    appendBonus(bonusLine, info.strength,  "Str");
+    appendBonus(bonusLine, info.agility,   "Agi");
+    appendBonus(bonusLine, info.stamina,   "Sta");
+    appendBonus(bonusLine, info.intellect, "Int");
+    appendBonus(bonusLine, info.spirit,    "Spi");
+    if (!bonusLine.empty()) ImGui::TextColored(green, "%s", bonusLine.c_str());
+
+    // Extra stats
+    for (const auto& es : info.extraStats) {
+        const char* statName = nullptr;
+        switch (es.statType) {
+            case 12: statName = "Defense Rating"; break;
+            case 13: statName = "Dodge Rating"; break;
+            case 14: statName = "Parry Rating"; break;
+            case 16: case 17: case 18: case 31: statName = "Hit Rating"; break;
+            case 19: case 20: case 21: case 32: statName = "Crit Rating"; break;
+            case 28: case 29: case 30: case 36: statName = "Haste Rating"; break;
+            case 35: statName = "Resilience"; break;
+            case 37: statName = "Expertise Rating"; break;
+            case 38: statName = "Attack Power"; break;
+            case 39: statName = "Ranged Attack Power"; break;
+            case 41: statName = "Healing Power"; break;
+            case 42: statName = "Spell Damage"; break;
+            case 43: statName = "Mana per 5 sec"; break;
+            case 44: statName = "Armor Penetration"; break;
+            case 45: statName = "Spell Power"; break;
+            case 46: statName = "Health per 5 sec"; break;
+            case 47: statName = "Spell Penetration"; break;
+            case 48: statName = "Block Value"; break;
+            default: statName = nullptr; break;
+        }
+        char buf[64];
+        if (statName)
+            std::snprintf(buf, sizeof(buf), "%+d %s", es.statValue, statName);
+        else
+            std::snprintf(buf, sizeof(buf), "%+d (stat %u)", es.statValue, es.statType);
+        ImGui::TextColored(green, "%s", buf);
+    }
+
+    if (info.requiredLevel > 1) {
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Requires Level %u", info.requiredLevel);
+    }
+
+    // Spell effects
+    for (const auto& sp : info.spells) {
+        if (sp.spellId == 0) continue;
+        const char* trigger = nullptr;
+        switch (sp.spellTrigger) {
+            case 0: trigger = "Use"; break;
+            case 1: trigger = "Equip"; break;
+            case 2: trigger = "Chance on Hit"; break;
+            default: break;
+        }
+        if (!trigger) continue;
+        if (gameHandler_) {
+            const std::string& spName = gameHandler_->getSpellName(sp.spellId);
+            if (!spName.empty())
+                ImGui::TextColored(ImVec4(0.0f, 0.8f, 1.0f, 1.0f), "%s: %s", trigger, spName.c_str());
+            else
+                ImGui::TextColored(ImVec4(0.0f, 0.8f, 1.0f, 1.0f), "%s: Spell #%u", trigger, sp.spellId);
+        }
+    }
+
+    if (info.startQuestId != 0) {
+        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Begins a Quest");
+    }
+    if (!info.description.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.5f, 0.9f), "\"%s\"", info.description.c_str());
+    }
+
+    if (info.sellPrice > 0) {
+        uint32_t g = info.sellPrice / 10000;
+        uint32_t s = (info.sellPrice / 100) % 100;
+        uint32_t c = info.sellPrice % 100;
+        ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "Sell: %ug %us %uc", g, s, c);
+    }
+
+    ImGui::EndTooltip();
+}
+
 } // namespace ui
 } // namespace wowee

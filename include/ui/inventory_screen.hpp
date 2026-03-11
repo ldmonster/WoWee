@@ -96,6 +96,7 @@ private:
     std::unordered_map<uint32_t, VkDescriptorSet> iconCache_;
 public:
     VkDescriptorSet getItemIcon(uint32_t displayInfoId);
+    void renderItemTooltip(const game::ItemQueryResponseData& info);
 private:
 
     // Character model preview

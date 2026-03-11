@@ -2695,7 +2695,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
             handleAchievementEarned(packet);
             break;
         case Opcode::SMSG_ALL_ACHIEVEMENT_DATA:
-            // Initial data burst on login — ignored for now (no achievement tracker UI).
+            handleAllAchievementData(packet);
             break;
         case Opcode::SMSG_ITEM_COOLDOWN: {
             // uint64 itemGuid + uint32 spellId + uint32 cooldownMs
@@ -18711,8 +18711,9 @@ void GameHandler::handleAchievementEarned(network::Packet& packet) {
         }
         addSystemChatMessage(buf);
 
+        earnedAchievements_.insert(achievementId);
         if (achievementEarnedCallback_) {
-            achievementEarnedCallback_(achievementId);
+            achievementEarnedCallback_(achievementId, achName);
         }
     } else {
         // Another player in the zone earned an achievement
@@ -18741,6 +18742,38 @@ void GameHandler::handleAchievementEarned(network::Packet& packet) {
     LOG_INFO("SMSG_ACHIEVEMENT_EARNED: guid=0x", std::hex, guid, std::dec,
              " achievementId=", achievementId, " self=", isSelf,
              achName.empty() ? "" : " name=", achName);
+}
+
+// ---------------------------------------------------------------------------
+// SMSG_ALL_ACHIEVEMENT_DATA (WotLK 3.3.5a)
+//   Achievement records: repeated { uint32 id, uint32 packedDate } until 0xFFFFFFFF sentinel
+//   Criteria records:    repeated { uint32 id, uint64 counter, uint32 packedDate, ... } until 0xFFFFFFFF
+// ---------------------------------------------------------------------------
+void GameHandler::handleAllAchievementData(network::Packet& packet) {
+    loadAchievementNameCache();
+    earnedAchievements_.clear();
+
+    // Parse achievement entries (id + packedDate pairs, sentinel 0xFFFFFFFF)
+    while (packet.getSize() - packet.getReadPos() >= 4) {
+        uint32_t id = packet.readUInt32();
+        if (id == 0xFFFFFFFF) break;
+        if (packet.getSize() - packet.getReadPos() < 4) break;
+        /*uint32_t date =*/ packet.readUInt32();
+        earnedAchievements_.insert(id);
+    }
+
+    // Skip criteria block (id + uint64 counter + uint32 date + uint32 flags until 0xFFFFFFFF)
+    while (packet.getSize() - packet.getReadPos() >= 4) {
+        uint32_t id = packet.readUInt32();
+        if (id == 0xFFFFFFFF) break;
+        // counter(8) + date(4) + unknown(4) = 16 bytes
+        if (packet.getSize() - packet.getReadPos() < 16) break;
+        packet.readUInt64();  // counter
+        packet.readUInt32();  // date
+        packet.readUInt32();  // unknown / flags
+    }
+
+    LOG_INFO("SMSG_ALL_ACHIEVEMENT_DATA: loaded ", earnedAchievements_.size(), " earned achievements");
 }
 
 // ---------------------------------------------------------------------------

@@ -1134,8 +1134,9 @@ public:
     void setOtherPlayerLevelUpCallback(OtherPlayerLevelUpCallback cb) { otherPlayerLevelUpCallback_ = std::move(cb); }
 
     // Achievement earned callback — fires when SMSG_ACHIEVEMENT_EARNED is received
-    using AchievementEarnedCallback = std::function<void(uint32_t achievementId)>;
+    using AchievementEarnedCallback = std::function<void(uint32_t achievementId, const std::string& name)>;
     void setAchievementEarnedCallback(AchievementEarnedCallback cb) { achievementEarnedCallback_ = std::move(cb); }
+    const std::unordered_set<uint32_t>& getEarnedAchievements() const { return earnedAchievements_; }
 
     // Server-triggered music callback — fires when SMSG_PLAY_MUSIC is received.
     // The soundId corresponds to a SoundEntries.dbc record. The receiver is
@@ -2246,6 +2247,9 @@ private:
     std::unordered_map<uint32_t, std::string> achievementNameCache_;
     bool achievementNameCacheLoaded_ = false;
     void loadAchievementNameCache();
+    // Set of achievement IDs earned by the player (populated from SMSG_ALL_ACHIEVEMENT_DATA)
+    std::unordered_set<uint32_t> earnedAchievements_;
+    void handleAllAchievementData(network::Packet& packet);
 
     // Area name cache (lazy-loaded from WorldMapArea.dbc; maps AreaTable ID → display name)
     std::unordered_map<uint32_t, std::string> areaNameCache_;

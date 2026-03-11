@@ -366,6 +366,7 @@ private:
     static constexpr float ACHIEVEMENT_TOAST_DURATION = 5.0f;
     float achievementToastTimer_ = 0.0f;
     uint32_t achievementToastId_ = 0;
+    std::string achievementToastName_;
     void renderAchievementToast();
 
     // Zone discovery text ("Entering: <ZoneName>")
@@ -377,7 +378,7 @@ private:
 
 public:
     void triggerDing(uint32_t newLevel);
-    void triggerAchievementToast(uint32_t achievementId);
+    void triggerAchievementToast(uint32_t achievementId, std::string name = {});
 };
 
 } // namespace ui

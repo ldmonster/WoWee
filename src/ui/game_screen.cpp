@@ -6499,6 +6499,13 @@ void GameScreen::renderLootWindow(game::GameHandler& gameHandler) {
             }
             bool hovered = ImGui::IsItemHovered();
 
+            // Show item tooltip on hover
+            if (hovered && info && info->valid) {
+                inventoryScreen.renderItemTooltip(*info);
+            } else if (hovered && !itemName.empty() && itemName[0] != 'I') {
+                ImGui::SetTooltip("%s", itemName.c_str());
+            }
+
             ImDrawList* drawList = ImGui::GetWindowDrawList();
 
             // Draw hover highlight
@@ -10799,8 +10806,9 @@ void GameScreen::renderDingEffect() {
                   IM_COL32(255, 210, 0, (int)(alpha * 255)), buf);
 }
 
-void GameScreen::triggerAchievementToast(uint32_t achievementId) {
+void GameScreen::triggerAchievementToast(uint32_t achievementId, std::string name) {
     achievementToastId_    = achievementId;
+    achievementToastName_  = std::move(name);
     achievementToastTimer_ = ACHIEVEMENT_TOAST_DURATION;
 
     // Play a UI sound if available
@@ -10859,9 +10867,15 @@ void GameScreen::renderAchievementToast() {
     draw->AddText(font, titleSize, ImVec2(titleX, toastY + 8),
                   IM_COL32(255, 215, 0, (int)(alpha * 255)), title);
 
-    // Achievement ID line (until we have Achievement.dbc name lookup)
-    char idBuf[64];
-    std::snprintf(idBuf, sizeof(idBuf), "Achievement #%u", achievementToastId_);
+    // Achievement name (falls back to ID if name not available)
+    char idBuf[256];
+    const char* achText = achievementToastName_.empty()
+        ? nullptr : achievementToastName_.c_str();
+    if (achText) {
+        std::snprintf(idBuf, sizeof(idBuf), "%s", achText);
+    } else {
+        std::snprintf(idBuf, sizeof(idBuf), "Achievement #%u", achievementToastId_);
+    }
     float idW = font->CalcTextSizeA(bodySize, FLT_MAX, 0.0f, idBuf).x;
     float idX = toastX + (TOAST_W - idW) * 0.5f;
     draw->AddText(font, bodySize, ImVec2(idX, toastY + 28),
