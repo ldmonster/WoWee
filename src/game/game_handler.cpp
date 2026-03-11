@@ -4495,7 +4495,21 @@ void GameHandler::handlePacket(network::Packet& packet) {
             uint32_t mapId = packet.readUInt32();
             uint8_t reason = (packet.getReadPos() < packet.getSize()) ? packet.readUInt8() : 0;
             LOG_WARNING("SMSG_TRANSFER_ABORTED: mapId=", mapId, " reason=", (int)reason);
-            addSystemChatMessage("Transfer aborted.");
+            // Provide reason-specific feedback (WotLK TRANSFER_ABORT_* codes)
+            const char* abortMsg = nullptr;
+            switch (reason) {
+                case 0x01: abortMsg = "Transfer aborted: difficulty unavailable."; break;
+                case 0x02: abortMsg = "Transfer aborted: expansion required."; break;
+                case 0x03: abortMsg = "Transfer aborted: instance not found."; break;
+                case 0x04: abortMsg = "Transfer aborted: too many instances. Please wait before entering a new instance."; break;
+                case 0x06: abortMsg = "Transfer aborted: instance is full."; break;
+                case 0x07: abortMsg = "Transfer aborted: zone is in combat."; break;
+                case 0x08: abortMsg = "Transfer aborted: you are already in this instance."; break;
+                case 0x09: abortMsg = "Transfer aborted: not enough players."; break;
+                case 0x0C: abortMsg = "Transfer aborted."; break;
+                default:   abortMsg = "Transfer aborted."; break;
+            }
+            addSystemChatMessage(abortMsg);
             break;
         }
 
