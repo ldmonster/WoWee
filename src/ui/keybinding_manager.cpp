@@ -28,7 +28,7 @@ void KeybindingManager::initializeDefaults() {
     bindings_[static_cast<int>(Action::TOGGLE_DUNGEON_FINDER)] = ImGuiKey_J;  // Originally I, reassigned to avoid conflict
     bindings_[static_cast<int>(Action::TOGGLE_WORLD_MAP)] = ImGuiKey_W;
     bindings_[static_cast<int>(Action::TOGGLE_NAMEPLATES)] = ImGuiKey_V;
-    bindings_[static_cast<int>(Action::TOGGLE_RAID_FRAMES)] = ImGuiKey_R;
+    bindings_[static_cast<int>(Action::TOGGLE_RAID_FRAMES)] = ImGuiKey_F;  // Reassigned from R (now camera reset)
     bindings_[static_cast<int>(Action::TOGGLE_QUEST_LOG)] = ImGuiKey_Q;
 }
 
