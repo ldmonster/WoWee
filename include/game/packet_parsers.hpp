@@ -207,6 +207,11 @@ public:
      *  WotLK: 5 fields per slot, Classic/Vanilla: 3. */
     virtual uint8_t questLogStride() const { return 5; }
 
+    /** Number of PLAYER_EXPLORED_ZONES uint32 fields in update-object blocks.
+     *  Classic/Vanilla/Turtle: 64 (bit-packs up to zone ID 2047).
+     *  TBC/WotLK: 128 (covers Outland/Northrend zone IDs up to 4095). */
+    virtual uint8_t exploredZonesCount() const { return 128; }
+
     // --- Quest Giver Status ---
 
     /** Read quest giver status from packet.
@@ -407,6 +412,9 @@ public:
     network::Packet buildAcceptQuestPacket(uint64_t npcGuid, uint32_t questId) override;
     // parseQuestDetails inherited from TbcPacketParsers (same format as TBC 2.4.3)
     uint8_t questLogStride() const override { return 3; }
+    // Classic 1.12 has 64 explored-zone uint32 fields (zone IDs fit in 2048 bits).
+    // TBC/WotLK use 128 (needed for Outland/Northrend zone IDs up to 4095).
+    uint8_t exploredZonesCount() const override { return 64; }
     bool parseMonsterMove(network::Packet& packet, MonsterMoveData& data) override {
         return MonsterMoveParser::parseVanilla(packet, data);
     }

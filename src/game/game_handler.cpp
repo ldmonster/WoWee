@@ -17556,17 +17556,30 @@ void GameHandler::extractSkillFields(const std::map<uint16_t, uint32_t>& fields)
 }
 
 void GameHandler::extractExploredZoneFields(const std::map<uint16_t, uint32_t>& fields) {
+    // Number of explored-zone uint32 fields varies by expansion:
+    // Classic/Turtle = 64, TBC/WotLK = 128. Always allocate 128 for world-map
+    // bit lookups, but only read the expansion-specific count to avoid reading
+    // player money or rest-XP fields as zone flags.
+    const size_t zoneCount = packetParsers_
+        ? static_cast<size_t>(packetParsers_->exploredZonesCount())
+        : PLAYER_EXPLORED_ZONES_COUNT;
+
     if (playerExploredZones_.size() != PLAYER_EXPLORED_ZONES_COUNT) {
         playerExploredZones_.assign(PLAYER_EXPLORED_ZONES_COUNT, 0u);
     }
 
     bool foundAny = false;
-    for (size_t i = 0; i < PLAYER_EXPLORED_ZONES_COUNT; i++) {
+    for (size_t i = 0; i < zoneCount; i++) {
         const uint16_t fieldIdx = static_cast<uint16_t>(fieldIndex(UF::PLAYER_EXPLORED_ZONES_START) + i);
         auto it = fields.find(fieldIdx);
         if (it == fields.end()) continue;
         playerExploredZones_[i] = it->second;
         foundAny = true;
+    }
+    // Zero out slots beyond the expansion's zone count to prevent stale data
+    // from polluting the fog-of-war display.
+    for (size_t i = zoneCount; i < PLAYER_EXPLORED_ZONES_COUNT; i++) {
+        playerExploredZones_[i] = 0u;
     }
 
     if (foundAny) {
