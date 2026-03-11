@@ -5173,7 +5173,10 @@ void GameScreen::renderCombatText(game::GameHandler& gameHandler) {
                                      : ImVec4(0.4f, 0.9f, 1.0f, alpha);
                     break;
                 case game::CombatTextEntry::BLOCK:
-                    snprintf(text, sizeof(text), outgoing ? "Block" : "You Block");
+                    if (entry.amount > 0)
+                        snprintf(text, sizeof(text), outgoing ? "Block %d" : "You Block %d", entry.amount);
+                    else
+                        snprintf(text, sizeof(text), outgoing ? "Block" : "You Block");
                     color = outgoing ? ImVec4(0.6f, 0.6f, 0.6f, alpha)
                                      : ImVec4(0.4f, 0.9f, 1.0f, alpha);
                     break;

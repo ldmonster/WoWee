@@ -13543,7 +13543,10 @@ void GameHandler::handleAttackerStateUpdate(network::Packet& packet) {
     } else if (data.victimState == 2) {
         addCombatText(CombatTextEntry::PARRY, 0, 0, isPlayerAttacker);
     } else if (data.victimState == 4) {
-        addCombatText(CombatTextEntry::BLOCK, 0, 0, isPlayerAttacker);
+        // VICTIMSTATE_BLOCKS: show reduced damage and the blocked amount
+        if (data.totalDamage > 0)
+            addCombatText(CombatTextEntry::MELEE_DAMAGE, data.totalDamage, 0, isPlayerAttacker);
+        addCombatText(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked), 0, isPlayerAttacker);
     } else if (data.victimState == 5) {
         // VICTIMSTATE_EVADE: NPC evaded (out of combat zone). Show as miss.
         addCombatText(CombatTextEntry::MISS, 0, 0, isPlayerAttacker);
