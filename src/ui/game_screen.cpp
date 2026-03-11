@@ -1452,7 +1452,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             gameHandler.tabTarget(movement.x, movement.y, movement.z);
         }
 
-        if (input.isKeyJustPressed(SDL_SCANCODE_ESCAPE)) {
+        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_SETTINGS, true)) {
             if (showSettingsWindow) {
                 // Close settings window if open
                 showSettingsWindow = false;
@@ -1514,7 +1514,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
     }
 
     // Enter key: focus chat input (empty) — always works unless already typing
-    if (!chatInputActive && input.isKeyJustPressed(SDL_SCANCODE_RETURN)) {
+    if (!chatInputActive && KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_CHAT, true)) {
         refocusChatInput = true;
     }
 
