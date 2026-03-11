@@ -1367,8 +1367,8 @@ void InventoryScreen::renderEquipmentPanel(game::Inventory& inventory) {
         game::EquipSlot::RANGED,
     };
 
-    // Position weapons to the right of the left column (after the 3D preview column)
-    ImGui::SetCursorPosX(rightColX);
+    // Position weapons in center column area (after left column, 3D preview renders on top)
+    ImGui::SetCursorPosX(contentStartX + slotSize + 8.0f);
     for (int i = 0; i < 3; i++) {
         if (i > 0) ImGui::SameLine();
         const auto& slot = inventory.getEquipSlot(weaponSlots[i]);
