@@ -3437,13 +3437,25 @@ bool AuraUpdateParser::parse(network::Packet& packet, AuraUpdateData& data, bool
 }
 
 bool SpellCooldownParser::parse(network::Packet& packet, SpellCooldownData& data) {
+    // Upfront validation: guid(8) + flags(1) = 9 bytes minimum
+    if (packet.getSize() - packet.getReadPos() < 9) return false;
+
     data.guid = packet.readUInt64();
     data.flags = packet.readUInt8();
 
-    while (packet.getReadPos() + 8 <= packet.getSize()) {
+    // Cap cooldown entries to prevent unbounded memory allocation (each entry is 8 bytes)
+    uint32_t maxCooldowns = 512;
+    uint32_t cooldownCount = 0;
+
+    while (packet.getReadPos() + 8 <= packet.getSize() && cooldownCount < maxCooldowns) {
         uint32_t spellId = packet.readUInt32();
         uint32_t cooldownMs = packet.readUInt32();
         data.cooldowns.push_back({spellId, cooldownMs});
+        cooldownCount++;
+    }
+
+    if (cooldownCount >= maxCooldowns && packet.getReadPos() + 8 <= packet.getSize()) {
+        LOG_WARNING("Spell cooldowns: capped at ", maxCooldowns, " entries, remaining data ignored");
     }
 
     LOG_DEBUG("Spell cooldowns: ", data.cooldowns.size(), " entries");
