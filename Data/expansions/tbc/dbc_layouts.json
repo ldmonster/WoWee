@@ -1,7 +1,8 @@
 {
   "Spell": {
     "ID": 0, "Attributes": 5, "IconID": 124,
-    "Name": 127, "Tooltip": 154, "Rank": 136, "SchoolMask": 215
+    "Name": 127, "Tooltip": 154, "Rank": 136, "SchoolMask": 215,
+    "CastingTimeIndex": 22, "PowerType": 35, "ManaCost": 36, "RangeIndex": 40
   },
   "SpellRange": { "MaxRange": 4 },
   "ItemDisplayInfo": {
