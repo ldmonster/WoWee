@@ -1,4 +1,5 @@
 #include "ui/inventory_screen.hpp"
+#include "ui/keybinding_manager.hpp"
 #include "game/game_handler.hpp"
 #include "core/application.hpp"
 #include "rendering/vk_context.hpp"
@@ -709,18 +710,21 @@ bool InventoryScreen::bagHasAnyItems(const game::Inventory& inventory, int bagIn
 }
 
 void InventoryScreen::render(game::Inventory& inventory, uint64_t moneyCopper) {
-    // B key toggle (edge-triggered)
-    bool wantsTextInput = ImGui::GetIO().WantTextInput;
-    bool bDown = !wantsTextInput && core::Input::getInstance().isKeyPressed(SDL_SCANCODE_B);
-    bool bToggled = bDown && !bKeyWasDown;
-    bKeyWasDown = bDown;
+    // Bags toggle (B key, edge-triggered)
+    bool bagsDown = KeybindingManager::getInstance().isActionPressed(
+        KeybindingManager::Action::TOGGLE_BAGS, false);
+    bool bToggled = bagsDown && !bKeyWasDown;
+    bKeyWasDown = bagsDown;
 
-    // C key toggle for character screen (edge-triggered)
-    bool cDown = !wantsTextInput && core::Input::getInstance().isKeyPressed(SDL_SCANCODE_C);
-    if (cDown && !cKeyWasDown) {
+    // Character screen toggle (C key, edge-triggered)
+    bool characterDown = KeybindingManager::getInstance().isActionPressed(
+        KeybindingManager::Action::TOGGLE_CHARACTER_SCREEN, false);
+    if (characterDown && !cKeyWasDown) {
         characterOpen = !characterOpen;
     }
-    cKeyWasDown = cDown;
+    cKeyWasDown = characterDown;
+
+    bool wantsTextInput = ImGui::GetIO().WantTextInput;
 
     if (separateBags_) {
         if (bToggled) {

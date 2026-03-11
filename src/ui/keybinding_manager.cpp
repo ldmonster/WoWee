@@ -18,6 +18,7 @@ void KeybindingManager::initializeDefaults() {
     // Set default keybindings
     bindings_[static_cast<int>(Action::TOGGLE_CHARACTER_SCREEN)] = ImGuiKey_C;
     bindings_[static_cast<int>(Action::TOGGLE_INVENTORY)] = ImGuiKey_I;
+    bindings_[static_cast<int>(Action::TOGGLE_BAGS)] = ImGuiKey_B;
     bindings_[static_cast<int>(Action::TOGGLE_SPELLBOOK)] = ImGuiKey_P;  // WoW standard key
     bindings_[static_cast<int>(Action::TOGGLE_TALENTS)] = ImGuiKey_N;     // WoW standard key
     bindings_[static_cast<int>(Action::TOGGLE_QUESTS)] = ImGuiKey_L;
@@ -57,6 +58,7 @@ const char* KeybindingManager::getActionName(Action action) {
     switch (action) {
         case Action::TOGGLE_CHARACTER_SCREEN: return "Character Screen";
         case Action::TOGGLE_INVENTORY: return "Inventory";
+        case Action::TOGGLE_BAGS: return "Bags";
         case Action::TOGGLE_SPELLBOOK: return "Spellbook";
         case Action::TOGGLE_TALENTS: return "Talents";
         case Action::TOGGLE_QUESTS: return "Quests";
@@ -120,6 +122,7 @@ void KeybindingManager::loadFromConfigFile(const std::string& filePath) {
         int actionIdx = -1;
         if (action == "toggle_character_screen") actionIdx = static_cast<int>(Action::TOGGLE_CHARACTER_SCREEN);
         else if (action == "toggle_inventory") actionIdx = static_cast<int>(Action::TOGGLE_INVENTORY);
+        else if (action == "toggle_bags") actionIdx = static_cast<int>(Action::TOGGLE_BAGS);
         else if (action == "toggle_spellbook") actionIdx = static_cast<int>(Action::TOGGLE_SPELLBOOK);
         else if (action == "toggle_talents") actionIdx = static_cast<int>(Action::TOGGLE_TALENTS);
         else if (action == "toggle_quests") actionIdx = static_cast<int>(Action::TOGGLE_QUESTS);
@@ -210,6 +213,7 @@ void KeybindingManager::saveToConfigFile(const std::string& filePath) const {
     } actionMap[] = {
         {Action::TOGGLE_CHARACTER_SCREEN, "toggle_character_screen"},
         {Action::TOGGLE_INVENTORY, "toggle_inventory"},
+        {Action::TOGGLE_BAGS, "toggle_bags"},
         {Action::TOGGLE_SPELLBOOK, "toggle_spellbook"},
         {Action::TOGGLE_TALENTS, "toggle_talents"},
         {Action::TOGGLE_QUESTS, "toggle_quests"},

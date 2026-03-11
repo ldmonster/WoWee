@@ -17,6 +17,7 @@ public:
     enum class Action {
         TOGGLE_CHARACTER_SCREEN,
         TOGGLE_INVENTORY,
+        TOGGLE_BAGS,
         TOGGLE_SPELLBOOK,
         TOGGLE_TALENTS,
         TOGGLE_QUESTS,
