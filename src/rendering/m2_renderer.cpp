@@ -1148,7 +1148,8 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
         (lowerName.find("lavasplash") != std::string::npos) ||
         (lowerName.find("lavabubble") != std::string::npos) ||
         (lowerName.find("lavasteam") != std::string::npos) ||
-        (lowerName.find("wisps") != std::string::npos);
+        (lowerName.find("wisps") != std::string::npos) ||
+        (lowerName.find("levelup") != std::string::npos);
     gpuModel.isSpellEffect = effectByName ||
                               (hasParticles && model.vertices.size() <= 200 &&
                                model.particleEmitters.size() >= 3);

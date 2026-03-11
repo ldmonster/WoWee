@@ -710,6 +710,8 @@ bool Renderer::initialize(core::Window* win) {
 
     levelUpEffect = std::make_unique<LevelUpEffect>();
 
+    questMarkerRenderer = std::make_unique<QuestMarkerRenderer>();
+
     LOG_INFO("Vulkan sub-renderers initialized (Phase 3)");
 
     // LightingManager doesn't use GL — initialize for data-only use
@@ -2222,6 +2224,14 @@ void Renderer::updateCharacterAnimation() {
             } else if (sitting) {
                 cancelEmote();
                 newState = CharAnimState::SIT_DOWN;
+            } else if (!emoteLoop && characterRenderer && characterInstanceId > 0) {
+                // Auto-cancel non-looping emotes once animation completes
+                uint32_t curId = 0; float curT = 0.0f, curDur = 0.0f;
+                if (characterRenderer->getAnimationState(characterInstanceId, curId, curT, curDur)
+                        && curDur > 0.1f && curT >= curDur - 0.05f) {
+                    cancelEmote();
+                    newState = CharAnimState::IDLE;
+                }
             }
             break;
 
