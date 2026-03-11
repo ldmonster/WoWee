@@ -5009,7 +5009,7 @@ void GameScreen::renderQuestObjectiveTracker(game::GameHandler& gameHandler) {
     if (toShow.empty()) return;
 
     float x = screenW - TRACKER_W - RIGHT_MARGIN;
-    float y = 200.0f;  // below minimap area
+    float y = 320.0f;  // below minimap (210) + buff bar space (up to 3 rows ≈ 114px)
 
     ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(TRACKER_W, 0), ImGuiCond_Always);
@@ -6602,14 +6602,15 @@ void GameScreen::renderBuffBar(game::GameHandler& gameHandler) {
 
     auto* assetMgr = core::Application::getInstance().getAssetManager();
 
-    // Position in top-right to avoid overlapping the party frame on the left
+    // Position below the minimap (minimap: 200x200 at top-right, bottom edge at Y≈210)
+    // Anchored to the right side to stay away from party frames on the left
     constexpr float ICON_SIZE = 32.0f;
-    constexpr int ICONS_PER_ROW = 12;
+    constexpr int ICONS_PER_ROW = 8;
     float barW = ICONS_PER_ROW * (ICON_SIZE + 4.0f) + 8.0f;
     ImVec2 displaySize = ImGui::GetIO().DisplaySize;
     float screenW = displaySize.x > 0.0f ? displaySize.x : 1280.0f;
-    // Anchor to top-right, below minimap area (~140px from top)
-    ImGui::SetNextWindowPos(ImVec2(screenW - barW - 10.0f, 140.0f), ImGuiCond_Always);
+    // Y=215 puts us just below the minimap's bottom edge (minimap bottom ≈ 210)
+    ImGui::SetNextWindowPos(ImVec2(screenW - barW - 10.0f, 215.0f), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(barW, 0), ImGuiCond_Always);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
