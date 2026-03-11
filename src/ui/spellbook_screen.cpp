@@ -86,6 +86,7 @@ void SpellbookScreen::loadSpellDBC(pipeline::AssetManager* assetManager) {
                        const char* label) {
         spellData.clear();
         uint32_t count = dbc->getRecordCount();
+        const uint32_t fc = dbc->getFieldCount();
         for (uint32_t i = 0; i < count; ++i) {
             uint32_t spellId = dbc->getUInt32(i, idField);
             if (spellId == 0) continue;
@@ -95,19 +96,24 @@ void SpellbookScreen::loadSpellDBC(pipeline::AssetManager* assetManager) {
             info.attributes = dbc->getUInt32(i, attrField);
             info.iconId = dbc->getUInt32(i, iconField);
             info.name = dbc->getString(i, nameField);
-            info.rank = dbc->getString(i, rankField);
-            info.description = dbc->getString(i, tooltipField);
-            info.powerType = dbc->getUInt32(i, powerTypeField);
-            info.manaCost  = dbc->getUInt32(i, manaCostField);
-            uint32_t ctIdx = dbc->getUInt32(i, castTimeIndexField);
-            if (ctIdx > 0) {
-                auto ctIt = castTimeMap.find(ctIdx);
-                if (ctIt != castTimeMap.end()) info.castTimeMs = ctIt->second;
+            if (rankField < fc)    info.rank = dbc->getString(i, rankField);
+            if (tooltipField < fc) info.description = dbc->getString(i, tooltipField);
+            // Optional fields: only read if field index is valid for this DBC version
+            if (powerTypeField < fc)   info.powerType = dbc->getUInt32(i, powerTypeField);
+            if (manaCostField  < fc)   info.manaCost  = dbc->getUInt32(i, manaCostField);
+            if (castTimeIndexField < fc) {
+                uint32_t ctIdx = dbc->getUInt32(i, castTimeIndexField);
+                if (ctIdx > 0) {
+                    auto ctIt = castTimeMap.find(ctIdx);
+                    if (ctIt != castTimeMap.end()) info.castTimeMs = ctIt->second;
+                }
             }
-            uint32_t rangeIdx = dbc->getUInt32(i, rangeIndexField);
-            if (rangeIdx > 0) {
-                auto rangeIt = rangeMap.find(rangeIdx);
-                if (rangeIt != rangeMap.end()) info.rangeIndex = static_cast<uint32_t>(rangeIt->second);
+            if (rangeIndexField < fc) {
+                uint32_t rangeIdx = dbc->getUInt32(i, rangeIndexField);
+                if (rangeIdx > 0) {
+                    auto rangeIt = rangeMap.find(rangeIdx);
+                    if (rangeIt != rangeMap.end()) info.rangeIndex = static_cast<uint32_t>(rangeIt->second);
+                }
             }
 
             if (!info.name.empty()) {
@@ -118,11 +124,13 @@ void SpellbookScreen::loadSpellDBC(pipeline::AssetManager* assetManager) {
     };
 
     if (spellL) {
-        uint32_t tooltipField      = 139;
-        uint32_t powerTypeField    = 14;
-        uint32_t manaCostField     = 39;
-        uint32_t castTimeIdxField  = 47;
-        uint32_t rangeIdxField     = 49;
+        // Default to UINT32_MAX for optional fields; tryLoad will skip them if >= fieldCount.
+        // Avoids reading wrong data from expansion DBCs that lack these fields (e.g. Classic/TBC).
+        uint32_t tooltipField      = UINT32_MAX;
+        uint32_t powerTypeField    = UINT32_MAX;
+        uint32_t manaCostField     = UINT32_MAX;
+        uint32_t castTimeIdxField  = UINT32_MAX;
+        uint32_t rangeIdxField     = UINT32_MAX;
         try { tooltipField     = (*spellL)["Tooltip"]; } catch (...) {}
         try { powerTypeField   = (*spellL)["PowerType"]; } catch (...) {}
         try { manaCostField    = (*spellL)["ManaCost"]; } catch (...) {}
