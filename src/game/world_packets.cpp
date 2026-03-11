@@ -2723,6 +2723,14 @@ bool MonsterMoveParser::parse(network::Packet& packet, MonsterMoveData& data) {
 
     if (pointCount == 0) return true;
 
+    // Cap pointCount to prevent excessive iteration from malformed packets
+    constexpr uint32_t kMaxSplinePoints = 1000;
+    if (pointCount > kMaxSplinePoints) {
+        LOG_WARNING("SMSG_MONSTER_MOVE: pointCount=", pointCount, " exceeds max ", kMaxSplinePoints,
+                    " (guid=0x", std::hex, data.guid, std::dec, "), capping");
+        pointCount = kMaxSplinePoints;
+    }
+
     // Catmullrom or Flying → all waypoints stored as absolute float3 (uncompressed).
     // Otherwise: first float3 is final destination, remaining are packed deltas.
     bool uncompressed = (data.splineFlags & (0x00080000 | 0x00002000)) != 0;
@@ -2824,7 +2832,14 @@ bool MonsterMoveParser::parseVanilla(network::Packet& packet, MonsterMoveData& d
     uint32_t pointCount = packet.readUInt32();
 
     if (pointCount == 0) return true;
-    if (pointCount > 16384) return false; // sanity
+
+    // Cap pointCount to prevent excessive iteration from malformed packets
+    constexpr uint32_t kMaxSplinePoints = 1000;
+    if (pointCount > kMaxSplinePoints) {
+        LOG_WARNING("SMSG_MONSTER_MOVE(Vanilla): pointCount=", pointCount, " exceeds max ", kMaxSplinePoints,
+                    " (guid=0x", std::hex, data.guid, std::dec, "), capping");
+        pointCount = kMaxSplinePoints;
+    }
 
     // First float[3] is destination.
     if (packet.getReadPos() + 12 > packet.getSize()) return true;
