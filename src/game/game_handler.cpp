@@ -10595,7 +10595,19 @@ void GameHandler::tabTarget(float playerX, float playerY, float playerZ) {
         const uint64_t guid = e->getGuid();
         auto* unit = dynamic_cast<Unit*>(e.get());
         if (!unit) return false;           // Not a unit (shouldn't happen after type filter)
-        if (unit->getHealth() == 0) return false;  // Dead / corpse
+        if (unit->getHealth() == 0) {
+            // Dead corpse: only targetable if it has loot or is skinnableable
+            // If corpse was looted and is now empty, skip it (except for skinning)
+            auto lootIt = localLootState_.find(guid);
+            if (lootIt == localLootState_.end() || lootIt->second.data.items.empty()) {
+                // No loot data or all items taken; check if skinnableable
+                // For now, skip empty looted corpses (proper skinning check requires
+                // creature type data that may not be immediately available)
+                return false;
+            }
+            // Has unlooted items available
+            return true;
+        }
         const bool hostileByFaction = unit->isHostile();
         const bool hostileByCombat = isAggressiveTowardPlayer(guid);
         if (!hostileByFaction && !hostileByCombat) return false;
