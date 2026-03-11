@@ -67,6 +67,7 @@ private:
     bool showPlayerInfo = false;
     bool showSocialFrame_ = false;  // O key toggles social/friends list
     bool showGuildRoster_ = false;
+    bool showWorldMap_ = false;  // W key toggles world map
     std::string selectedGuildMember_;
     bool showGuildNoteEdit_ = false;
     bool editingOfficerNote_ = false;

@@ -1475,6 +1475,10 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             showNameplates_ = !showNameplates_;
         }
 
+        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_WORLD_MAP)) {
+            showWorldMap_ = !showWorldMap_;
+        }
+
         // Action bar keys (1-9, 0, -, =)
         static const SDL_Scancode actionBarKeys[] = {
             SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4,
@@ -4003,6 +4007,8 @@ void GameScreen::updateCharacterTextures(game::Inventory& inventory) {
 // ============================================================
 
 void GameScreen::renderWorldMap(game::GameHandler& gameHandler) {
+    if (!showWorldMap_) return;
+
     auto& app = core::Application::getInstance();
     auto* renderer = app.getRenderer();
     if (!renderer) return;
