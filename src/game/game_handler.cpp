@@ -3603,10 +3603,29 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 uint8_t error = packet.readUInt8();
                 if (error != 0) {
                     LOG_WARNING("SMSG_INVENTORY_CHANGE_FAILURE: error=", (int)error);
+                    // After error byte: item_guid1(8) + item_guid2(8) + bag_slot(1) = 17 bytes
+                    uint32_t requiredLevel = 0;
+                    if (packet.getSize() - packet.getReadPos() >= 17) {
+                        packet.readUInt64(); // item_guid1
+                        packet.readUInt64(); // item_guid2
+                        packet.readUInt8();  // bag_slot
+                        // Error 1 = EQUIP_ERR_LEVEL_REQ: server appends required level as uint32
+                        if (error == 1 && packet.getSize() - packet.getReadPos() >= 4)
+                            requiredLevel = packet.readUInt32();
+                    }
                     // InventoryResult enum (AzerothCore 3.3.5a)
                     const char* errMsg = nullptr;
+                    char levelBuf[64];
                     switch (error) {
-                        case 1:  errMsg = "You must reach level %d to use that item."; break;
+                        case 1:
+                            if (requiredLevel > 0) {
+                                std::snprintf(levelBuf, sizeof(levelBuf),
+                                              "You must reach level %u to use that item.", requiredLevel);
+                                addSystemChatMessage(levelBuf);
+                            } else {
+                                addSystemChatMessage("You must reach a higher level to use that item.");
+                            }
+                            break;
                         case 2:  errMsg = "You don't have the required skill."; break;
                         case 3:  errMsg = "That item doesn't go in that slot."; break;
                         case 4:  errMsg = "That bag is full."; break;
