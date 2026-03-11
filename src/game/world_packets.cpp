@@ -419,6 +419,9 @@ network::Packet CharEnumPacket::build() {
 }
 
 bool CharEnumParser::parse(network::Packet& packet, CharEnumResponse& response) {
+    // Upfront validation: count(1) + at least minimal character data
+    if (packet.getSize() - packet.getReadPos() < 1) return false;
+
     // Read character count
     uint8_t count = packet.readUInt8();
 
@@ -430,49 +433,126 @@ bool CharEnumParser::parse(network::Packet& packet, CharEnumResponse& response) 
     for (uint8_t i = 0; i < count; ++i) {
         Character character;
 
+        // Validate minimum bytes for this character entry before reading:
+        // GUID(8) + name(>=1 for empty string) + race(1) + class(1) + gender(1) +
+        // appearanceBytes(4) + facialFeatures(1) + level(1) + zoneId(4) + mapId(4) +
+        // x(4) + y(4) + z(4) + guildId(4) + flags(4) + customization(4) + unknown(1) +
+        // petDisplayModel(4) + petLevel(4) + petFamily(4) + 23items*(dispModel(4)+invType(1)+enchant(4)) = 207 bytes
+        const size_t minCharacterSize = 8 + 1 + 1 + 1 + 1 + 4 + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 1 + 4 + 4 + 4 + (23 * 9);
+        if (packet.getReadPos() + minCharacterSize > packet.getSize()) {
+            LOG_WARNING("CharEnumParser: truncated character at index ", (int)i);
+            break;
+        }
+
         // Read GUID (8 bytes, little-endian)
         character.guid = packet.readUInt64();
 
-        // Read name (null-terminated string)
+        // Read name (null-terminated string) - validate before reading
+        if (packet.getReadPos() >= packet.getSize()) {
+            LOG_WARNING("CharEnumParser: no bytes for name at index ", (int)i);
+            break;
+        }
         character.name = packet.readString();
 
-        // Read race, class, gender
-        character.race = static_cast<Race>(packet.readUInt8());
-        character.characterClass = static_cast<Class>(packet.readUInt8());
-        character.gender = static_cast<Gender>(packet.readUInt8());
+        // Validate remaining bytes before reading fixed-size fields
+        if (packet.getReadPos() + 1 > packet.getSize()) {
+            LOG_WARNING("CharEnumParser: truncated before race/class/gender at index ", (int)i);
+            character.race = Race::HUMAN;
+            character.characterClass = Class::WARRIOR;
+            character.gender = Gender::MALE;
+        } else {
+            // Read race, class, gender
+            character.race = static_cast<Race>(packet.readUInt8());
+            if (packet.getReadPos() + 1 > packet.getSize()) {
+                character.characterClass = Class::WARRIOR;
+                character.gender = Gender::MALE;
+            } else {
+                character.characterClass = static_cast<Class>(packet.readUInt8());
+                if (packet.getReadPos() + 1 > packet.getSize()) {
+                    character.gender = Gender::MALE;
+                } else {
+                    character.gender = static_cast<Gender>(packet.readUInt8());
+                }
+            }
+        }
 
-        // Read appearance data
-        character.appearanceBytes = packet.readUInt32();
-        character.facialFeatures = packet.readUInt8();
+        // Validate before reading appearance data
+        if (packet.getReadPos() + 4 > packet.getSize()) {
+            character.appearanceBytes = 0;
+            character.facialFeatures = 0;
+        } else {
+            // Read appearance data
+            character.appearanceBytes = packet.readUInt32();
+            if (packet.getReadPos() + 1 > packet.getSize()) {
+                character.facialFeatures = 0;
+            } else {
+                character.facialFeatures = packet.readUInt8();
+            }
+        }
 
         // Read level
-        character.level = packet.readUInt8();
+        if (packet.getReadPos() + 1 > packet.getSize()) {
+            character.level = 1;
+        } else {
+            character.level = packet.readUInt8();
+        }
 
         // Read location
-        character.zoneId = packet.readUInt32();
-        character.mapId = packet.readUInt32();
-        character.x = packet.readFloat();
-        character.y = packet.readFloat();
-        character.z = packet.readFloat();
+        if (packet.getReadPos() + 12 > packet.getSize()) {
+            character.zoneId = 0;
+            character.mapId = 0;
+            character.x = 0.0f;
+            character.y = 0.0f;
+            character.z = 0.0f;
+        } else {
+            character.zoneId = packet.readUInt32();
+            character.mapId = packet.readUInt32();
+            character.x = packet.readFloat();
+            character.y = packet.readFloat();
+            character.z = packet.readFloat();
+        }
 
         // Read affiliations
-        character.guildId = packet.readUInt32();
+        if (packet.getReadPos() + 4 > packet.getSize()) {
+            character.guildId = 0;
+        } else {
+            character.guildId = packet.readUInt32();
+        }
 
         // Read flags
-        character.flags = packet.readUInt32();
+        if (packet.getReadPos() + 4 > packet.getSize()) {
+            character.flags = 0;
+        } else {
+            character.flags = packet.readUInt32();
+        }
 
         // Skip customization flag (uint32) and unknown byte
-        packet.readUInt32();  // Customization
-        packet.readUInt8();   // Unknown
+        if (packet.getReadPos() + 4 > packet.getSize()) {
+            // Customization missing, skip unknown
+        } else {
+            packet.readUInt32();  // Customization
+            if (packet.getReadPos() + 1 > packet.getSize()) {
+                // Unknown missing
+            } else {
+                packet.readUInt8();   // Unknown
+            }
+        }
 
         // Read pet data (always present, even if no pet)
-        character.pet.displayModel = packet.readUInt32();
-        character.pet.level = packet.readUInt32();
-        character.pet.family = packet.readUInt32();
+        if (packet.getReadPos() + 12 > packet.getSize()) {
+            character.pet.displayModel = 0;
+            character.pet.level = 0;
+            character.pet.family = 0;
+        } else {
+            character.pet.displayModel = packet.readUInt32();
+            character.pet.level = packet.readUInt32();
+            character.pet.family = packet.readUInt32();
+        }
 
         // Read equipment (23 items)
         character.equipment.reserve(23);
         for (int j = 0; j < 23; ++j) {
+            if (packet.getReadPos() + 9 > packet.getSize()) break;
             EquipmentItem item;
             item.displayModel = packet.readUInt32();
             item.inventoryType = packet.readUInt8();
