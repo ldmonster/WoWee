@@ -15671,8 +15671,10 @@ void GameHandler::loadSpellNameCache() {
         return;
     }
 
-    if (dbc->getFieldCount() < 154) {
-        LOG_WARNING("Trainer: Spell.dbc has too few fields");
+    // Classic 1.12 Spell.dbc has 148 fields; TBC/WotLK have more.
+    // Require at least 148 so Classic trainers can resolve spell names.
+    if (dbc->getFieldCount() < 148) {
+        LOG_WARNING("Trainer: Spell.dbc has too few fields (", dbc->getFieldCount(), ")");
         return;
     }
 

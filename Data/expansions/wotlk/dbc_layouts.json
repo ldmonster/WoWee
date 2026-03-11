@@ -4,6 +4,7 @@
     "Name": 136, "Tooltip": 139, "Rank": 153, "SchoolMask": 225,
     "PowerType": 14, "ManaCost": 39, "CastingTimeIndex": 47, "RangeIndex": 49
   },
+  "SpellRange": { "MaxRange": 4 },
   "ItemDisplayInfo": {
     "ID": 0, "LeftModel": 1, "LeftModelTexture": 3,
     "InventoryIcon": 5, "GeosetGroup1": 7, "GeosetGroup3": 9,

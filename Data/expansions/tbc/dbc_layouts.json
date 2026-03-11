@@ -3,6 +3,7 @@
     "ID": 0, "Attributes": 5, "IconID": 124,
     "Name": 127, "Tooltip": 154, "Rank": 136, "SchoolMask": 215
   },
+  "SpellRange": { "MaxRange": 4 },
   "ItemDisplayInfo": {
     "ID": 0, "LeftModel": 1, "LeftModelTexture": 3,
     "InventoryIcon": 5, "GeosetGroup1": 7, "GeosetGroup3": 9,

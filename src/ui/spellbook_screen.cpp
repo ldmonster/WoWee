@@ -66,15 +66,26 @@ void SpellbookScreen::loadSpellDBC(pipeline::AssetManager* assetManager) {
         }
     }
 
-    // Load SpellRange.dbc: field 0=ID, field 5=MaxRangeHostile (float)
+    // Load SpellRange.dbc.  Field layout differs by expansion:
+    //   Classic 1.12:  0=ID, 1=MinRange, 2=MaxRange, 3=Flags, 4+=strings
+    //   TBC / WotLK:   0=ID, 1=MinRangeFriendly, 2=MinRangeHostile,
+    //                  3=MaxRangeFriendly, 4=MaxRangeHostile, 5=Flags, 6+=strings
+    // The correct field is declared in each expansion's dbc_layouts.json.
+    uint32_t spellRangeMaxField = 4;  // WotLK / TBC default: MaxRangeHostile
+    const auto* spellRangeL = pipeline::getActiveDBCLayout()
+                              ? pipeline::getActiveDBCLayout()->getLayout("SpellRange")
+                              : nullptr;
+    if (spellRangeL) {
+        try { spellRangeMaxField = (*spellRangeL)["MaxRange"]; } catch (...) {}
+    }
     std::unordered_map<uint32_t, float> rangeMap;  // index → max yards
     auto rangeDbc = assetManager->loadDBC("SpellRange.dbc");
     if (rangeDbc && rangeDbc->isLoaded()) {
         uint32_t rangeFieldCount = rangeDbc->getFieldCount();
-        if (rangeFieldCount >= 6) {
+        if (rangeFieldCount > spellRangeMaxField) {
             for (uint32_t i = 0; i < rangeDbc->getRecordCount(); ++i) {
                 uint32_t id = rangeDbc->getUInt32(i, 0);
-                float maxRange = rangeDbc->getFloat(i, 5);
+                float maxRange = rangeDbc->getFloat(i, spellRangeMaxField);
                 if (id > 0 && maxRange > 0.0f)
                     rangeMap[id] = maxRange;
             }
