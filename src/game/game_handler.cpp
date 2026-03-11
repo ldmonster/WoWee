@@ -2378,26 +2378,42 @@ void GameHandler::handlePacket(network::Packet& packet) {
 
         // ---- Spell log miss ----
         case Opcode::SMSG_SPELLLOGMISS: {
-            // WotLK: packed_guid caster + packed_guid target + uint8 isCrit + uint32 count
-            // TBC/Classic: full uint64 caster + full uint64 target + uint8 isCrit + uint32 count
-            // + count × (uint64 victimGuid + uint8 missInfo)
+            // All expansions: uint32 spellId first.
+            // WotLK:       spellId(4) + packed_guid caster + uint8 unk + uint32 count
+            //              + count × (packed_guid victim + uint8 missInfo)
+            //              [missInfo==11(REFLECT): + uint32 reflectSpellId + uint8 reflectResult]
+            // TBC/Classic: spellId(4) + uint64 caster + uint8 unk + uint32 count
+            //              + count × (uint64 victim + uint8 missInfo)
             const bool spellMissTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
             auto readSpellMissGuid = [&]() -> uint64_t {
                 if (spellMissTbcLike)
                     return (packet.getSize() - packet.getReadPos() >= 8) ? packet.readUInt64() : 0;
                 return UpdateObjectParser::readPackedGuid(packet);
             };
+            // spellId prefix present in all expansions
+            if (packet.getSize() - packet.getReadPos() < 4) break;
+            /*uint32_t spellId =*/ packet.readUInt32();
             if (packet.getSize() - packet.getReadPos() < (spellMissTbcLike ? 8 : 1)) break;
             uint64_t casterGuid = readSpellMissGuid();
-            if (packet.getSize() - packet.getReadPos() < (spellMissTbcLike ? 8 : 1)) break;
-            /*uint64_t targetGuidLog =*/ readSpellMissGuid();
             if (packet.getSize() - packet.getReadPos() < 5) break;
-            /*uint8_t isCrit =*/ packet.readUInt8();
+            /*uint8_t unk =*/ packet.readUInt8();
             uint32_t count = packet.readUInt32();
             count = std::min(count, 32u);
-            for (uint32_t i = 0; i < count && packet.getSize() - packet.getReadPos() >= 9; ++i) {
-                /*uint64_t victimGuid =*/ packet.readUInt64();
+            for (uint32_t i = 0; i < count; ++i) {
+                if (packet.getSize() - packet.getReadPos() < (spellMissTbcLike ? 9u : 2u)) break;
+                /*uint64_t victimGuid =*/ readSpellMissGuid();
+                if (packet.getSize() - packet.getReadPos() < 1) break;
                 uint8_t missInfo = packet.readUInt8();
+                // REFLECT (11): extra uint32 reflectSpellId + uint8 reflectResult
+                if (missInfo == 11 && !spellMissTbcLike) {
+                    if (packet.getSize() - packet.getReadPos() >= 5) {
+                        /*uint32_t reflectSpellId =*/ packet.readUInt32();
+                        /*uint8_t  reflectResult  =*/ packet.readUInt8();
+                    } else {
+                        packet.setReadPos(packet.getSize());
+                        break;
+                    }
+                }
                 // Show combat text only for local player's spell misses
                 if (casterGuid == playerGuid) {
                     static const CombatTextEntry::Type missTypes[] = {
