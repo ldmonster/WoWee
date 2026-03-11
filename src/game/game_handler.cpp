@@ -4078,11 +4078,13 @@ void GameHandler::handlePacket(network::Packet& packet) {
             break;
         }
         case Opcode::SMSG_WEATHER: {
-            // Format: uint32 weatherType, float intensity, uint8 isAbrupt
-            if (packet.getSize() - packet.getReadPos() >= 9) {
+            // Classic 1.12: uint32 weatherType + float intensity (8 bytes, no isAbrupt)
+            // TBC 2.4.3 / WotLK 3.3.5a: uint32 weatherType + float intensity + uint8 isAbrupt (9 bytes)
+            if (packet.getSize() - packet.getReadPos() >= 8) {
                 uint32_t wType = packet.readUInt32();
                 float wIntensity = packet.readFloat();
-                /*uint8_t isAbrupt =*/ packet.readUInt8();
+                if (packet.getSize() - packet.getReadPos() >= 1)
+                    /*uint8_t isAbrupt =*/ packet.readUInt8();
                 weatherType_ = wType;
                 weatherIntensity_ = wIntensity;
                 const char* typeName = (wType == 1) ? "Rain" : (wType == 2) ? "Snow" : (wType == 3) ? "Storm" : "Clear";
