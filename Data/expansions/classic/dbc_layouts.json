@@ -30,7 +30,7 @@
     "ReputationBase0": 10, "ReputationBase1": 11,
     "ReputationBase2": 12, "ReputationBase3": 13
   },
-  "AreaTable": { "ID": 0, "ExploreFlag": 3 },
+  "AreaTable": { "ID": 0, "MapID": 1, "ParentAreaNum": 2, "ExploreFlag": 3 },
   "CreatureDisplayInfoExtra": {
     "ID": 0, "RaceID": 1, "SexID": 2, "SkinID": 3, "FaceID": 4,
     "HairStyleID": 5, "HairColorID": 6, "FacialHairID": 7,
