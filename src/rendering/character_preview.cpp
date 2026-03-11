@@ -64,9 +64,9 @@ bool CharacterPreview::initialize(pipeline::AssetManager* am) {
         return false;
     }
 
-    // Disable fog and shadows for the preview
+    // Configure lighting for character preview
+    // Use distant fog to avoid clipping, enable shadows for visual depth
     charRenderer_->setFog(glm::vec3(0.05f, 0.05f, 0.1f), 9999.0f, 10000.0f);
-    charRenderer_->clearShadowMap();
 
     camera_ = std::make_unique<Camera>();
     // Portrait-style camera: WoW Z-up coordinate system
@@ -819,8 +819,8 @@ void CharacterPreview::compositePass(VkCommandBuffer cmd, uint32_t frameIndex) {
     // No fog in preview
     ubo.fogColor = glm::vec4(0.05f, 0.05f, 0.1f, 0.0f);
     ubo.fogParams = glm::vec4(9999.0f, 10000.0f, 0.0f, 0.0f);
-    // Shadows disabled
-    ubo.shadowParams = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    // Enable shadows for visual depth in preview (strength=0.5 for subtle effect)
+    ubo.shadowParams = glm::vec4(1.0f, 0.5f, 0.0f, 0.0f);
 
     std::memcpy(previewUBOMapped_[fi], &ubo, sizeof(GPUPerFrameData));
 
