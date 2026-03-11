@@ -2934,13 +2934,37 @@ bool AttackStopParser::parse(network::Packet& packet, AttackStopData& data) {
 }
 
 bool AttackerStateUpdateParser::parse(network::Packet& packet, AttackerStateUpdateData& data) {
+    // Upfront validation: hitInfo(4) + packed GUIDs(1-8 each) + totalDamage(4) + subDamageCount(1) = 13 bytes minimum
+    if (packet.getSize() - packet.getReadPos() < 13) return false;
+
+    size_t startPos = packet.getReadPos();
     data.hitInfo = packet.readUInt32();
     data.attackerGuid = UpdateObjectParser::readPackedGuid(packet);
     data.targetGuid = UpdateObjectParser::readPackedGuid(packet);
+
+    // Validate totalDamage + subDamageCount can be read (5 bytes)
+    if (packet.getSize() - packet.getReadPos() < 5) {
+        packet.setReadPos(startPos);
+        return false;
+    }
+
     data.totalDamage = static_cast<int32_t>(packet.readUInt32());
     data.subDamageCount = packet.readUInt8();
 
+    // Cap subDamageCount to prevent OOM (each entry is 20 bytes: 4+4+4+4+4)
+    if (data.subDamageCount > 64) {
+        LOG_WARNING("AttackerStateUpdate: subDamageCount capped (requested=", (int)data.subDamageCount, ")");
+        data.subDamageCount = 64;
+    }
+
+    data.subDamages.reserve(data.subDamageCount);
     for (uint8_t i = 0; i < data.subDamageCount; ++i) {
+        // Each sub-damage entry needs 20 bytes: schoolMask(4) + damage(4) + intDamage(4) + absorbed(4) + resisted(4)
+        if (packet.getSize() - packet.getReadPos() < 20) {
+            LOG_WARNING("AttackerStateUpdate: truncated subDamage at index ", (int)i, "/", (int)data.subDamageCount);
+            data.subDamageCount = i;
+            break;
+        }
         SubDamage sub;
         sub.schoolMask = packet.readUInt32();
         sub.damage = packet.readFloat();
@@ -2950,12 +2974,22 @@ bool AttackerStateUpdateParser::parse(network::Packet& packet, AttackerStateUpda
         data.subDamages.push_back(sub);
     }
 
+    // Validate victimState + overkill fields (8 bytes)
+    if (packet.getSize() - packet.getReadPos() < 8) {
+        LOG_WARNING("AttackerStateUpdate: truncated victimState/overkill");
+        data.victimState = 0;
+        data.overkill = 0;
+        return !data.subDamages.empty();
+    }
+
     data.victimState = packet.readUInt32();
     data.overkill = static_cast<int32_t>(packet.readUInt32());
 
-    // Read blocked amount
-    if (packet.getReadPos() < packet.getSize()) {
+    // Read blocked amount (optional, 4 bytes)
+    if (packet.getSize() - packet.getReadPos() >= 4) {
         data.blocked = packet.readUInt32();
+    } else {
+        data.blocked = 0;
     }
 
     LOG_DEBUG("Melee hit: ", data.totalDamage, " damage",
@@ -2965,8 +2999,19 @@ bool AttackerStateUpdateParser::parse(network::Packet& packet, AttackerStateUpda
 }
 
 bool SpellDamageLogParser::parse(network::Packet& packet, SpellDamageLogData& data) {
+    // Upfront validation: packed GUIDs(1-8 each) + spellId(4) + damage(4) + overkill(4) + schoolMask(1) + absorbed(4) + resisted(4) = 30 bytes minimum
+    if (packet.getSize() - packet.getReadPos() < 30) return false;
+
+    size_t startPos = packet.getReadPos();
     data.targetGuid = UpdateObjectParser::readPackedGuid(packet);
     data.attackerGuid = UpdateObjectParser::readPackedGuid(packet);
+
+    // Validate core fields (spellId + damage + overkill + schoolMask + absorbed + resisted = 21 bytes)
+    if (packet.getSize() - packet.getReadPos() < 21) {
+        packet.setReadPos(startPos);
+        return false;
+    }
+
     data.spellId = packet.readUInt32();
     data.damage = packet.readUInt32();
     data.overkill = packet.readUInt32();
@@ -2974,7 +3019,13 @@ bool SpellDamageLogParser::parse(network::Packet& packet, SpellDamageLogData& da
     data.absorbed = packet.readUInt32();
     data.resisted = packet.readUInt32();
 
-    // Skip remaining fields
+    // Skip remaining fields (periodicLog + unused + blocked + flags = 10 bytes)
+    if (packet.getSize() - packet.getReadPos() < 10) {
+        LOG_WARNING("SpellDamageLog: truncated trailing fields");
+        data.isCrit = false;
+        return true;
+    }
+
     uint8_t periodicLog = packet.readUInt8();
     (void)periodicLog;
     packet.readUInt8(); // unused
@@ -2990,8 +3041,19 @@ bool SpellDamageLogParser::parse(network::Packet& packet, SpellDamageLogData& da
 }
 
 bool SpellHealLogParser::parse(network::Packet& packet, SpellHealLogData& data) {
+    // Upfront validation: packed GUIDs(1-8 each) + spellId(4) + heal(4) + overheal(4) + absorbed(4) + critFlag(1) = 21 bytes minimum
+    if (packet.getSize() - packet.getReadPos() < 21) return false;
+
+    size_t startPos = packet.getReadPos();
     data.targetGuid = UpdateObjectParser::readPackedGuid(packet);
     data.casterGuid = UpdateObjectParser::readPackedGuid(packet);
+
+    // Validate remaining fields (spellId + heal + overheal + absorbed + critFlag = 17 bytes)
+    if (packet.getSize() - packet.getReadPos() < 17) {
+        packet.setReadPos(startPos);
+        return false;
+    }
+
     data.spellId = packet.readUInt32();
     data.heal = packet.readUInt32();
     data.overheal = packet.readUInt32();
