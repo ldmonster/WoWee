@@ -1,4 +1,5 @@
 #include "ui/talent_screen.hpp"
+#include "ui/keybinding_manager.hpp"
 #include "core/input.hpp"
 #include "core/application.hpp"
 #include "core/logger.hpp"
@@ -22,13 +23,14 @@ static const char* getClassName(uint8_t classId) {
 }
 
 void TalentScreen::render(game::GameHandler& gameHandler) {
-    // N key toggle (edge-triggered)
-    bool wantsTextInput = ImGui::GetIO().WantTextInput;
-    bool nDown = !wantsTextInput && core::Input::getInstance().isKeyPressed(SDL_SCANCODE_N);
-    if (nDown && !nKeyWasDown) {
+    // Talents toggle via keybinding (edge-triggered)
+    // Customizable key (default: N) from KeybindingManager
+    bool talentsDown = KeybindingManager::getInstance().isActionPressed(
+        KeybindingManager::Action::TOGGLE_TALENTS, false);
+    if (talentsDown && !nKeyWasDown) {
         open = !open;
     }
-    nKeyWasDown = nDown;
+    nKeyWasDown = talentsDown;
 
     if (!open) return;
 

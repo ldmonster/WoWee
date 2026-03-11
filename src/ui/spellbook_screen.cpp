@@ -1,4 +1,5 @@
 #include "ui/spellbook_screen.hpp"
+#include "ui/keybinding_manager.hpp"
 #include "core/input.hpp"
 #include "core/application.hpp"
 #include "rendering/vk_context.hpp"
@@ -563,13 +564,14 @@ void SpellbookScreen::renderSpellTooltip(const SpellInfo* info, game::GameHandle
 }
 
 void SpellbookScreen::render(game::GameHandler& gameHandler, pipeline::AssetManager* assetManager) {
-    // P key toggle (edge-triggered)
-    bool wantsTextInput = ImGui::GetIO().WantTextInput;
-    bool pDown = !wantsTextInput && core::Input::getInstance().isKeyPressed(SDL_SCANCODE_P);
-    if (pDown && !pKeyWasDown) {
+    // Spellbook toggle via keybinding (edge-triggered)
+    // Customizable key (default: P) from KeybindingManager
+    bool spellbookDown = KeybindingManager::getInstance().isActionPressed(
+        KeybindingManager::Action::TOGGLE_SPELLBOOK, false);
+    if (spellbookDown && !pKeyWasDown) {
         open = !open;
     }
-    pKeyWasDown = pDown;
+    pKeyWasDown = spellbookDown;
 
     if (!open) return;
 
