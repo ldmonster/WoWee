@@ -979,8 +979,16 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
             (lowerName.find("monument") != std::string::npos) ||
             (lowerName.find("sculpture") != std::string::npos);
         gpuModel.collisionStatue = statueName;
+        // Sittable furniture: chairs/benches/stools cause players to get stuck against
+        // invisible bounding boxes; WMOs already handle room collision.
+        bool sittableFurnitureName =
+            (lowerName.find("chair") != std::string::npos) ||
+            (lowerName.find("bench") != std::string::npos) ||
+            (lowerName.find("stool") != std::string::npos) ||
+            (lowerName.find("seat") != std::string::npos) ||
+            (lowerName.find("throne") != std::string::npos);
         bool smallSolidPropName =
-            statueName ||
+            (statueName && !sittableFurnitureName) ||
             (lowerName.find("crate") != std::string::npos) ||
             (lowerName.find("box") != std::string::npos) ||
             (lowerName.find("chest") != std::string::npos) ||
@@ -1023,6 +1031,10 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
             (lowerName.find("bamboo") != std::string::npos) ||
             (lowerName.find("banana") != std::string::npos) ||
             (lowerName.find("coconut") != std::string::npos) ||
+            (lowerName.find("watermelon") != std::string::npos) ||
+            (lowerName.find("melon") != std::string::npos) ||
+            (lowerName.find("squash") != std::string::npos) ||
+            (lowerName.find("gourd") != std::string::npos) ||
             (lowerName.find("canopy") != std::string::npos) ||
             (lowerName.find("hedge") != std::string::npos) ||
             (lowerName.find("cactus") != std::string::npos) ||

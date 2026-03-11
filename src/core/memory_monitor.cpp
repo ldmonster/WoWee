@@ -109,16 +109,16 @@ size_t MemoryMonitor::getAvailableRAM() const {
 
 size_t MemoryMonitor::getRecommendedCacheBudget() const {
     size_t available = getAvailableRAM();
-    // Use 80% of available RAM for caches (very aggressive), but cap at 90% of total
-    size_t budget = available * 80 / 100;
-    size_t maxBudget = totalRAM_ * 90 / 100;
-    return budget < maxBudget ? budget : maxBudget;
+    // Use 50% of available RAM for caches, hard-capped at 16 GB.
+    static constexpr size_t kHardCapBytes = 16ull * 1024 * 1024 * 1024;  // 16 GB
+    size_t budget = available * 50 / 100;
+    return budget < kHardCapBytes ? budget : kHardCapBytes;
 }
 
 bool MemoryMonitor::isMemoryPressure() const {
     size_t available = getAvailableRAM();
-    // Memory pressure if < 20% RAM available
-    return available < (totalRAM_ * 20 / 100);
+    // Memory pressure if < 10% RAM available
+    return available < (totalRAM_ * 10 / 100);
 }
 
 } // namespace core

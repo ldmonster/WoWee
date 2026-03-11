@@ -189,7 +189,7 @@ bool SpellbookScreen::renderSpellInfoTooltip(uint32_t spellId, game::GameHandler
     if (!dbcLoadAttempted) loadSpellDBC(assetManager);
     const SpellInfo* info = getSpellInfo(spellId);
     if (!info) return false;
-    renderSpellTooltip(info, gameHandler);
+    renderSpellTooltip(info, gameHandler, /*showUsageHints=*/false);
     return true;
 }
 
@@ -446,7 +446,7 @@ const SpellInfo* SpellbookScreen::getSpellInfo(uint32_t spellId) const {
     return (it != spellData.end()) ? &it->second : nullptr;
 }
 
-void SpellbookScreen::renderSpellTooltip(const SpellInfo* info, game::GameHandler& gameHandler) {
+void SpellbookScreen::renderSpellTooltip(const SpellInfo* info, game::GameHandler& gameHandler, bool showUsageHints) {
     ImGui::BeginTooltip();
     ImGui::PushTextWrapPos(320.0f);
 
@@ -551,8 +551,8 @@ void SpellbookScreen::renderSpellTooltip(const SpellInfo* info, game::GameHandle
         ImGui::TextWrapped("%s", info->description.c_str());
     }
 
-    // Usage hints
-    if (!info->isPassive()) {
+    // Usage hints — only shown when browsing the spellbook, not on action bar hover
+    if (!info->isPassive() && showUsageHints) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Drag to action bar");
         ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Double-click to cast");

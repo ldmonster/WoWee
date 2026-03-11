@@ -1051,14 +1051,21 @@ bool VkContext::recreateSwapchain(int width, int height) {
 
     auto swapRet = builder.build();
 
-    if (oldSwapchain) {
-        vkDestroySwapchainKHR(device, oldSwapchain, nullptr);
+    if (!swapRet) {
+        // Destroy old swapchain now that we failed (it can't be used either)
+        if (oldSwapchain) {
+            vkDestroySwapchainKHR(device, oldSwapchain, nullptr);
+            swapchain = VK_NULL_HANDLE;
+        }
+        LOG_ERROR("Failed to recreate swapchain: ", swapRet.error().message());
+        // Keep swapchainDirty=true so the next frame retries
+        swapchainDirty = true;
+        return false;
     }
 
-    if (!swapRet) {
-        LOG_ERROR("Failed to recreate swapchain: ", swapRet.error().message());
-        swapchain = VK_NULL_HANDLE;
-        return false;
+    // Success — safe to retire the old swapchain
+    if (oldSwapchain) {
+        vkDestroySwapchainKHR(device, oldSwapchain, nullptr);
     }
 
     auto vkbSwap = swapRet.value();
@@ -1322,6 +1329,7 @@ bool VkContext::recreateSwapchain(int width, int height) {
 
 VkCommandBuffer VkContext::beginFrame(uint32_t& imageIndex) {
     if (deviceLost_) return VK_NULL_HANDLE;
+    if (swapchain == VK_NULL_HANDLE) return VK_NULL_HANDLE;  // Swapchain lost; recreate pending
 
     auto& frame = frames[currentFrame];
 

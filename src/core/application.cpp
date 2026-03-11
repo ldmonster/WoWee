@@ -2553,13 +2553,19 @@ void Application::setupUICallbacks() {
             // Don't override Death animation (1). The per-frame sync loop will return to
             // Stand when movement stops.
             if (durationMs > 0) {
-                uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
-                auto* cr = renderer->getCharacterRenderer();
-                bool gotState = cr->getAnimationState(instanceId, curAnimId, curT, curDur);
-                if (!gotState || curAnimId != 1 /*Death*/) {
-                    cr->playAnimation(instanceId, 5u, /*loop=*/true);
+                // Player animation is managed by the local renderer state machine —
+                // don't reset it here or every server movement packet restarts the
+                // run cycle from frame 0, causing visible stutter.
+                if (!isPlayer) {
+                    uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
+                    auto* cr = renderer->getCharacterRenderer();
+                    bool gotState = cr->getAnimationState(instanceId, curAnimId, curT, curDur);
+                    // Only start Run if not already running and not in Death animation.
+                    if (!gotState || (curAnimId != 1 /*Death*/ && curAnimId != 5u /*Run*/)) {
+                        cr->playAnimation(instanceId, 5u, /*loop=*/true);
+                    }
+                    creatureWasMoving_[guid] = true;
                 }
-                if (!isPlayer) creatureWasMoving_[guid] = true;
             }
         }
     });
@@ -8701,17 +8707,21 @@ void Application::updateQuestMarkers() {
         int markerType = -1;  // -1 = no marker
 
         using game::QuestGiverStatus;
+        float markerGrayscale = 0.0f;  // 0 = colour, 1 = grey (trivial quests)
         switch (status) {
             case QuestGiverStatus::AVAILABLE:
+                markerType = 0;  // Yellow !
+                break;
             case QuestGiverStatus::AVAILABLE_LOW:
-                markerType = 0;  // Available (yellow !)
+                markerType = 0;  // Grey ! (same texture, desaturated in shader)
+                markerGrayscale = 1.0f;
                 break;
             case QuestGiverStatus::REWARD:
             case QuestGiverStatus::REWARD_REP:
-                markerType = 1;  // Turn-in (yellow ?)
+                markerType = 1;  // Yellow ?
                 break;
             case QuestGiverStatus::INCOMPLETE:
-                markerType = 2;  // Incomplete (grey ?)
+                markerType = 2;  // Grey ?
                 break;
             default:
                 break;
@@ -8745,7 +8755,7 @@ void Application::updateQuestMarkers() {
         }
 
         // Set the marker (renderer will handle positioning, bob, glow, etc.)
-        questMarkerRenderer->setMarker(guid, renderPos, markerType, boundingHeight);
+        questMarkerRenderer->setMarker(guid, renderPos, markerType, boundingHeight, markerGrayscale);
         markersAdded++;
     }
 

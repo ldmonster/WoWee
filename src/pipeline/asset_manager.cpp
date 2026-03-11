@@ -92,7 +92,7 @@ void AssetManager::setupFileCacheBudget() {
     const size_t envMaxMB = parseEnvSizeMB("WOWEE_FILE_CACHE_MAX_MB");
 
     const size_t minBudgetBytes = 256ull * 1024ull * 1024ull;
-    const size_t defaultMaxBudgetBytes = 32768ull * 1024ull * 1024ull;
+    const size_t defaultMaxBudgetBytes = 12288ull * 1024ull * 1024ull;  // 12 GB max for file cache
     const size_t maxBudgetBytes = (envMaxMB > 0)
         ? (envMaxMB * 1024ull * 1024ull)
         : defaultMaxBudgetBytes;

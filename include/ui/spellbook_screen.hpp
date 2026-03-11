@@ -94,8 +94,8 @@ private:
     VkDescriptorSet getSpellIcon(uint32_t iconId, pipeline::AssetManager* assetManager);
     const SpellInfo* getSpellInfo(uint32_t spellId) const;
 
-    // Tooltip rendering helper
-    void renderSpellTooltip(const SpellInfo* info, game::GameHandler& gameHandler);
+    // Tooltip rendering helper (showUsageHints=false when called from action bar)
+    void renderSpellTooltip(const SpellInfo* info, game::GameHandler& gameHandler, bool showUsageHints = true);
 };
 
 } // namespace ui
