@@ -356,6 +356,9 @@ public:
     void declineBattlefield(uint32_t queueSlot = 0xFFFFFFFF);
     const std::array<BgQueueSlot, 3>& getBgQueues() const { return bgQueues_; }
 
+    // Network latency (milliseconds, updated each PONG response)
+    uint32_t getLatencyMs() const { return lastLatency; }
+
     // Logout commands
     void requestLogout();
     void cancelLogout();

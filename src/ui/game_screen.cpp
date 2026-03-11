@@ -2464,6 +2464,10 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                     if (totEntity->getType() == game::ObjectType::UNIT ||
                         totEntity->getType() == game::ObjectType::PLAYER) {
                         auto totUnit = std::static_pointer_cast<game::Unit>(totEntity);
+                        if (totUnit->getLevel() > 0) {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("Lv%u", totUnit->getLevel());
+                        }
                         uint32_t hp = totUnit->getHealth();
                         uint32_t maxHp = totUnit->getMaxHealth();
                         if (maxHp > 0) {
@@ -2475,6 +2479,10 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                             ImGui::ProgressBar(pct, ImVec2(-1, 10), "");
                             ImGui::PopStyleColor();
                         }
+                    }
+                    // Click to target the target-of-target
+                    if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0)) {
+                        gameHandler.setTarget(totGuid);
                     }
                 }
                 ImGui::End();
@@ -9368,19 +9376,71 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     }
     ImGui::End();
 
-    // "New Mail" indicator below the minimap
+    // Indicators below the minimap (stacked: new mail, then BG queue, then latency)
+    float indicatorX = centerX - mapRadius;
+    float nextIndicatorY = centerY + mapRadius + 4.0f;
+    const float indicatorW = mapRadius * 2.0f;
+    constexpr float kIndicatorH = 22.0f;
+    ImGuiWindowFlags indicatorFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                                       ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs;
+
+    // "New Mail" indicator
     if (gameHandler.hasNewMail()) {
-        float indicatorX = centerX - mapRadius;
-        float indicatorY = centerY + mapRadius + 4.0f;
-        ImGui::SetNextWindowPos(ImVec2(indicatorX, indicatorY), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(mapRadius * 2.0f, 22), ImGuiCond_Always);
-        ImGuiWindowFlags mailFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                                      ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs;
-        if (ImGui::Begin("##NewMailIndicator", nullptr, mailFlags)) {
-            // Pulsing effect
+        ImGui::SetNextWindowPos(ImVec2(indicatorX, nextIndicatorY), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(indicatorW, kIndicatorH), ImGuiCond_Always);
+        if (ImGui::Begin("##NewMailIndicator", nullptr, indicatorFlags)) {
             float pulse = 0.7f + 0.3f * std::sin(static_cast<float>(ImGui::GetTime()) * 3.0f);
             ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, pulse), "New Mail!");
+        }
+        ImGui::End();
+        nextIndicatorY += kIndicatorH;
+    }
+
+    // BG queue status indicator (when in queue but not yet invited)
+    for (const auto& slot : gameHandler.getBgQueues()) {
+        if (slot.statusId != 1) continue;  // STATUS_WAIT_QUEUE only
+
+        std::string bgName;
+        if (slot.arenaType > 0) {
+            bgName = std::to_string(slot.arenaType) + "v" + std::to_string(slot.arenaType) + " Arena";
+        } else {
+            switch (slot.bgTypeId) {
+                case 1: bgName = "AV"; break;
+                case 2: bgName = "WSG"; break;
+                case 3: bgName = "AB"; break;
+                case 7: bgName = "EotS"; break;
+                case 9: bgName = "SotA"; break;
+                case 11: bgName = "IoC"; break;
+                default: bgName = "BG"; break;
+            }
+        }
+
+        ImGui::SetNextWindowPos(ImVec2(indicatorX, nextIndicatorY), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(indicatorW, kIndicatorH), ImGuiCond_Always);
+        if (ImGui::Begin("##BgQueueIndicator", nullptr, indicatorFlags)) {
+            float pulse = 0.6f + 0.4f * std::sin(static_cast<float>(ImGui::GetTime()) * 1.5f);
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, pulse),
+                               "In Queue: %s", bgName.c_str());
+        }
+        ImGui::End();
+        nextIndicatorY += kIndicatorH;
+        break;  // Show at most one queue slot indicator
+    }
+
+    // Latency indicator (shown when in world and last latency is known)
+    uint32_t latMs = gameHandler.getLatencyMs();
+    if (latMs > 0 && gameHandler.getState() == game::WorldState::IN_WORLD) {
+        ImVec4 latColor;
+        if      (latMs < 100) latColor = ImVec4(0.3f, 1.0f, 0.3f, 0.8f);   // Green < 100ms
+        else if (latMs < 250) latColor = ImVec4(1.0f, 1.0f, 0.3f, 0.8f);   // Yellow < 250ms
+        else if (latMs < 500) latColor = ImVec4(1.0f, 0.6f, 0.1f, 0.8f);   // Orange < 500ms
+        else                  latColor = ImVec4(1.0f, 0.2f, 0.2f, 0.8f);   // Red >= 500ms
+
+        ImGui::SetNextWindowPos(ImVec2(indicatorX, nextIndicatorY), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(indicatorW, kIndicatorH), ImGuiCond_Always);
+        if (ImGui::Begin("##LatencyIndicator", nullptr, indicatorFlags)) {
+            ImGui::TextColored(latColor, "%u ms", latMs);
         }
         ImGui::End();
     }
