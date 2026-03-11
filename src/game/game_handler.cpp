@@ -2864,13 +2864,33 @@ void GameHandler::handlePacket(network::Packet& packet) {
             handleAuraUpdate(packet, true);
             break;
         case Opcode::SMSG_DISPEL_FAILED: {
-            // casterGuid(8) + victimGuid(8) + spellId(4) [+ failing spellId(4)...]
-            if (packet.getSize() - packet.getReadPos() >= 20) {
-                /*uint64_t casterGuid =*/ packet.readUInt64();
-                /*uint64_t victimGuid =*/ packet.readUInt64();
-                uint32_t spellId = packet.readUInt32();
+            // WotLK:       uint32 dispelSpellId + packed_guid caster + packed_guid victim
+            //              [+ count × uint32 failedSpellId]
+            // TBC/Classic: uint64 caster + uint64 victim + uint32 spellId
+            //              [+ count × uint32 failedSpellId]
+            const bool dispelTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+            uint32_t dispelSpellId = 0;
+            if (dispelTbcLike) {
+                if (packet.getSize() - packet.getReadPos() < 20) break;
+                /*uint64_t caster =*/ packet.readUInt64();
+                /*uint64_t victim =*/ packet.readUInt64();
+                dispelSpellId = packet.readUInt32();
+            } else {
+                if (packet.getSize() - packet.getReadPos() < 4) break;
+                dispelSpellId = packet.readUInt32();
+                if (packet.getSize() - packet.getReadPos() < 1) break;
+                /*uint64_t caster =*/ UpdateObjectParser::readPackedGuid(packet);
+                if (packet.getSize() - packet.getReadPos() < 1) break;
+                /*uint64_t victim =*/ UpdateObjectParser::readPackedGuid(packet);
+            }
+            {
+                loadSpellNameCache();
+                auto it = spellNameCache_.find(dispelSpellId);
                 char buf[128];
-                std::snprintf(buf, sizeof(buf), "Dispel failed! (spell %u)", spellId);
+                if (it != spellNameCache_.end() && !it->second.name.empty())
+                    std::snprintf(buf, sizeof(buf), "%s failed to dispel.", it->second.name.c_str());
+                else
+                    std::snprintf(buf, sizeof(buf), "Dispel failed! (spell %u)", dispelSpellId);
                 addSystemChatMessage(buf);
             }
             break;
