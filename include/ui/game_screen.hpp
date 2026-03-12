@@ -527,6 +527,17 @@ private:
     bool areaDiscoveryCallbackSet_ = false;
     void renderDiscoveryToast();
 
+    // Whisper toast — brief overlay at screen top when a whisper arrives while chat is not focused
+    struct WhisperToastEntry {
+        std::string sender;
+        std::string preview;   // first ~60 chars of message
+        float age = 0.0f;
+    };
+    static constexpr float WHISPER_TOAST_DURATION = 5.0f;
+    std::vector<WhisperToastEntry> whisperToasts_;
+    size_t whisperSeenCount_ = 0;     // how many chat entries have been scanned for whispers
+    void renderWhisperToasts();
+
     // Zone discovery text ("Entering: <ZoneName>")
     static constexpr float ZONE_TEXT_DURATION = 5.0f;
     float zoneTextTimer_ = 0.0f;

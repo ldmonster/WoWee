@@ -639,6 +639,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderDingEffect();
     renderAchievementToast();
     renderDiscoveryToast();
+    renderWhisperToasts();
     renderZoneText();
 
     // World map (M key toggle handled inside)
@@ -1687,6 +1688,32 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
         chatMentionSeenCount_ = chatHistory.size();
     } else if (chatHistory.size() <= chatMentionSeenCount_) {
         chatMentionSeenCount_ = chatHistory.size();  // reset if history was cleared
+    }
+
+    // Scan NEW messages for incoming whispers and push a toast notification
+    {
+        size_t histSize = chatHistory.size();
+        if (histSize < whisperSeenCount_) whisperSeenCount_ = histSize; // cleared
+        for (size_t wi = whisperSeenCount_; wi < histSize; ++wi) {
+            const auto& wMsg = chatHistory[wi];
+            if (wMsg.type == game::ChatType::WHISPER ||
+                wMsg.type == game::ChatType::RAID_BOSS_WHISPER) {
+                WhisperToastEntry toast;
+                toast.sender = wMsg.senderName;
+                if (toast.sender.empty() && wMsg.senderGuid != 0)
+                    toast.sender = gameHandler.lookupName(wMsg.senderGuid);
+                if (toast.sender.empty()) toast.sender = "Unknown";
+                // Truncate preview to 60 chars
+                toast.preview = wMsg.message.size() > 60
+                    ? wMsg.message.substr(0, 57) + "..."
+                    : wMsg.message;
+                toast.age = 0.0f;
+                // Keep at most 3 stacked toasts
+                if (whisperToasts_.size() >= 3) whisperToasts_.erase(whisperToasts_.begin());
+                whisperToasts_.push_back(std::move(toast));
+            }
+        }
+        whisperSeenCount_ = histSize;
     }
 
     int chatMsgIdx = 0;
@@ -18012,6 +18039,80 @@ void GameScreen::renderDiscoveryToast() {
 }
 
 // ---------------------------------------------------------------------------
+// Whisper toast notifications — brief overlay when a player whispers you
+// ---------------------------------------------------------------------------
+
+void GameScreen::renderWhisperToasts() {
+    if (whisperToasts_.empty()) return;
+
+    float dt = ImGui::GetIO().DeltaTime;
+
+    // Age and prune expired toasts
+    for (auto& t : whisperToasts_) t.age += dt;
+    whisperToasts_.erase(
+        std::remove_if(whisperToasts_.begin(), whisperToasts_.end(),
+            [](const WhisperToastEntry& t) { return t.age >= WHISPER_TOAST_DURATION; }),
+        whisperToasts_.end());
+    if (whisperToasts_.empty()) return;
+
+    ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+    float screenH = displaySize.y > 0.0f ? displaySize.y : 720.0f;
+
+    // Stack toasts at bottom-left, above the action bars (y ≈ screenH * 0.72)
+    // Each toast is ~56px tall with a 4px gap between them.
+    constexpr float TOAST_W   = 280.0f;
+    constexpr float TOAST_H   = 56.0f;
+    constexpr float TOAST_GAP = 4.0f;
+    constexpr float TOAST_X   = 14.0f;  // left edge (won't cover action bars)
+    float baseY = screenH * 0.72f;
+
+    ImDrawList* bgDL = ImGui::GetBackgroundDrawList();
+
+    const int count = static_cast<int>(whisperToasts_.size());
+    for (int i = 0; i < count; ++i) {
+        auto& toast = whisperToasts_[i];
+
+        // Fade in over 0.25s; fade out in last 1.0s
+        float alpha;
+        float remaining = WHISPER_TOAST_DURATION - toast.age;
+        if (toast.age < 0.25f)
+            alpha = toast.age / 0.25f;
+        else if (remaining < 1.0f)
+            alpha = remaining;
+        else
+            alpha = 1.0f;
+        alpha = std::clamp(alpha, 0.0f, 1.0f);
+
+        // Slide-in from left: offset 0→0 after 0.25s
+        float slideX = (toast.age < 0.25f) ? (TOAST_W * (1.0f - toast.age / 0.25f)) : 0.0f;
+        float tx = TOAST_X - slideX;
+        float ty = baseY - (count - i) * (TOAST_H + TOAST_GAP);
+
+        uint8_t bgA = static_cast<uint8_t>(210 * alpha);
+        uint8_t fgA = static_cast<uint8_t>(255 * alpha);
+
+        // Background panel — dark purple tint (whisper color convention)
+        bgDL->AddRectFilled(ImVec2(tx, ty), ImVec2(tx + TOAST_W, ty + TOAST_H),
+                            IM_COL32(25, 10, 40, bgA), 6.0f);
+        // Purple border
+        bgDL->AddRect(ImVec2(tx, ty), ImVec2(tx + TOAST_W, ty + TOAST_H),
+                      IM_COL32(160, 80, 220, static_cast<uint8_t>(180 * alpha)), 6.0f, 0, 1.5f);
+
+        // "Whisper" label (small, purple-ish)
+        bgDL->AddText(ImVec2(tx + 10.0f, ty + 6.0f),
+                      IM_COL32(190, 110, 255, fgA), "Whisper from:");
+
+        // Sender name (gold)
+        bgDL->AddText(ImVec2(tx + 10.0f, ty + 20.0f),
+                      IM_COL32(255, 210, 50, fgA), toast.sender.c_str());
+
+        // Message preview (white, dimmer)
+        bgDL->AddText(ImVec2(tx + 10.0f, ty + 36.0f),
+                      IM_COL32(220, 220, 220, static_cast<uint8_t>(200 * alpha)),
+                      toast.preview.c_str());
+    }
+}
+
 // Zone discovery text — "Entering: <ZoneName>" fades in/out at screen centre
 // ---------------------------------------------------------------------------
 
