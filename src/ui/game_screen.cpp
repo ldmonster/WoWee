@@ -2082,11 +2082,19 @@ void GameScreen::renderPlayerFrame(game::GameHandler& gameHandler) {
             gameHandler.setTarget(gameHandler.getPlayerGuid());
         }
         if (ImGui::BeginPopupContextItem("PlayerSelfCtx")) {
-            if (ImGui::Selectable("Open Character")) {
+            ImGui::TextDisabled("%s", playerName.c_str());
+            ImGui::Separator();
+            if (ImGui::MenuItem("Open Character")) {
                 inventoryScreen.setCharacterOpen(true);
             }
-            if (ImGui::Selectable("Toggle PvP")) {
+            if (ImGui::MenuItem("Toggle PvP")) {
                 gameHandler.togglePvp();
+            }
+            if (gameHandler.isInGroup()) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("Leave Group")) {
+                    gameHandler.leaveGroup();
+                }
             }
             ImGui::EndPopup();
         }
