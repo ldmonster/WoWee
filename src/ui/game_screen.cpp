@@ -2499,13 +2499,58 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 18.0f);
         }
 
-        // Entity name and type
+        // Entity name and type — Selectable so we can attach a right-click context menu
         std::string name = getEntityName(target);
 
         ImVec4 nameColor = hostileColor;
 
         ImGui::SameLine(0.0f, 0.0f);
-        ImGui::TextColored(nameColor, "%s", name.c_str());
+        ImGui::PushStyleColor(ImGuiCol_Text, nameColor);
+        ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0,0,0,0));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(1,1,1,0.08f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(1,1,1,0.12f));
+        ImGui::Selectable(name.c_str(), false, ImGuiSelectableFlags_DontClosePopups,
+                          ImVec2(ImGui::CalcTextSize(name.c_str()).x, 0));
+        ImGui::PopStyleColor(4);
+
+        // Right-click context menu on the target name
+        if (ImGui::BeginPopupContextItem("##TargetNameCtx")) {
+            const bool isPlayer = (target->getType() == game::ObjectType::PLAYER);
+            const uint64_t tGuid = target->getGuid();
+
+            ImGui::TextDisabled("%s", name.c_str());
+            ImGui::Separator();
+
+            if (ImGui::MenuItem("Set Focus")) {
+                gameHandler.setFocus(tGuid);
+            }
+            if (ImGui::MenuItem("Clear Target")) {
+                gameHandler.clearTarget();
+            }
+            if (isPlayer) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("Whisper")) {
+                    selectedChatType = 4;
+                    strncpy(whisperTargetBuffer, name.c_str(), sizeof(whisperTargetBuffer) - 1);
+                    whisperTargetBuffer[sizeof(whisperTargetBuffer) - 1] = '\0';
+                    refocusChatInput = true;
+                }
+                if (ImGui::MenuItem("Invite to Group")) {
+                    gameHandler.inviteToGroup(name);
+                }
+                if (ImGui::MenuItem("Trade")) {
+                    gameHandler.initiateTrade(tGuid);
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Add Friend")) {
+                    gameHandler.addFriend(name);
+                }
+                if (ImGui::MenuItem("Ignore")) {
+                    gameHandler.addIgnore(name);
+                }
+            }
+            ImGui::EndPopup();
+        }
 
         // Level (for units/players) — colored by difficulty
         if (target->getType() == game::ObjectType::UNIT || target->getType() == game::ObjectType::PLAYER) {
