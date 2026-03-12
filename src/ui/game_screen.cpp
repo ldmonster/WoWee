@@ -4038,6 +4038,15 @@ void GameScreen::renderFocusFrame(game::GameHandler& gameHandler) {
                           ImVec2(ImGui::CalcTextSize(focusName.c_str()).x, 0));
         ImGui::PopStyleColor(4);
 
+        // Group leader crown — golden ♛ when the focused player is the party/raid leader
+        if (gameHandler.isInGroup() && focus->getType() == game::ObjectType::PLAYER) {
+            if (gameHandler.getPartyData().leaderGuid == focus->getGuid()) {
+                ImGui::SameLine(0, 4);
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.1f, 1.0f), "\xe2\x99\x9b");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Group Leader");
+            }
+        }
+
         // Quest giver indicator and classification badge for NPC focus targets
         if (focus->getType() == game::ObjectType::UNIT) {
             auto focusUnit = std::static_pointer_cast<game::Unit>(focus);
