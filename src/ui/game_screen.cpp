@@ -7709,6 +7709,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 
         // Cast bar below health bar when unit is casting
         float castBarBaseY = sy + barH + 2.0f;
+        float nameplateBottom = castBarBaseY;  // tracks lowest drawn element for debuff dots
         {
             const auto* cs = gameHandler.getUnitCastState(guid);
             if (cs && cs->casting && cs->timeTotal > 0.0f) {
@@ -7751,6 +7752,37 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 float timeY = castBarBaseY + (cbH - timeSz.y) * 0.5f;
                 drawList->AddText(ImVec2(timeX + 1.0f, timeY + 1.0f), IM_COL32(0, 0, 0, A(140)), timeBuf);
                 drawList->AddText(ImVec2(timeX,         timeY),         IM_COL32(220, 200, 255, A(220)), timeBuf);
+                nameplateBottom = castBarBaseY + cbH + 2.0f;
+            }
+        }
+
+        // Debuff dot indicators: small colored squares below the nameplate showing
+        // player-applied auras on the current hostile target.
+        // Colors: Magic=blue, Curse=purple, Disease=yellow, Poison=green, Other=grey
+        if (isTarget && unit->isHostile() && !isCorpse) {
+            const auto& auras = gameHandler.getTargetAuras();
+            const uint64_t pguid = gameHandler.getPlayerGuid();
+            const float dotSize = 6.0f * nameplateScale_;
+            const float dotGap  = 2.0f;
+            float dotX = barX;
+            for (const auto& aura : auras) {
+                if (aura.isEmpty() || aura.casterGuid != pguid) continue;
+                uint8_t dispelType = gameHandler.getSpellDispelType(aura.spellId);
+                ImU32 dotCol;
+                switch (dispelType) {
+                    case 1:  dotCol = IM_COL32( 64, 128, 255, A(210)); break; // Magic   - blue
+                    case 2:  dotCol = IM_COL32(160,  32, 240, A(210)); break; // Curse   - purple
+                    case 3:  dotCol = IM_COL32(180, 140,  40, A(210)); break; // Disease - yellow-brown
+                    case 4:  dotCol = IM_COL32( 50, 200,  50, A(210)); break; // Poison  - green
+                    default: dotCol = IM_COL32(170, 170, 170, A(170)); break; // Other   - grey
+                }
+                drawList->AddRectFilled(ImVec2(dotX,          nameplateBottom),
+                                        ImVec2(dotX + dotSize, nameplateBottom + dotSize), dotCol, 1.0f);
+                drawList->AddRect      (ImVec2(dotX - 1.0f,          nameplateBottom - 1.0f),
+                                        ImVec2(dotX + dotSize + 1.0f, nameplateBottom + dotSize + 1.0f),
+                                        IM_COL32(0, 0, 0, A(150)), 1.0f);
+                dotX += dotSize + dotGap;
+                if (dotX + dotSize > barX + barW) break;
             }
         }
 
