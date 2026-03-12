@@ -3915,6 +3915,130 @@ void GameScreen::renderFocusFrame(game::GameHandler& gameHandler) {
             }
         }
 
+        // Focus auras — buffs first, then debuffs, up to 8 icons wide
+        {
+            const std::vector<game::AuraSlot>* focusAuras =
+                (focus->getGuid() == gameHandler.getTargetGuid())
+                    ? &gameHandler.getTargetAuras()
+                    : gameHandler.getUnitAuras(focus->getGuid());
+
+            if (focusAuras) {
+                int activeCount = 0;
+                for (const auto& a : *focusAuras) if (!a.isEmpty()) activeCount++;
+                if (activeCount > 0) {
+                    auto* focusAsset = core::Application::getInstance().getAssetManager();
+                    constexpr float FA_ICON = 20.0f;
+                    constexpr int   FA_PER_ROW = 10;
+
+                    ImGui::Separator();
+
+                    uint64_t faNowMs = static_cast<uint64_t>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count());
+
+                    // Sort: debuffs first (so hostile-caster info is prominent), then buffs
+                    std::vector<size_t> faIdx;
+                    faIdx.reserve(focusAuras->size());
+                    for (size_t i = 0; i < focusAuras->size(); ++i)
+                        if (!(*focusAuras)[i].isEmpty()) faIdx.push_back(i);
+                    std::sort(faIdx.begin(), faIdx.end(), [&](size_t a, size_t b) {
+                        bool aD = ((*focusAuras)[a].flags & 0x80) != 0;
+                        bool bD = ((*focusAuras)[b].flags & 0x80) != 0;
+                        if (aD != bD) return aD > bD; // debuffs first
+                        int32_t ra = (*focusAuras)[a].getRemainingMs(faNowMs);
+                        int32_t rb = (*focusAuras)[b].getRemainingMs(faNowMs);
+                        if (ra < 0 && rb < 0) return false;
+                        if (ra < 0) return false;
+                        if (rb < 0) return true;
+                        return ra < rb;
+                    });
+
+                    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, 2.0f));
+                    int faShown = 0;
+                    for (size_t si = 0; si < faIdx.size() && faShown < 20; ++si) {
+                        const auto& aura = (*focusAuras)[faIdx[si]];
+                        bool isBuff = (aura.flags & 0x80) == 0;
+
+                        if (faShown > 0 && faShown % FA_PER_ROW != 0) ImGui::SameLine();
+                        ImGui::PushID(static_cast<int>(faIdx[si]) + 3000);
+
+                        ImVec4 borderCol;
+                        if (isBuff) {
+                            borderCol = ImVec4(0.2f, 0.8f, 0.2f, 0.9f);
+                        } else {
+                            uint8_t dt = gameHandler.getSpellDispelType(aura.spellId);
+                            switch (dt) {
+                                case 1: borderCol = ImVec4(0.15f, 0.50f, 1.00f, 0.9f); break;
+                                case 2: borderCol = ImVec4(0.70f, 0.20f, 0.90f, 0.9f); break;
+                                case 3: borderCol = ImVec4(0.55f, 0.30f, 0.10f, 0.9f); break;
+                                case 4: borderCol = ImVec4(0.10f, 0.70f, 0.10f, 0.9f); break;
+                                default: borderCol = ImVec4(0.80f, 0.20f, 0.20f, 0.9f); break;
+                            }
+                        }
+
+                        VkDescriptorSet faIcon = (focusAsset)
+                            ? getSpellIcon(aura.spellId, focusAsset) : VK_NULL_HANDLE;
+                        if (faIcon) {
+                            ImGui::PushStyleColor(ImGuiCol_Button, borderCol);
+                            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(1, 1));
+                            ImGui::ImageButton("##faura",
+                                (ImTextureID)(uintptr_t)faIcon,
+                                ImVec2(FA_ICON - 2, FA_ICON - 2));
+                            ImGui::PopStyleVar();
+                            ImGui::PopStyleColor();
+                        } else {
+                            ImGui::PushStyleColor(ImGuiCol_Button, borderCol);
+                            char lab[8];
+                            snprintf(lab, sizeof(lab), "%u", aura.spellId);
+                            ImGui::Button(lab, ImVec2(FA_ICON, FA_ICON));
+                            ImGui::PopStyleColor();
+                        }
+
+                        // Duration overlay
+                        int32_t faRemain = aura.getRemainingMs(faNowMs);
+                        if (faRemain > 0) {
+                            ImVec2 imin = ImGui::GetItemRectMin();
+                            ImVec2 imax = ImGui::GetItemRectMax();
+                            char ts[12];
+                            int s = (faRemain + 999) / 1000;
+                            if (s >= 3600) snprintf(ts, sizeof(ts), "%dh", s / 3600);
+                            else if (s >= 60) snprintf(ts, sizeof(ts), "%d:%02d", s / 60, s % 60);
+                            else snprintf(ts, sizeof(ts), "%d", s);
+                            ImVec2 tsz = ImGui::CalcTextSize(ts);
+                            float cx = imin.x + (imax.x - imin.x - tsz.x) * 0.5f;
+                            float cy = imax.y - tsz.y - 1.0f;
+                            ImGui::GetWindowDrawList()->AddText(ImVec2(cx + 1, cy + 1), IM_COL32(0, 0, 0, 180), ts);
+                            ImGui::GetWindowDrawList()->AddText(ImVec2(cx, cy), IM_COL32(255, 255, 255, 220), ts);
+                        }
+
+                        // Tooltip
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::BeginTooltip();
+                            bool richOk = spellbookScreen.renderSpellInfoTooltip(
+                                aura.spellId, gameHandler, focusAsset);
+                            if (!richOk) {
+                                std::string nm = spellbookScreen.lookupSpellName(aura.spellId, focusAsset);
+                                if (nm.empty()) nm = "Spell #" + std::to_string(aura.spellId);
+                                ImGui::Text("%s", nm.c_str());
+                            }
+                            if (faRemain > 0) {
+                                int s = faRemain / 1000;
+                                char db[32];
+                                if (s < 60) snprintf(db, sizeof(db), "Remaining: %ds", s);
+                                else snprintf(db, sizeof(db), "Remaining: %dm %ds", s / 60, s % 60);
+                                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", db);
+                            }
+                            ImGui::EndTooltip();
+                        }
+
+                        ImGui::PopID();
+                        faShown++;
+                    }
+                    ImGui::PopStyleVar();
+                }
+            }
+        }
+
         // Clicking the focus frame targets it
         if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0)) {
             gameHandler.setTarget(focus->getGuid());
