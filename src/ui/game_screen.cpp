@@ -787,7 +787,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         }
 
         // Only show when alive and below 20% HP; intensity increases as HP drops
-        if (!isDead && hpPct < 0.20f && hpPct > 0.0f) {
+        if (lowHealthVignetteEnabled_ && !isDead && hpPct < 0.20f && hpPct > 0.0f) {
             // Base intensity from HP deficit (0 at 20%, 1 at 0%); pulse at ~1.5 Hz
             float danger = (0.20f - hpPct) / 0.20f;
             float pulse  = 0.55f + 0.45f * std::sin(static_cast<float>(ImGui::GetTime()) * 9.4f);
@@ -12021,6 +12021,12 @@ void GameScreen::renderSettingsWindow() {
                 ImGui::SameLine();
                 ImGui::TextDisabled("(red vignette on taking damage)");
 
+                if (ImGui::Checkbox("Low Health Vignette", &lowHealthVignetteEnabled_)) {
+                    saveSettings();
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("(pulsing red edges below 20%% HP)");
+
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
@@ -13841,6 +13847,7 @@ void GameScreen::saveSettings() {
     out << "right_bar_offset_y=" << pendingRightBarOffsetY << "\n";
     out << "left_bar_offset_y=" << pendingLeftBarOffsetY << "\n";
     out << "damage_flash=" << (damageFlashEnabled_ ? 1 : 0) << "\n";
+    out << "low_health_vignette=" << (lowHealthVignetteEnabled_ ? 1 : 0) << "\n";
 
     // Audio
     out << "sound_muted=" << (soundMuted_ ? 1 : 0) << "\n";
@@ -13962,6 +13969,8 @@ void GameScreen::loadSettings() {
                 pendingLeftBarOffsetY = std::clamp(std::stof(val), -400.0f, 400.0f);
             } else if (key == "damage_flash") {
                 damageFlashEnabled_ = (std::stoi(val) != 0);
+            } else if (key == "low_health_vignette") {
+                lowHealthVignetteEnabled_ = (std::stoi(val) != 0);
             }
             // Audio
             else if (key == "sound_muted") {
