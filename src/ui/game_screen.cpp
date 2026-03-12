@@ -11094,10 +11094,14 @@ void GameScreen::renderBankWindow(game::GameHandler& gameHandler) {
 
             // Tooltip
             if (ImGui::IsItemHovered() && !isHolding) {
-                ImGui::BeginTooltip();
-                ImGui::TextColored(qc, "%s", item.name.c_str());
-                if (item.stackCount > 1) ImGui::Text("Count: %u", item.stackCount);
-                ImGui::EndTooltip();
+                auto* info = gameHandler.getItemInfo(item.itemId);
+                if (info && info->valid)
+                    inventoryScreen.renderItemTooltip(*info);
+                else {
+                    ImGui::BeginTooltip();
+                    ImGui::TextColored(qc, "%s", item.name.c_str());
+                    ImGui::EndTooltip();
+                }
             }
         }
     };
