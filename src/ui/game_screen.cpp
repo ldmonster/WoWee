@@ -5056,14 +5056,19 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
                 iconTex = inventoryScreen.getItemIcon(itemDisplayInfoId);
         }
 
+        // Item-missing check: grey out item slots whose item is not in the player's inventory.
+        const bool itemMissing = (slot.type == game::ActionBarSlot::ITEM && slot.id != 0
+                                  && barItemDef == nullptr && !onCooldown);
+
         bool clicked = false;
         if (iconTex) {
             ImVec4 tintColor(1, 1, 1, 1);
             ImVec4 bgColor(0.1f, 0.1f, 0.1f, 0.9f);
-            if (onCooldown) { tintColor = ImVec4(0.4f, 0.4f, 0.4f, 0.8f); }
-            else if (onGCD) { tintColor = ImVec4(0.6f, 0.6f, 0.6f, 0.85f); }
-            else if (outOfRange) { tintColor = ImVec4(0.85f, 0.35f, 0.35f, 0.9f); }
+            if (onCooldown)          { tintColor = ImVec4(0.4f, 0.4f, 0.4f, 0.8f); }
+            else if (onGCD)          { tintColor = ImVec4(0.6f, 0.6f, 0.6f, 0.85f); }
+            else if (outOfRange)     { tintColor = ImVec4(0.85f, 0.35f, 0.35f, 0.9f); }
             else if (insufficientPower) { tintColor = ImVec4(0.6f, 0.5f, 0.9f, 0.85f); }
+            else if (itemMissing)    { tintColor = ImVec4(0.35f, 0.35f, 0.35f, 0.7f); }
             clicked = ImGui::ImageButton("##icon",
                 (ImTextureID)(uintptr_t)iconTex,
                 ImVec2(slotSize, slotSize),
@@ -5073,6 +5078,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
             if (onCooldown)            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.8f));
             else if (outOfRange)       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.15f, 0.15f, 0.9f));
             else if (insufficientPower)ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.15f, 0.4f, 0.9f));
+            else if (itemMissing)      ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.12f, 0.12f, 0.7f));
             else if (slot.isEmpty())   ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.15f, 0.15f, 0.8f));
             else                       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.5f, 0.9f));
 
