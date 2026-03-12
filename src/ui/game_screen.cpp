@@ -8324,57 +8324,59 @@ void GameScreen::renderVendorWindow(game::GameHandler& gameHandler) {
                 ImGui::TableSetupColumn("Price", ImGuiTableColumnFlags_WidthFixed, 110.0f);
                 ImGui::TableSetupColumn("Buy", ImGuiTableColumnFlags_WidthFixed, 62.0f);
                 ImGui::TableHeadersRow();
-                // Show only the most recently sold item (LIFO).
-                const int i = 0;
-                const auto& entry = buyback[0];
-                // Proactively ensure buyback item info is loaded
-                gameHandler.ensureItemInfo(entry.item.itemId);
-                auto* bbInfo = gameHandler.getItemInfo(entry.item.itemId);
-                uint32_t sellPrice = entry.item.sellPrice;
-                if (sellPrice == 0) {
-                    if (bbInfo && bbInfo->valid) sellPrice = bbInfo->sellPrice;
-                }
-                uint64_t price = static_cast<uint64_t>(sellPrice) *
-                                 static_cast<uint64_t>(entry.count > 0 ? entry.count : 1);
-                uint32_t g = static_cast<uint32_t>(price / 10000);
-                uint32_t s = static_cast<uint32_t>((price / 100) % 100);
-                uint32_t c = static_cast<uint32_t>(price % 100);
-                bool canAfford = money >= price;
-
-                ImGui::TableNextRow();
-                ImGui::PushID(8000 + i);
-                ImGui::TableSetColumnIndex(0);
-                {
-                    uint32_t dispId = entry.item.displayInfoId;
-                    if (bbInfo && bbInfo->valid && bbInfo->displayInfoId != 0) dispId = bbInfo->displayInfoId;
-                    if (dispId != 0) {
-                        VkDescriptorSet iconTex = inventoryScreen.getItemIcon(dispId);
-                        if (iconTex) ImGui::Image((ImTextureID)(uintptr_t)iconTex, ImVec2(18, 18));
+                // Show all buyback items (most recently sold first)
+                for (int i = 0; i < static_cast<int>(buyback.size()); ++i) {
+                    const auto& entry = buyback[i];
+                    gameHandler.ensureItemInfo(entry.item.itemId);
+                    auto* bbInfo = gameHandler.getItemInfo(entry.item.itemId);
+                    uint32_t sellPrice = entry.item.sellPrice;
+                    if (sellPrice == 0) {
+                        if (bbInfo && bbInfo->valid) sellPrice = bbInfo->sellPrice;
                     }
+                    uint64_t price = static_cast<uint64_t>(sellPrice) *
+                                     static_cast<uint64_t>(entry.count > 0 ? entry.count : 1);
+                    uint32_t g = static_cast<uint32_t>(price / 10000);
+                    uint32_t s = static_cast<uint32_t>((price / 100) % 100);
+                    uint32_t c = static_cast<uint32_t>(price % 100);
+                    bool canAfford = money >= price;
+
+                    ImGui::TableNextRow();
+                    ImGui::PushID(8000 + i);
+                    ImGui::TableSetColumnIndex(0);
+                    {
+                        uint32_t dispId = entry.item.displayInfoId;
+                        if (bbInfo && bbInfo->valid && bbInfo->displayInfoId != 0) dispId = bbInfo->displayInfoId;
+                        if (dispId != 0) {
+                            VkDescriptorSet iconTex = inventoryScreen.getItemIcon(dispId);
+                            if (iconTex) ImGui::Image((ImTextureID)(uintptr_t)iconTex, ImVec2(18, 18));
+                        }
+                    }
+                    ImGui::TableSetColumnIndex(1);
+                    game::ItemQuality bbQuality = entry.item.quality;
+                    if (bbInfo && bbInfo->valid) bbQuality = static_cast<game::ItemQuality>(bbInfo->quality);
+                    ImVec4 bbQc = InventoryScreen::getQualityColor(bbQuality);
+                    const char* name = entry.item.name.empty() ? "Unknown Item" : entry.item.name.c_str();
+                    if (entry.count > 1) {
+                        ImGui::TextColored(bbQc, "%s x%u", name, entry.count);
+                    } else {
+                        ImGui::TextColored(bbQc, "%s", name);
+                    }
+                    if (ImGui::IsItemHovered() && bbInfo && bbInfo->valid)
+                        inventoryScreen.renderItemTooltip(*bbInfo);
+                    ImGui::TableSetColumnIndex(2);
+                    if (!canAfford) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+                    ImGui::Text("%ug %us %uc", g, s, c);
+                    if (!canAfford) ImGui::PopStyleColor();
+                    ImGui::TableSetColumnIndex(3);
+                    if (!canAfford) ImGui::BeginDisabled();
+                    char bbLabel[32];
+                    snprintf(bbLabel, sizeof(bbLabel), "Buy Back##bb%d", i);
+                    if (ImGui::SmallButton(bbLabel)) {
+                        gameHandler.buyBackItem(static_cast<uint32_t>(i));
+                    }
+                    if (!canAfford) ImGui::EndDisabled();
+                    ImGui::PopID();
                 }
-                ImGui::TableSetColumnIndex(1);
-                game::ItemQuality bbQuality = entry.item.quality;
-                if (bbInfo && bbInfo->valid) bbQuality = static_cast<game::ItemQuality>(bbInfo->quality);
-                ImVec4 bbQc = InventoryScreen::getQualityColor(bbQuality);
-                const char* name = entry.item.name.empty() ? "Unknown Item" : entry.item.name.c_str();
-                if (entry.count > 1) {
-                    ImGui::TextColored(bbQc, "%s x%u", name, entry.count);
-                } else {
-                    ImGui::TextColored(bbQc, "%s", name);
-                }
-                if (ImGui::IsItemHovered() && bbInfo && bbInfo->valid)
-                    inventoryScreen.renderItemTooltip(*bbInfo);
-                ImGui::TableSetColumnIndex(2);
-                if (!canAfford) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
-                ImGui::Text("%ug %us %uc", g, s, c);
-                if (!canAfford) ImGui::PopStyleColor();
-                ImGui::TableSetColumnIndex(3);
-                if (!canAfford) ImGui::BeginDisabled();
-                if (ImGui::SmallButton("Buy Back##buyback_0")) {
-                    gameHandler.buyBackItem(0);
-                }
-                if (!canAfford) ImGui::EndDisabled();
-                ImGui::PopID();
                 ImGui::EndTable();
             }
             ImGui::Separator();
