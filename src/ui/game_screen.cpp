@@ -2937,8 +2937,31 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
 
             ImGui::Separator();
 
+            // Build sorted index list: debuffs before buffs, shorter duration first
+            uint64_t tNowSort = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count());
+            std::vector<size_t> sortedIdx;
+            sortedIdx.reserve(targetAuras.size());
+            for (size_t i = 0; i < targetAuras.size(); ++i)
+                if (!targetAuras[i].isEmpty()) sortedIdx.push_back(i);
+            std::sort(sortedIdx.begin(), sortedIdx.end(), [&](size_t a, size_t b) {
+                const auto& aa = targetAuras[a]; const auto& ab = targetAuras[b];
+                bool aDebuff = (aa.flags & 0x80) != 0;
+                bool bDebuff = (ab.flags & 0x80) != 0;
+                if (aDebuff != bDebuff) return aDebuff > bDebuff; // debuffs first
+                int32_t ra = aa.getRemainingMs(tNowSort);
+                int32_t rb = ab.getRemainingMs(tNowSort);
+                // Permanent (-1) goes last; shorter remaining goes first
+                if (ra < 0 && rb < 0) return false;
+                if (ra < 0) return false;
+                if (rb < 0) return true;
+                return ra < rb;
+            });
+
             int shown = 0;
-            for (size_t i = 0; i < targetAuras.size() && shown < 16; ++i) {
+            for (size_t si = 0; si < sortedIdx.size() && shown < 16; ++si) {
+                size_t i = sortedIdx[si];
                 const auto& aura = targetAuras[i];
                 if (aura.isEmpty()) continue;
 
@@ -9236,12 +9259,33 @@ void GameScreen::renderBuffBar(game::GameHandler& gameHandler) {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, 2.0f));
 
     if (ImGui::Begin("##BuffBar", nullptr, flags)) {
-        // Separate buffs and debuffs; show buffs first, then debuffs with a visual gap
+        // Pre-sort auras: buffs first, then debuffs; within each group, shorter remaining first
+        uint64_t buffNowMs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+        std::vector<size_t> buffSortedIdx;
+        buffSortedIdx.reserve(auras.size());
+        for (size_t i = 0; i < auras.size(); ++i)
+            if (!auras[i].isEmpty()) buffSortedIdx.push_back(i);
+        std::sort(buffSortedIdx.begin(), buffSortedIdx.end(), [&](size_t a, size_t b) {
+            const auto& aa = auras[a]; const auto& ab = auras[b];
+            bool aDebuff = (aa.flags & 0x80) != 0;
+            bool bDebuff = (ab.flags & 0x80) != 0;
+            if (aDebuff != bDebuff) return aDebuff < bDebuff; // buffs (0) first
+            int32_t ra = aa.getRemainingMs(buffNowMs);
+            int32_t rb = ab.getRemainingMs(buffNowMs);
+            if (ra < 0 && rb < 0) return false;
+            if (ra < 0) return false;
+            if (rb < 0) return true;
+            return ra < rb;
+        });
+
         // Render one pass for buffs, one for debuffs
         for (int pass = 0; pass < 2; ++pass) {
             bool wantBuff = (pass == 0);
             int shown = 0;
-        for (size_t i = 0; i < auras.size() && shown < 40; ++i) {
+        for (size_t si = 0; si < buffSortedIdx.size() && shown < 40; ++si) {
+            size_t i = buffSortedIdx[si];
             const auto& aura = auras[i];
             if (aura.isEmpty()) continue;
 
