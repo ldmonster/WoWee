@@ -9953,10 +9953,11 @@ void GameScreen::renderLootWindow(game::GameHandler& gameHandler) {
     if (ImGui::Begin("Loot", &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
         const auto& loot = gameHandler.getCurrentLoot();
 
-        // Gold
+        // Gold (auto-looted on open; shown for feedback)
         if (loot.gold > 0) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%ug %us %uc",
-                               loot.getGold(), loot.getSilver(), loot.getCopper());
+            ImGui::TextDisabled("Gold:");
+            ImGui::SameLine(0, 4);
+            renderCoinsText(loot.getGold(), loot.getSilver(), loot.getCopper());
             ImGui::Separator();
         }
 
