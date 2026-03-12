@@ -16983,6 +16983,14 @@ void GameHandler::loadSpellNameCache() {
         if (f != 0xFFFFFFFF && f < dbc->getFieldCount()) { schoolEnumField = f; hasSchoolEnum = true; }
     }
 
+    // DispelType field (0=none,1=magic,2=curse,3=disease,4=poison,5=stealth,…)
+    uint32_t dispelField = 0xFFFFFFFF;
+    bool hasDispelField = false;
+    if (spellL) {
+        uint32_t f = spellL->field("DispelType");
+        if (f != 0xFFFFFFFF && f < dbc->getFieldCount()) { dispelField = f; hasDispelField = true; }
+    }
+
     uint32_t count = dbc->getRecordCount();
     for (uint32_t i = 0; i < count; ++i) {
         uint32_t id = dbc->getUInt32(i, spellL ? (*spellL)["ID"] : 0);
@@ -16990,7 +16998,7 @@ void GameHandler::loadSpellNameCache() {
         std::string name = dbc->getString(i, spellL ? (*spellL)["Name"] : 136);
         std::string rank = dbc->getString(i, spellL ? (*spellL)["Rank"] : 153);
         if (!name.empty()) {
-            SpellNameEntry entry{std::move(name), std::move(rank), 0};
+            SpellNameEntry entry{std::move(name), std::move(rank), 0, 0};
             if (hasSchoolMask) {
                 entry.schoolMask = dbc->getUInt32(i, schoolMaskField);
             } else if (hasSchoolEnum) {
@@ -16998,6 +17006,9 @@ void GameHandler::loadSpellNameCache() {
                 static const uint32_t enumToBitmask[] = {0x01,0x02,0x04,0x08,0x10,0x20,0x40};
                 uint32_t e = dbc->getUInt32(i, schoolEnumField);
                 entry.schoolMask = (e < 7) ? enumToBitmask[e] : 0;
+            }
+            if (hasDispelField) {
+                entry.dispelType = static_cast<uint8_t>(dbc->getUInt32(i, dispelField));
             }
             spellNameCache_[id] = std::move(entry);
         }
@@ -17190,6 +17201,12 @@ const std::string& GameHandler::getSpellName(uint32_t spellId) const {
 const std::string& GameHandler::getSpellRank(uint32_t spellId) const {
     auto it = spellNameCache_.find(spellId);
     return (it != spellNameCache_.end()) ? it->second.rank : EMPTY_STRING;
+}
+
+uint8_t GameHandler::getSpellDispelType(uint32_t spellId) const {
+    const_cast<GameHandler*>(this)->loadSpellNameCache();
+    auto it = spellNameCache_.find(spellId);
+    return (it != spellNameCache_.end()) ? it->second.dispelType : 0;
 }
 
 const std::string& GameHandler::getSkillLineName(uint32_t spellId) const {

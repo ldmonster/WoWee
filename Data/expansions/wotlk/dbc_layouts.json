@@ -2,7 +2,8 @@
   "Spell": {
     "ID": 0, "Attributes": 4, "IconID": 133,
     "Name": 136, "Tooltip": 139, "Rank": 153, "SchoolMask": 225,
-    "PowerType": 14, "ManaCost": 39, "CastingTimeIndex": 47, "RangeIndex": 49
+    "PowerType": 14, "ManaCost": 39, "CastingTimeIndex": 47, "RangeIndex": 49,
+    "DispelType": 2
   },
   "SpellRange": { "MaxRange": 4 },
   "ItemDisplayInfo": {
