@@ -17111,9 +17111,13 @@ void GameHandler::handleNewWorld(network::Packet& packet) {
         LOG_INFO("Sent MSG_MOVE_WORLDPORT_ACK");
     }
 
-    // Reload terrain at new position
+    // Reload terrain at new position.
+    // Pass isSameMap as isInitialEntry so the application despawns and
+    // re-registers renderer instances before the server resends CREATE_OBJECTs.
+    // Without this, same-map SMSG_NEW_WORLD (dungeon wing teleporters, etc.)
+    // leaves zombie renderer instances that block fresh entity spawns.
     if (worldEntryCallback_) {
-        worldEntryCallback_(mapId, serverX, serverY, serverZ, false);
+        worldEntryCallback_(mapId, serverX, serverY, serverZ, isSameMap);
     }
 }
 
