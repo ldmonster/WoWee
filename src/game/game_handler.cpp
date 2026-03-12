@@ -6703,6 +6703,7 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     onlineEquipDirty_ = false;
     playerMoneyCopper_ = 0;
     playerArmorRating_ = 0;
+    std::fill(std::begin(playerResistances_), std::end(playerResistances_), 0);
     std::fill(std::begin(playerStats_), std::end(playerStats_), -1);
     knownSpells.clear();
     spellCooldowns.clear();
@@ -8807,6 +8808,9 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                             playerArmorRating_ = static_cast<int32_t>(val);
                             LOG_DEBUG("Armor rating from update fields: ", playerArmorRating_);
                         }
+                        else if (ufArmor != 0xFFFF && key > ufArmor && key <= ufArmor + 6) {
+                            playerResistances_[key - ufArmor - 1] = static_cast<int32_t>(val);
+                        }
                         else if (ufPBytes2 != 0xFFFF && key == ufPBytes2) {
                             uint8_t bankBagSlots = static_cast<uint8_t>((val >> 16) & 0xFF);
                             LOG_WARNING("PLAYER_BYTES_2 (CREATE): raw=0x", std::hex, val, std::dec,
@@ -9146,6 +9150,9 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                             }
                             else if (ufArmor != 0xFFFF && key == ufArmor) {
                                 playerArmorRating_ = static_cast<int32_t>(val);
+                            }
+                            else if (ufArmor != 0xFFFF && key > ufArmor && key <= ufArmor + 6) {
+                                playerResistances_[key - ufArmor - 1] = static_cast<int32_t>(val);
                             }
                             else if (ufPBytes2v != 0xFFFF && key == ufPBytes2v) {
                                 uint8_t bankBagSlots = static_cast<uint8_t>((val >> 16) & 0xFF);

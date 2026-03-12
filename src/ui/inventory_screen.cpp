@@ -1159,7 +1159,9 @@ void InventoryScreen::renderCharacterScreen(game::GameHandler& gameHandler) {
             int32_t stats[5];
             for (int i = 0; i < 5; ++i) stats[i] = gameHandler.getPlayerStat(i);
             const int32_t* serverStats = (stats[0] >= 0) ? stats : nullptr;
-            renderStatsPanel(inventory, gameHandler.getPlayerLevel(), gameHandler.getArmorRating(), serverStats);
+            int32_t resists[6];
+            for (int i = 0; i < 6; ++i) resists[i] = gameHandler.getResistance(i + 1);
+            renderStatsPanel(inventory, gameHandler.getPlayerLevel(), gameHandler.getArmorRating(), serverStats, resists);
 
             // Played time (shown if available, fetched on character screen open)
             uint32_t totalSec = gameHandler.getTotalTimePlayed();
@@ -1557,7 +1559,8 @@ void InventoryScreen::renderEquipmentPanel(game::Inventory& inventory) {
 // ============================================================
 
 void InventoryScreen::renderStatsPanel(game::Inventory& inventory, uint32_t playerLevel,
-                                        int32_t serverArmor, const int32_t* serverStats) {
+                                        int32_t serverArmor, const int32_t* serverStats,
+                                        const int32_t* serverResists) {
     // Sum equipment stats for item-query bonus display
     int32_t itemStr = 0, itemAgi = 0, itemSta = 0, itemInt = 0, itemSpi = 0;
     // Secondary stat sums from extraStats
@@ -1664,6 +1667,28 @@ void InventoryScreen::renderStatsPanel(game::Inventory& inventory, uint32_t play
         renderSecondary("Expertise",       itemExpertise);
         renderSecondary("Mana per 5 sec",  itemMp5);
         renderSecondary("Health per 5 sec",itemHp5);
+    }
+
+    // Elemental resistances from server update fields
+    if (serverResists) {
+        static const char* kResistNames[6] = {
+            "Holy Resistance", "Fire Resistance", "Nature Resistance",
+            "Frost Resistance", "Shadow Resistance", "Arcane Resistance"
+        };
+        bool hasResist = false;
+        for (int i = 0; i < 6; ++i) {
+            if (serverResists[i] > 0) { hasResist = true; break; }
+        }
+        if (hasResist) {
+            ImGui::Spacing();
+            ImGui::Separator();
+            for (int i = 0; i < 6; ++i) {
+                if (serverResists[i] > 0) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.85f, 1.0f, 1.0f),
+                        "%s: %d", kResistNames[i], serverResists[i]);
+                }
+            }
+        }
     }
 }
 

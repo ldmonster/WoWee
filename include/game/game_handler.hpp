@@ -295,6 +295,13 @@ public:
     // Server-authoritative armor (UNIT_FIELD_RESISTANCES[0])
     int32_t getArmorRating() const { return playerArmorRating_; }
 
+    // Server-authoritative elemental resistances (UNIT_FIELD_RESISTANCES[1-6]).
+    // school: 1=Holy, 2=Fire, 3=Nature, 4=Frost, 5=Shadow, 6=Arcane. Returns 0 if not received.
+    int32_t getResistance(int school) const {
+        if (school < 1 || school > 6) return 0;
+        return playerResistances_[school - 1];
+    }
+
     // Server-authoritative primary stats (UNIT_FIELD_STAT0-4: STR, AGI, STA, INT, SPI).
     // Returns -1 if the server hasn't sent the value yet.
     int32_t getPlayerStat(int idx) const {
@@ -2436,6 +2443,7 @@ private:
     std::unordered_map<uint64_t, float> recentLootMoneyAnnounceCooldowns_;
     uint64_t playerMoneyCopper_ = 0;
     int32_t playerArmorRating_ = 0;
+    int32_t playerResistances_[6] = {};  // [0]=Holy,[1]=Fire,[2]=Nature,[3]=Frost,[4]=Shadow,[5]=Arcane
     // Server-authoritative primary stats: [0]=STR [1]=AGI [2]=STA [3]=INT [4]=SPI; -1 = not received yet
     int32_t playerStats_[5] = {-1, -1, -1, -1, -1};
     // Some servers/custom clients shift update field indices. We can auto-detect coinage by correlating
