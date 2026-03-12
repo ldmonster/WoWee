@@ -205,6 +205,21 @@ std::string cleanQuestTitleForUi(const std::string& raw, uint32_t questId) {
     if (s.size() > 72) s = s.substr(0, 72) + "...";
     return s;
 }
+
+void renderCoinsText(uint32_t g, uint32_t s, uint32_t c) {
+    bool any = false;
+    if (g > 0) {
+        ImGui::TextColored(ImVec4(1.00f, 0.82f, 0.00f, 1.0f), "%ug", g);
+        any = true;
+    }
+    if (s > 0 || g > 0) {
+        if (any) ImGui::SameLine(0, 3);
+        ImGui::TextColored(ImVec4(0.80f, 0.80f, 0.80f, 1.0f), "%us", s);
+        any = true;
+    }
+    if (any) ImGui::SameLine(0, 3);
+    ImGui::TextColored(ImVec4(0.72f, 0.45f, 0.20f, 1.0f), "%uc", c);
+}
 } // anonymous namespace
 
 void QuestLogScreen::render(game::GameHandler& gameHandler, InventoryScreen& invScreen) {
@@ -488,12 +503,7 @@ void QuestLogScreen::render(game::GameHandler& gameHandler, InventoryScreen& inv
                         uint32_t rg = static_cast<uint32_t>(sel.rewardMoney) / 10000;
                         uint32_t rs = static_cast<uint32_t>(sel.rewardMoney % 10000) / 100;
                         uint32_t rc = static_cast<uint32_t>(sel.rewardMoney % 100);
-                        if (rg > 0)
-                            ImGui::Text("%ug %us %uc", rg, rs, rc);
-                        else if (rs > 0)
-                            ImGui::Text("%us %uc", rs, rc);
-                        else
-                            ImGui::Text("%uc", rc);
+                        renderCoinsText(rg, rs, rc);
                     }
 
                     // Guaranteed reward items
