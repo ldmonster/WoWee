@@ -1770,8 +1770,70 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
             self->chatInputMoveCursorToEnd = false;
         }
 
+        // Tab: slash-command autocomplete
+        if (data->EventFlag == ImGuiInputTextFlags_CallbackCompletion) {
+            if (data->BufTextLen > 0 && data->Buf[0] == '/') {
+                // Split buffer into command word and trailing args
+                std::string fullBuf(data->Buf, data->BufTextLen);
+                size_t spacePos = fullBuf.find(' ');
+                std::string word = (spacePos != std::string::npos) ? fullBuf.substr(0, spacePos) : fullBuf;
+                std::string rest = (spacePos != std::string::npos) ? fullBuf.substr(spacePos) : "";
+
+                // Normalize to lowercase for matching
+                std::string lowerWord = word;
+                for (auto& ch : lowerWord) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+
+                static const std::vector<std::string> kCmds = {
+                    "/afk", "/away", "/cast", "/chathelp", "/clear",
+                    "/dance", "/do", "/dnd", "/e", "/emote",
+                    "/follow", "/g", "/guild", "/guildinfo",
+                    "/gmticket", "/grouploot", "/i", "/instance",
+                    "/invite", "/j", "/join", "/kick",
+                    "/l", "/leave", "/local", "/me",
+                    "/p", "/party", "/r", "/raid",
+                    "/raidwarning", "/random", "/reply", "/roll",
+                    "/s", "/say", "/setloot", "/shout",
+                    "/stopattack", "/stopfollow", "/t", "/time",
+                    "/trade", "/uninvite", "/w", "/whisper",
+                    "/who", "/wts", "/wtb", "/y", "/yell", "/zone"
+                };
+
+                // New session if prefix changed
+                if (self->chatTabMatchIdx_ < 0 || self->chatTabPrefix_ != lowerWord) {
+                    self->chatTabPrefix_ = lowerWord;
+                    self->chatTabMatches_.clear();
+                    for (const auto& cmd : kCmds) {
+                        if (cmd.size() >= lowerWord.size() &&
+                            cmd.compare(0, lowerWord.size(), lowerWord) == 0)
+                            self->chatTabMatches_.push_back(cmd);
+                    }
+                    self->chatTabMatchIdx_ = 0;
+                } else {
+                    // Cycle forward through matches
+                    ++self->chatTabMatchIdx_;
+                    if (self->chatTabMatchIdx_ >= static_cast<int>(self->chatTabMatches_.size()))
+                        self->chatTabMatchIdx_ = 0;
+                }
+
+                if (!self->chatTabMatches_.empty()) {
+                    std::string match = self->chatTabMatches_[self->chatTabMatchIdx_];
+                    // Append trailing space when match is unambiguous
+                    if (self->chatTabMatches_.size() == 1 && rest.empty())
+                        match += ' ';
+                    std::string newBuf = match + rest;
+                    data->DeleteChars(0, data->BufTextLen);
+                    data->InsertChars(0, newBuf.c_str());
+                }
+            }
+            return 0;
+        }
+
         // Up/Down arrow: cycle through sent message history
         if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
+            // Any history navigation resets autocomplete
+            self->chatTabMatchIdx_ = -1;
+            self->chatTabMatches_.clear();
+
             const int histSize = static_cast<int>(self->chatSentHistory_.size());
             if (histSize == 0) return 0;
 
@@ -1802,7 +1864,8 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
 
     ImGuiInputTextFlags inputFlags = ImGuiInputTextFlags_EnterReturnsTrue |
                                      ImGuiInputTextFlags_CallbackAlways |
-                                     ImGuiInputTextFlags_CallbackHistory;
+                                     ImGuiInputTextFlags_CallbackHistory |
+                                     ImGuiInputTextFlags_CallbackCompletion;
     if (ImGui::InputText("##ChatInput", chatInputBuffer, sizeof(chatInputBuffer), inputFlags, inputCallback, this)) {
         sendChatMessage(gameHandler);
         // Close chat input on send so movement keys work immediately.

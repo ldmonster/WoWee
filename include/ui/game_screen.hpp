@@ -54,6 +54,11 @@ private:
     std::vector<std::string> chatSentHistory_;
     int chatHistoryIdx_ = -1;  // -1 = not browsing history
 
+    // Tab-completion state for slash commands
+    std::string chatTabPrefix_;            // prefix captured on first Tab press
+    std::vector<std::string> chatTabMatches_;  // matching command list
+    int chatTabMatchIdx_ = -1;             // active match index (-1 = inactive)
+
     // Chat tabs
     int activeChatTab_ = 0;
     struct ChatTab {
