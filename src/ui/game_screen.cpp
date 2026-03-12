@@ -2590,6 +2590,13 @@ void GameScreen::renderPlayerFrame(game::GameHandler& gameHandler) {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f), "DEAD");
         }
+        // Group leader crown on self frame when you lead the party/raid
+        if (gameHandler.isInGroup() &&
+            gameHandler.getPartyData().leaderGuid == gameHandler.getPlayerGuid()) {
+            ImGui::SameLine(0, 4);
+            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.1f, 1.0f), "\xe2\x99\x9b");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("You are the group leader");
+        }
         if (gameHandler.isAfk()) {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "<AFK>");
