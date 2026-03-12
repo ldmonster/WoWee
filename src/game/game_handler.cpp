@@ -2870,6 +2870,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     spellCooldowns[spellId] = cdSec;
                     for (auto& slot : actionBar) {
                         if (slot.type == ActionBarSlot::SPELL && slot.id == spellId) {
+                            slot.cooldownTotal     = cdSec;
                             slot.cooldownRemaining = cdSec;
                         }
                     }
