@@ -214,6 +214,9 @@ public:
     void setMaxPower(uint32_t p) { maxPowers[powerType < 7 ? powerType : 0] = p; }
     void setMaxPowerByType(uint8_t type, uint32_t p) { if (type < 7) maxPowers[type] = p; }
 
+    uint32_t getPowerByType(uint8_t type) const { return type < 7 ? powers[type] : 0; }
+    uint32_t getMaxPowerByType(uint8_t type) const { return type < 7 ? maxPowers[type] : 0; }
+
     uint8_t getPowerType() const { return powerType; }
     void setPowerType(uint8_t t) { powerType = t; }
 

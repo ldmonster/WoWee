@@ -2844,6 +2844,23 @@ void GameScreen::renderPetFrame(game::GameHandler& gameHandler) {
             ImGui::PopStyleColor();
         }
 
+        // Happiness bar — hunter pets store happiness as power type 4
+        {
+            uint32_t happiness = petUnit->getPowerByType(4);
+            uint32_t maxHappiness = petUnit->getMaxPowerByType(4);
+            if (maxHappiness > 0 && happiness > 0) {
+                float hapPct = static_cast<float>(happiness) / static_cast<float>(maxHappiness);
+                // Tier: < 33% = Unhappy (red), < 67% = Content (yellow), >= 67% = Happy (green)
+                ImVec4 hapColor = hapPct >= 0.667f ? ImVec4(0.2f, 0.85f, 0.2f, 1.0f)
+                                : hapPct >= 0.333f ? ImVec4(0.9f, 0.75f, 0.1f, 1.0f)
+                                :                   ImVec4(0.85f, 0.2f, 0.2f, 1.0f);
+                const char* hapLabel = hapPct >= 0.667f ? "Happy" : hapPct >= 0.333f ? "Content" : "Unhappy";
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, hapColor);
+                ImGui::ProgressBar(hapPct, ImVec2(-1, 8), hapLabel);
+                ImGui::PopStyleColor();
+            }
+        }
+
         // Pet cast bar
         if (auto* pcs = gameHandler.getUnitCastState(petGuid)) {
             float castPct = (pcs->timeTotal > 0.0f)
