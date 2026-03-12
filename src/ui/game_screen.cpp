@@ -497,6 +497,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderAuctionHouseWindow(gameHandler);
     renderDungeonFinderWindow(gameHandler);
     renderInstanceLockouts(gameHandler);
+    renderAchievementWindow(gameHandler);
     // renderQuestMarkers(gameHandler);  // Disabled - using 3D billboard markers now
     if (showMinimap_) {
         renderMinimapMarkers(gameHandler);
@@ -1760,6 +1761,10 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
 
         if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_QUEST_LOG)) {
             questLogScreen.toggle();
+        }
+
+        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_ACHIEVEMENTS)) {
+            showAchievementWindow_ = !showAchievementWindow_;
         }
 
         // Action bar keys (1-9, 0, -, =)
@@ -14324,6 +14329,70 @@ void GameScreen::renderBattlegroundScore(game::GameHandler& gameHandler) {
     }
     ImGui::End();
     ImGui::PopStyleVar(2);
+}
+
+// ─── Achievement Window ───────────────────────────────────────────────────────
+void GameScreen::renderAchievementWindow(game::GameHandler& gameHandler) {
+    if (!showAchievementWindow_) return;
+
+    ImGui::SetNextWindowSize(ImVec2(420, 480), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(200, 150), ImGuiCond_FirstUseEver);
+
+    if (!ImGui::Begin("Achievements", &showAchievementWindow_)) {
+        ImGui::End();
+        return;
+    }
+
+    const auto& earned = gameHandler.getEarnedAchievements();
+    ImGui::Text("Earned: %u", static_cast<unsigned>(earned.size()));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(180.0f);
+    ImGui::InputText("##achsearch", achievementSearchBuf_, sizeof(achievementSearchBuf_));
+    ImGui::SameLine();
+    if (ImGui::Button("Clear")) achievementSearchBuf_[0] = '\0';
+    ImGui::Separator();
+
+    if (earned.empty()) {
+        ImGui::TextDisabled("No achievements earned yet.");
+        ImGui::End();
+        return;
+    }
+
+    ImGui::BeginChild("##achlist", ImVec2(0, 0), false);
+
+    std::string filter(achievementSearchBuf_);
+    // lower-case filter for case-insensitive matching
+    for (char& c : filter) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+
+    // Collect and sort ids for stable display
+    std::vector<uint32_t> ids(earned.begin(), earned.end());
+    std::sort(ids.begin(), ids.end());
+
+    for (uint32_t id : ids) {
+        const std::string& name = gameHandler.getAchievementName(id);
+        const std::string& display = name.empty() ? std::to_string(id) : name;
+
+        if (!filter.empty()) {
+            std::string lower = display;
+            for (char& c : lower) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+            if (lower.find(filter) == std::string::npos) continue;
+        }
+
+        ImGui::PushID(static_cast<int>(id));
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, 1.0f), "[Achievement]");
+        ImGui::SameLine();
+        ImGui::TextUnformatted(display.c_str());
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::Text("ID: %u", id);
+            if (!name.empty()) ImGui::TextDisabled("%s", name.c_str());
+            ImGui::EndTooltip();
+        }
+        ImGui::PopID();
+    }
+
+    ImGui::EndChild();
+    ImGui::End();
 }
 
 }} // namespace wowee::ui
