@@ -10971,6 +10971,35 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
             ImGui::TextColored(latColor, "%u ms", latMs);
         }
         ImGui::End();
+        nextIndicatorY += kIndicatorH;
+    }
+
+    // Local time clock — always visible below minimap indicators
+    {
+        auto now = std::chrono::system_clock::now();
+        std::time_t tt = std::chrono::system_clock::to_time_t(now);
+        struct tm tmBuf;
+#ifdef _WIN32
+        localtime_s(&tmBuf, &tt);
+#else
+        localtime_r(&tt, &tmBuf);
+#endif
+        char clockStr[16];
+        snprintf(clockStr, sizeof(clockStr), "%02d:%02d", tmBuf.tm_hour, tmBuf.tm_min);
+
+        ImGui::SetNextWindowPos(ImVec2(indicatorX, nextIndicatorY), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(indicatorW, kIndicatorH), ImGuiCond_Always);
+        ImGuiWindowFlags clockFlags = indicatorFlags & ~ImGuiWindowFlags_NoInputs;
+        if (ImGui::Begin("##ClockIndicator", nullptr, clockFlags)) {
+            ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 0.75f), "%s", clockStr);
+            if (ImGui::IsItemHovered()) {
+                char fullTime[32];
+                snprintf(fullTime, sizeof(fullTime), "%02d:%02d:%02d (local)",
+                         tmBuf.tm_hour, tmBuf.tm_min, tmBuf.tm_sec);
+                ImGui::SetTooltip("%s", fullTime);
+            }
+        }
+        ImGui::End();
     }
 }
 
