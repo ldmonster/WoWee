@@ -3732,6 +3732,28 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                             ImGui::PopStyleColor();
                         }
 
+                        // ToT cast bar — orange-yellow, pulses when near completion
+                        if (auto* totCs = gameHandler.getUnitCastState(totGuid)) {
+                            float totCastPct = (totCs->timeTotal > 0.0f)
+                                ? (totCs->timeTotal - totCs->timeRemaining) / totCs->timeTotal : 0.0f;
+                            ImVec4 tcColor;
+                            if (totCastPct > 0.8f) {
+                                float pulse = 0.7f + 0.3f * std::sin(static_cast<float>(ImGui::GetTime()) * 8.0f);
+                                tcColor = ImVec4(1.0f * pulse, 0.5f * pulse, 0.0f, 1.0f);
+                            } else {
+                                tcColor = ImVec4(0.8f, 0.5f, 0.1f, 1.0f);
+                            }
+                            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, tcColor);
+                            char tcLabel[48];
+                            const std::string& tcName = gameHandler.getSpellName(totCs->spellId);
+                            if (!tcName.empty())
+                                snprintf(tcLabel, sizeof(tcLabel), "%s (%.1fs)", tcName.c_str(), totCs->timeRemaining);
+                            else
+                                snprintf(tcLabel, sizeof(tcLabel), "Casting... (%.1fs)", totCs->timeRemaining);
+                            ImGui::ProgressBar(totCastPct, ImVec2(-1, 8), tcLabel);
+                            ImGui::PopStyleColor();
+                        }
+
                         // ToT aura row — compact icons, debuffs first
                         {
                             const std::vector<game::AuraSlot>* totAuras = nullptr;
