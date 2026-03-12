@@ -743,6 +743,17 @@ public:
     float getGameTime() const { return gameTime_; }
     float getTimeSpeed() const { return timeSpeed_; }
 
+    // Global Cooldown (GCD) — set when the server sends a spellId=0 cooldown entry
+    float getGCDRemaining() const {
+        if (gcdTotal_ <= 0.0f) return 0.0f;
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - gcdStartedAt_).count() / 1000.0f;
+        float rem = gcdTotal_ - elapsed;
+        return rem > 0.0f ? rem : 0.0f;
+    }
+    float getGCDTotal() const { return gcdTotal_; }
+    bool isGCDActive() const { return getGCDRemaining() > 0.0f; }
+
     // Weather state (updated by SMSG_WEATHER)
     // weatherType: 0=clear, 1=rain, 2=snow, 3=storm/fog
     uint32_t getWeatherType() const { return weatherType_; }
@@ -2558,6 +2569,10 @@ private:
     float gameTime_ = 0.0f;       // Server game time in seconds
     float timeSpeed_ = 0.0166f;   // Time scale (default: 1 game day = 1 real hour)
     void handleLoginSetTimeSpeed(network::Packet& packet);
+
+    // ---- Global Cooldown (GCD) ----
+    float gcdTotal_ = 0.0f;
+    std::chrono::steady_clock::time_point gcdStartedAt_{};
 
     // ---- Weather state (SMSG_WEATHER) ----
     uint32_t weatherType_ = 0;       // 0=clear, 1=rain, 2=snow, 3=storm

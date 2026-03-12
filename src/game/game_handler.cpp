@@ -14119,6 +14119,10 @@ void GameHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
         : CastSpellPacket::build(spellId, target, ++castCount);
     socket->send(packet);
     LOG_INFO("Casting spell: ", spellId, " on 0x", std::hex, target, std::dec);
+
+    // Optimistically start GCD immediately on cast — server will confirm or override
+    gcdTotal_ = 1.5f;
+    gcdStartedAt_ = std::chrono::steady_clock::now();
 }
 
 void GameHandler::cancelCast() {
@@ -14477,6 +14481,14 @@ void GameHandler::handleSpellCooldown(network::Packet& packet) {
         uint32_t cooldownMs = packet.readUInt32();
 
         float seconds = cooldownMs / 1000.0f;
+
+        // spellId=0 is the Global Cooldown marker (server sends it for GCD triggers)
+        if (spellId == 0 && cooldownMs > 0 && cooldownMs <= 2000) {
+            gcdTotal_ = seconds;
+            gcdStartedAt_ = std::chrono::steady_clock::now();
+            continue;
+        }
+
         spellCooldowns[spellId] = seconds;
         for (auto& slot : actionBar) {
             bool match = (slot.type == ActionBarSlot::SPELL && slot.id == spellId)

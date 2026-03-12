@@ -4952,6 +4952,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
 
         const auto& slot = bar[absSlot];
         bool onCooldown = !slot.isReady();
+        const bool onGCD = gameHandler.isGCDActive() && !onCooldown && !slot.isEmpty();
 
         auto getSpellName = [&](uint32_t spellId) -> std::string {
             std::string name = spellbookScreen.lookupSpellName(spellId, assetMgr);
@@ -5004,6 +5005,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
             ImVec4 tintColor(1, 1, 1, 1);
             ImVec4 bgColor(0.1f, 0.1f, 0.1f, 0.9f);
             if (onCooldown) { tintColor = ImVec4(0.4f, 0.4f, 0.4f, 0.8f); }
+            else if (onGCD) { tintColor = ImVec4(0.6f, 0.6f, 0.6f, 0.85f); }
             clicked = ImGui::ImageButton("##icon",
                 (ImTextureID)(uintptr_t)iconTex,
                 ImVec2(slotSize, slotSize),
@@ -5186,6 +5188,35 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
             float ty = cy - textSize.y * 0.5f;
             dl->AddText(ImVec2(tx + 1.0f, ty + 1.0f), IM_COL32(0, 0, 0, 220), cdText);
             dl->AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, 255), cdText);
+        }
+
+        // GCD overlay — subtle dark fan sweep (thinner/lighter than regular cooldown)
+        if (onGCD) {
+            ImVec2 btnMin = ImGui::GetItemRectMin();
+            ImVec2 btnMax = ImGui::GetItemRectMax();
+            float cx = (btnMin.x + btnMax.x) * 0.5f;
+            float cy = (btnMin.y + btnMax.y) * 0.5f;
+            float r  = (btnMax.x - btnMin.x) * 0.5f;
+            auto* dl = ImGui::GetWindowDrawList();
+            float gcdRem   = gameHandler.getGCDRemaining();
+            float gcdTotal = gameHandler.getGCDTotal();
+            if (gcdTotal > 0.0f) {
+                float elapsed     = gcdTotal - gcdRem;
+                float elapsedFrac = std::min(1.0f, std::max(0.0f, elapsed / gcdTotal));
+                if (elapsedFrac > 0.005f) {
+                    constexpr int N_SEGS = 24;
+                    float startAngle = -IM_PI * 0.5f;
+                    float endAngle   = startAngle + elapsedFrac * 2.0f * IM_PI;
+                    float fanR       = r * 1.4f;
+                    ImVec2 pts[N_SEGS + 2];
+                    pts[0] = ImVec2(cx, cy);
+                    for (int s = 0; s <= N_SEGS; ++s) {
+                        float a = startAngle + (endAngle - startAngle) * s / static_cast<float>(N_SEGS);
+                        pts[s + 1] = ImVec2(cx + std::cos(a) * fanR, cy + std::sin(a) * fanR);
+                    }
+                    dl->AddConvexPolyFilled(pts, N_SEGS + 2, IM_COL32(0, 0, 0, 110));
+                }
+            }
         }
 
         // Item stack count overlay — bottom-right corner of icon
