@@ -71,6 +71,23 @@ namespace {
         return s;
     }
 
+    // Render gold/silver/copper amounts in WoW-canonical colors on the current ImGui line.
+    // Skips zero-value denominations (except copper, which is always shown when gold=silver=0).
+    void renderCoinsText(uint32_t g, uint32_t s, uint32_t c) {
+        bool any = false;
+        if (g > 0) {
+            ImGui::TextColored(ImVec4(1.00f, 0.82f, 0.00f, 1.0f), "%ug", g);
+            any = true;
+        }
+        if (s > 0 || g > 0) {
+            if (any) ImGui::SameLine(0, 3);
+            ImGui::TextColored(ImVec4(0.80f, 0.80f, 0.80f, 1.0f), "%us", s);
+            any = true;
+        }
+        if (any) ImGui::SameLine(0, 3);
+        ImGui::TextColored(ImVec4(0.72f, 0.45f, 0.20f, 1.0f), "%uc", c);
+    }
+
     bool isPortBotTarget(const std::string& target) {
         std::string t = toLower(trim(target));
         return t == "portbot" || t == "gmbot" || t == "telebot";
@@ -10701,7 +10718,8 @@ void GameScreen::renderVendorWindow(game::GameHandler& gameHandler) {
         uint32_t mg = static_cast<uint32_t>(money / 10000);
         uint32_t ms = static_cast<uint32_t>((money / 100) % 100);
         uint32_t mc = static_cast<uint32_t>(money % 100);
-        ImGui::Text("Your money: %ug %us %uc", mg, ms, mc);
+        ImGui::TextDisabled("Your money:"); ImGui::SameLine(0, 4);
+        renderCoinsText(mg, ms, mc);
 
         if (vendor.canRepair) {
             ImGui::SameLine();
@@ -10911,9 +10929,11 @@ void GameScreen::renderVendorWindow(game::GameHandler& gameHandler) {
                         uint32_t s = (item.buyPrice / 100) % 100;
                         uint32_t c = item.buyPrice % 100;
                         bool canAfford = money >= item.buyPrice;
-                        if (!canAfford) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
-                        ImGui::Text("%ug %us %uc", g, s, c);
-                        if (!canAfford) ImGui::PopStyleColor();
+                        if (canAfford) {
+                            renderCoinsText(g, s, c);
+                        } else {
+                            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%ug %us %uc", g, s, c);
+                        }
                     }
 
                     ImGui::TableSetColumnIndex(3);
@@ -10991,7 +11011,8 @@ void GameScreen::renderTrainerWindow(game::GameHandler& gameHandler) {
         uint32_t mg = static_cast<uint32_t>(money / 10000);
         uint32_t ms = static_cast<uint32_t>((money / 100) % 100);
         uint32_t mc = static_cast<uint32_t>(money % 100);
-        ImGui::Text("Your money: %ug %us %uc", mg, ms, mc);
+        ImGui::TextDisabled("Your money:"); ImGui::SameLine(0, 4);
+        renderCoinsText(mg, ms, mc);
 
         // Filter controls
         static bool showUnavailable = false;
@@ -11146,8 +11167,11 @@ void GameScreen::renderTrainerWindow(game::GameHandler& gameHandler) {
                         uint32_t s = (spell->spellCost / 100) % 100;
                         uint32_t c = spell->spellCost % 100;
                         bool canAfford = money >= spell->spellCost;
-                        ImVec4 costColor = canAfford ? color : ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
-                        ImGui::TextColored(costColor, "%ug %us %uc", g, s, c);
+                        if (canAfford) {
+                            renderCoinsText(g, s, c);
+                        } else {
+                            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%ug %us %uc", g, s, c);
+                        }
                     } else {
                         ImGui::TextColored(color, "Free");
                     }
@@ -14300,7 +14324,8 @@ void GameScreen::renderMailWindow(game::GameHandler& gameHandler) {
         uint32_t mg = static_cast<uint32_t>(money / 10000);
         uint32_t ms = static_cast<uint32_t>((money / 100) % 100);
         uint32_t mc = static_cast<uint32_t>(money % 100);
-        ImGui::Text("Your money: %ug %us %uc", mg, ms, mc);
+        ImGui::TextDisabled("Your money:"); ImGui::SameLine(0, 4);
+        renderCoinsText(mg, ms, mc);
         ImGui::SameLine(ImGui::GetWindowWidth() - 100);
         if (ImGui::Button("Compose")) {
             mailRecipientBuffer_[0] = '\0';
