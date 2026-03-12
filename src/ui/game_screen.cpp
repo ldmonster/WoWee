@@ -16256,10 +16256,38 @@ void GameScreen::renderThreatWindow(game::GameHandler& gameHandler) {
 
     uint32_t maxThreat = list->front().threat;
 
+    // Pre-scan to find the player's rank and threat percentage
+    uint64_t playerGuid = gameHandler.getPlayerGuid();
+    int playerRank = 0;
+    float playerPct = 0.0f;
+    {
+        int scan = 0;
+        for (const auto& e : *list) {
+            ++scan;
+            if (e.victimGuid == playerGuid) {
+                playerRank = scan;
+                playerPct  = (maxThreat > 0) ? static_cast<float>(e.threat) / static_cast<float>(maxThreat) : 0.0f;
+                break;
+            }
+            if (scan >= 10) break;
+        }
+    }
+
+    // Status bar: aggro alert or rank summary
+    if (playerRank == 1) {
+        // Player has aggro — persistent red warning
+        ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "!! YOU HAVE AGGRO !!");
+    } else if (playerRank > 1 && playerPct >= 0.8f) {
+        // Close to pulling — pulsing warning
+        float pulse = 0.55f + 0.45f * sinf(static_cast<float>(ImGui::GetTime()) * 5.0f);
+        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.1f, pulse), "! PULLING AGGRO (%.0f%%) !", playerPct * 100.0f);
+    } else if (playerRank > 0) {
+        ImGui::TextColored(ImVec4(0.6f, 0.8f, 0.6f, 1.0f), "You: #%d  %.0f%% threat", playerRank, playerPct * 100.0f);
+    }
+
     ImGui::TextDisabled("%-19s  Threat", "Player");
     ImGui::Separator();
 
-    uint64_t playerGuid = gameHandler.getPlayerGuid();
     int rank = 0;
     for (const auto& entry : *list) {
         ++rank;
