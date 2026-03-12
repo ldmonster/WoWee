@@ -7247,6 +7247,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
     if (!gameHandler.isInGroup()) return;
 
+    auto* assetMgr = core::Application::getInstance().getAssetManager();
     const auto& partyData = gameHandler.getPartyData();
     const bool isRaid = (partyData.groupType == 1);
     float frameY = 120.0f;
@@ -7626,7 +7627,17 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                     snprintf(pcastLabel, sizeof(pcastLabel), "%s (%.1fs)", spellNm.c_str(), cs->timeRemaining);
                 else
                     snprintf(pcastLabel, sizeof(pcastLabel), "Casting... (%.1fs)", cs->timeRemaining);
-                ImGui::ProgressBar(castPct, ImVec2(-1, 10), pcastLabel);
+                {
+                    VkDescriptorSet pIcon = (cs->spellId != 0 && assetMgr)
+                        ? getSpellIcon(cs->spellId, assetMgr) : VK_NULL_HANDLE;
+                    if (pIcon) {
+                        ImGui::Image((ImTextureID)(uintptr_t)pIcon, ImVec2(10, 10));
+                        ImGui::SameLine(0, 2);
+                        ImGui::ProgressBar(castPct, ImVec2(-1, 10), pcastLabel);
+                    } else {
+                        ImGui::ProgressBar(castPct, ImVec2(-1, 10), pcastLabel);
+                    }
+                }
                 ImGui::PopStyleColor();
             }
 
@@ -7974,6 +7985,8 @@ void GameScreen::renderZoneToasts(float deltaTime) {
 // ============================================================
 
 void GameScreen::renderBossFrames(game::GameHandler& gameHandler) {
+    auto* assetMgr = core::Application::getInstance().getAssetManager();
+
     // Collect active boss unit slots
     struct BossSlot { uint32_t slot; uint64_t guid; };
     std::vector<BossSlot> active;
@@ -8054,7 +8067,17 @@ void GameScreen::renderBossFrames(game::GameHandler& gameHandler) {
                              bcastName.c_str(), cs->timeRemaining);
                 else
                     snprintf(bcastLabel, sizeof(bcastLabel), "Casting... (%.1fs)", cs->timeRemaining);
-                ImGui::ProgressBar(castPct, ImVec2(-1, 12), bcastLabel);
+                {
+                    VkDescriptorSet bIcon = (bspell != 0 && assetMgr)
+                        ? getSpellIcon(bspell, assetMgr) : VK_NULL_HANDLE;
+                    if (bIcon) {
+                        ImGui::Image((ImTextureID)(uintptr_t)bIcon, ImVec2(12, 12));
+                        ImGui::SameLine(0, 2);
+                        ImGui::ProgressBar(castPct, ImVec2(-1, 12), bcastLabel);
+                    } else {
+                        ImGui::ProgressBar(castPct, ImVec2(-1, 12), bcastLabel);
+                    }
+                }
                 ImGui::PopStyleColor();
             }
 
