@@ -5689,6 +5689,14 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                                       pct > 0.2f ? IM_COL32(200, 180, 50, 255) :
                                                    IM_COL32(200, 60, 60, 255);
                         draw->AddRectFilled(barFill, barFillEnd, hpCol, 2.0f);
+                        // HP percentage text centered on bar
+                        char hpPct[8];
+                        snprintf(hpPct, sizeof(hpPct), "%d%%", static_cast<int>(pct * 100.0f + 0.5f));
+                        ImVec2 ts = ImGui::CalcTextSize(hpPct);
+                        float tx = (barBg.x + barBgEnd.x - ts.x) * 0.5f;
+                        float ty = barBg.y + (BAR_H - ts.y) * 0.5f;
+                        draw->AddText(ImVec2(tx + 1.0f, ty + 1.0f), IM_COL32(0, 0, 0, 180), hpPct);
+                        draw->AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, 230), hpPct);
                     }
 
                     // Power bar
