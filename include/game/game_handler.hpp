@@ -1270,6 +1270,8 @@ public:
     const std::vector<FactionStandingInit>& getInitialFactions() const { return initialFactions_; }
     const std::unordered_map<uint32_t, int32_t>& getFactionStandings() const { return factionStandings_; }
     const std::string& getFactionNamePublic(uint32_t factionId) const;
+    uint32_t getWatchedFactionId() const { return watchedFactionId_; }
+    void setWatchedFactionId(uint32_t id) { watchedFactionId_ = id; }
     uint32_t getLastContactListMask() const { return lastContactListMask_; }
     uint32_t getLastContactListCount() const { return lastContactListCount_; }
     bool isServerMovementAllowed() const { return serverMovementAllowed_; }
@@ -2636,6 +2638,7 @@ private:
 
     // ---- Reputation change callback ----
     RepChangeCallback repChangeCallback_;
+    uint32_t watchedFactionId_ = 0; // auto-set to most recently changed faction
 
     // ---- Quest completion callback ----
     QuestCompleteCallback questCompleteCallback_;

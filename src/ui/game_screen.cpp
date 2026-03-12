@@ -464,6 +464,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderActionBar(gameHandler);
     renderBagBar(gameHandler);
     renderXpBar(gameHandler);
+    renderRepBar(gameHandler);
     renderCastBar(gameHandler);
     renderMirrorTimers(gameHandler);
     renderQuestObjectiveTracker(gameHandler);
@@ -5657,6 +5658,126 @@ void GameScreen::renderXpBar(game::GameHandler& gameHandler) {
     }
     ImGui::End();
 
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
+}
+
+// ============================================================
+// Reputation Bar
+// ============================================================
+
+void GameScreen::renderRepBar(game::GameHandler& gameHandler) {
+    uint32_t factionId = gameHandler.getWatchedFactionId();
+    if (factionId == 0) return;
+
+    const auto& standings = gameHandler.getFactionStandings();
+    auto it = standings.find(factionId);
+    if (it == standings.end()) return;
+
+    int32_t standing = it->second;
+
+    // WoW reputation rank thresholds
+    struct RepRank { const char* name; int32_t min; int32_t max; ImU32 color; };
+    static const RepRank kRanks[] = {
+        { "Hated",      -42000, -6001,  IM_COL32(180,  40,  40, 255) },
+        { "Hostile",     -6000, -3001,  IM_COL32(180,  40,  40, 255) },
+        { "Unfriendly",  -3000,    -1,  IM_COL32(220, 100,  50, 255) },
+        { "Neutral",         0,  2999,  IM_COL32(200, 200,  60, 255) },
+        { "Friendly",     3000,  8999,  IM_COL32( 60, 180,  60, 255) },
+        { "Honored",      9000, 20999,  IM_COL32( 60, 160, 220, 255) },
+        { "Revered",     21000, 41999,  IM_COL32(140,  80, 220, 255) },
+        { "Exalted",     42000, 42999,  IM_COL32(255, 200,  50, 255) },
+    };
+    constexpr int kNumRanks = static_cast<int>(sizeof(kRanks) / sizeof(kRanks[0]));
+
+    int rankIdx = kNumRanks - 1; // default to Exalted
+    for (int i = 0; i < kNumRanks; ++i) {
+        if (standing <= kRanks[i].max) { rankIdx = i; break; }
+    }
+    const RepRank& rank = kRanks[rankIdx];
+
+    float fraction = 1.0f;
+    if (rankIdx < kNumRanks - 1) {
+        float range = static_cast<float>(rank.max - rank.min + 1);
+        fraction = static_cast<float>(standing - rank.min) / range;
+        fraction = std::max(0.0f, std::min(1.0f, fraction));
+    }
+
+    const std::string& factionName = gameHandler.getFactionNamePublic(factionId);
+
+    // Position directly above the XP bar
+    ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+    float screenW = displaySize.x > 0.0f ? displaySize.x : 1280.0f;
+    float screenH = displaySize.y > 0.0f ? displaySize.y : 720.0f;
+
+    float slotSize = 48.0f * pendingActionBarScale;
+    float spacing  = 4.0f;
+    float padding  = 8.0f;
+    float barW     = 12 * slotSize + 11 * spacing + padding * 2;
+    float barH_ab  = slotSize + 24.0f;
+    float xpBarH   = 20.0f;
+    float repBarH  = 12.0f;
+    float xpBarW   = barW;
+    float xpBarX   = (screenW - xpBarW) / 2.0f;
+
+    float bar1TopY = screenH - barH_ab;
+    float xpBarY;
+    if (pendingShowActionBar2) {
+        float bar2TopY = bar1TopY - barH_ab - 2.0f + pendingActionBar2OffsetY;
+        xpBarY = bar2TopY - xpBarH - 2.0f;
+    } else {
+        xpBarY = bar1TopY - xpBarH - 2.0f;
+    }
+    float repBarY = xpBarY - repBarH - 2.0f;
+
+    ImGui::SetNextWindowPos(ImVec2(xpBarX, repBarY), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(xpBarW, repBarH + 4.0f), ImGuiCond_Always);
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
+                             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysAutoResize;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 2.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(2.0f, 2.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.05f, 0.05f, 0.9f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.3f, 0.3f, 0.3f, 0.8f));
+
+    if (ImGui::Begin("##RepBar", nullptr, flags)) {
+        ImVec2 barMin  = ImGui::GetCursorScreenPos();
+        ImVec2 barSize = ImVec2(ImGui::GetContentRegionAvail().x, repBarH - 4.0f);
+        ImVec2 barMax  = ImVec2(barMin.x + barSize.x, barMin.y + barSize.y);
+        auto* dl = ImGui::GetWindowDrawList();
+
+        dl->AddRectFilled(barMin, barMax, IM_COL32(15, 15, 20, 220), 2.0f);
+        dl->AddRect(barMin, barMax, IM_COL32(80, 80, 90, 220), 2.0f);
+
+        float fillW = barSize.x * fraction;
+        if (fillW > 0.0f)
+            dl->AddRectFilled(barMin, ImVec2(barMin.x + fillW, barMax.y), rank.color, 2.0f);
+
+        // Label: "FactionName - Rank"
+        char label[96];
+        snprintf(label, sizeof(label), "%s - %s", factionName.c_str(), rank.name);
+        ImVec2 textSize = ImGui::CalcTextSize(label);
+        float tx = barMin.x + (barSize.x - textSize.x) * 0.5f;
+        float ty = barMin.y + (barSize.y - textSize.y) * 0.5f;
+        dl->AddText(ImVec2(tx, ty), IM_COL32(230, 230, 230, 255), label);
+
+        // Tooltip with exact values on hover
+        ImGui::Dummy(barSize);
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            float cr = ((rank.color      ) & 0xFF) / 255.0f;
+            float cg = ((rank.color >>  8) & 0xFF) / 255.0f;
+            float cb = ((rank.color >> 16) & 0xFF) / 255.0f;
+            ImGui::TextColored(ImVec4(cr, cg, cb, 1.0f), "%s", rank.name);
+            int32_t rankMin = rank.min;
+            int32_t rankMax = (rankIdx < kNumRanks - 1) ? rank.max : 42000;
+            ImGui::Text("%s: %d / %d", factionName.c_str(), standing - rankMin, rankMax - rankMin + 1);
+            ImGui::EndTooltip();
+        }
+    }
+    ImGui::End();
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(2);
 }

@@ -281,6 +281,7 @@ private:
     void renderActionBar(game::GameHandler& gameHandler);
     void renderBagBar(game::GameHandler& gameHandler);
     void renderXpBar(game::GameHandler& gameHandler);
+    void renderRepBar(game::GameHandler& gameHandler);
     void renderCastBar(game::GameHandler& gameHandler);
     void renderMirrorTimers(game::GameHandler& gameHandler);
     void renderCombatText(game::GameHandler& gameHandler);
