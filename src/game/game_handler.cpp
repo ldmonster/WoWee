@@ -19993,6 +19993,7 @@ void GameHandler::handleLootRoll(network::Packet& packet) {
         pendingLootRoll_.objectGuid        = objectGuid;
         pendingLootRoll_.slot              = slot;
         pendingLootRoll_.itemId            = itemId;
+        pendingLootRoll_.playerRolls.clear();
         // Ensure item info is in cache; query if not
         queryItemInfo(itemId, 0);
         // Look up item name from cache
@@ -20016,6 +20017,28 @@ void GameHandler::handleLootRoll(network::Packet& packet) {
         rollerName = unit->getName();
     }
     if (rollerName.empty()) rollerName = "Someone";
+
+    // Track in the live roll list while our popup is open for the same item
+    if (pendingLootRollActive_ &&
+        pendingLootRoll_.objectGuid == objectGuid &&
+        pendingLootRoll_.slot == slot) {
+        bool found = false;
+        for (auto& r : pendingLootRoll_.playerRolls) {
+            if (r.playerName == rollerName) {
+                r.rollNum  = rollNum;
+                r.rollType = rollType;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            LootRollEntry::PlayerRollResult prr;
+            prr.playerName = rollerName;
+            prr.rollNum    = rollNum;
+            prr.rollType   = rollType;
+            pendingLootRoll_.playerRolls.push_back(std::move(prr));
+        }
+    }
 
     auto* info = getItemInfo(itemId);
     std::string iName = info ? info->name : std::to_string(itemId);

@@ -1151,6 +1151,13 @@ public:
         uint8_t  itemQuality   = 0;
         uint32_t rollCountdownMs = 60000; // Duration of roll window in ms
         std::chrono::steady_clock::time_point rollStartedAt{};
+
+        struct PlayerRollResult {
+            std::string playerName;
+            uint8_t rollNum  = 0;
+            uint8_t rollType = 0; // 0=need,1=greed,2=disenchant,96=pass
+        };
+        std::vector<PlayerRollResult> playerRolls; // live roll results from group members
     };
     bool hasPendingLootRoll() const { return pendingLootRollActive_; }
     const LootRollEntry& getPendingLootRoll() const { return pendingLootRoll_; }

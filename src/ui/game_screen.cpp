@@ -8706,6 +8706,48 @@ void GameScreen::renderLootRollPopup(game::GameHandler& gameHandler) {
         if (ImGui::Button("Pass", ImVec2(70, 30))) {
             gameHandler.sendLootRoll(roll.objectGuid, roll.slot, 96);
         }
+
+        // Live roll results from group members
+        if (!roll.playerRolls.empty()) {
+            ImGui::Separator();
+            ImGui::TextDisabled("Rolls so far:");
+            // Roll-type label + color
+            static const char* kRollLabels[] = {"Need", "Greed", "Disenchant", "Pass"};
+            static const ImVec4 kRollColors[] = {
+                ImVec4(0.2f, 0.9f, 0.2f, 1.0f),  // Need  — green
+                ImVec4(0.3f, 0.6f, 1.0f, 1.0f),  // Greed — blue
+                ImVec4(0.7f, 0.3f, 0.9f, 1.0f),  // Disenchant — purple
+                ImVec4(0.5f, 0.5f, 0.5f, 1.0f),  // Pass  — gray
+            };
+            auto rollTypeIndex = [](uint8_t t) -> int {
+                if (t == 0) return 0;
+                if (t == 1) return 1;
+                if (t == 2) return 2;
+                return 3; // pass (96 or unknown)
+            };
+
+            if (ImGui::BeginTable("##lootrolls", 3,
+                    ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
+                ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Type",   ImGuiTableColumnFlags_WidthFixed, 72.0f);
+                ImGui::TableSetupColumn("Roll",   ImGuiTableColumnFlags_WidthFixed, 32.0f);
+                for (const auto& r : roll.playerRolls) {
+                    int ri = rollTypeIndex(r.rollType);
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextUnformatted(r.playerName.c_str());
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextColored(kRollColors[ri], "%s", kRollLabels[ri]);
+                    ImGui::TableSetColumnIndex(2);
+                    if (r.rollType != 96) {
+                        ImGui::TextColored(kRollColors[ri], "%d", static_cast<int>(r.rollNum));
+                    } else {
+                        ImGui::TextDisabled("—");
+                    }
+                }
+                ImGui::EndTable();
+            }
+        }
     }
     ImGui::End();
 }
