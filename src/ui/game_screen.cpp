@@ -7583,12 +7583,37 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                 else if (isDead || isGhost) label += " (dead)";
             }
 
-            // Clickable name to target; leader name is gold
-            if (isLeader) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.0f, 1.0f));
+            // Clickable name to target — use WoW class colors when entity is loaded,
+            // fall back to gold for leader / light gray for others
+            ImVec4 nameColor = isLeader
+                ? ImVec4(1.0f, 0.85f, 0.0f, 1.0f)
+                : ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+            {
+                auto memberEntity = gameHandler.getEntityManager().getEntity(member.guid);
+                if (memberEntity) {
+                    uint32_t bytes0 = memberEntity->getField(
+                        game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
+                    uint8_t classId = static_cast<uint8_t>((bytes0 >> 8) & 0xFF);
+                    switch (classId) {
+                        case 1:  nameColor = ImVec4(0.78f, 0.61f, 0.43f, 1.0f); break; // Warrior
+                        case 2:  nameColor = ImVec4(0.96f, 0.55f, 0.73f, 1.0f); break; // Paladin
+                        case 3:  nameColor = ImVec4(0.67f, 0.83f, 0.45f, 1.0f); break; // Hunter
+                        case 4:  nameColor = ImVec4(1.00f, 0.96f, 0.41f, 1.0f); break; // Rogue
+                        case 5:  nameColor = ImVec4(1.00f, 1.00f, 1.00f, 1.0f); break; // Priest
+                        case 6:  nameColor = ImVec4(0.77f, 0.12f, 0.23f, 1.0f); break; // Death Knight
+                        case 7:  nameColor = ImVec4(0.00f, 0.44f, 0.87f, 1.0f); break; // Shaman
+                        case 8:  nameColor = ImVec4(0.41f, 0.80f, 0.94f, 1.0f); break; // Mage
+                        case 9:  nameColor = ImVec4(0.58f, 0.51f, 0.79f, 1.0f); break; // Warlock
+                        case 11: nameColor = ImVec4(1.00f, 0.49f, 0.04f, 1.0f); break; // Druid
+                        default: break; // keep fallback
+                    }
+                }
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, nameColor);
             if (ImGui::Selectable(label.c_str(), gameHandler.getTargetGuid() == member.guid)) {
                 gameHandler.setTarget(member.guid);
             }
-            if (isLeader) ImGui::PopStyleColor();
+            ImGui::PopStyleColor();
 
             // LFG role badge (Tank/Healer/DPS) — shown on same line as name when set
             if (member.roles != 0) {
