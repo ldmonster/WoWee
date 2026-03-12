@@ -123,6 +123,7 @@ private:
     bool awaitingKeyPress = false;
     bool pendingUseOriginalSoundtrack = true;
     bool pendingShowActionBar2 = true;   // Show second action bar above main bar
+    float pendingActionBarScale = 1.0f;  // Multiplier for action bar slot size (0.5–1.5)
     float pendingActionBar2OffsetX = 0.0f;  // Horizontal offset from default center position
     float pendingActionBar2OffsetY = 0.0f;  // Vertical offset from default (above bar 1)
     bool pendingShowRightBar = false;   // Right-edge vertical action bar (bar 3, slots 24-35)

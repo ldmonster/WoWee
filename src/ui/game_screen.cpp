@@ -4259,7 +4259,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
     float screenH = displaySize.y > 0.0f ? displaySize.y : 720.0f;
     auto* assetMgr = core::Application::getInstance().getAssetManager();
 
-    float slotSize = 48.0f;
+    float slotSize = 48.0f * pendingActionBarScale;
     float spacing = 4.0f;
     float padding = 8.0f;
     float barW = 12 * slotSize + 11 * spacing + padding * 2;
@@ -4896,7 +4896,7 @@ void GameScreen::renderXpBar(game::GameHandler& gameHandler) {
     (void)window;  // Not used for positioning; kept for AssetManager if needed
 
     // Position just above both action bars (bar1 at screenH-barH, bar2 above that)
-    float slotSize = 48.0f;
+    float slotSize = 48.0f * pendingActionBarScale;
     float spacing = 4.0f;
     float padding = 8.0f;
     float barW = 12 * slotSize + 11 * spacing + padding * 2;
@@ -9463,6 +9463,11 @@ void GameScreen::renderSettingsWindow() {
 
                 ImGui::SeparatorText("Action Bars");
                 ImGui::Spacing();
+                ImGui::SetNextItemWidth(200.0f);
+                if (ImGui::SliderFloat("Action Bar Scale", &pendingActionBarScale, 0.5f, 1.5f, "%.2fx")) {
+                    saveSettings();
+                }
+                ImGui::Spacing();
 
                 if (ImGui::Checkbox("Show Second Action Bar", &pendingShowActionBar2)) {
                     saveSettings();
@@ -10925,6 +10930,7 @@ void GameScreen::saveSettings() {
     out << "minimap_npc_dots=" << (pendingMinimapNpcDots ? 1 : 0) << "\n";
     out << "show_latency_meter=" << (pendingShowLatencyMeter ? 1 : 0) << "\n";
     out << "separate_bags=" << (pendingSeparateBags ? 1 : 0) << "\n";
+    out << "action_bar_scale=" << pendingActionBarScale << "\n";
     out << "show_action_bar2=" << (pendingShowActionBar2 ? 1 : 0) << "\n";
     out << "action_bar2_offset_x=" << pendingActionBar2OffsetX << "\n";
     out << "action_bar2_offset_y=" << pendingActionBar2OffsetY << "\n";
@@ -11031,6 +11037,8 @@ void GameScreen::loadSettings() {
             } else if (key == "separate_bags") {
                 pendingSeparateBags = (std::stoi(val) != 0);
                 inventoryScreen.setSeparateBags(pendingSeparateBags);
+            } else if (key == "action_bar_scale") {
+                pendingActionBarScale = std::clamp(std::stof(val), 0.5f, 1.5f);
             } else if (key == "show_action_bar2") {
                 pendingShowActionBar2 = (std::stoi(val) != 0);
             } else if (key == "action_bar2_offset_x") {
