@@ -8463,6 +8463,20 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, dotCol);
                             ImGui::Button("##d", ImVec2(8.0f, 8.0f));
                             ImGui::PopStyleColor(2);
+                            if (ImGui::IsItemHovered()) {
+                                static const char* kDispelNames[] = { "", "Magic", "Curse", "Disease", "Poison" };
+                                // Find spell name(s) of this dispel type
+                                ImGui::BeginTooltip();
+                                ImGui::TextColored(dotCol, "%s", kDispelNames[dt]);
+                                for (const auto& da : *unitAuras) {
+                                    if (da.isEmpty() || (da.flags & 0x80) == 0) continue;
+                                    if (gameHandler.getSpellDispelType(da.spellId) != dt) continue;
+                                    const std::string& dName = gameHandler.getSpellName(da.spellId);
+                                    if (!dName.empty())
+                                        ImGui::Text("  %s", dName.c_str());
+                                }
+                                ImGui::EndTooltip();
+                            }
                             ImGui::SameLine();
                         }
                         ImGui::NewLine();
