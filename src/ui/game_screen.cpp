@@ -10654,6 +10654,28 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
         }
     }
 
+    // Ctrl+click on minimap → send minimap ping to party
+    if (ImGui::IsMouseClicked(0) && ImGui::GetIO().KeyCtrl) {
+        ImVec2 mouse = ImGui::GetMousePos();
+        float mdx = mouse.x - centerX;
+        float mdy = mouse.y - centerY;
+        float distSq = mdx * mdx + mdy * mdy;
+        if (distSq <= mapRadius * mapRadius) {
+            // Invert projectToMinimap: px=mdx, py=mdy → rx=px*viewRadius/mapRadius
+            float rx = mdx * viewRadius / mapRadius;
+            float ry = mdy * viewRadius / mapRadius;
+            // rx/ry are in rotated frame; unrotate to get world dx/dy
+            // rx = -(dx*cosB + dy*sinB), ry = dx*sinB - dy*cosB
+            // Solving: dx = -(rx*cosB - ry*sinB), dy = -(rx*sinB + ry*cosB)
+            float wdx = -(rx * cosB - ry * sinB);
+            float wdy = -(rx * sinB + ry * cosB);
+            // playerRender is in render coords; add delta to get render position then convert to canonical
+            glm::vec3 clickRender = playerRender + glm::vec3(wdx, wdy, 0.0f);
+            glm::vec3 clickCanon = core::coords::renderToCanonical(clickRender);
+            gameHandler.sendMinimapPing(clickCanon.x, clickCanon.y);
+        }
+    }
+
     auto applyMuteState = [&]() {
         auto* activeRenderer = core::Application::getInstance().getRenderer();
         float masterScale = soundMuted_ ? 0.0f : static_cast<float>(pendingMasterVolume) / 100.0f;

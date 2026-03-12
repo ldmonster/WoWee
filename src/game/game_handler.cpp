@@ -7710,6 +7710,29 @@ void GameHandler::sendPing() {
     socket->send(packet);
 }
 
+void GameHandler::sendMinimapPing(float wowX, float wowY) {
+    if (state != WorldState::IN_WORLD) return;
+
+    // MSG_MINIMAP_PING (CMSG direction): float posX + float posY
+    // Server convention: posX = east/west axis = canonical Y (west)
+    //                    posY = north/south axis = canonical X (north)
+    const float serverX = wowY;  // canonical Y (west) → server posX
+    const float serverY = wowX;  // canonical X (north) → server posY
+
+    network::Packet pkt(wireOpcode(Opcode::MSG_MINIMAP_PING));
+    pkt.writeFloat(serverX);
+    pkt.writeFloat(serverY);
+    socket->send(pkt);
+
+    // Add ping locally so the sender sees their own ping immediately
+    MinimapPing localPing;
+    localPing.senderGuid = activeCharacterGuid_;
+    localPing.wowX       = wowX;
+    localPing.wowY       = wowY;
+    localPing.age        = 0.0f;
+    minimapPings_.push_back(localPing);
+}
+
 void GameHandler::handlePong(network::Packet& packet) {
     LOG_DEBUG("Handling SMSG_PONG");
 

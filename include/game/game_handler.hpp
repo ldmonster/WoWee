@@ -388,6 +388,9 @@ public:
     // PvP
     void togglePvp();
 
+    // Minimap ping (Ctrl+click on minimap; wowX/wowY in canonical WoW coords)
+    void sendMinimapPing(float wowX, float wowY);
+
     // Guild commands
     void requestGuildInfo();
     void requestGuildRoster();
