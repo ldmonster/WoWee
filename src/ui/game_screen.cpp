@@ -723,7 +723,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
             ImGuiIO& io = ImGui::GetIO();
             const float W = io.DisplaySize.x;
             const float H = io.DisplaySize.y;
-            const int alpha = static_cast<int>(damageFlashAlpha_ * 180.0f);
+            const int alpha = static_cast<int>(damageFlashAlpha_ * 100.0f);
             const ImU32 edgeCol  = IM_COL32(200, 0, 0, alpha);
             const ImU32 fadeCol  = IM_COL32(200, 0, 0, 0);
             const float thickness = std::min(W, H) * 0.12f;
