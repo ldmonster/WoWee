@@ -9354,6 +9354,33 @@ void GameScreen::renderSocialFrame(game::GameHandler& gameHandler) {
             ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar)) {
 
+        // Class color helper shared by Friends tab
+        auto getClassColor = [](uint32_t classId, bool online) -> ImVec4 {
+            if (!online) return ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+            switch (classId) {
+                case 1:  return ImVec4(0.78f, 0.61f, 0.43f, 1.0f); // Warrior
+                case 2:  return ImVec4(0.96f, 0.55f, 0.73f, 1.0f); // Paladin
+                case 3:  return ImVec4(0.67f, 0.83f, 0.45f, 1.0f); // Hunter
+                case 4:  return ImVec4(1.00f, 0.96f, 0.41f, 1.0f); // Rogue
+                case 5:  return ImVec4(1.00f, 1.00f, 1.00f, 1.0f); // Priest
+                case 6:  return ImVec4(0.77f, 0.12f, 0.23f, 1.0f); // Death Knight
+                case 7:  return ImVec4(0.00f, 0.44f, 0.87f, 1.0f); // Shaman
+                case 8:  return ImVec4(0.41f, 0.80f, 0.94f, 1.0f); // Mage
+                case 9:  return ImVec4(0.58f, 0.51f, 0.79f, 1.0f); // Warlock
+                case 11: return ImVec4(1.00f, 0.49f, 0.04f, 1.0f); // Druid
+                default: return ImVec4(0.75f, 0.75f, 0.75f, 1.0f);
+            }
+        };
+        static const char* kClassNames[] = {
+            "Unknown","Warrior","Paladin","Hunter","Rogue","Priest",
+            "Death Knight","Shaman","Mage","Warlock","","Druid"
+        };
+
+        // Get zone manager for area name lookups
+        game::ZoneManager* socialZoneMgr = nullptr;
+        if (auto* rend = core::Application::getInstance().getRenderer())
+            socialZoneMgr = rend->getZoneManager();
+
         if (ImGui::BeginTabBar("##SocialTabs")) {
             // ---- Friends tab ----
             if (ImGui::BeginTabItem("Friends")) {
@@ -9391,7 +9418,31 @@ void GameScreen::renderSocialFrame(game::GameHandler& gameHandler) {
 
                         if (c.isOnline() && c.level > 0) {
                             ImGui::SameLine();
-                            ImGui::TextDisabled("Lv%u", c.level);
+                            // Show level and class name in class color
+                            ImVec4 cc = getClassColor(c.classId, true);
+                            const char* cname = (c.classId < 12) ? kClassNames[c.classId] : "?";
+                            ImGui::TextColored(cc, "Lv%u %s", c.level, cname);
+                        }
+
+                        // Tooltip: zone info and note
+                        if (ImGui::IsItemHovered() || (c.isOnline() && ImGui::IsItemHovered())) {
+                            if (c.isOnline() && (c.areaId != 0 || !c.note.empty())) {
+                                ImGui::BeginTooltip();
+                                if (c.areaId != 0) {
+                                    const char* zoneName = nullptr;
+                                    if (socialZoneMgr) {
+                                        const auto* zi = socialZoneMgr->getZoneInfo(c.areaId);
+                                        if (zi && !zi->name.empty()) zoneName = zi->name.c_str();
+                                    }
+                                    if (zoneName)
+                                        ImGui::Text("Zone: %s", zoneName);
+                                    else
+                                        ImGui::Text("Area ID: %u", c.areaId);
+                                }
+                                if (!c.note.empty())
+                                    ImGui::TextDisabled("Note: %s", c.note.c_str());
+                                ImGui::EndTooltip();
+                            }
                         }
 
                         // Right-click context menu
