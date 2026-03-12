@@ -1,4 +1,5 @@
 #include "ui/quest_log_screen.hpp"
+#include "ui/inventory_screen.hpp"
 #include "ui/keybinding_manager.hpp"
 #include "core/application.hpp"
 #include "core/input.hpp"
@@ -206,7 +207,7 @@ std::string cleanQuestTitleForUi(const std::string& raw, uint32_t questId) {
 }
 } // anonymous namespace
 
-void QuestLogScreen::render(game::GameHandler& gameHandler) {
+void QuestLogScreen::render(game::GameHandler& gameHandler, InventoryScreen& invScreen) {
     // Quests toggle via keybinding (edge-triggered)
     // Customizable key (default: L) from KeybindingManager
     bool questsDown = KeybindingManager::getInstance().isActionPressed(
@@ -392,13 +393,24 @@ void QuestLogScreen::render(game::GameHandler& gameHandler) {
                     }
                     for (const auto& [itemId, count] : sel.itemCounts) {
                         std::string itemLabel = "Item " + std::to_string(itemId);
+                        uint32_t dispId = 0;
                         if (const auto* info = gameHandler.getItemInfo(itemId)) {
                             if (!info->name.empty()) itemLabel = info->name;
+                            dispId = info->displayInfoId;
+                        } else {
+                            gameHandler.ensureItemInfo(itemId);
                         }
                         uint32_t required = 1;
                         auto reqIt = sel.requiredItemCounts.find(itemId);
                         if (reqIt != sel.requiredItemCounts.end()) required = reqIt->second;
-                        ImGui::BulletText("%s: %u/%u", itemLabel.c_str(), count, required);
+                        VkDescriptorSet iconTex = dispId ? invScreen.getItemIcon(dispId) : VK_NULL_HANDLE;
+                        if (iconTex) {
+                            ImGui::Image((ImTextureID)(uintptr_t)iconTex, ImVec2(14, 14));
+                            ImGui::SameLine();
+                            ImGui::Text("%s: %u/%u", itemLabel.c_str(), count, required);
+                        } else {
+                            ImGui::BulletText("%s: %u/%u", itemLabel.c_str(), count, required);
+                        }
                     }
                 }
 

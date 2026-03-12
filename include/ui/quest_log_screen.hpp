@@ -7,9 +7,11 @@
 
 namespace wowee { namespace ui {
 
+class InventoryScreen;
+
 class QuestLogScreen {
 public:
-    void render(game::GameHandler& gameHandler);
+    void render(game::GameHandler& gameHandler, InventoryScreen& invScreen);
     bool isOpen() const { return open; }
     void toggle() { open = !open; }
     void setOpen(bool o) { open = o; }

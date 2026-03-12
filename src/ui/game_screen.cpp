@@ -460,7 +460,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderWorldMap(gameHandler);
 
     // Quest Log (L key toggle handled inside)
-    questLogScreen.render(gameHandler);
+    questLogScreen.render(gameHandler, inventoryScreen);
 
     // Spellbook (P key toggle handled inside)
     spellbookScreen.render(gameHandler, core::Application::getInstance().getAssetManager());
