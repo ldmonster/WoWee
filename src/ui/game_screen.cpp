@@ -1090,6 +1090,22 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                         gameHandler.ensureItemInfo(itemEntry);
                     }
 
+                    // Show small icon before item link if available
+                    if (itemEntry > 0) {
+                        const auto* chatInfo = gameHandler.getItemInfo(itemEntry);
+                        if (chatInfo && chatInfo->valid && chatInfo->displayInfoId != 0) {
+                            VkDescriptorSet chatIcon = inventoryScreen.getItemIcon(chatInfo->displayInfoId);
+                            if (chatIcon) {
+                                ImGui::Image((ImTextureID)(uintptr_t)chatIcon, ImVec2(12, 12));
+                                if (ImGui::IsItemHovered()) {
+                                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                                    renderItemLinkTooltip(itemEntry);
+                                }
+                                ImGui::SameLine(0, 2);
+                            }
+                        }
+                    }
+
                     // Render bracketed item name in quality color
                     std::string display = "[" + itemName + "]";
                     ImGui::PushStyleColor(ImGuiCol_Text, linkColor);
