@@ -563,6 +563,17 @@ private:
     bool otherPlayerLevelUpCallbackSet_ = false;
     void renderPlayerLevelUpToasts(game::GameHandler& gameHandler);
 
+    // PvP honor credit toast ("+N Honor" shown when an honorable kill is credited)
+    struct PvpHonorToastEntry {
+        uint32_t honor = 0;
+        uint32_t victimRank = 0;  // 0 = unranked / not available
+        float age = 0.0f;
+    };
+    static constexpr float PVP_HONOR_TOAST_DURATION = 3.5f;
+    std::vector<PvpHonorToastEntry> pvpHonorToasts_;
+    bool pvpHonorCallbackSet_ = false;
+    void renderPvpHonorToasts();
+
     // Zone discovery text ("Entering: <ZoneName>")
     static constexpr float ZONE_TEXT_DURATION = 5.0f;
     float zoneTextTimer_ = 0.0f;

@@ -348,6 +348,17 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         otherPlayerLevelUpCallbackSet_ = true;
     }
 
+    // Set up PvP honor credit toast callback (once)
+    if (!pvpHonorCallbackSet_) {
+        gameHandler.setPvpHonorCallback([this](uint32_t honor, uint64_t /*victimGuid*/, uint32_t rank) {
+            if (honor == 0) return;
+            pvpHonorToasts_.push_back({honor, rank, 0.0f});
+            if (pvpHonorToasts_.size() > 4)
+                pvpHonorToasts_.erase(pvpHonorToasts_.begin());
+        });
+        pvpHonorCallbackSet_ = true;
+    }
+
     // Set up UI error frame callback (once)
     if (!uiErrorCallbackSet_) {
         gameHandler.setUIErrorCallback([this](const std::string& msg) {
@@ -680,6 +691,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderWhisperToasts();
     renderQuestProgressToasts();
     renderPlayerLevelUpToasts(gameHandler);
+    renderPvpHonorToasts();
     renderZoneText();
 
     // World map (M key toggle handled inside)
@@ -18211,6 +18223,70 @@ void GameScreen::renderQuestProgressToasts() {
             snprintf(progBuf, sizeof(progBuf), "%u/%u", toast.current, toast.required);
         bgDL->AddText(ImVec2(toastX + 8.0f, ty + 32.0f),
                       IM_COL32(220, 220, 200, static_cast<uint8_t>(210 * alpha)), progBuf);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PvP honor credit toasts — shown at screen top-right on honorable kill
+// ---------------------------------------------------------------------------
+
+void GameScreen::renderPvpHonorToasts() {
+    if (pvpHonorToasts_.empty()) return;
+
+    float dt = ImGui::GetIO().DeltaTime;
+    for (auto& t : pvpHonorToasts_) t.age += dt;
+    pvpHonorToasts_.erase(
+        std::remove_if(pvpHonorToasts_.begin(), pvpHonorToasts_.end(),
+            [](const PvpHonorToastEntry& t) { return t.age >= PVP_HONOR_TOAST_DURATION; }),
+        pvpHonorToasts_.end());
+    if (pvpHonorToasts_.empty()) return;
+
+    ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+    float screenW = displaySize.x > 0.0f ? displaySize.x : 1280.0f;
+
+    // Stack toasts at top-right, below any minimap area
+    constexpr float TOAST_W   = 180.0f;
+    constexpr float TOAST_H   = 30.0f;
+    constexpr float TOAST_GAP = 3.0f;
+    constexpr float TOAST_TOP = 10.0f;
+    float toastX = screenW - TOAST_W - 10.0f;
+
+    ImDrawList* bgDL = ImGui::GetBackgroundDrawList();
+    const int count = static_cast<int>(pvpHonorToasts_.size());
+
+    for (int i = 0; i < count; ++i) {
+        const auto& toast = pvpHonorToasts_[i];
+
+        float remaining = PVP_HONOR_TOAST_DURATION - toast.age;
+        float alpha;
+        if (toast.age < 0.15f)
+            alpha = toast.age / 0.15f;
+        else if (remaining < 0.8f)
+            alpha = remaining / 0.8f;
+        else
+            alpha = 1.0f;
+        alpha = std::clamp(alpha, 0.0f, 1.0f);
+
+        float ty = TOAST_TOP + i * (TOAST_H + TOAST_GAP);
+
+        uint8_t bgA = static_cast<uint8_t>(190 * alpha);
+        uint8_t fgA = static_cast<uint8_t>(255 * alpha);
+
+        // Background: dark red (PvP theme)
+        bgDL->AddRectFilled(ImVec2(toastX, ty), ImVec2(toastX + TOAST_W, ty + TOAST_H),
+                            IM_COL32(28, 5, 5, bgA), 4.0f);
+        bgDL->AddRect(ImVec2(toastX, ty), ImVec2(toastX + TOAST_W, ty + TOAST_H),
+                      IM_COL32(200, 50, 50, static_cast<uint8_t>(160 * alpha)), 4.0f, 0, 1.2f);
+
+        // Sword ⚔ icon (U+2694, UTF-8: e2 9a 94)
+        bgDL->AddText(ImVec2(toastX + 7.0f, ty + 7.0f),
+                      IM_COL32(220, 80, 80, fgA), "\xe2\x9a\x94");
+
+        // "+N Honor" text in gold
+        char buf[40];
+        snprintf(buf, sizeof(buf), "+%u Honor", toast.honor);
+        bgDL->AddText(ImVec2(toastX + 24.0f, ty + 8.0f),
+                      IM_COL32(255, 210, 50, fgA), buf);
     }
 }
 

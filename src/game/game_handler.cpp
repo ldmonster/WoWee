@@ -1882,6 +1882,9 @@ void GameHandler::handlePacket(network::Packet& packet) {
                          std::dec, " rank=", rank);
                 std::string msg = "You gain " + std::to_string(honor) + " honor points.";
                 addSystemChatMessage(msg);
+                if (pvpHonorCallback_) {
+                    pvpHonorCallback_(honor, victimGuid, rank);
+                }
             }
             break;
         }

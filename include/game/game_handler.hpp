@@ -1490,6 +1490,10 @@ public:
     using RepChangeCallback = std::function<void(const std::string& factionName, int32_t delta, int32_t standing)>;
     void setRepChangeCallback(RepChangeCallback cb) { repChangeCallback_ = std::move(cb); }
 
+    // PvP honor credit callback (honorable kill or BG reward)
+    using PvpHonorCallback = std::function<void(uint32_t honorAmount, uint64_t victimGuid, uint32_t victimRank)>;
+    void setPvpHonorCallback(PvpHonorCallback cb) { pvpHonorCallback_ = std::move(cb); }
+
     // Quest turn-in completion callback
     using QuestCompleteCallback = std::function<void(uint32_t questId, const std::string& questTitle)>;
     void setQuestCompleteCallback(QuestCompleteCallback cb) { questCompleteCallback_ = std::move(cb); }
@@ -2830,6 +2834,9 @@ private:
     // ---- Reputation change callback ----
     RepChangeCallback repChangeCallback_;
     uint32_t watchedFactionId_ = 0; // auto-set to most recently changed faction
+
+    // ---- PvP honor credit callback ----
+    PvpHonorCallback pvpHonorCallback_;
 
     // ---- Quest completion callback ----
     QuestCompleteCallback questCompleteCallback_;
