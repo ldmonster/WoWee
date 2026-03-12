@@ -1489,6 +1489,39 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
         }
     };
 
+    // Determine local player name for mention detection (case-insensitive)
+    std::string selfNameLower;
+    {
+        const auto* ch = gameHandler.getActiveCharacter();
+        if (ch && !ch->name.empty()) {
+            selfNameLower = ch->name;
+            for (auto& c : selfNameLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+    }
+
+    // Scan NEW messages (beyond chatMentionSeenCount_) for mentions and play notification sound
+    if (!selfNameLower.empty() && chatHistory.size() > chatMentionSeenCount_) {
+        for (size_t mi = chatMentionSeenCount_; mi < chatHistory.size(); ++mi) {
+            const auto& mMsg = chatHistory[mi];
+            // Skip outgoing whispers, system, and monster messages
+            if (mMsg.type == game::ChatType::WHISPER_INFORM ||
+                mMsg.type == game::ChatType::SYSTEM) continue;
+            // Case-insensitive search in message body
+            std::string bodyLower = mMsg.message;
+            for (auto& c : bodyLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (bodyLower.find(selfNameLower) != std::string::npos) {
+                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                    if (auto* ui = renderer->getUiSoundManager())
+                        ui->playWhisperReceived();
+                }
+                break; // play at most once per scan pass
+            }
+        }
+        chatMentionSeenCount_ = chatHistory.size();
+    } else if (chatHistory.size() <= chatMentionSeenCount_) {
+        chatMentionSeenCount_ = chatHistory.size();  // reset if history was cleared
+    }
+
     int chatMsgIdx = 0;
     for (const auto& msg : chatHistory) {
         if (!shouldShowMessage(msg, activeChatTab_)) continue;
@@ -1572,10 +1605,30 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
             }
         }
 
+        // Detect mention: does this message contain the local player's name?
+        bool isMention = false;
+        if (!selfNameLower.empty() &&
+            msg.type != game::ChatType::WHISPER_INFORM &&
+            msg.type != game::ChatType::SYSTEM) {
+            std::string msgLower = fullMsg;
+            for (auto& c : msgLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            isMention = (msgLower.find(selfNameLower) != std::string::npos);
+        }
+
         // Render message in a group so we can attach a right-click context menu
         ImGui::PushID(chatMsgIdx++);
+        if (isMention) {
+            // Golden highlight strip behind the text
+            ImVec2 groupMin = ImGui::GetCursorScreenPos();
+            float availW = ImGui::GetContentRegionAvail().x;
+            float lineH = ImGui::GetTextLineHeightWithSpacing();
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                groupMin,
+                ImVec2(groupMin.x + availW, groupMin.y + lineH),
+                IM_COL32(255, 200, 50, 45));  // soft golden tint
+        }
         ImGui::BeginGroup();
-        renderTextWithLinks(fullMsg, color);
+        renderTextWithLinks(fullMsg, isMention ? ImVec4(1.0f, 0.9f, 0.35f, 1.0f) : color);
         ImGui::EndGroup();
 
         // Right-click context menu (only for player messages with a sender)

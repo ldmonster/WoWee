@@ -59,6 +59,9 @@ private:
     std::vector<std::string> chatTabMatches_;  // matching command list
     int chatTabMatchIdx_ = -1;             // active match index (-1 = inactive)
 
+    // Mention notification: plays a sound when the player's name appears in chat
+    size_t chatMentionSeenCount_ = 0;      // how many messages have been scanned for mentions
+
     // Chat tabs
     int activeChatTab_ = 0;
     struct ChatTab {
