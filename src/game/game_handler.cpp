@@ -1767,6 +1767,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     }
                     addSystemChatMessage(msg);
                     // XP is updated via PLAYER_XP update fields from the server.
+                    if (areaDiscoveryCallback_)
+                        areaDiscoveryCallback_(areaName, xpGained);
                 }
             }
             break;

@@ -1428,6 +1428,10 @@ public:
     using AchievementEarnedCallback = std::function<void(uint32_t achievementId, const std::string& name)>;
     void setAchievementEarnedCallback(AchievementEarnedCallback cb) { achievementEarnedCallback_ = std::move(cb); }
     const std::unordered_set<uint32_t>& getEarnedAchievements() const { return earnedAchievements_; }
+
+    // Area discovery callback — fires when SMSG_EXPLORATION_EXPERIENCE is received
+    using AreaDiscoveryCallback = std::function<void(const std::string& areaName, uint32_t xpGained)>;
+    void setAreaDiscoveryCallback(AreaDiscoveryCallback cb) { areaDiscoveryCallback_ = std::move(cb); }
     const std::unordered_map<uint32_t, uint64_t>& getCriteriaProgress() const { return criteriaProgress_; }
     /// Returns the WoW PackedTime earn date for an achievement, or 0 if unknown.
     uint32_t getAchievementDate(uint32_t id) const {
@@ -2749,6 +2753,7 @@ private:
     LevelUpCallback levelUpCallback_;
     OtherPlayerLevelUpCallback otherPlayerLevelUpCallback_;
     AchievementEarnedCallback achievementEarnedCallback_;
+    AreaDiscoveryCallback areaDiscoveryCallback_;
     MountCallback mountCallback_;
     TaxiPrecacheCallback taxiPrecacheCallback_;
     TaxiOrientationCallback taxiOrientationCallback_;

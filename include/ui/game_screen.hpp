@@ -519,6 +519,14 @@ private:
     std::string achievementToastName_;
     void renderAchievementToast();
 
+    // Area discovery toast ("Discovered! <AreaName> +XP XP")
+    static constexpr float DISCOVERY_TOAST_DURATION = 4.0f;
+    float discoveryToastTimer_ = 0.0f;
+    std::string discoveryToastName_;
+    uint32_t discoveryToastXP_ = 0;
+    bool areaDiscoveryCallbackSet_ = false;
+    void renderDiscoveryToast();
+
     // Zone discovery text ("Entering: <ZoneName>")
     static constexpr float ZONE_TEXT_DURATION = 5.0f;
     float zoneTextTimer_ = 0.0f;

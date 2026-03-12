@@ -300,6 +300,16 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         achievementCallbackSet_ = true;
     }
 
+    // Set up area discovery toast callback (once)
+    if (!areaDiscoveryCallbackSet_) {
+        gameHandler.setAreaDiscoveryCallback([this](const std::string& areaName, uint32_t xpGained) {
+            discoveryToastName_ = areaName.empty() ? "New Area" : areaName;
+            discoveryToastXP_   = xpGained;
+            discoveryToastTimer_ = DISCOVERY_TOAST_DURATION;
+        });
+        areaDiscoveryCallbackSet_ = true;
+    }
+
     // Set up UI error frame callback (once)
     if (!uiErrorCallbackSet_) {
         gameHandler.setUIErrorCallback([this](const std::string& msg) {
@@ -628,6 +638,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderSettingsWindow();
     renderDingEffect();
     renderAchievementToast();
+    renderDiscoveryToast();
     renderZoneText();
 
     // World map (M key toggle handled inside)
@@ -17925,6 +17936,79 @@ void GameScreen::renderAchievementToast() {
     float idX = toastX + (TOAST_W - idW) * 0.5f;
     draw->AddText(font, bodySize, ImVec2(idX, toastY + 28),
                   IM_COL32(220, 200, 150, (int)(alpha * 255)), idBuf);
+}
+
+// ---------------------------------------------------------------------------
+// Area discovery toast — "Discovered: <AreaName>! (+XP XP)" centered on screen
+// ---------------------------------------------------------------------------
+
+void GameScreen::renderDiscoveryToast() {
+    if (discoveryToastTimer_ <= 0.0f) return;
+
+    float dt = ImGui::GetIO().DeltaTime;
+    discoveryToastTimer_ -= dt;
+    if (discoveryToastTimer_ < 0.0f) discoveryToastTimer_ = 0.0f;
+
+    // Fade: ramp up in first 0.4s, hold, fade out in last 1.0s
+    float alpha;
+    if (discoveryToastTimer_ > DISCOVERY_TOAST_DURATION - 0.4f)
+        alpha = 1.0f - (discoveryToastTimer_ - (DISCOVERY_TOAST_DURATION - 0.4f)) / 0.4f;
+    else if (discoveryToastTimer_ < 1.0f)
+        alpha = discoveryToastTimer_;
+    else
+        alpha = 1.0f;
+    alpha = std::clamp(alpha, 0.0f, 1.0f);
+
+    auto* window = core::Application::getInstance().getWindow();
+    float screenW = window ? static_cast<float>(window->getWidth())  : 1280.0f;
+    float screenH = window ? static_cast<float>(window->getHeight()) :  720.0f;
+
+    ImFont* font = ImGui::GetFont();
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+
+    const char* header   = "Discovered!";
+    float headerSize     = 16.0f;
+    float nameSize       = 28.0f;
+    float xpSize         = 14.0f;
+
+    ImVec2 headerDim = font->CalcTextSizeA(headerSize, FLT_MAX, 0.0f, header);
+    ImVec2 nameDim   = font->CalcTextSizeA(nameSize,   FLT_MAX, 0.0f, discoveryToastName_.c_str());
+
+    char xpBuf[48];
+    if (discoveryToastXP_ > 0)
+        snprintf(xpBuf, sizeof(xpBuf), "+%u XP", discoveryToastXP_);
+    else
+        xpBuf[0] = '\0';
+    ImVec2 xpDim = font->CalcTextSizeA(xpSize, FLT_MAX, 0.0f, xpBuf);
+
+    // Position slightly below zone text (at 37% down screen)
+    float centreY = screenH * 0.37f;
+    float headerX = (screenW - headerDim.x) * 0.5f;
+    float nameX   = (screenW - nameDim.x)   * 0.5f;
+    float xpX     = (screenW - xpDim.x)     * 0.5f;
+    float headerY = centreY;
+    float nameY   = centreY + headerDim.y + 4.0f;
+    float xpY     = nameY + nameDim.y + 4.0f;
+
+    // "Discovered!" in gold
+    draw->AddText(font, headerSize, ImVec2(headerX + 1, headerY + 1),
+                  IM_COL32(0, 0, 0, (int)(alpha * 160)), header);
+    draw->AddText(font, headerSize, ImVec2(headerX, headerY),
+                  IM_COL32(255, 215, 0, (int)(alpha * 255)), header);
+
+    // Area name in white
+    draw->AddText(font, nameSize, ImVec2(nameX + 1, nameY + 1),
+                  IM_COL32(0, 0, 0, (int)(alpha * 160)), discoveryToastName_.c_str());
+    draw->AddText(font, nameSize, ImVec2(nameX, nameY),
+                  IM_COL32(255, 255, 255, (int)(alpha * 255)), discoveryToastName_.c_str());
+
+    // XP gain in light green (if any)
+    if (xpBuf[0] != '\0') {
+        draw->AddText(font, xpSize, ImVec2(xpX + 1, xpY + 1),
+                      IM_COL32(0, 0, 0, (int)(alpha * 140)), xpBuf);
+        draw->AddText(font, xpSize, ImVec2(xpX, xpY),
+                      IM_COL32(100, 220, 100, (int)(alpha * 230)), xpBuf);
+    }
 }
 
 // ---------------------------------------------------------------------------
