@@ -7213,12 +7213,31 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         ImVec2 textSize = ImGui::CalcTextSize(labelBuf);
         float nameX = sx - textSize.x * 0.5f;
         float nameY = sy - barH - 12.0f;
-        // Name color: other player=cyan, hostile=red, non-hostile=yellow (WoW convention)
-        ImU32 nameColor = isPlayer
-            ? IM_COL32( 80, 200, 255, A(230))   // cyan — other players
-            : unit->isHostile()
+        // Name color: players get WoW class colors; NPCs use hostility (red/yellow)
+        ImU32 nameColor;
+        if (isPlayer) {
+            // Determine class from UNIT_FIELD_BYTES_0 byte 1; cyan fallback for unknown class
+            nameColor = IM_COL32(80, 200, 255, A(230));
+            uint8_t cid = static_cast<uint8_t>(
+                (unit->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0)) >> 8) & 0xFF);
+            switch (cid) {
+                case 1:  nameColor = IM_COL32(199, 156, 110, A(230)); break; // Warrior
+                case 2:  nameColor = IM_COL32(245, 140, 186, A(230)); break; // Paladin
+                case 3:  nameColor = IM_COL32(171, 212, 115, A(230)); break; // Hunter
+                case 4:  nameColor = IM_COL32(255, 245, 105, A(230)); break; // Rogue
+                case 5:  nameColor = IM_COL32(255, 255, 255, A(230)); break; // Priest
+                case 6:  nameColor = IM_COL32(196,  31,  59, A(230)); break; // Death Knight
+                case 7:  nameColor = IM_COL32(  0, 112, 222, A(230)); break; // Shaman
+                case 8:  nameColor = IM_COL32(105, 204, 240, A(230)); break; // Mage
+                case 9:  nameColor = IM_COL32(148, 130, 201, A(230)); break; // Warlock
+                case 11: nameColor = IM_COL32(255, 125,  10, A(230)); break; // Druid
+                default: break;
+            }
+        } else {
+            nameColor = unit->isHostile()
                 ? IM_COL32(220,  80,  80, A(230))   // red  — hostile NPC
                 : IM_COL32(240, 200, 100, A(230));  // yellow — friendly NPC
+        }
         drawList->AddText(ImVec2(nameX + 1.0f, nameY + 1.0f), IM_COL32(0, 0, 0, A(160)), labelBuf);
         drawList->AddText(ImVec2(nameX,         nameY),         nameColor, labelBuf);
 
