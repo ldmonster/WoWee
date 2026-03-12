@@ -14729,10 +14729,41 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
             drawList->AddCircleFilled(ImVec2(sx, sy), 4.0f, dotColor);
             drawList->AddCircle(ImVec2(sx, sy), 4.0f, IM_COL32(255, 255, 255, 160), 12, 1.0f);
 
+            // Raid mark: tiny symbol drawn above the dot
+            {
+                static const struct { const char* sym; ImU32 col; } kMMMarks[] = {
+                    { "\xe2\x98\x85", IM_COL32(255, 220,  50, 255) },
+                    { "\xe2\x97\x8f", IM_COL32(255, 140,   0, 255) },
+                    { "\xe2\x97\x86", IM_COL32(160,  32, 240, 255) },
+                    { "\xe2\x96\xb2", IM_COL32( 50, 200,  50, 255) },
+                    { "\xe2\x97\x8c", IM_COL32( 80, 160, 255, 255) },
+                    { "\xe2\x96\xa0", IM_COL32( 50, 200, 220, 255) },
+                    { "\xe2\x9c\x9d", IM_COL32(255,  80,  80, 255) },
+                    { "\xe2\x98\xa0", IM_COL32(255, 255, 255, 255) },
+                };
+                uint8_t pmk = gameHandler.getEntityRaidMark(member.guid);
+                if (pmk < game::GameHandler::kRaidMarkCount) {
+                    ImFont* mmFont = ImGui::GetFont();
+                    ImVec2 msz = mmFont->CalcTextSizeA(9.0f, FLT_MAX, 0.0f, kMMMarks[pmk].sym);
+                    drawList->AddText(mmFont, 9.0f,
+                        ImVec2(sx - msz.x * 0.5f, sy - 4.0f - msz.y),
+                        kMMMarks[pmk].col, kMMMarks[pmk].sym);
+                }
+            }
+
             ImVec2 cursorPos = ImGui::GetMousePos();
             float mdx = cursorPos.x - sx, mdy = cursorPos.y - sy;
             if (!member.name.empty() && (mdx * mdx + mdy * mdy) < 64.0f) {
-                ImGui::SetTooltip("%s", member.name.c_str());
+                uint8_t pmk2 = gameHandler.getEntityRaidMark(member.guid);
+                if (pmk2 < game::GameHandler::kRaidMarkCount) {
+                    static const char* kMarkNames[] = {
+                        "Star", "Circle", "Diamond", "Triangle",
+                        "Moon", "Square", "Cross", "Skull"
+                    };
+                    ImGui::SetTooltip("%s {%s}", member.name.c_str(), kMarkNames[pmk2]);
+                } else {
+                    ImGui::SetTooltip("%s", member.name.c_str());
+                }
             }
         }
     }
