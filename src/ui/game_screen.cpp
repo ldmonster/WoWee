@@ -2094,6 +2094,15 @@ void GameScreen::renderPlayerFrame(game::GameHandler& gameHandler) {
             if (ImGui::MenuItem("Toggle PvP")) {
                 gameHandler.togglePvp();
             }
+            ImGui::Separator();
+            bool afk = gameHandler.isAfk();
+            bool dnd = gameHandler.isDnd();
+            if (ImGui::MenuItem(afk ? "Cancel AFK" : "Set AFK")) {
+                gameHandler.toggleAfk();
+            }
+            if (ImGui::MenuItem(dnd ? "Cancel DND" : "Set DND")) {
+                gameHandler.toggleDnd();
+            }
             if (gameHandler.isInGroup()) {
                 ImGui::Separator();
                 if (ImGui::MenuItem("Leave Group")) {
@@ -2294,6 +2303,18 @@ void GameScreen::renderPetFrame(game::GameHandler& gameHandler) {
                  petName.empty() ? "Pet" : petName.c_str());
         if (ImGui::Selectable(petLabel, false, 0, ImVec2(0, 0))) {
             gameHandler.setTarget(petGuid);
+        }
+        // Right-click context menu on pet name
+        if (ImGui::BeginPopupContextItem("PetNameCtx")) {
+            ImGui::TextDisabled("%s", petLabel);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Target Pet")) {
+                gameHandler.setTarget(petGuid);
+            }
+            if (ImGui::MenuItem("Dismiss Pet")) {
+                gameHandler.dismissPet();
+            }
+            ImGui::EndPopup();
         }
         ImGui::PopStyleColor();
         if (petLevel > 0) {
