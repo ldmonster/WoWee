@@ -1099,16 +1099,7 @@ public:
     void completeQuest();       // Send CMSG_QUESTGIVER_COMPLETE_QUEST
     void closeQuestRequestItems();
 
-    bool isQuestOfferRewardOpen() {
-        if (questOfferRewardOpen_) return true;
-        if (questDetailsOpenTime != std::chrono::steady_clock::time_point{}) {
-            if (std::chrono::steady_clock::now() >= questDetailsOpenTime) {
-                questOfferRewardOpen_ = true;
-                questDetailsOpenTime = std::chrono::steady_clock::time_point{};
-            }
-        }
-        return questOfferRewardOpen_;
-    }
+    bool isQuestOfferRewardOpen() const { return questOfferRewardOpen_; }
     const QuestOfferRewardData& getQuestOfferReward() const { return currentQuestOfferReward_; }
     void chooseQuestReward(uint32_t rewardIndex);  // Send CMSG_QUESTGIVER_CHOOSE_REWARD
     void closeQuestOfferReward();

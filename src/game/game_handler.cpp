@@ -15770,19 +15770,17 @@ void GameHandler::handleQuestOfferReward(network::Packet& packet) {
         pendingTurnInRewardRequest_ = false;
     }
     currentQuestOfferReward_ = data;
+    questOfferRewardOpen_ = true;
     questRequestItemsOpen_ = false;
     gossipWindowOpen = false;
     questDetailsOpen = false;
+    questDetailsOpenTime = std::chrono::steady_clock::time_point{};
 
     // Query item names for reward items
     for (const auto& item : data.choiceRewards)
         queryItemInfo(item.itemId, 0);
     for (const auto& item : data.fixedRewards)
         queryItemInfo(item.itemId, 0);
-
-    // Delay opening window by 100ms to allow item queries to complete (avoids "Item X" placeholders)
-    questOfferRewardOpen_ = false;
-    questDetailsOpenTime = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
 }
 
 void GameHandler::completeQuest() {
