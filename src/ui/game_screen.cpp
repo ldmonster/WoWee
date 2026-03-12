@@ -12686,12 +12686,40 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
             auto* fgDl = ImGui::GetForegroundDrawList();
             float zoneTextY = centerY - mapRadius - 16.0f;
             ImFont* font = ImGui::GetFont();
-            ImVec2 tsz = font->CalcTextSizeA(12.0f, FLT_MAX, 0.0f, zoneName.c_str());
+
+            // Weather icon appended to zone name when active
+            uint32_t wType = gameHandler.getWeatherType();
+            float wIntensity = gameHandler.getWeatherIntensity();
+            const char* weatherIcon = nullptr;
+            ImU32 weatherColor = IM_COL32(255, 255, 255, 200);
+            if (wType == 1 && wIntensity > 0.05f) {           // Rain
+                weatherIcon = " \xe2\x9b\x86";               // U+26C6 ⛆
+                weatherColor = IM_COL32(140, 180, 240, 220);
+            } else if (wType == 2 && wIntensity > 0.05f) {    // Snow
+                weatherIcon = " \xe2\x9d\x84";               // U+2744 ❄
+                weatherColor = IM_COL32(210, 230, 255, 220);
+            } else if (wType == 3 && wIntensity > 0.05f) {    // Storm/Fog
+                weatherIcon = " \xe2\x98\x81";               // U+2601 ☁
+                weatherColor = IM_COL32(160, 160, 190, 220);
+            }
+
+            std::string displayName = zoneName;
+            // Build combined string if weather active
+            std::string fullLabel = weatherIcon ? (zoneName + weatherIcon) : zoneName;
+            ImVec2 tsz = font->CalcTextSizeA(12.0f, FLT_MAX, 0.0f, fullLabel.c_str());
             float tzx = centerX - tsz.x * 0.5f;
+
+            // Shadow pass
             fgDl->AddText(font, 12.0f, ImVec2(tzx + 1.0f, zoneTextY + 1.0f),
                 IM_COL32(0, 0, 0, 180), zoneName.c_str());
+            // Zone name in gold
             fgDl->AddText(font, 12.0f, ImVec2(tzx, zoneTextY),
                 IM_COL32(255, 220, 120, 230), zoneName.c_str());
+            // Weather symbol in its own color appended after
+            if (weatherIcon) {
+                ImVec2 nameSz = font->CalcTextSizeA(12.0f, FLT_MAX, 0.0f, zoneName.c_str());
+                fgDl->AddText(font, 12.0f, ImVec2(tzx + nameSz.x, zoneTextY), weatherColor, weatherIcon);
+            }
         }
     }
 
