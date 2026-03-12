@@ -5671,6 +5671,33 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                     if (ImGui::InvisibleButton("raidCell", ImVec2(CELL_W, CELL_H))) {
                         gameHandler.setTarget(m.guid);
                     }
+                    if (ImGui::BeginPopupContextItem("RaidMemberCtx")) {
+                        ImGui::TextDisabled("%s", m.name.c_str());
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Target"))
+                            gameHandler.setTarget(m.guid);
+                        if (ImGui::MenuItem("Set Focus"))
+                            gameHandler.setFocus(m.guid);
+                        if (ImGui::MenuItem("Whisper")) {
+                            selectedChatType = 4;
+                            strncpy(whisperTargetBuffer, m.name.c_str(), sizeof(whisperTargetBuffer) - 1);
+                            whisperTargetBuffer[sizeof(whisperTargetBuffer) - 1] = '\0';
+                            refocusChatInput = true;
+                        }
+                        if (ImGui::MenuItem("Trade"))
+                            gameHandler.initiateTrade(m.guid);
+                        if (ImGui::MenuItem("Inspect")) {
+                            gameHandler.setTarget(m.guid);
+                            gameHandler.inspectTarget();
+                        }
+                        bool isLeader = (partyData.leaderGuid == gameHandler.getPlayerGuid());
+                        if (isLeader) {
+                            ImGui::Separator();
+                            if (ImGui::MenuItem("Kick from Raid"))
+                                gameHandler.uninvitePlayer(m.name);
+                        }
+                        ImGui::EndPopup();
+                    }
                     ImGui::PopID();
                 }
                 colIdx++;
@@ -5818,6 +5845,14 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                 if (ImGui::MenuItem("Inspect")) {
                     gameHandler.setTarget(member.guid);
                     gameHandler.inspectTarget();
+                }
+                // Leader-only actions
+                bool isLeader = (gameHandler.getPartyData().leaderGuid == gameHandler.getPlayerGuid());
+                if (isLeader) {
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Kick from Group")) {
+                        gameHandler.uninvitePlayer(member.name);
+                    }
                 }
                 ImGui::EndPopup();
             }
