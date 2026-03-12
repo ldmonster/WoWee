@@ -8003,9 +8003,12 @@ void GameScreen::renderTrainerWindow(game::GameHandler& gameHandler) {
         uint32_t mc = static_cast<uint32_t>(money % 100);
         ImGui::Text("Your money: %ug %us %uc", mg, ms, mc);
 
-        // Filter checkbox
+        // Filter controls
         static bool showUnavailable = false;
         ImGui::Checkbox("Show unavailable spells", &showUnavailable);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputTextWithHint("##TrainerSearch", "Search...", trainerSearchFilter_, sizeof(trainerSearchFilter_));
         ImGui::Separator();
 
         if (trainer.spells.empty()) {
@@ -8053,6 +8056,20 @@ void GameScreen::renderTrainerWindow(game::GameHandler& gameHandler) {
                     // Use effectiveState so spells with newly met prereqs aren't filtered
                     if (!showUnavailable && effectiveState == 1) {
                         continue;
+                    }
+
+                    // Apply text search filter
+                    if (trainerSearchFilter_[0] != '\0') {
+                        std::string trainerFilter(trainerSearchFilter_);
+                        for (char& c : trainerFilter) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        const std::string& spellName = gameHandler.getSpellName(spell->spellId);
+                        std::string nameLC = spellName.empty() ? std::to_string(spell->spellId) : spellName;
+                        for (char& c : nameLC) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        if (nameLC.find(trainerFilter) == std::string::npos) {
+                            ImGui::PushID(static_cast<int>(spell->spellId));
+                            ImGui::PopID();
+                            continue;
+                        }
                     }
 
                     ImGui::TableNextRow();

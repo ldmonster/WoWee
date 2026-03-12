@@ -365,6 +365,9 @@ private:
     // Vendor search filter
     char vendorSearchFilter_[128] = "";
 
+    // Trainer search filter
+    char trainerSearchFilter_[128] = "";
+
     // Auction house UI state
     char auctionSearchName_[256] = "";
     int auctionLevelMin_ = 0;
