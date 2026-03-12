@@ -3731,6 +3731,132 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                             ImGui::ProgressBar(pct, ImVec2(-1, 10), "");
                             ImGui::PopStyleColor();
                         }
+
+                        // ToT aura row — compact icons, debuffs first
+                        {
+                            const std::vector<game::AuraSlot>* totAuras = nullptr;
+                            if (totGuid == gameHandler.getPlayerGuid())
+                                totAuras = &gameHandler.getPlayerAuras();
+                            else if (totGuid == gameHandler.getTargetGuid())
+                                totAuras = &gameHandler.getTargetAuras();
+                            else
+                                totAuras = gameHandler.getUnitAuras(totGuid);
+
+                            if (totAuras) {
+                                int totActive = 0;
+                                for (const auto& a : *totAuras) if (!a.isEmpty()) totActive++;
+                                if (totActive > 0) {
+                                    auto* totAsset = core::Application::getInstance().getAssetManager();
+                                    constexpr float TA_ICON = 16.0f;
+                                    constexpr int   TA_PER_ROW = 8;
+
+                                    ImGui::Separator();
+
+                                    uint64_t taNowMs = static_cast<uint64_t>(
+                                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                                            std::chrono::steady_clock::now().time_since_epoch()).count());
+
+                                    std::vector<size_t> taIdx;
+                                    taIdx.reserve(totAuras->size());
+                                    for (size_t i = 0; i < totAuras->size(); ++i)
+                                        if (!(*totAuras)[i].isEmpty()) taIdx.push_back(i);
+                                    std::sort(taIdx.begin(), taIdx.end(), [&](size_t a, size_t b) {
+                                        bool aD = ((*totAuras)[a].flags & 0x80) != 0;
+                                        bool bD = ((*totAuras)[b].flags & 0x80) != 0;
+                                        if (aD != bD) return aD > bD;
+                                        int32_t ra = (*totAuras)[a].getRemainingMs(taNowMs);
+                                        int32_t rb = (*totAuras)[b].getRemainingMs(taNowMs);
+                                        if (ra < 0 && rb < 0) return false;
+                                        if (ra < 0) return false;
+                                        if (rb < 0) return true;
+                                        return ra < rb;
+                                    });
+
+                                    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f, 2.0f));
+                                    int taShown = 0;
+                                    for (size_t si = 0; si < taIdx.size() && taShown < 16; ++si) {
+                                        const auto& aura = (*totAuras)[taIdx[si]];
+                                        bool isBuff = (aura.flags & 0x80) == 0;
+
+                                        if (taShown > 0 && taShown % TA_PER_ROW != 0) ImGui::SameLine();
+                                        ImGui::PushID(static_cast<int>(taIdx[si]) + 5000);
+
+                                        ImVec4 borderCol;
+                                        if (isBuff) {
+                                            borderCol = ImVec4(0.2f, 0.8f, 0.2f, 0.9f);
+                                        } else {
+                                            uint8_t dt = gameHandler.getSpellDispelType(aura.spellId);
+                                            switch (dt) {
+                                                case 1: borderCol = ImVec4(0.15f, 0.50f, 1.00f, 0.9f); break;
+                                                case 2: borderCol = ImVec4(0.70f, 0.20f, 0.90f, 0.9f); break;
+                                                case 3: borderCol = ImVec4(0.55f, 0.30f, 0.10f, 0.9f); break;
+                                                case 4: borderCol = ImVec4(0.10f, 0.70f, 0.10f, 0.9f); break;
+                                                default: borderCol = ImVec4(0.80f, 0.20f, 0.20f, 0.9f); break;
+                                            }
+                                        }
+
+                                        VkDescriptorSet taIcon = (totAsset)
+                                            ? getSpellIcon(aura.spellId, totAsset) : VK_NULL_HANDLE;
+                                        if (taIcon) {
+                                            ImGui::PushStyleColor(ImGuiCol_Button, borderCol);
+                                            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(1, 1));
+                                            ImGui::ImageButton("##taura",
+                                                (ImTextureID)(uintptr_t)taIcon,
+                                                ImVec2(TA_ICON - 2, TA_ICON - 2));
+                                            ImGui::PopStyleVar();
+                                            ImGui::PopStyleColor();
+                                        } else {
+                                            ImGui::PushStyleColor(ImGuiCol_Button, borderCol);
+                                            char lab[8];
+                                            snprintf(lab, sizeof(lab), "%u", aura.spellId % 10000);
+                                            ImGui::Button(lab, ImVec2(TA_ICON, TA_ICON));
+                                            ImGui::PopStyleColor();
+                                        }
+
+                                        // Duration overlay
+                                        int32_t taRemain = aura.getRemainingMs(taNowMs);
+                                        if (taRemain > 0) {
+                                            ImVec2 imin = ImGui::GetItemRectMin();
+                                            ImVec2 imax = ImGui::GetItemRectMax();
+                                            char ts[12];
+                                            int s = (taRemain + 999) / 1000;
+                                            if (s >= 3600) snprintf(ts, sizeof(ts), "%dh", s / 3600);
+                                            else if (s >= 60) snprintf(ts, sizeof(ts), "%d:%02d", s / 60, s % 60);
+                                            else snprintf(ts, sizeof(ts), "%d", s);
+                                            ImVec2 tsz = ImGui::CalcTextSize(ts);
+                                            float cx = imin.x + (imax.x - imin.x - tsz.x) * 0.5f;
+                                            float cy = imax.y - tsz.y;
+                                            ImGui::GetWindowDrawList()->AddText(ImVec2(cx + 1, cy + 1), IM_COL32(0, 0, 0, 180), ts);
+                                            ImGui::GetWindowDrawList()->AddText(ImVec2(cx, cy), IM_COL32(255, 255, 255, 220), ts);
+                                        }
+
+                                        // Tooltip
+                                        if (ImGui::IsItemHovered()) {
+                                            ImGui::BeginTooltip();
+                                            bool richOk = spellbookScreen.renderSpellInfoTooltip(
+                                                aura.spellId, gameHandler, totAsset);
+                                            if (!richOk) {
+                                                std::string nm = spellbookScreen.lookupSpellName(aura.spellId, totAsset);
+                                                if (nm.empty()) nm = "Spell #" + std::to_string(aura.spellId);
+                                                ImGui::Text("%s", nm.c_str());
+                                            }
+                                            if (taRemain > 0) {
+                                                int s = taRemain / 1000;
+                                                char db[32];
+                                                if (s < 60) snprintf(db, sizeof(db), "Remaining: %ds", s);
+                                                else snprintf(db, sizeof(db), "Remaining: %dm %ds", s / 60, s % 60);
+                                                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", db);
+                                            }
+                                            ImGui::EndTooltip();
+                                        }
+
+                                        ImGui::PopID();
+                                        taShown++;
+                                    }
+                                    ImGui::PopStyleVar();
+                                }
+                            }
+                        }
                     }
                 }
                 ImGui::End();
