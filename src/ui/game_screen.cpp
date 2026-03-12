@@ -460,6 +460,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderQuestObjectiveTracker(gameHandler);
     renderNameplates(gameHandler);  // player names always shown; NPC plates gated by showNameplates_
     renderBattlegroundScore(gameHandler);
+    renderRaidWarningOverlay(gameHandler);
     renderCombatText(gameHandler);
     renderUIErrors(gameHandler, ImGui::GetIO().DeltaTime);
     renderRepToasts(ImGui::GetIO().DeltaTime);
@@ -5804,6 +5805,96 @@ void GameScreen::renderQuestObjectiveTracker(game::GameHandler& gameHandler) {
 
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
+}
+
+// ============================================================
+// Raid Warning / Boss Emote Center-Screen Overlay
+// ============================================================
+
+void GameScreen::renderRaidWarningOverlay(game::GameHandler& gameHandler) {
+    // Scan chat history for new RAID_WARNING / RAID_BOSS_EMOTE messages
+    const auto& chatHistory = gameHandler.getChatHistory();
+    size_t newCount = chatHistory.size();
+    if (newCount > raidWarnChatSeenCount_) {
+        // Walk only the new messages (deque — iterate from back by skipping old ones)
+        size_t toScan = newCount - raidWarnChatSeenCount_;
+        size_t startIdx = newCount > toScan ? newCount - toScan : 0;
+        for (size_t i = startIdx; i < newCount; ++i) {
+            const auto& msg = chatHistory[i];
+            if (msg.type == game::ChatType::RAID_WARNING ||
+                msg.type == game::ChatType::RAID_BOSS_EMOTE ||
+                msg.type == game::ChatType::MONSTER_EMOTE) {
+                bool isBoss = (msg.type != game::ChatType::RAID_WARNING);
+                // Limit display text length to avoid giant overlay
+                std::string text = msg.message;
+                if (text.size() > 200) text = text.substr(0, 200) + "...";
+                raidWarnEntries_.push_back({text, 0.0f, isBoss});
+                if (raidWarnEntries_.size() > 3)
+                    raidWarnEntries_.erase(raidWarnEntries_.begin());
+            }
+        }
+        raidWarnChatSeenCount_ = newCount;
+    }
+
+    // Age and remove expired entries
+    float dt = ImGui::GetIO().DeltaTime;
+    for (auto& e : raidWarnEntries_) e.age += dt;
+    raidWarnEntries_.erase(
+        std::remove_if(raidWarnEntries_.begin(), raidWarnEntries_.end(),
+            [](const RaidWarnEntry& e){ return e.age >= RaidWarnEntry::LIFETIME; }),
+        raidWarnEntries_.end());
+
+    if (raidWarnEntries_.empty()) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    float screenW = io.DisplaySize.x;
+    float screenH = io.DisplaySize.y;
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+
+    // Stack entries vertically near upper-center (below target frame area)
+    float baseY = screenH * 0.28f;
+    for (const auto& e : raidWarnEntries_) {
+        float alpha = std::clamp(1.0f - (e.age / RaidWarnEntry::LIFETIME), 0.0f, 1.0f);
+        // Fade in quickly, hold, then fade out last 20%
+        if (e.age < 0.3f) alpha = e.age / 0.3f;
+
+        // Truncate to fit screen width reasonably
+        const char* txt = e.text.c_str();
+        const float fontSize = 22.0f;
+        ImFont* font = ImGui::GetFont();
+
+        // Word-wrap manually: compute text size, center horizontally
+        float maxW = screenW * 0.7f;
+        ImVec2 textSz = font->CalcTextSizeA(fontSize, maxW, maxW, txt);
+        float tx = (screenW - textSz.x) * 0.5f;
+
+        ImU32 shadowCol = IM_COL32(0, 0, 0, static_cast<int>(alpha * 200));
+        ImU32 mainCol;
+        if (e.isBossEmote) {
+            mainCol = IM_COL32(255, 185, 60, static_cast<int>(alpha * 255));   // amber
+        } else {
+            // Raid warning: alternating red/yellow flash during first second
+            float flashT = std::fmod(e.age * 4.0f, 1.0f);
+            if (flashT < 0.5f)
+                mainCol = IM_COL32(255, 50, 50, static_cast<int>(alpha * 255));
+            else
+                mainCol = IM_COL32(255, 220, 50, static_cast<int>(alpha * 255));
+        }
+
+        // Background dim box for readability
+        float pad = 8.0f;
+        fg->AddRectFilled(ImVec2(tx - pad, baseY - pad),
+                           ImVec2(tx + textSz.x + pad, baseY + textSz.y + pad),
+                           IM_COL32(0, 0, 0, static_cast<int>(alpha * 120)), 4.0f);
+
+        // Shadow + main text
+        fg->AddText(font, fontSize, ImVec2(tx + 2.0f, baseY + 2.0f), shadowCol, txt,
+                    nullptr, maxW);
+        fg->AddText(font, fontSize, ImVec2(tx,         baseY),         mainCol,  txt,
+                    nullptr, maxW);
+
+        baseY += textSz.y + 6.0f;
+    }
 }
 
 // ============================================================

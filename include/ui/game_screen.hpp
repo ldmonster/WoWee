@@ -78,6 +78,17 @@ private:
     float levelUpFlashAlpha_ = 0.0f; // Golden level-up burst effect (fades to 0)
     uint32_t levelUpDisplayLevel_ = 0; // Level shown in level-up text
 
+    // Raid Warning / Boss Emote big-text overlay (center-screen, fades after 5s)
+    struct RaidWarnEntry {
+        std::string text;
+        float age = 0.0f;
+        bool isBossEmote = false;  // true = amber, false (raid warning) = red+yellow
+        static constexpr float LIFETIME = 5.0f;
+    };
+    std::vector<RaidWarnEntry> raidWarnEntries_;
+    bool raidWarnCallbackSet_ = false;
+    size_t raidWarnChatSeenCount_ = 0;  // index into chat history for unread scan
+
     // UIErrorsFrame: WoW-style center-bottom error messages (spell fails, out of range, etc.)
     struct UIErrorEntry { std::string text; float age = 0.0f; };
     std::vector<UIErrorEntry> uiErrors_;
@@ -267,6 +278,7 @@ private:
     void renderCastBar(game::GameHandler& gameHandler);
     void renderMirrorTimers(game::GameHandler& gameHandler);
     void renderCombatText(game::GameHandler& gameHandler);
+    void renderRaidWarningOverlay(game::GameHandler& gameHandler);
     void renderPartyFrames(game::GameHandler& gameHandler);
     void renderBossFrames(game::GameHandler& gameHandler);
     void renderUIErrors(game::GameHandler& gameHandler, float deltaTime);
