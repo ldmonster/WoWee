@@ -8332,6 +8332,23 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         } else if (unit->isHostile()) {
             barColor = IM_COL32(220, 60,  60,  A(200));
             bgColor  = IM_COL32(100, 25,  25,  A(160));
+        } else if (isPlayer) {
+            // Player nameplates: use class color for easy identification
+            uint8_t cid = entityClassId(unit);
+            if (cid != 0) {
+                ImVec4 cv = classColorVec4(cid);
+                barColor = IM_COL32(
+                    static_cast<int>(cv.x * 255),
+                    static_cast<int>(cv.y * 255),
+                    static_cast<int>(cv.z * 255), A(210));
+                bgColor  = IM_COL32(
+                    static_cast<int>(cv.x * 80),
+                    static_cast<int>(cv.y * 80),
+                    static_cast<int>(cv.z * 80), A(160));
+            } else {
+                barColor = IM_COL32(60,  200, 80,  A(200));
+                bgColor  = IM_COL32(25,  100, 35,  A(160));
+            }
         } else {
             barColor = IM_COL32(60,  200, 80,  A(200));
             bgColor  = IM_COL32(25,  100, 35,  A(160));
