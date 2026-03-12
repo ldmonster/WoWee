@@ -960,6 +960,7 @@ void GameScreen::renderEntityList(game::GameHandler& gameHandler) {
 
 void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
     auto* window = core::Application::getInstance().getWindow();
+    auto* assetMgr = core::Application::getInstance().getAssetManager();
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
     float chatW = std::min(500.0f, screenW * 0.4f);
@@ -1216,10 +1217,13 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
             // Find next special element: URL or WoW link
             size_t urlStart = text.find("https://", pos);
 
-            // Find next WoW item link: |cXXXXXXXX|Hitem:ENTRY:...|h[Name]|h|r
+            // Find next WoW link (may be colored with |c prefix or bare |H)
             size_t linkStart = text.find("|c", pos);
-            // Also handle bare |Hitem: without color prefix
-            size_t bareLinkStart = text.find("|Hitem:", pos);
+            // Also handle bare |H links without color prefix
+            size_t bareItem  = text.find("|Hitem:",  pos);
+            size_t bareSpell = text.find("|Hspell:", pos);
+            size_t bareQuest = text.find("|Hquest:", pos);
+            size_t bareLinkStart = std::min({bareItem, bareSpell, bareQuest});
 
             // Determine which comes first
             size_t nextSpecial = std::min({urlStart, linkStart, bareLinkStart});
@@ -1252,18 +1256,30 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                 if (nextSpecial == linkStart && text.size() > linkStart + 10) {
                     // Parse |cAARRGGBB color
                     linkColor = parseWowColor(text, linkStart);
-                    hStart = text.find("|Hitem:", linkStart + 10);
+                    // Find the nearest |H link of any supported type
+                    size_t hItem  = text.find("|Hitem:",        linkStart + 10);
+                    size_t hSpell = text.find("|Hspell:",       linkStart + 10);
+                    size_t hQuest = text.find("|Hquest:",       linkStart + 10);
+                    size_t hAch   = text.find("|Hachievement:", linkStart + 10);
+                    hStart = std::min({hItem, hSpell, hQuest, hAch});
                 } else if (nextSpecial == bareLinkStart) {
                     hStart = bareLinkStart;
                 }
 
                 if (hStart != std::string::npos) {
-                    // Parse item entry: |Hitem:ENTRY:...
-                    size_t entryStart = hStart + 7; // skip "|Hitem:"
+                    // Determine link type
+                    const bool isSpellLink = (text.compare(hStart, 8, "|Hspell:") == 0);
+                    const bool isQuestLink = (text.compare(hStart, 8, "|Hquest:") == 0);
+                    const bool isAchievLink = (text.compare(hStart, 14, "|Hachievement:") == 0);
+                    // Default: item link
+
+                    // Parse the first numeric ID after |Htype:
+                    size_t idOffset = isSpellLink ? 8 : (isQuestLink ? 8 : (isAchievLink ? 14 : 7));
+                    size_t entryStart = hStart + idOffset;
                     size_t entryEnd = text.find(':', entryStart);
-                    uint32_t itemEntry = 0;
+                    uint32_t linkId = 0;
                     if (entryEnd != std::string::npos) {
-                        itemEntry = static_cast<uint32_t>(strtoul(
+                        linkId = static_cast<uint32_t>(strtoul(
                             text.substr(entryStart, entryEnd - entryStart).c_str(), nullptr, 10));
                     }
 
@@ -1272,53 +1288,122 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                     size_t nameTagEnd = (nameTagStart != std::string::npos)
                         ? text.find("]|h", nameTagStart + 3) : std::string::npos;
 
-                    std::string itemName = "Unknown Item";
+                    std::string linkName = isSpellLink ? "Unknown Spell"
+                                        : isQuestLink  ? "Unknown Quest"
+                                        : isAchievLink ? "Unknown Achievement"
+                                        : "Unknown Item";
                     if (nameTagStart != std::string::npos && nameTagEnd != std::string::npos) {
-                        itemName = text.substr(nameTagStart + 3, nameTagEnd - nameTagStart - 3);
+                        linkName = text.substr(nameTagStart + 3, nameTagEnd - nameTagStart - 3);
                     }
 
                     // Find end of entire link sequence (|r or after ]|h)
-                    size_t linkEnd = (nameTagEnd != std::string::npos) ? nameTagEnd + 3 : hStart + 7;
+                    size_t linkEnd = (nameTagEnd != std::string::npos) ? nameTagEnd + 3 : hStart + idOffset;
                     size_t resetPos = text.find("|r", linkEnd);
                     if (resetPos != std::string::npos && resetPos <= linkEnd + 2) {
                         linkEnd = resetPos + 2;
                     }
 
-                    // Ensure item info is cached (trigger query if needed)
-                    if (itemEntry > 0) {
-                        gameHandler.ensureItemInfo(itemEntry);
-                    }
+                    if (!isSpellLink && !isQuestLink && !isAchievLink) {
+                        // --- Item link ---
+                        uint32_t itemEntry = linkId;
+                        if (itemEntry > 0) {
+                            gameHandler.ensureItemInfo(itemEntry);
+                        }
 
-                    // Show small icon before item link if available
-                    if (itemEntry > 0) {
-                        const auto* chatInfo = gameHandler.getItemInfo(itemEntry);
-                        if (chatInfo && chatInfo->valid && chatInfo->displayInfoId != 0) {
-                            VkDescriptorSet chatIcon = inventoryScreen.getItemIcon(chatInfo->displayInfoId);
-                            if (chatIcon) {
-                                ImGui::Image((ImTextureID)(uintptr_t)chatIcon, ImVec2(12, 12));
-                                if (ImGui::IsItemHovered()) {
-                                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                                    renderItemLinkTooltip(itemEntry);
+                        // Show small icon before item link if available
+                        if (itemEntry > 0) {
+                            const auto* chatInfo = gameHandler.getItemInfo(itemEntry);
+                            if (chatInfo && chatInfo->valid && chatInfo->displayInfoId != 0) {
+                                VkDescriptorSet chatIcon = inventoryScreen.getItemIcon(chatInfo->displayInfoId);
+                                if (chatIcon) {
+                                    ImGui::Image((ImTextureID)(uintptr_t)chatIcon, ImVec2(12, 12));
+                                    if (ImGui::IsItemHovered()) {
+                                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                                        renderItemLinkTooltip(itemEntry);
+                                    }
+                                    ImGui::SameLine(0, 2);
                                 }
-                                ImGui::SameLine(0, 2);
                             }
                         }
-                    }
 
-                    // Render bracketed item name in quality color
-                    std::string display = "[" + itemName + "]";
-                    ImGui::PushStyleColor(ImGuiCol_Text, linkColor);
-                    ImGui::TextWrapped("%s", display.c_str());
-                    ImGui::PopStyleColor();
+                        // Render bracketed item name in quality color
+                        std::string display = "[" + linkName + "]";
+                        ImGui::PushStyleColor(ImGuiCol_Text, linkColor);
+                        ImGui::TextWrapped("%s", display.c_str());
+                        ImGui::PopStyleColor();
 
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                        if (itemEntry > 0) {
-                            renderItemLinkTooltip(itemEntry);
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                            if (itemEntry > 0) {
+                                renderItemLinkTooltip(itemEntry);
+                            }
+                        }
+                    } else if (isSpellLink) {
+                        // --- Spell link: |Hspell:SPELLID:RANK|h[Name]|h ---
+                        // Small icon (use spell icon cache if available)
+                        VkDescriptorSet spellIcon = (linkId > 0) ? getSpellIcon(linkId, assetMgr) : VK_NULL_HANDLE;
+                        if (spellIcon) {
+                            ImGui::Image((ImTextureID)(uintptr_t)spellIcon, ImVec2(12, 12));
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                                spellbookScreen.renderSpellInfoTooltip(linkId, gameHandler, assetMgr);
+                            }
+                            ImGui::SameLine(0, 2);
+                        }
+
+                        std::string display = "[" + linkName + "]";
+                        ImGui::PushStyleColor(ImGuiCol_Text, linkColor);
+                        ImGui::TextWrapped("%s", display.c_str());
+                        ImGui::PopStyleColor();
+
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                            if (linkId > 0) {
+                                spellbookScreen.renderSpellInfoTooltip(linkId, gameHandler, assetMgr);
+                            }
+                        }
+                    } else if (isQuestLink) {
+                        // --- Quest link: |Hquest:QUESTID:QUESTLEVEL|h[Name]|h ---
+                        std::string display = "[" + linkName + "]";
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.84f, 0.0f, 1.0f)); // gold
+                        ImGui::TextWrapped("%s", display.c_str());
+                        ImGui::PopStyleColor();
+
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                            ImGui::BeginTooltip();
+                            ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "%s", linkName.c_str());
+                            // Parse quest level (second field after questId)
+                            if (entryEnd != std::string::npos) {
+                                size_t lvlEnd = text.find(':', entryEnd + 1);
+                                if (lvlEnd == std::string::npos) lvlEnd = text.find('|', entryEnd + 1);
+                                if (lvlEnd != std::string::npos) {
+                                    uint32_t qLvl = static_cast<uint32_t>(strtoul(
+                                        text.substr(entryEnd + 1, lvlEnd - entryEnd - 1).c_str(), nullptr, 10));
+                                    if (qLvl > 0) ImGui::TextDisabled("Level %u Quest", qLvl);
+                                }
+                            }
+                            ImGui::TextDisabled("Click quest log to view details");
+                            ImGui::EndTooltip();
+                        }
+                        // Click: open quest log and select this quest if we have it
+                        if (ImGui::IsItemClicked() && linkId > 0) {
+                            questLogScreen.openAndSelectQuest(linkId);
+                        }
+                    } else {
+                        // --- Achievement link ---
+                        std::string display = "[" + linkName + "]";
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.0f, 1.0f)); // gold
+                        ImGui::TextWrapped("%s", display.c_str());
+                        ImGui::PopStyleColor();
+
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                            ImGui::SetTooltip("Achievement: %s", linkName.c_str());
                         }
                     }
 
-                    // Shift-click: insert item link into chat input
+                    // Shift-click: insert entire link back into chat input
                     if (ImGui::IsItemClicked() && ImGui::GetIO().KeyShift) {
                         std::string linkText = text.substr(nextSpecial, linkEnd - nextSpecial);
                         size_t curLen = strlen(chatInputBuffer);
