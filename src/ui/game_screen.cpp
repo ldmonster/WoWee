@@ -10944,14 +10944,44 @@ void GameScreen::renderMailWindow(game::GameHandler& gameHandler) {
                         ImGui::InvisibleButton("##mailatt", ImVec2(MAIL_SLOT, MAIL_SLOT));
                         if (ImGui::IsItemHovered() && info && info->valid)
                             inventoryScreen.renderItemTooltip(*info);
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                            ImGui::GetIO().KeyShift && info && info->valid && !info->name.empty()) {
+                            std::string link = buildItemChatLink(info->entry, info->quality, info->name);
+                            size_t curLen = strlen(chatInputBuffer);
+                            if (curLen + link.size() + 1 < sizeof(chatInputBuffer)) {
+                                strncat(chatInputBuffer, link.c_str(), sizeof(chatInputBuffer) - curLen - 1);
+                                chatInputMoveCursorToEnd = true;
+                                refocusChatInput = true;
+                            }
+                        }
                         ImGui::SameLine();
                         ImGui::TextColored(qc, "%s", name.c_str());
+                        if (ImGui::IsItemHovered() && info && info->valid)
+                            inventoryScreen.renderItemTooltip(*info);
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                            ImGui::GetIO().KeyShift && info && info->valid && !info->name.empty()) {
+                            std::string link = buildItemChatLink(info->entry, info->quality, info->name);
+                            size_t curLen = strlen(chatInputBuffer);
+                            if (curLen + link.size() + 1 < sizeof(chatInputBuffer)) {
+                                strncat(chatInputBuffer, link.c_str(), sizeof(chatInputBuffer) - curLen - 1);
+                                chatInputMoveCursorToEnd = true;
+                                refocusChatInput = true;
+                            }
+                        }
                         ImGui::SameLine();
                         if (ImGui::SmallButton("Take")) {
                             gameHandler.mailTakeItem(mail.messageId, att.slot);
                         }
 
                         ImGui::PopID();
+                    }
+                    // "Take All" button when there are multiple attachments
+                    if (mail.attachments.size() > 1) {
+                        if (ImGui::SmallButton("Take All")) {
+                            for (const auto& att2 : mail.attachments) {
+                                gameHandler.mailTakeItem(mail.messageId, att2.slot);
+                            }
+                        }
                     }
                 }
 
