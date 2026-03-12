@@ -419,6 +419,20 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     // Apply auto-loot setting to GameHandler every frame (cheap bool sync)
     gameHandler.setAutoLoot(pendingAutoLoot);
 
+    // Zone entry detection — fire a toast when the renderer's zone name changes
+    if (auto* rend = core::Application::getInstance().getRenderer()) {
+        const std::string& curZone = rend->getCurrentZoneName();
+        if (!curZone.empty() && curZone != lastKnownZone_) {
+            if (!lastKnownZone_.empty()) {
+                // Genuine zone change (not first entry)
+                zoneToasts_.push_back({curZone, 0.0f});
+                if (zoneToasts_.size() > 3)
+                    zoneToasts_.erase(zoneToasts_.begin());
+            }
+            lastKnownZone_ = curZone;
+        }
+    }
+
     // Sync chat auto-join settings to GameHandler
     gameHandler.chatAutoJoin.general = chatAutoJoinGeneral_;
     gameHandler.chatAutoJoin.trade = chatAutoJoinTrade_;
@@ -476,6 +490,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderUIErrors(gameHandler, ImGui::GetIO().DeltaTime);
     renderRepToasts(ImGui::GetIO().DeltaTime);
     renderQuestCompleteToasts(ImGui::GetIO().DeltaTime);
+    renderZoneToasts(ImGui::GetIO().DeltaTime);
     if (showRaidFrames_) {
         renderPartyFrames(gameHandler);
     }
@@ -7495,6 +7510,64 @@ void GameScreen::renderQuestCompleteToasts(float deltaTime) {
 }
 
 // ============================================================
+// Zone Entry Toast
+// ============================================================
+
+void GameScreen::renderZoneToasts(float deltaTime) {
+    for (auto& e : zoneToasts_) e.age += deltaTime;
+    zoneToasts_.erase(
+        std::remove_if(zoneToasts_.begin(), zoneToasts_.end(),
+            [](const ZoneToastEntry& e) { return e.age >= kZoneToastLifetime; }),
+        zoneToasts_.end());
+
+    if (zoneToasts_.empty()) return;
+
+    auto* window = core::Application::getInstance().getWindow();
+    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
+
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    ImFont* font = ImGui::GetFont();
+
+    for (int i = 0; i < static_cast<int>(zoneToasts_.size()); ++i) {
+        const auto& e = zoneToasts_[i];
+        constexpr float kSlideDur = 0.35f;
+        float slideIn  = std::min(e.age, kSlideDur) / kSlideDur;
+        float slideOut = std::min(std::max(0.0f, kZoneToastLifetime - e.age), kSlideDur) / kSlideDur;
+        float slide    = std::min(slideIn, slideOut);
+        float alpha    = std::clamp(slide, 0.0f, 1.0f);
+
+        // Measure text to size the toast
+        ImVec2 nameSz = font->CalcTextSizeA(14.0f, FLT_MAX, 0.0f, e.zoneName.c_str());
+        const char* header = "Entering:";
+        ImVec2 hdrSz = font->CalcTextSizeA(11.0f, FLT_MAX, 0.0f, header);
+
+        float toastW = std::max(nameSz.x, hdrSz.x) + 28.0f;
+        float toastH = 42.0f;
+
+        // Center the toast horizontally, appear just below the zone name area (top-center)
+        float toastX = (screenW - toastW) * 0.5f;
+        float toastY = 56.0f + i * (toastH + 4.0f);
+        // Slide down from above
+        float offY = (1.0f - slide) * (-toastH - 10.0f);
+        toastY += offY;
+
+        ImVec2 tl(toastX, toastY);
+        ImVec2 br(toastX + toastW, toastY + toastH);
+
+        draw->AddRectFilled(tl, br, IM_COL32(10, 10, 16, (int)(alpha * 200)), 6.0f);
+        draw->AddRect(tl, br, IM_COL32(160, 140, 80, (int)(alpha * 220)), 6.0f, 0, 1.2f);
+
+        float cx = tl.x + toastW * 0.5f;
+        draw->AddText(font, 11.0f,
+            ImVec2(cx - hdrSz.x * 0.5f, tl.y + 5.0f),
+            IM_COL32(180, 170, 120, (int)(alpha * 200)), header);
+        draw->AddText(font, 14.0f,
+            ImVec2(cx - nameSz.x * 0.5f, tl.y + toastH * 0.5f + 1.0f),
+            IM_COL32(255, 230, 140, (int)(alpha * 240)), e.zoneName.c_str());
+    }
+}
+
+// ============================================================
 // Boss Encounter Frames
 // ============================================================
 
@@ -12885,6 +12958,24 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
         }
         ImGui::End();
         nextIndicatorY += kIndicatorH;
+    }
+
+    // Unspent talent points indicator
+    {
+        uint8_t unspent = gameHandler.getUnspentTalentPoints();
+        if (unspent > 0) {
+            ImGui::SetNextWindowPos(ImVec2(indicatorX, nextIndicatorY), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(indicatorW, kIndicatorH), ImGuiCond_Always);
+            if (ImGui::Begin("##TalentIndicator", nullptr, indicatorFlags)) {
+                float pulse = 0.7f + 0.3f * std::sin(static_cast<float>(ImGui::GetTime()) * 2.5f);
+                char talentBuf[40];
+                snprintf(talentBuf, sizeof(talentBuf), "! %u Talent Point%s Available",
+                         static_cast<unsigned>(unspent), unspent == 1 ? "" : "s");
+                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f * pulse, pulse), "%s", talentBuf);
+            }
+            ImGui::End();
+            nextIndicatorY += kIndicatorH;
+        }
     }
 
     // BG queue status indicator (when in queue but not yet invited)

@@ -106,6 +106,13 @@ private:
     std::vector<QuestCompleteToastEntry> questCompleteToasts_;
     bool questCompleteCallbackSet_ = false;
     static constexpr float kQuestCompleteToastLifetime = 4.0f;
+
+    // Zone entry toast: brief banner when entering a new zone
+    struct ZoneToastEntry { std::string zoneName; float age = 0.0f; };
+    std::vector<ZoneToastEntry> zoneToasts_;
+    std::string lastKnownZone_;
+    static constexpr float kZoneToastLifetime = 3.0f;
+    void renderZoneToasts(float deltaTime);
     bool showPlayerInfo = false;
     bool showSocialFrame_ = false;  // O key toggles social/friends list
     bool showGuildRoster_ = false;
