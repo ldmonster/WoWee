@@ -10751,6 +10751,74 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
         }
     }
 
+    // Corpse direction indicator — shown when player is a ghost
+    if (gameHandler.isPlayerGhost()) {
+        float corpseCanX = 0.0f, corpseCanY = 0.0f;
+        if (gameHandler.getCorpseCanonicalPos(corpseCanX, corpseCanY)) {
+            glm::vec3 corpseRender = core::coords::canonicalToRender(glm::vec3(corpseCanX, corpseCanY, 0.0f));
+            float csx = 0.0f, csy = 0.0f;
+            bool onMap = projectToMinimap(corpseRender, csx, csy);
+
+            if (onMap) {
+                // Draw a small skull-like X marker at the corpse position
+                const float r = 5.0f;
+                drawList->AddCircleFilled(ImVec2(csx, csy), r + 1.0f, IM_COL32(0, 0, 0, 140), 12);
+                drawList->AddCircle(ImVec2(csx, csy), r + 1.0f, IM_COL32(200, 200, 220, 220), 12, 1.5f);
+                // Draw an X in the circle
+                drawList->AddLine(ImVec2(csx - 3.0f, csy - 3.0f), ImVec2(csx + 3.0f, csy + 3.0f),
+                                  IM_COL32(180, 180, 220, 255), 1.5f);
+                drawList->AddLine(ImVec2(csx + 3.0f, csy - 3.0f), ImVec2(csx - 3.0f, csy + 3.0f),
+                                  IM_COL32(180, 180, 220, 255), 1.5f);
+                // Tooltip on hover
+                ImVec2 mouse = ImGui::GetMousePos();
+                float mdx = mouse.x - csx, mdy = mouse.y - csy;
+                if (mdx * mdx + mdy * mdy < 64.0f) {
+                    float dist = gameHandler.getCorpseDistance();
+                    if (dist >= 0.0f)
+                        ImGui::SetTooltip("Your corpse (%.0f yd)", dist);
+                    else
+                        ImGui::SetTooltip("Your corpse");
+                }
+            } else {
+                // Corpse is outside minimap — draw an edge arrow pointing toward it
+                float dx = corpseRender.x - playerRender.x;
+                float dy = corpseRender.y - playerRender.y;
+                // Rotate delta into minimap frame (same as projectToMinimap)
+                float rx = -(dx * cosB + dy * sinB);
+                float ry =   dx * sinB - dy * cosB;
+                float len = std::sqrt(rx * rx + ry * ry);
+                if (len > 0.001f) {
+                    float nx = rx / len;
+                    float ny = ry / len;
+                    // Place arrow at the minimap edge
+                    float edgeR = mapRadius - 7.0f;
+                    float ax = centerX + nx * edgeR;
+                    float ay = centerY + ny * edgeR;
+                    // Arrow pointing outward (toward corpse)
+                    float arrowLen = 6.0f;
+                    float arrowW = 3.5f;
+                    ImVec2 tip(ax + nx * arrowLen, ay + ny * arrowLen);
+                    ImVec2 left(ax - ny * arrowW - nx * arrowLen * 0.4f,
+                                ay + nx * arrowW - ny * arrowLen * 0.4f);
+                    ImVec2 right(ax + ny * arrowW - nx * arrowLen * 0.4f,
+                                 ay - nx * arrowW - ny * arrowLen * 0.4f);
+                    drawList->AddTriangleFilled(tip, left, right, IM_COL32(180, 180, 240, 230));
+                    drawList->AddTriangle(tip, left, right, IM_COL32(0, 0, 0, 180), 1.0f);
+                    // Tooltip on hover
+                    ImVec2 mouse = ImGui::GetMousePos();
+                    float mdx = mouse.x - ax, mdy = mouse.y - ay;
+                    if (mdx * mdx + mdy * mdy < 100.0f) {
+                        float dist = gameHandler.getCorpseDistance();
+                        if (dist >= 0.0f)
+                            ImGui::SetTooltip("Your corpse (%.0f yd)", dist);
+                        else
+                            ImGui::SetTooltip("Your corpse");
+                    }
+                }
+            }
+        }
+    }
+
     // Scroll wheel over minimap → zoom in/out
     {
         float wheel = ImGui::GetIO().MouseWheel;

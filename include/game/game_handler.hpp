@@ -899,6 +899,14 @@ public:
         float dz = movementInfo.z - corpseZ_;
         return std::sqrt(dx*dx + dy*dy + dz*dz);
     }
+    /** Corpse position in canonical WoW coords (X=north, Y=west).
+     *  Returns false if no corpse data or on a different map. */
+    bool getCorpseCanonicalPos(float& outX, float& outY) const {
+        if (corpseMapId_ == 0 || currentMapId_ != corpseMapId_) return false;
+        outX = corpseY_;  // server Y = canonical X (north)
+        outY = corpseX_;  // server X = canonical Y (west)
+        return true;
+    }
     /** Send CMSG_RECLAIM_CORPSE; noop if not a ghost or not near corpse. */
     void reclaimCorpse();
     void releaseSpirit();
