@@ -1031,6 +1031,8 @@ public:
             if (raidTargetGuids_[i] == guid) return static_cast<uint8_t>(i);
         return 0xFF;
     }
+    // Set or clear a raid mark on a guid (icon 0-7, or 0xFF to clear)
+    void setRaidMark(uint64_t guid, uint8_t icon);
 
     // ---- LFG / Dungeon Finder ----
     enum class LfgState : uint8_t {

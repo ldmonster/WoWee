@@ -2594,6 +2594,21 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                     gameHandler.addIgnore(name);
                 }
             }
+            ImGui::Separator();
+            if (ImGui::BeginMenu("Set Raid Mark")) {
+                static const char* kRaidMarkNames[] = {
+                    "{*} Star", "{O} Circle", "{<>} Diamond", "{^} Triangle",
+                    "{)} Moon", "{ } Square", "{x} Cross", "{8} Skull"
+                };
+                for (int mi = 0; mi < 8; ++mi) {
+                    if (ImGui::MenuItem(kRaidMarkNames[mi]))
+                        gameHandler.setRaidMark(tGuid, static_cast<uint8_t>(mi));
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Clear Mark"))
+                    gameHandler.setRaidMark(tGuid, 0xFF);
+                ImGui::EndMenu();
+            }
             ImGui::EndPopup();
         }
 
@@ -6258,6 +6273,21 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                             if (ImGui::MenuItem("Kick from Raid"))
                                 gameHandler.uninvitePlayer(m.name);
                         }
+                        ImGui::Separator();
+                        if (ImGui::BeginMenu("Set Raid Mark")) {
+                            static const char* kRaidMarkNames[] = {
+                                "{*} Star", "{O} Circle", "{<>} Diamond", "{^} Triangle",
+                                "{)} Moon", "{ } Square", "{x} Cross", "{8} Skull"
+                            };
+                            for (int mi = 0; mi < 8; ++mi) {
+                                if (ImGui::MenuItem(kRaidMarkNames[mi]))
+                                    gameHandler.setRaidMark(m.guid, static_cast<uint8_t>(mi));
+                            }
+                            ImGui::Separator();
+                            if (ImGui::MenuItem("Clear Mark"))
+                                gameHandler.setRaidMark(m.guid, 0xFF);
+                            ImGui::EndMenu();
+                        }
                         ImGui::EndPopup();
                     }
                     ImGui::PopID();
@@ -6437,6 +6467,21 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                     if (ImGui::MenuItem("Kick from Group")) {
                         gameHandler.uninvitePlayer(member.name);
                     }
+                }
+                ImGui::Separator();
+                if (ImGui::BeginMenu("Set Raid Mark")) {
+                    static const char* kRaidMarkNames[] = {
+                        "{*} Star", "{O} Circle", "{<>} Diamond", "{^} Triangle",
+                        "{)} Moon", "{ } Square", "{x} Cross", "{8} Skull"
+                    };
+                    for (int mi = 0; mi < 8; ++mi) {
+                        if (ImGui::MenuItem(kRaidMarkNames[mi]))
+                            gameHandler.setRaidMark(member.guid, static_cast<uint8_t>(mi));
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Clear Mark"))
+                        gameHandler.setRaidMark(member.guid, 0xFF);
+                    ImGui::EndMenu();
                 }
                 ImGui::EndPopup();
             }

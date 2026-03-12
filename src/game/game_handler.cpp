@@ -10546,6 +10546,29 @@ void GameHandler::clearMainAssist() {
     LOG_INFO("Cleared main assist");
 }
 
+void GameHandler::setRaidMark(uint64_t guid, uint8_t icon) {
+    if (state != WorldState::IN_WORLD || !socket) return;
+
+    static const char* kMarkNames[] = {
+        "Star", "Circle", "Diamond", "Triangle", "Moon", "Square", "Cross", "Skull"
+    };
+
+    if (icon == 0xFF) {
+        // Clear mark: find which slot this guid holds and send 0 GUID
+        for (int i = 0; i < 8; ++i) {
+            if (raidTargetGuids_[i] == guid) {
+                auto packet = RaidTargetUpdatePacket::build(static_cast<uint8_t>(i), 0);
+                socket->send(packet);
+                break;
+            }
+        }
+    } else if (icon < 8) {
+        auto packet = RaidTargetUpdatePacket::build(icon, guid);
+        socket->send(packet);
+        LOG_INFO("Set raid mark %s on guid %llu", kMarkNames[icon], (unsigned long long)guid);
+    }
+}
+
 void GameHandler::requestRaidInfo() {
     if (state != WorldState::IN_WORLD || !socket) {
         LOG_WARNING("Cannot request raid info: not in world or not connected");
