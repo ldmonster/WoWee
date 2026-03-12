@@ -13317,6 +13317,29 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
         drawList->AddText(font, fontSize, ImVec2(tx, ty), IM_COL32(230, 220, 140, 255), coordBuf);
     }
 
+    // Zone name display — drawn inside the top edge of the minimap circle
+    {
+        auto* zmRenderer = renderer ? renderer->getZoneManager() : nullptr;
+        uint32_t zoneId = gameHandler.getWorldStateZoneId();
+        const game::ZoneInfo* zi = (zmRenderer && zoneId != 0) ? zmRenderer->getZoneInfo(zoneId) : nullptr;
+        if (zi && !zi->name.empty()) {
+            ImFont* font = ImGui::GetFont();
+            float fontSize = ImGui::GetFontSize();
+            ImVec2 ts = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, zi->name.c_str());
+            float tx = centerX - ts.x * 0.5f;
+            float ty = centerY - mapRadius + 4.0f;  // just inside top edge of the circle
+            float pad = 2.0f;
+            drawList->AddRectFilled(
+                ImVec2(tx - pad, ty - pad),
+                ImVec2(tx + ts.x + pad, ty + ts.y + pad),
+                IM_COL32(0, 0, 0, 160), 2.0f);
+            drawList->AddText(font, fontSize, ImVec2(tx + 1.0f, ty + 1.0f),
+                              IM_COL32(0, 0, 0, 180), zi->name.c_str());
+            drawList->AddText(font, fontSize, ImVec2(tx, ty),
+                              IM_COL32(255, 230, 150, 220), zi->name.c_str());
+        }
+    }
+
     // Hover tooltip and right-click context menu
     {
         ImVec2 mouse = ImGui::GetMousePos();
