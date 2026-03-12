@@ -9019,9 +9019,10 @@ void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
                             ImGui::TableNextRow();
                             ImVec4 textColor = m.online ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f)
                                                         : ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+                            ImVec4 nameColor = m.online ? classColorVec4(m.classId) : textColor;
 
                             ImGui::TableNextColumn();
-                            ImGui::TextColored(textColor, "%s", m.name.c_str());
+                            ImGui::TextColored(nameColor, "%s", m.name.c_str());
 
                             // Right-click context menu
                             if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
@@ -9042,22 +9043,7 @@ void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
 
                             ImGui::TableNextColumn();
                             const char* className = (m.classId < 12) ? classNames[m.classId] : "Unknown";
-                            // Class-colored text for online members (gray for offline)
-                            ImVec4 classCol = textColor;
-                            if (m.online) {
-                                switch (m.classId) {
-                                    case 1:  classCol = ImVec4(0.78f, 0.61f, 0.43f, 1.0f); break; // Warrior
-                                    case 2:  classCol = ImVec4(0.96f, 0.55f, 0.73f, 1.0f); break; // Paladin
-                                    case 3:  classCol = ImVec4(0.67f, 0.83f, 0.45f, 1.0f); break; // Hunter
-                                    case 4:  classCol = ImVec4(1.00f, 0.96f, 0.41f, 1.0f); break; // Rogue
-                                    case 5:  classCol = ImVec4(1.00f, 1.00f, 1.00f, 1.0f); break; // Priest
-                                    case 6:  classCol = ImVec4(0.77f, 0.12f, 0.23f, 1.0f); break; // Death Knight
-                                    case 7:  classCol = ImVec4(0.00f, 0.44f, 0.87f, 1.0f); break; // Shaman
-                                    case 8:  classCol = ImVec4(0.41f, 0.80f, 0.94f, 1.0f); break; // Mage
-                                    case 9:  classCol = ImVec4(0.58f, 0.51f, 0.79f, 1.0f); break; // Warlock
-                                    case 11: classCol = ImVec4(1.00f, 0.49f, 0.04f, 1.0f); break; // Druid
-                                }
-                            }
+                            ImVec4 classCol = m.online ? classColorVec4(m.classId) : textColor;
                             ImGui::TextColored(classCol, "%s", className);
 
                             ImGui::TableNextColumn();
