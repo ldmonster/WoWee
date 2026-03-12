@@ -1230,7 +1230,8 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
             uint32_t g = info->sellPrice / 10000;
             uint32_t s = (info->sellPrice / 100) % 100;
             uint32_t c = info->sellPrice % 100;
-            ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "Sell: %ug %us %uc", g, s, c);
+            ImGui::TextDisabled("Sell:"); ImGui::SameLine(0, 4);
+            renderCoinsText(g, s, c);
         }
 
         if (ImGui::GetIO().KeyShift && info->inventoryType > 0) {
@@ -8857,7 +8858,8 @@ void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
         uint32_t gold = cost / 10000;
         uint32_t silver = (cost % 10000) / 100;
         uint32_t copper = cost % 100;
-        ImGui::Text("Cost: %ug %us %uc", gold, silver, copper);
+        ImGui::TextDisabled("Cost:"); ImGui::SameLine(0, 4);
+        renderCoinsText(gold, silver, copper);
         ImGui::Spacing();
         ImGui::Text("Guild Name:");
         ImGui::InputText("##petitionname", petitionNameBuffer_, sizeof(petitionNameBuffer_));
@@ -10363,9 +10365,8 @@ void GameScreen::renderQuestDetailsWindow(game::GameHandler& gameHandler) {
                 uint32_t gold = quest.rewardMoney / 10000;
                 uint32_t silver = (quest.rewardMoney % 10000) / 100;
                 uint32_t copper = quest.rewardMoney % 100;
-                if (gold > 0) ImGui::Text("  %ug %us %uc", gold, silver, copper);
-                else if (silver > 0) ImGui::Text("  %us %uc", silver, copper);
-                else ImGui::Text("  %uc", copper);
+                ImGui::TextDisabled("  Money:"); ImGui::SameLine(0, 4);
+                renderCoinsText(gold, silver, copper);
             }
         }
 
@@ -10479,7 +10480,8 @@ void GameScreen::renderQuestRequestItemsWindow(game::GameHandler& gameHandler) {
             uint32_t g = quest.requiredMoney / 10000;
             uint32_t s = (quest.requiredMoney % 10000) / 100;
             uint32_t c = quest.requiredMoney % 100;
-            ImGui::Text("Required money: %ug %us %uc", g, s, c);
+            ImGui::TextDisabled("Required money:"); ImGui::SameLine(0, 4);
+            renderCoinsText(g, s, c);
         }
 
         // Complete / Cancel buttons
@@ -10657,9 +10659,8 @@ void GameScreen::renderQuestOfferRewardWindow(game::GameHandler& gameHandler) {
                 uint32_t g = quest.rewardMoney / 10000;
                 uint32_t s = (quest.rewardMoney % 10000) / 100;
                 uint32_t c = quest.rewardMoney % 100;
-                if (g > 0) ImGui::Text("  %ug %us %uc", g, s, c);
-                else if (s > 0) ImGui::Text("  %us %uc", s, c);
-                else ImGui::Text("  %uc", c);
+                ImGui::TextDisabled("  Money:"); ImGui::SameLine(0, 4);
+                renderCoinsText(g, s, c);
             }
         }
 
@@ -10821,9 +10822,11 @@ void GameScreen::renderVendorWindow(game::GameHandler& gameHandler) {
                     if (ImGui::IsItemHovered() && bbInfo && bbInfo->valid)
                         inventoryScreen.renderItemTooltip(*bbInfo);
                     ImGui::TableSetColumnIndex(2);
-                    if (!canAfford) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
-                    ImGui::Text("%ug %us %uc", g, s, c);
-                    if (!canAfford) ImGui::PopStyleColor();
+                    if (canAfford) {
+                        renderCoinsText(g, s, c);
+                    } else {
+                        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%ug %us %uc", g, s, c);
+                    }
                     ImGui::TableSetColumnIndex(3);
                     if (!canAfford) ImGui::BeginDisabled();
                     char bbLabel[32];
@@ -11452,13 +11455,7 @@ void GameScreen::renderTaxiWindow(game::GameHandler& gameHandler) {
                 }
 
                 ImGui::TableSetColumnIndex(1);
-                if (gold > 0) {
-                    ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.3f, 1.0f), "%ug %us %uc", gold, silver, copper);
-                } else if (silver > 0) {
-                    ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.75f, 1.0f), "%us %uc", silver, copper);
-                } else {
-                    ImGui::TextColored(ImVec4(0.72f, 0.45f, 0.2f, 1.0f), "%uc", copper);
-                }
+                renderCoinsText(gold, silver, copper);
 
                 ImGui::TableSetColumnIndex(2);
                 if (ImGui::SmallButton("Fly")) {
@@ -14458,7 +14455,8 @@ void GameScreen::renderMailWindow(game::GameHandler& gameHandler) {
                     uint32_t g = mail.money / 10000;
                     uint32_t s = (mail.money / 100) % 100;
                     uint32_t c = mail.money % 100;
-                    ImGui::Text("Money: %ug %us %uc", g, s, c);
+                    ImGui::TextDisabled("Money:"); ImGui::SameLine(0, 4);
+                    renderCoinsText(g, s, c);
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Take Money")) {
                         gameHandler.mailTakeMoney(mail.messageId);
@@ -14954,9 +14952,8 @@ void GameScreen::renderGuildBankWindow(game::GameHandler& gameHandler) {
     uint32_t gold = static_cast<uint32_t>(data.money / 10000);
     uint32_t silver = static_cast<uint32_t>((data.money / 100) % 100);
     uint32_t copper = static_cast<uint32_t>(data.money % 100);
-    ImGui::Text("Guild Bank Money: ");
-    ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.3f, 1.0f), "%ug %us %uc", gold, silver, copper);
+    ImGui::TextDisabled("Guild Bank Money:"); ImGui::SameLine(0, 4);
+    renderCoinsText(gold, silver, copper);
 
     // Tab bar
     if (!data.tabs.empty()) {
@@ -15339,13 +15336,13 @@ void GameScreen::renderAuctionHouseWindow(game::GameHandler& gameHandler) {
                     ImGui::TableSetColumnIndex(3);
                     {
                         uint32_t bid = auction.currentBid > 0 ? auction.currentBid : auction.startBid;
-                        ImGui::Text("%ug%us%uc", bid / 10000, (bid / 100) % 100, bid % 100);
+                        renderCoinsText(bid / 10000, (bid / 100) % 100, bid % 100);
                     }
 
                     ImGui::TableSetColumnIndex(4);
                     if (auction.buyoutPrice > 0) {
-                        ImGui::Text("%ug%us%uc", auction.buyoutPrice / 10000,
-                                    (auction.buyoutPrice / 100) % 100, auction.buyoutPrice % 100);
+                        renderCoinsText(auction.buyoutPrice / 10000,
+                                        (auction.buyoutPrice / 100) % 100, auction.buyoutPrice % 100);
                     } else {
                         ImGui::TextDisabled("--");
                     }
@@ -15519,10 +15516,10 @@ void GameScreen::renderAuctionHouseWindow(game::GameHandler& gameHandler) {
                 ImGui::TableSetColumnIndex(1);
                 ImGui::Text("%u", a.stackCount);
                 ImGui::TableSetColumnIndex(2);
-                ImGui::Text("%ug%us%uc", a.currentBid / 10000, (a.currentBid / 100) % 100, a.currentBid % 100);
+                renderCoinsText(a.currentBid / 10000, (a.currentBid / 100) % 100, a.currentBid % 100);
                 ImGui::TableSetColumnIndex(3);
                 if (a.buyoutPrice > 0)
-                    ImGui::Text("%ug%us%uc", a.buyoutPrice / 10000, (a.buyoutPrice / 100) % 100, a.buyoutPrice % 100);
+                    renderCoinsText(a.buyoutPrice / 10000, (a.buyoutPrice / 100) % 100, a.buyoutPrice % 100);
                 else
                     ImGui::TextDisabled("--");
                 ImGui::TableSetColumnIndex(4);
@@ -15595,11 +15592,11 @@ void GameScreen::renderAuctionHouseWindow(game::GameHandler& gameHandler) {
                 ImGui::TableSetColumnIndex(2);
                 {
                     uint32_t bid = a.currentBid > 0 ? a.currentBid : a.startBid;
-                    ImGui::Text("%ug%us%uc", bid / 10000, (bid / 100) % 100, bid % 100);
+                    renderCoinsText(bid / 10000, (bid / 100) % 100, bid % 100);
                 }
                 ImGui::TableSetColumnIndex(3);
                 if (a.buyoutPrice > 0)
-                    ImGui::Text("%ug%us%uc", a.buyoutPrice / 10000, (a.buyoutPrice / 100) % 100, a.buyoutPrice % 100);
+                    renderCoinsText(a.buyoutPrice / 10000, (a.buyoutPrice / 100) % 100, a.buyoutPrice % 100);
                 else
                     ImGui::TextDisabled("--");
                 ImGui::TableSetColumnIndex(4);
