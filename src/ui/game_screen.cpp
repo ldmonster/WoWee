@@ -10412,6 +10412,27 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
         return true;
     };
 
+    // Player position marker — always drawn at minimap center with a directional arrow.
+    {
+        // The player is always at centerX, centerY on the minimap.
+        // Draw a yellow arrow pointing in the player's facing direction.
+        glm::vec3 fwd = camera->getForward();
+        float facing = std::atan2(-fwd.x, fwd.y); // bearing relative to north
+        float cosF = std::cos(facing - bearing);
+        float sinF = std::sin(facing - bearing);
+        float arrowLen = 8.0f;
+        float arrowW = 4.0f;
+        ImVec2 tip(centerX + sinF * arrowLen, centerY - cosF * arrowLen);
+        ImVec2 left(centerX - cosF * arrowW - sinF * arrowLen * 0.3f,
+                    centerY - sinF * arrowW + cosF * arrowLen * 0.3f);
+        ImVec2 right(centerX + cosF * arrowW - sinF * arrowLen * 0.3f,
+                     centerY + sinF * arrowW + cosF * arrowLen * 0.3f);
+        drawList->AddTriangleFilled(tip, left, right, IM_COL32(255, 220, 0, 255));
+        drawList->AddTriangle(tip, left, right, IM_COL32(0, 0, 0, 180), 1.0f);
+        // White dot at player center
+        drawList->AddCircleFilled(ImVec2(centerX, centerY), 2.5f, IM_COL32(255, 255, 255, 220));
+    }
+
     // Optional base nearby NPC dots (independent of quest status packets).
     if (minimapNpcDots_) {
         for (const auto& [guid, entity] : gameHandler.getEntityManager().getEntities()) {
