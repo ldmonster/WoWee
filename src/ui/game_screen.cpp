@@ -8414,6 +8414,29 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                     if (isMemberLeader)
                         draw->AddText(ImVec2(cellMax.x - 10.0f, cellMin.y + 2.0f), IM_COL32(255, 215, 0, 255), "*");
 
+                    // Raid mark symbol — small, just to the left of the leader crown
+                    {
+                        static const struct { const char* sym; ImU32 col; } kCellMarks[] = {
+                            { "\xe2\x98\x85", IM_COL32(255, 220,  50, 255) },
+                            { "\xe2\x97\x8f", IM_COL32(255, 140,   0, 255) },
+                            { "\xe2\x97\x86", IM_COL32(160,  32, 240, 255) },
+                            { "\xe2\x96\xb2", IM_COL32( 50, 200,  50, 255) },
+                            { "\xe2\x97\x8c", IM_COL32( 80, 160, 255, 255) },
+                            { "\xe2\x96\xa0", IM_COL32( 50, 200, 220, 255) },
+                            { "\xe2\x9c\x9d", IM_COL32(255,  80,  80, 255) },
+                            { "\xe2\x98\xa0", IM_COL32(255, 255, 255, 255) },
+                        };
+                        uint8_t rmk = gameHandler.getEntityRaidMark(m.guid);
+                        if (rmk < game::GameHandler::kRaidMarkCount) {
+                            ImFont* rmFont = ImGui::GetFont();
+                            ImVec2 rmsz = rmFont->CalcTextSizeA(9.0f, FLT_MAX, 0.0f, kCellMarks[rmk].sym);
+                            float rmX = cellMax.x - 10.0f - 2.0f - rmsz.x;
+                            draw->AddText(rmFont, 9.0f,
+                                ImVec2(rmX, cellMin.y + 2.0f),
+                                kCellMarks[rmk].col, kCellMarks[rmk].sym);
+                        }
+                    }
+
                     // LFG role badge in bottom-right corner of cell
                     if (m.roles & 0x02)
                         draw->AddText(ImVec2(cellMax.x - 11.0f, cellMax.y - 11.0f), IM_COL32(80, 130, 255, 230), "T");
