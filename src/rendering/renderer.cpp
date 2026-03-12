@@ -2008,7 +2008,12 @@ void Renderer::updateCharacterAnimation() {
             // Rider bob: sinusoidal motion synced to mount's run animation (only used in fallback positioning)
             mountBob = 0.0f;
             if (moving && haveMountState && curMountDur > 1.0f) {
-                float norm = std::fmod(curMountTime, curMountDur) / curMountDur;
+                // Wrap mount time preserving precision via subtraction instead of fmod
+                float wrappedTime = curMountTime;
+                while (wrappedTime >= curMountDur) {
+                    wrappedTime -= curMountDur;
+                }
+                float norm = wrappedTime / curMountDur;
                 // One bounce per stride cycle
                 float bobSpeed = taxiFlight_ ? 2.0f : 1.0f;
                 mountBob = std::sin(norm * 2.0f * 3.14159f * bobSpeed) * 0.12f;
@@ -2580,8 +2585,13 @@ bool Renderer::shouldTriggerFootstepEvent(uint32_t animationId, float animationT
         return false;
     }
 
-    float norm = std::fmod(animationTimeMs, animationDurationMs) / animationDurationMs;
-    if (norm < 0.0f) norm += 1.0f;
+    // Wrap animation time preserving precision via subtraction instead of fmod
+    float wrappedTime = animationTimeMs;
+    while (wrappedTime >= animationDurationMs) {
+        wrappedTime -= animationDurationMs;
+    }
+    if (wrappedTime < 0.0f) wrappedTime += animationDurationMs;
+    float norm = wrappedTime / animationDurationMs;
 
     if (animationId != footstepLastAnimationId) {
         footstepLastAnimationId = animationId;
@@ -2875,8 +2885,13 @@ void Renderer::update(float deltaTime) {
             float animTimeMs = 0.0f, animDurationMs = 0.0f;
             if (characterRenderer->getAnimationState(mountInstanceId_, animId, animTimeMs, animDurationMs) &&
                 animDurationMs > 1.0f && cameraController->isMoving()) {
-                float norm = std::fmod(animTimeMs, animDurationMs) / animDurationMs;
-                if (norm < 0.0f) norm += 1.0f;
+                // Wrap animation time preserving precision via subtraction instead of fmod
+                float wrappedTime = animTimeMs;
+                while (wrappedTime >= animDurationMs) {
+                    wrappedTime -= animDurationMs;
+                }
+                if (wrappedTime < 0.0f) wrappedTime += animDurationMs;
+                float norm = wrappedTime / animDurationMs;
 
                 if (animId != mountFootstepLastAnimId) {
                     mountFootstepLastAnimId = animId;

@@ -1880,7 +1880,15 @@ static void resolveTrackTime(const pipeline::M2AnimationTrack& track,
         // Global sequence: always use sub-array 0, wrap time at global duration
         outSeqIdx = 0;
         float dur = static_cast<float>(globalSeqDurations[track.globalSequence]);
-        outTime = (dur > 0.0f) ? std::fmod(time, dur) : 0.0f;
+        if (dur > 0.0f) {
+            // Use iterative subtraction instead of fmod() to preserve precision
+            outTime = time;
+            while (outTime >= dur) {
+                outTime -= dur;
+            }
+        } else {
+            outTime = 0.0f;
+        }
     } else {
         outSeqIdx = seqIdx;
         outTime = time;
@@ -2070,8 +2078,9 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
     for (size_t idx : particleOnlyInstanceIndices_) {
         if (idx >= instances.size()) continue;
         auto& instance = instances[idx];
-        if (instance.animTime > 3333.0f) {
-            instance.animTime = std::fmod(instance.animTime, 3333.0f);
+        // Use iterative subtraction instead of fmod() to preserve precision
+        while (instance.animTime > 3333.0f) {
+            instance.animTime -= 3333.0f;
         }
     }
 
@@ -2114,7 +2123,11 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
                 instance.animTime = 0.0f;
                 instance.variationTimer = 4000.0f + static_cast<float>(rand() % 6000);
             } else {
-                instance.animTime = std::fmod(instance.animTime, std::max(1.0f, instance.animDuration));
+                // Use iterative subtraction instead of fmod() to preserve precision
+                float duration = std::max(1.0f, instance.animDuration);
+                while (instance.animTime >= duration) {
+                    instance.animTime -= duration;
+                }
             }
         }
 
@@ -3452,8 +3465,12 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             if ((em.flags & kParticleFlagTiled) && totalTiles > 1) {
                 float animSeconds = inst.animTime / 1000.0f;
                 uint32_t animFrame = static_cast<uint32_t>(std::floor(animSeconds * totalTiles)) % totalTiles;
-                tileIndex = std::fmod(p.tileIndex + static_cast<float>(animFrame),
-                                      static_cast<float>(totalTiles));
+                tileIndex = p.tileIndex + static_cast<float>(animFrame);
+                float tilesFloat = static_cast<float>(totalTiles);
+                // Wrap tile index within totalTiles range
+                while (tileIndex >= tilesFloat) {
+                    tileIndex -= tilesFloat;
+                }
             }
             group.vertexData.push_back(tileIndex);
             totalParticles++;
