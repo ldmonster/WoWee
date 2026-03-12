@@ -4775,6 +4775,31 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                 }
                 chatInputBuffer[0] = '\0';
                 return;
+            } else if ((cmdLower == "wts" || cmdLower == "wtb") && spacePos != std::string::npos) {
+                // /wts and /wtb — send to Trade channel
+                // Prefix with [WTS] / [WTB] and route to the Trade channel
+                const std::string tag = (cmdLower == "wts") ? "[WTS] " : "[WTB] ";
+                const std::string body = command.substr(spacePos + 1);
+                // Find the Trade channel among joined channels (case-insensitive prefix match)
+                std::string tradeChan;
+                for (const auto& ch : gameHandler.getJoinedChannels()) {
+                    std::string chLow = ch;
+                    for (char& c : chLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    if (chLow.rfind("trade", 0) == 0) { tradeChan = ch; break; }
+                }
+                if (tradeChan.empty()) {
+                    game::MessageChatData errMsg;
+                    errMsg.type = game::ChatType::SYSTEM;
+                    errMsg.language = game::ChatLanguage::UNIVERSAL;
+                    errMsg.message = "You are not in the Trade channel.";
+                    gameHandler.addLocalChatMessage(errMsg);
+                    chatInputBuffer[0] = '\0';
+                    return;
+                }
+                message = tag + body;
+                type = game::ChatType::CHANNEL;
+                target = tradeChan;
+                isChannelCommand = true;
             } else if (cmdLower.size() == 1 && cmdLower[0] >= '1' && cmdLower[0] <= '9') {
                 // /1 msg, /2 msg — channel shortcuts
                 int channelIdx = cmdLower[0] - '0';
