@@ -100,6 +100,12 @@ private:
     std::vector<RepToastEntry> repToasts_;
     bool repChangeCallbackSet_ = false;
     static constexpr float kRepToastLifetime = 3.5f;
+
+    // Quest completion toast: slide-in when a quest is turned in
+    struct QuestCompleteToastEntry { uint32_t questId = 0; std::string title; float age = 0.0f; };
+    std::vector<QuestCompleteToastEntry> questCompleteToasts_;
+    bool questCompleteCallbackSet_ = false;
+    static constexpr float kQuestCompleteToastLifetime = 4.0f;
     bool showPlayerInfo = false;
     bool showSocialFrame_ = false;  // O key toggles social/friends list
     bool showGuildRoster_ = false;
@@ -283,6 +289,7 @@ private:
     void renderBossFrames(game::GameHandler& gameHandler);
     void renderUIErrors(game::GameHandler& gameHandler, float deltaTime);
     void renderRepToasts(float deltaTime);
+    void renderQuestCompleteToasts(float deltaTime);
     void renderGroupInvitePopup(game::GameHandler& gameHandler);
     void renderDuelRequestPopup(game::GameHandler& gameHandler);
     void renderLootRollPopup(game::GameHandler& gameHandler);

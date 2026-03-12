@@ -245,6 +245,15 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         repChangeCallbackSet_ = true;
     }
 
+    // Set up quest completion toast callback (once)
+    if (!questCompleteCallbackSet_) {
+        gameHandler.setQuestCompleteCallback([this](uint32_t id, const std::string& title) {
+            questCompleteToasts_.push_back({id, title, 0.0f});
+            if (questCompleteToasts_.size() > 3) questCompleteToasts_.erase(questCompleteToasts_.begin());
+        });
+        questCompleteCallbackSet_ = true;
+    }
+
     // Apply UI transparency setting
     float prevAlpha = ImGui::GetStyle().Alpha;
     ImGui::GetStyle().Alpha = uiOpacity_;
@@ -465,6 +474,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderDPSMeter(gameHandler);
     renderUIErrors(gameHandler, ImGui::GetIO().DeltaTime);
     renderRepToasts(ImGui::GetIO().DeltaTime);
+    renderQuestCompleteToasts(ImGui::GetIO().DeltaTime);
     if (showRaidFrames_) {
         renderPartyFrames(gameHandler);
     }
@@ -7125,6 +7135,68 @@ void GameScreen::renderRepToasts(float deltaTime) {
         snprintf(nameBuf, sizeof(nameBuf), "%s (%s)", e.factionName.c_str(), standingLabel(e.standing));
         draw->AddText(font, fontSize * 0.85f, ImVec2(tl.x + 44.0f, tl.y + (toastH - fontSize * 0.85f) * 0.5f),
                       IM_COL32(210, 210, 210, (int)(alpha * 220)), nameBuf);
+    }
+}
+
+void GameScreen::renderQuestCompleteToasts(float deltaTime) {
+    for (auto& e : questCompleteToasts_) e.age += deltaTime;
+    questCompleteToasts_.erase(
+        std::remove_if(questCompleteToasts_.begin(), questCompleteToasts_.end(),
+            [](const QuestCompleteToastEntry& e) { return e.age >= kQuestCompleteToastLifetime; }),
+        questCompleteToasts_.end());
+
+    if (questCompleteToasts_.empty()) return;
+
+    auto* window = core::Application::getInstance().getWindow();
+    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
+    float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
+
+    const float toastW = 260.0f;
+    const float toastH = 40.0f;
+    const float padY   = 4.0f;
+    const float baseY  = screenH - 220.0f;  // above rep toasts
+
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    ImFont* font = ImGui::GetFont();
+    float fontSize = ImGui::GetFontSize();
+
+    for (int i = 0; i < static_cast<int>(questCompleteToasts_.size()); ++i) {
+        const auto& e = questCompleteToasts_[i];
+        constexpr float kSlideDur = 0.3f;
+        float slideIn  = std::min(e.age, kSlideDur) / kSlideDur;
+        float slideOut = std::min(std::max(0.0f, kQuestCompleteToastLifetime - e.age), kSlideDur) / kSlideDur;
+        float slide    = std::min(slideIn, slideOut);
+        float alpha    = std::clamp(slide, 0.0f, 1.0f);
+
+        float xFull  = screenW - 14.0f - toastW;
+        float xStart = screenW + 10.0f;
+        float toastX = xStart + (xFull - xStart) * slide;
+        float toastY = baseY - i * (toastH + padY);
+
+        ImVec2 tl(toastX, toastY);
+        ImVec2 br(toastX + toastW, toastY + toastH);
+
+        // Background + gold border (quest completion)
+        draw->AddRectFilled(tl, br, IM_COL32(20, 18, 8, (int)(alpha * 210)), 5.0f);
+        draw->AddRect(tl, br, IM_COL32(220, 180, 30, (int)(alpha * 230)), 5.0f, 0, 1.5f);
+
+        // Scroll icon placeholder (gold diamond)
+        float iconCx = tl.x + 18.0f;
+        float iconCy = tl.y + toastH * 0.5f;
+        draw->AddCircleFilled(ImVec2(iconCx, iconCy), 7.0f, IM_COL32(210, 170, 20, (int)(alpha * 230)));
+        draw->AddCircle      (ImVec2(iconCx, iconCy), 7.0f, IM_COL32(255, 220, 50, (int)(alpha * 200)));
+
+        // "Quest Complete" header in gold
+        const char* header = "Quest Complete";
+        draw->AddText(font, fontSize * 0.78f,
+                      ImVec2(tl.x + 34.0f, tl.y + 4.0f),
+                      IM_COL32(240, 200, 40, (int)(alpha * 240)), header);
+
+        // Quest title in off-white
+        const char* titleStr = e.title.empty() ? "Unknown Quest" : e.title.c_str();
+        draw->AddText(font, fontSize * 0.82f,
+                      ImVec2(tl.x + 34.0f, tl.y + toastH * 0.5f + 1.0f),
+                      IM_COL32(220, 215, 195, (int)(alpha * 220)), titleStr);
     }
 }
 

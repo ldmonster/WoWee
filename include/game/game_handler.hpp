@@ -1330,6 +1330,10 @@ public:
     using RepChangeCallback = std::function<void(const std::string& factionName, int32_t delta, int32_t standing)>;
     void setRepChangeCallback(RepChangeCallback cb) { repChangeCallback_ = std::move(cb); }
 
+    // Quest turn-in completion callback
+    using QuestCompleteCallback = std::function<void(uint32_t questId, const std::string& questTitle)>;
+    void setQuestCompleteCallback(QuestCompleteCallback cb) { questCompleteCallback_ = std::move(cb); }
+
     // Mount state
     using MountCallback = std::function<void(uint32_t mountDisplayId)>;  // 0 = dismount
     void setMountCallback(MountCallback cb) { mountCallback_ = std::move(cb); }
@@ -2630,6 +2634,9 @@ private:
 
     // ---- Reputation change callback ----
     RepChangeCallback repChangeCallback_;
+
+    // ---- Quest completion callback ----
+    QuestCompleteCallback questCompleteCallback_;
 };
 
 } // namespace game

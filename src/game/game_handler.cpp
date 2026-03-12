@@ -4381,6 +4381,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 }
                 for (auto it = questLog_.begin(); it != questLog_.end(); ++it) {
                     if (it->questId == questId) {
+                        // Fire toast callback before erasing
+                        if (questCompleteCallback_) {
+                            questCompleteCallback_(questId, it->title);
+                        }
                         questLog_.erase(it);
                         LOG_INFO("  Removed quest ", questId, " from quest log");
                         break;
