@@ -712,7 +712,6 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderInspectWindow(gameHandler);
     renderThreatWindow(gameHandler);
     renderBgScoreboard(gameHandler);
-    renderObjectiveTracker(gameHandler);
     // renderQuestMarkers(gameHandler);  // Disabled - using 3D billboard markers now
     if (showMinimap_) {
         renderMinimapMarkers(gameHandler);
@@ -7792,14 +7791,19 @@ void GameScreen::renderQuestObjectiveTracker(game::GameHandler& gameHandler) {
     }
     if (toShow.empty()) return;
 
-    float x = screenW - TRACKER_W - RIGHT_MARGIN;
-    float y = 320.0f;  // below minimap (210) + buff bar space (up to 3 rows ≈ 114px)
+    float screenH = ImGui::GetIO().DisplaySize.y > 0.0f ? ImGui::GetIO().DisplaySize.y : 720.0f;
 
-    ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
+    // Default position: top-right, below minimap + buff bar space
+    if (!questTrackerPosInit_ || questTrackerPos_.x < 0.0f) {
+        questTrackerPos_ = ImVec2(screenW - TRACKER_W - RIGHT_MARGIN, 320.0f);
+        questTrackerPosInit_ = true;
+    }
+
+    ImGui::SetNextWindowPos(questTrackerPos_, ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(TRACKER_W, 0), ImGuiCond_Always);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration |
-                             ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoNav |
                              ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoBringToFrontOnFocus;
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.55f));
@@ -7937,6 +7941,16 @@ void GameScreen::renderQuestObjectiveTracker(game::GameHandler& gameHandler) {
             if (i < static_cast<int>(toShow.size()) - 1) {
                 ImGui::Spacing();
             }
+        }
+
+        // Capture position after drag
+        ImVec2 newPos = ImGui::GetWindowPos();
+        if (std::abs(newPos.x - questTrackerPos_.x) > 0.5f ||
+            std::abs(newPos.y - questTrackerPos_.y) > 0.5f) {
+            newPos.x = std::clamp(newPos.x, 0.0f, screenW - TRACKER_W);
+            newPos.y = std::clamp(newPos.y, 0.0f, screenH - 40.0f);
+            questTrackerPos_ = newPos;
+            saveSettings();
         }
     }
     ImGui::End();
@@ -20005,119 +20019,10 @@ void GameScreen::renderBgScoreboard(game::GameHandler& gameHandler) {
     ImGui::End();
 }
 
-// ─── Quest Objective Tracker ──────────────────────────────────────────────────
-void GameScreen::renderObjectiveTracker(game::GameHandler& gameHandler) {
-    if (gameHandler.getState() != game::WorldState::IN_WORLD) return;
-
-    const auto& questLog  = gameHandler.getQuestLog();
-    const auto& tracked   = gameHandler.getTrackedQuestIds();
-
-    // Collect quests to show: tracked ones first, then in-progress quests up to a max of 5 total.
-    std::vector<const game::GameHandler::QuestLogEntry*> toShow;
-    for (const auto& q : questLog) {
-        if (q.questId == 0) continue;
-        if (tracked.count(q.questId)) toShow.push_back(&q);
-    }
-    if (toShow.empty()) {
-        // No explicitly tracked quests — show up to 5 in-progress quests
-        for (const auto& q : questLog) {
-            if (q.questId == 0) continue;
-            if (!tracked.count(q.questId)) toShow.push_back(&q);
-            if (toShow.size() >= 5) break;
-        }
-    }
-
-    if (toShow.empty()) return;
-
-    ImVec2 display = ImGui::GetIO().DisplaySize;
-    float screenW  = display.x > 0.0f ? display.x : 1280.0f;
-    float screenH  = display.y > 0.0f ? display.y : 720.0f;
-    float trackerW = 220.0f;
-
-    // Default position: top-right, below minimap
-    if (!questTrackerPosInit_ || questTrackerPos_.x < 0.0f) {
-        questTrackerPos_ = ImVec2(screenW - trackerW - 12.0f, 230.0f);
-        questTrackerPosInit_ = true;
-    }
-
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysAutoResize |
-                             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoFocusOnAppearing;
-
-    ImGui::SetNextWindowPos(questTrackerPos_, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(trackerW, 0.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowBgAlpha(0.5f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 2.0f));
-
-    if (ImGui::Begin("##ObjectiveTracker", nullptr, flags)) {
-        for (const auto* q : toShow) {
-            // Quest title
-            ImVec4 titleColor = q->complete ? ImVec4(0.45f, 1.0f, 0.45f, 1.0f)
-                                            : ImVec4(1.0f, 0.84f, 0.0f, 1.0f);
-            std::string titleStr = q->title.empty()
-                ? ("Quest #" + std::to_string(q->questId)) : q->title;
-            // Truncate to fit
-            if (titleStr.size() > 26) { titleStr.resize(23); titleStr += "..."; }
-            ImGui::TextColored(titleColor, "%s", titleStr.c_str());
-
-            // Kill/entity objectives
-            bool hasObjectives = false;
-            for (const auto& ko : q->killObjectives) {
-                if (ko.npcOrGoId == 0 || ko.required == 0) continue;
-                hasObjectives = true;
-                uint32_t entry = (uint32_t)std::abs(ko.npcOrGoId);
-                auto it = q->killCounts.find(entry);
-                uint32_t cur = it != q->killCounts.end() ? it->second.first : 0;
-                std::string name = gameHandler.getCachedCreatureName(entry);
-                if (name.empty()) {
-                    if (ko.npcOrGoId < 0) {
-                        const auto* goInfo = gameHandler.getCachedGameObjectInfo(entry);
-                        if (goInfo) name = goInfo->name;
-                    }
-                    if (name.empty()) name = "Objective";
-                }
-                if (name.size() > 20) { name.resize(17); name += "..."; }
-                bool done = (cur >= ko.required);
-                ImVec4 c = done ? ImVec4(0.5f, 0.9f, 0.5f, 1.0f) : ImVec4(0.75f, 0.75f, 0.75f, 1.0f);
-                ImGui::TextColored(c, "  %s: %u/%u", name.c_str(), cur, ko.required);
-            }
-
-            // Item objectives
-            for (const auto& io : q->itemObjectives) {
-                if (io.itemId == 0 || io.required == 0) continue;
-                hasObjectives = true;
-                auto it = q->itemCounts.find(io.itemId);
-                uint32_t cur = it != q->itemCounts.end() ? it->second : 0;
-                std::string name;
-                if (const auto* info = gameHandler.getItemInfo(io.itemId)) name = info->name;
-                if (name.empty()) name = "Item #" + std::to_string(io.itemId);
-                if (name.size() > 20) { name.resize(17); name += "..."; }
-                bool done = (cur >= io.required);
-                ImVec4 c = done ? ImVec4(0.5f, 0.9f, 0.5f, 1.0f) : ImVec4(0.75f, 0.75f, 0.75f, 1.0f);
-                ImGui::TextColored(c, "  %s: %u/%u", name.c_str(), cur, io.required);
-            }
-
-            if (!hasObjectives && q->complete) {
-                ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.5f, 1.0f), "  Ready to turn in!");
-            }
-
-            ImGui::Dummy(ImVec2(0.0f, 2.0f));
-        }
-
-        // Track drag — save new position when the window is moved
-        ImVec2 newPos = ImGui::GetWindowPos();
-        if (std::abs(newPos.x - questTrackerPos_.x) > 0.5f ||
-            std::abs(newPos.y - questTrackerPos_.y) > 0.5f) {
-            // Clamp to screen bounds
-            newPos.x = std::clamp(newPos.x, 0.0f, screenW - trackerW);
-            newPos.y = std::clamp(newPos.y, 0.0f, screenH - 40.0f);
-            questTrackerPos_ = newPos;
-            saveSettings();
-        }
-    }
-    ImGui::End();
-    ImGui::PopStyleVar(2);
+// ─── Quest Objective Tracker (legacy stub — superseded by renderQuestObjectiveTracker) ───
+void GameScreen::renderObjectiveTracker(game::GameHandler&) {
+    // No-op: consolidated into renderQuestObjectiveTracker which renders the
+    // full-featured draggable tracker with context menus and item icons.
 }
 
 // ─── Inspect Window ───────────────────────────────────────────────────────────
