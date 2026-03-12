@@ -228,6 +228,9 @@ void GameScreen::initChatTabs() {
                                    (1ULL << static_cast<uint8_t>(game::ChatType::GUILD_ACHIEVEMENT))});
     // Trade/LFG tab: channel messages
     chatTabs_.push_back({"Trade/LFG", (1ULL << static_cast<uint8_t>(game::ChatType::CHANNEL))});
+    // Reset unread counts to match new tab list
+    chatTabUnread_.assign(chatTabs_.size(), 0);
+    chatTabSeenCount_ = 0;
 }
 
 bool GameScreen::shouldShowMessage(const game::MessageChatData& msg, int tabIndex) const {
@@ -1107,11 +1110,43 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
         chatWindowPos_ = ImGui::GetWindowPos();
     }
 
+    // Update unread counts: scan any new messages since last frame
+    {
+        const auto& history = gameHandler.getChatHistory();
+        // Ensure unread array is sized correctly (guards against late init)
+        if (chatTabUnread_.size() != chatTabs_.size())
+            chatTabUnread_.assign(chatTabs_.size(), 0);
+        // If history shrank (e.g. cleared), reset
+        if (chatTabSeenCount_ > history.size()) chatTabSeenCount_ = 0;
+        for (size_t mi = chatTabSeenCount_; mi < history.size(); ++mi) {
+            const auto& msg = history[mi];
+            // For each non-General (non-0) tab that isn't currently active, check visibility
+            for (int ti = 1; ti < static_cast<int>(chatTabs_.size()); ++ti) {
+                if (ti == activeChatTab_) continue;
+                if (shouldShowMessage(msg, ti)) {
+                    chatTabUnread_[ti]++;
+                }
+            }
+        }
+        chatTabSeenCount_ = history.size();
+    }
+
     // Chat tabs
     if (ImGui::BeginTabBar("ChatTabs")) {
         for (int i = 0; i < static_cast<int>(chatTabs_.size()); ++i) {
-            if (ImGui::BeginTabItem(chatTabs_[i].name.c_str())) {
-                activeChatTab_ = i;
+            // Build label with unread count suffix for non-General tabs
+            std::string tabLabel = chatTabs_[i].name;
+            if (i > 0 && i < static_cast<int>(chatTabUnread_.size()) && chatTabUnread_[i] > 0) {
+                tabLabel += " (" + std::to_string(chatTabUnread_[i]) + ")";
+            }
+            // Use ImGuiTabItemFlags_NoPushId so label changes don't break tab identity
+            if (ImGui::BeginTabItem(tabLabel.c_str())) {
+                if (activeChatTab_ != i) {
+                    activeChatTab_ = i;
+                    // Clear unread count when tab becomes active
+                    if (i < static_cast<int>(chatTabUnread_.size()))
+                        chatTabUnread_[i] = 0;
+                }
                 ImGui::EndTabItem();
             }
         }

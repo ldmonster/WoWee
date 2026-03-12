@@ -70,6 +70,8 @@ private:
         uint64_t typeMask;  // bitmask of ChatType values to show (64-bit: types go up to 84)
     };
     std::vector<ChatTab> chatTabs_;
+    std::vector<int> chatTabUnread_;   // unread message count per tab (0 = none)
+    size_t chatTabSeenCount_ = 0;      // how many history messages have been processed
     void initChatTabs();
     bool shouldShowMessage(const game::MessageChatData& msg, int tabIndex) const;
 
