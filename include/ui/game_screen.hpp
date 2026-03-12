@@ -293,6 +293,7 @@ private:
     void renderQuestCompleteToasts(float deltaTime);
     void renderGroupInvitePopup(game::GameHandler& gameHandler);
     void renderDuelRequestPopup(game::GameHandler& gameHandler);
+    void renderDuelCountdown(game::GameHandler& gameHandler);
     void renderLootRollPopup(game::GameHandler& gameHandler);
     void renderTradeRequestPopup(game::GameHandler& gameHandler);
     void renderTradeWindow(game::GameHandler& gameHandler);

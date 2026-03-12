@@ -1035,6 +1035,14 @@ public:
     const std::string& getDuelChallengerName() const { return duelChallengerName_; }
     void acceptDuel();
     // forfeitDuel() already declared at line ~399
+    // Returns remaining duel countdown seconds, or 0 if no active countdown
+    float getDuelCountdownRemaining() const {
+        if (duelCountdownMs_ == 0) return 0.0f;
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - duelCountdownStartedAt_).count();
+        float rem = (static_cast<float>(duelCountdownMs_) - static_cast<float>(elapsed)) / 1000.0f;
+        return rem > 0.0f ? rem : 0.0f;
+    }
 
     // ---- Instance lockouts ----
     struct InstanceLockout {
@@ -2251,6 +2259,8 @@ private:
     uint64_t duelChallengerGuid_= 0;
     uint64_t duelFlagGuid_      = 0;
     std::string duelChallengerName_;
+    uint32_t duelCountdownMs_   = 0;   // 0 = no active countdown
+    std::chrono::steady_clock::time_point duelCountdownStartedAt_{};
 
     // ---- Guild state ----
     std::string guildName_;

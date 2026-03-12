@@ -3214,9 +3214,16 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_DUEL_INBOUNDS:
             // Re-entered the duel area; no special action needed.
             break;
-        case Opcode::SMSG_DUEL_COUNTDOWN:
-            // Countdown timer — no action needed; server also sends UNIT_FIELD_FLAGS update.
+        case Opcode::SMSG_DUEL_COUNTDOWN: {
+            // uint32 countdown in milliseconds (typically 3000 ms)
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                uint32_t ms = packet.readUInt32();
+                duelCountdownMs_        = (ms > 0 && ms <= 30000) ? ms : 3000;
+                duelCountdownStartedAt_ = std::chrono::steady_clock::now();
+                LOG_INFO("SMSG_DUEL_COUNTDOWN: ", duelCountdownMs_, " ms");
+            }
             break;
+        }
         case Opcode::SMSG_PARTYKILLLOG: {
             // uint64 killerGuid + uint64 victimGuid
             if (packet.getSize() - packet.getReadPos() < 16) break;
@@ -10472,6 +10479,7 @@ void GameHandler::handleDuelComplete(network::Packet& packet) {
     uint8_t started = packet.readUInt8();
     // started=1: duel began, started=0: duel was cancelled before starting
     pendingDuelRequest_ = false;
+    duelCountdownMs_    = 0; // clear countdown once duel is resolved
     if (!started) {
         addSystemChatMessage("The duel was cancelled.");
     }
