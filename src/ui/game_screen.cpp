@@ -2882,7 +2882,38 @@ void GameScreen::renderFocusFrame(game::GameHandler& gameHandler) {
         ImGui::SameLine();
 
         std::string focusName = getEntityName(focus);
-        ImGui::TextColored(focusColor, "%s", focusName.c_str());
+        ImGui::PushStyleColor(ImGuiCol_Text, focusColor);
+        ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0,0,0,0));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(1,1,1,0.08f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(1,1,1,0.12f));
+        ImGui::Selectable(focusName.c_str(), false, ImGuiSelectableFlags_DontClosePopups,
+                          ImVec2(ImGui::CalcTextSize(focusName.c_str()).x, 0));
+        ImGui::PopStyleColor(4);
+
+        if (ImGui::BeginPopupContextItem("##FocusNameCtx")) {
+            const bool focusIsPlayer = (focus->getType() == game::ObjectType::PLAYER);
+            const uint64_t fGuid = focus->getGuid();
+            ImGui::TextDisabled("%s", focusName.c_str());
+            ImGui::Separator();
+            if (ImGui::MenuItem("Target"))
+                gameHandler.setTarget(fGuid);
+            if (ImGui::MenuItem("Clear Focus"))
+                gameHandler.clearFocus();
+            if (focusIsPlayer) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("Whisper")) {
+                    selectedChatType = 4;
+                    strncpy(whisperTargetBuffer, focusName.c_str(), sizeof(whisperTargetBuffer) - 1);
+                    whisperTargetBuffer[sizeof(whisperTargetBuffer) - 1] = '\0';
+                    refocusChatInput = true;
+                }
+                if (ImGui::MenuItem("Invite to Group"))
+                    gameHandler.inviteToGroup(focusName);
+                if (ImGui::MenuItem("Trade"))
+                    gameHandler.initiateTrade(fGuid);
+            }
+            ImGui::EndPopup();
+        }
 
         if (focus->getType() == game::ObjectType::UNIT ||
             focus->getType() == game::ObjectType::PLAYER) {
