@@ -3389,6 +3389,27 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                 levelColor = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
             }
             ImGui::TextColored(levelColor, "Lv %u", unit->getLevel());
+            // Classification badge: Elite / Rare Elite / Boss / Rare
+            if (target->getType() == game::ObjectType::UNIT) {
+                int rank = gameHandler.getCreatureRank(unit->getEntry());
+                if (rank == 1) {
+                    ImGui::SameLine(0, 4);
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "[Elite]");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Elite — requires a group");
+                } else if (rank == 2) {
+                    ImGui::SameLine(0, 4);
+                    ImGui::TextColored(ImVec4(0.8f, 0.4f, 1.0f, 1.0f), "[Rare Elite]");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rare Elite — uncommon spawn, group recommended");
+                } else if (rank == 3) {
+                    ImGui::SameLine(0, 4);
+                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "[Boss]");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Boss — raid / dungeon boss");
+                } else if (rank == 4) {
+                    ImGui::SameLine(0, 4);
+                    ImGui::TextColored(ImVec4(0.5f, 0.9f, 1.0f, 1.0f), "[Rare]");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rare — uncommon spawn with better loot");
+                }
+            }
             if (confirmedCombatWithTarget) {
                 float cPulse = 0.75f + 0.25f * std::sin(static_cast<float>(ImGui::GetTime()) * 4.0f);
                 ImGui::SameLine();

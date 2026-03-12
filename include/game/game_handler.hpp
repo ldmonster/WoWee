@@ -548,6 +548,12 @@ public:
     }
     std::string getCachedPlayerName(uint64_t guid) const;
     std::string getCachedCreatureName(uint32_t entry) const;
+    // Returns the creature rank (0=Normal,1=Elite,2=RareElite,3=Boss,4=Rare)
+    // or -1 if not cached yet
+    int getCreatureRank(uint32_t entry) const {
+        auto it = creatureInfoCache.find(entry);
+        return (it != creatureInfoCache.end()) ? static_cast<int>(it->second.rank) : -1;
+    }
 
     // ---- Phase 2: Combat ----
     void startAutoAttack(uint64_t targetGuid);
