@@ -3854,6 +3854,39 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                 return;
             }
 
+            // /chathelp command — list chat-channel slash commands
+            if (cmdLower == "chathelp") {
+                static const char* kChatHelp[] = {
+                    "--- Chat Channel Commands ---",
+                    "/s [msg]          Say to nearby players",
+                    "/y [msg]          Yell to a wider area",
+                    "/w <name> [msg]   Whisper to player",
+                    "/r [msg]          Reply to last whisper",
+                    "/p [msg]          Party chat",
+                    "/g [msg]          Guild chat",
+                    "/o [msg]          Guild officer chat",
+                    "/raid [msg]       Raid chat",
+                    "/rw [msg]         Raid warning",
+                    "/bg [msg]         Battleground chat",
+                    "/1 [msg]          General channel",
+                    "/2 [msg]          Trade channel  (also /wts /wtb)",
+                    "/<N> [msg]        Channel by number",
+                    "/join <chan>      Join a channel",
+                    "/leave <chan>     Leave a channel",
+                    "/afk [msg]        Set AFK status",
+                    "/dnd [msg]        Set Do Not Disturb",
+                };
+                for (const char* line : kChatHelp) {
+                    game::MessageChatData helpMsg;
+                    helpMsg.type = game::ChatType::SYSTEM;
+                    helpMsg.language = game::ChatLanguage::UNIVERSAL;
+                    helpMsg.message = line;
+                    gameHandler.addLocalChatMessage(helpMsg);
+                }
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+
             // /help command — list available slash commands
             if (cmdLower == "help" || cmdLower == "?") {
                 static const char* kHelpLines[] = {
