@@ -16059,6 +16059,18 @@ void GameScreen::renderDungeonFinderWindow(game::GameHandler& gameHandler) {
     // ---- Vote-to-kick buttons ----
     if (state == LfgState::Boot) {
         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Vote to kick in progress:");
+        const std::string& bootTarget = gameHandler.getLfgBootTargetName();
+        const std::string& bootReason = gameHandler.getLfgBootReason();
+        if (!bootTarget.empty()) {
+            ImGui::Text("Player: ");
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "%s", bootTarget.c_str());
+        }
+        if (!bootReason.empty()) {
+            ImGui::Text("Reason: ");
+            ImGui::SameLine();
+            ImGui::TextWrapped("%s", bootReason.c_str());
+        }
         uint32_t bootVotes   = gameHandler.getLfgBootVotes();
         uint32_t bootTotal   = gameHandler.getLfgBootTotal();
         uint32_t bootNeeded  = gameHandler.getLfgBootNeeded();

@@ -1120,10 +1120,12 @@ public:
     uint32_t getLfgProposalId()  const { return lfgProposalId_; }
     int32_t  getLfgAvgWaitSec()  const { return lfgAvgWaitSec_; }
     uint32_t getLfgTimeInQueueMs() const { return lfgTimeInQueueMs_; }
-    uint32_t getLfgBootVotes()    const { return lfgBootVotes_; }
-    uint32_t getLfgBootTotal()    const { return lfgBootTotal_; }
-    uint32_t getLfgBootTimeLeft() const { return lfgBootTimeLeft_; }
-    uint32_t getLfgBootNeeded()   const { return lfgBootNeeded_; }
+    uint32_t getLfgBootVotes()      const { return lfgBootVotes_; }
+    uint32_t getLfgBootTotal()      const { return lfgBootTotal_; }
+    uint32_t getLfgBootTimeLeft()   const { return lfgBootTimeLeft_; }
+    uint32_t getLfgBootNeeded()     const { return lfgBootNeeded_; }
+    const std::string& getLfgBootTargetName() const { return lfgBootTargetName_; }
+    const std::string& getLfgBootReason()     const { return lfgBootReason_; }
 
     // ---- Arena Team Stats ----
     struct ArenaTeamStats {
@@ -2257,6 +2259,8 @@ private:
     uint32_t lfgBootTotal_    = 0;   // total votes cast
     uint32_t lfgBootTimeLeft_ = 0;   // seconds remaining
     uint32_t lfgBootNeeded_   = 0;   // votes needed to kick
+    std::string lfgBootTargetName_;  // name of player being voted on
+    std::string lfgBootReason_;      // reason given for kick
 
     // Ready check state
     bool        pendingReadyCheck_       = false;

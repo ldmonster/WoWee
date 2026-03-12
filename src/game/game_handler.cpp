@@ -13111,11 +13111,19 @@ void GameHandler::handleLfgBootProposalUpdate(network::Packet& packet) {
     lfgBootTimeLeft_ = timeLeft;
     lfgBootNeeded_   = votesNeeded;
 
+    // Optional: reason string and target name (null-terminated) follow the fixed fields
+    if (packet.getSize() - packet.getReadPos() > 0)
+        lfgBootReason_ = packet.readString();
+    if (packet.getSize() - packet.getReadPos() > 0)
+        lfgBootTargetName_ = packet.readString();
+
     if (inProgress) {
         lfgState_ = LfgState::Boot;
     } else {
         // Boot vote ended — return to InDungeon state regardless of outcome
         lfgBootVotes_ = lfgBootTotal_ = lfgBootTimeLeft_ = lfgBootNeeded_ = 0;
+        lfgBootTargetName_.clear();
+        lfgBootReason_.clear();
         lfgState_ = LfgState::InDungeon;
         if (myAnswer) {
             addSystemChatMessage("Dungeon Finder: Vote kick passed — member removed.");
@@ -13125,7 +13133,8 @@ void GameHandler::handleLfgBootProposalUpdate(network::Packet& packet) {
     }
 
     LOG_INFO("SMSG_LFG_BOOT_PROPOSAL_UPDATE: inProgress=", inProgress,
-             " bootVotes=", bootVotes, "/", totalVotes);
+             " bootVotes=", bootVotes, "/", totalVotes,
+             " target=", lfgBootTargetName_, " reason=", lfgBootReason_);
 }
 
 void GameHandler::handleLfgTeleportDenied(network::Packet& packet) {
