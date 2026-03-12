@@ -123,6 +123,15 @@ namespace {
         return static_cast<uint8_t>((bytes0 >> 8) & 0xFF);
     }
 
+    // Return the English class name for a class ID (1-11), or "Unknown".
+    const char* classNameStr(uint8_t classId) {
+        static const char* kNames[] = {
+            "Unknown","Warrior","Paladin","Hunter","Rogue","Priest",
+            "Death Knight","Shaman","Mage","Warlock","","Druid"
+        };
+        return (classId < 12) ? kNames[classId] : "Unknown";
+    }
+
     bool isPortBotTarget(const std::string& target) {
         std::string t = toLower(trim(target));
         return t == "portbot" || t == "gmbot" || t == "telebot";
@@ -9009,12 +9018,6 @@ void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
                             return a.name < b.name;
                         });
 
-                        static const char* classNames[] = {
-                            "Unknown", "Warrior", "Paladin", "Hunter", "Rogue",
-                            "Priest", "Death Knight", "Shaman", "Mage", "Warlock",
-                            "", "Druid"
-                        };
-
                         for (const auto& m : sortedMembers) {
                             ImGui::TableNextRow();
                             ImVec4 textColor = m.online ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f)
@@ -9042,7 +9045,7 @@ void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
                             ImGui::TextColored(textColor, "%u", m.level);
 
                             ImGui::TableNextColumn();
-                            const char* className = (m.classId < 12) ? classNames[m.classId] : "Unknown";
+                            const char* className = classNameStr(m.classId);
                             ImVec4 classCol = m.online ? classColorVec4(m.classId) : textColor;
                             ImGui::TextColored(classCol, "%s", className);
 
@@ -9390,31 +9393,9 @@ void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
                             (c.status == 2) ? " (AFK)" :
                             (c.status == 3) ? " (DND)" : "";
                         // Class color for the level/class display
-                        ImVec4 friendClassCol = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
-                        const char* friendClassName = "";
-                        if (c.classId > 0 && c.classId < 12) {
-                            static const ImVec4 kFriendClassColors[] = {
-                                {0,0,0,0},
-                                {0.78f,0.61f,0.43f,1}, // Warrior
-                                {0.96f,0.55f,0.73f,1}, // Paladin
-                                {0.67f,0.83f,0.45f,1}, // Hunter
-                                {1.00f,0.96f,0.41f,1}, // Rogue
-                                {1.00f,1.00f,1.00f,1}, // Priest
-                                {0.77f,0.12f,0.23f,1}, // Death Knight
-                                {0.00f,0.44f,0.87f,1}, // Shaman
-                                {0.41f,0.80f,0.94f,1}, // Mage
-                                {0.58f,0.51f,0.79f,1}, // Warlock
-                                {0,0,0,0},              // (unused slot 10)
-                                {1.00f,0.49f,0.04f,1}, // Druid
-                            };
-                            static const char* kFriendClassNames[] = {
-                                "","Warrior","Paladin","Hunter","Rogue","Priest",
-                                "Death Knight","Shaman","Mage","Warlock","","Druid"
-                            };
-                            friendClassCol = kFriendClassColors[c.classId];
-                            friendClassName = kFriendClassNames[c.classId];
-                        }
-                        if (c.level > 0 && *friendClassName) {
+                        ImVec4 friendClassCol = classColorVec4(static_cast<uint8_t>(c.classId));
+                        const char* friendClassName = classNameStr(static_cast<uint8_t>(c.classId));
+                        if (c.level > 0 && c.classId > 0) {
                             ImGui::TextColored(friendClassCol, "Lv%u %s%s", c.level, friendClassName, statusLabel);
                         } else if (c.level > 0) {
                             ImGui::TextDisabled("Lv %u%s", c.level, statusLabel);
@@ -9547,14 +9528,6 @@ void GameScreen::renderSocialFrame(game::GameHandler& gameHandler) {
             ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar)) {
 
-        auto getClassColor = [](uint32_t classId, bool online) -> ImVec4 {
-            return online ? classColorVec4(static_cast<uint8_t>(classId)) : ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
-        };
-        static const char* kClassNames[] = {
-            "Unknown","Warrior","Paladin","Hunter","Rogue","Priest",
-            "Death Knight","Shaman","Mage","Warlock","","Druid"
-        };
-
         // Get zone manager for area name lookups
         game::ZoneManager* socialZoneMgr = nullptr;
         if (auto* rend = core::Application::getInstance().getRenderer())
@@ -9598,9 +9571,8 @@ void GameScreen::renderSocialFrame(game::GameHandler& gameHandler) {
                         if (c.isOnline() && c.level > 0) {
                             ImGui::SameLine();
                             // Show level and class name in class color
-                            ImVec4 cc = getClassColor(c.classId, true);
-                            const char* cname = (c.classId < 12) ? kClassNames[c.classId] : "?";
-                            ImGui::TextColored(cc, "Lv%u %s", c.level, cname);
+                            ImGui::TextColored(classColorVec4(static_cast<uint8_t>(c.classId)),
+                                "Lv%u %s", c.level, classNameStr(static_cast<uint8_t>(c.classId)));
                         }
 
                         // Tooltip: zone info and note
