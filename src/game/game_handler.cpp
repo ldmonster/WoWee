@@ -2909,19 +2909,26 @@ void GameHandler::handlePacket(network::Packet& packet) {
             // uint64 itemGuid + uint32 spellId + uint32 cooldownMs
             size_t rem = packet.getSize() - packet.getReadPos();
             if (rem >= 16) {
-                /*uint64_t itemGuid =*/ packet.readUInt64();
-                uint32_t spellId    = packet.readUInt32();
-                uint32_t cdMs       = packet.readUInt32();
+                uint64_t itemGuid = packet.readUInt64();
+                uint32_t spellId  = packet.readUInt32();
+                uint32_t cdMs     = packet.readUInt32();
                 float cdSec = cdMs / 1000.0f;
-                if (spellId != 0 && cdSec > 0.0f) {
-                    spellCooldowns[spellId] = cdSec;
+                if (cdSec > 0.0f) {
+                    if (spellId != 0) spellCooldowns[spellId] = cdSec;
+                    // Resolve itemId from the GUID so item-type slots are also updated
+                    uint32_t itemId = 0;
+                    auto iit = onlineItems_.find(itemGuid);
+                    if (iit != onlineItems_.end()) itemId = iit->second.entry;
                     for (auto& slot : actionBar) {
-                        if (slot.type == ActionBarSlot::SPELL && slot.id == spellId) {
+                        bool match = (spellId != 0 && slot.type == ActionBarSlot::SPELL && slot.id == spellId)
+                                  || (itemId  != 0 && slot.type == ActionBarSlot::ITEM  && slot.id == itemId);
+                        if (match) {
                             slot.cooldownTotal     = cdSec;
                             slot.cooldownRemaining = cdSec;
                         }
                     }
-                    LOG_DEBUG("SMSG_ITEM_COOLDOWN: spellId=", spellId, " cd=", cdSec, "s");
+                    LOG_DEBUG("SMSG_ITEM_COOLDOWN: itemGuid=0x", std::hex, itemGuid, std::dec,
+                              " spellId=", spellId, " itemId=", itemId, " cd=", cdSec, "s");
                 }
             }
             break;
@@ -14286,14 +14293,17 @@ void GameHandler::handleSpellCooldown(network::Packet& packet) {
     const size_t entrySize = isClassicFormat ? 12u : 8u;
     while (packet.getSize() - packet.getReadPos() >= entrySize) {
         uint32_t spellId    = packet.readUInt32();
-        if (isClassicFormat) packet.readUInt32();  // itemId — consumed, not used
+        uint32_t cdItemId   = 0;
+        if (isClassicFormat) cdItemId = packet.readUInt32();  // itemId in Classic format
         uint32_t cooldownMs = packet.readUInt32();
 
         float seconds = cooldownMs / 1000.0f;
         spellCooldowns[spellId] = seconds;
         for (auto& slot : actionBar) {
-            if (slot.type == ActionBarSlot::SPELL && slot.id == spellId) {
-                slot.cooldownTotal    = seconds;
+            bool match = (slot.type == ActionBarSlot::SPELL && slot.id == spellId)
+                      || (cdItemId != 0 && slot.type == ActionBarSlot::ITEM && slot.id == cdItemId);
+            if (match) {
+                slot.cooldownTotal     = seconds;
                 slot.cooldownRemaining = seconds;
             }
         }
