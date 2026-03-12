@@ -462,6 +462,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderBattlegroundScore(gameHandler);
     renderRaidWarningOverlay(gameHandler);
     renderCombatText(gameHandler);
+    renderDPSMeter(gameHandler);
     renderUIErrors(gameHandler, ImGui::GetIO().DeltaTime);
     renderRepToasts(ImGui::GetIO().DeltaTime);
     if (showRaidFrames_) {
@@ -6034,6 +6035,108 @@ void GameScreen::renderCombatText(game::GameHandler& gameHandler) {
 }
 
 // ============================================================
+// DPS / HPS Meter
+// ============================================================
+
+void GameScreen::renderDPSMeter(game::GameHandler& gameHandler) {
+    if (!showDPSMeter_) return;
+    if (gameHandler.getState() != game::WorldState::IN_WORLD) return;
+
+    const float dt = ImGui::GetIO().DeltaTime;
+
+    // Track combat duration for accurate DPS denominator in short fights
+    bool inCombat = gameHandler.isInCombat();
+    if (inCombat) {
+        dpsCombatAge_ += dt;
+    } else if (dpsWasInCombat_) {
+        // Just left combat — let meter show last reading for LIFETIME then reset
+        dpsCombatAge_ = 0.0f;
+    }
+    dpsWasInCombat_ = inCombat;
+
+    // Sum all player-source damage and healing in the current combat-text window
+    float totalDamage = 0.0f, totalHeal = 0.0f;
+    for (const auto& e : gameHandler.getCombatText()) {
+        if (!e.isPlayerSource) continue;
+        switch (e.type) {
+            case game::CombatTextEntry::MELEE_DAMAGE:
+            case game::CombatTextEntry::SPELL_DAMAGE:
+            case game::CombatTextEntry::CRIT_DAMAGE:
+            case game::CombatTextEntry::PERIODIC_DAMAGE:
+                totalDamage += static_cast<float>(e.amount);
+                break;
+            case game::CombatTextEntry::HEAL:
+            case game::CombatTextEntry::CRIT_HEAL:
+            case game::CombatTextEntry::PERIODIC_HEAL:
+                totalHeal += static_cast<float>(e.amount);
+                break;
+            default: break;
+        }
+    }
+
+    // Only show if there's something to report
+    if (totalDamage < 1.0f && totalHeal < 1.0f && !inCombat) return;
+
+    // DPS window = min(combat age, combat-text lifetime) to avoid under-counting
+    // at the start of a fight and over-counting when entries expire.
+    float window = std::min(dpsCombatAge_, game::CombatTextEntry::LIFETIME);
+    if (window < 0.1f) window = 0.1f;
+
+    float dps = totalDamage / window;
+    float hps = totalHeal / window;
+
+    // Format numbers with K/M suffix for readability
+    auto fmtNum = [](float v, char* buf, int bufSz) {
+        if (v >= 1e6f)       snprintf(buf, bufSz, "%.1fM", v / 1e6f);
+        else if (v >= 1000.f) snprintf(buf, bufSz, "%.1fK", v / 1000.f);
+        else                 snprintf(buf, bufSz, "%.0f", v);
+    };
+
+    char dpsBuf[16], hpsBuf[16];
+    fmtNum(dps, dpsBuf, sizeof(dpsBuf));
+    fmtNum(hps, hpsBuf, sizeof(hpsBuf));
+
+    // Position: small floating label just above the action bar, right of center
+    auto* appWin = core::Application::getInstance().getWindow();
+    float screenW = appWin ? static_cast<float>(appWin->getWidth())  : 1280.0f;
+    float screenH = appWin ? static_cast<float>(appWin->getHeight()) : 720.0f;
+
+    constexpr float WIN_W = 90.0f;
+    constexpr float WIN_H = 36.0f;
+    float wx = screenW * 0.5f + 160.0f;   // right of cast bar
+    float wy = screenH - 130.0f;           // above action bar area
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove    |
+                             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
+                             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoNav    |
+                             ImGuiWindowFlags_NoInputs;
+    ImGui::SetNextWindowPos(ImVec2(wx, wy), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(WIN_W, WIN_H), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.55f);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 3));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.3f, 0.3f, 0.3f, 0.7f));
+
+    if (ImGui::Begin("##DPSMeter", nullptr, flags)) {
+        if (dps > 0.5f) {
+            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.15f, 1.0f), "%s", dpsBuf);
+            ImGui::SameLine(0, 2);
+            ImGui::TextDisabled("dps");
+        }
+        if (hps > 0.5f) {
+            ImGui::TextColored(ImVec4(0.35f, 1.0f, 0.35f, 1.0f), "%s", hpsBuf);
+            ImGui::SameLine(0, 2);
+            ImGui::TextDisabled("hps");
+        }
+    }
+    ImGui::End();
+
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+}
+
+// ============================================================
 // Nameplates — world-space health bars projected to screen
 // ============================================================
 
@@ -10772,6 +10875,12 @@ void GameScreen::renderSettingsWindow() {
                 ImGui::SameLine();
                 ImGui::TextDisabled("(ms indicator near minimap)");
 
+                if (ImGui::Checkbox("Show DPS/HPS Meter", &showDPSMeter_)) {
+                    saveSettings();
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("(damage/healing per second above action bar)");
+
                 ImGui::Spacing();
                 ImGui::SeparatorText("Screen Effects");
                 ImGui::Spacing();
@@ -12443,6 +12552,7 @@ void GameScreen::saveSettings() {
     out << "minimap_square=" << (pendingMinimapSquare ? 1 : 0) << "\n";
     out << "minimap_npc_dots=" << (pendingMinimapNpcDots ? 1 : 0) << "\n";
     out << "show_latency_meter=" << (pendingShowLatencyMeter ? 1 : 0) << "\n";
+    out << "show_dps_meter=" << (showDPSMeter_ ? 1 : 0) << "\n";
     out << "separate_bags=" << (pendingSeparateBags ? 1 : 0) << "\n";
     out << "action_bar_scale=" << pendingActionBarScale << "\n";
     out << "nameplate_scale=" << nameplateScale_ << "\n";
@@ -12550,6 +12660,8 @@ void GameScreen::loadSettings() {
             } else if (key == "show_latency_meter") {
                 showLatencyMeter_ = (std::stoi(val) != 0);
                 pendingShowLatencyMeter = showLatencyMeter_;
+            } else if (key == "show_dps_meter") {
+                showDPSMeter_ = (std::stoi(val) != 0);
             } else if (key == "separate_bags") {
                 pendingSeparateBags = (std::stoi(val) != 0);
                 inventoryScreen.setSeparateBags(pendingSeparateBags);

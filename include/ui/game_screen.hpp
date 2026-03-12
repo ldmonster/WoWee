@@ -328,6 +328,7 @@ private:
     void renderInstanceLockouts(game::GameHandler& gameHandler);
     void renderNameplates(game::GameHandler& gameHandler);
     void renderBattlegroundScore(game::GameHandler& gameHandler);
+    void renderDPSMeter(game::GameHandler& gameHandler);
 
     /**
      * Inventory screen
@@ -471,6 +472,11 @@ private:
     std::string zoneTextName_;
     std::string lastKnownZoneName_;
     void renderZoneText();
+
+    // DPS / HPS meter
+    bool showDPSMeter_ = false;
+    float dpsCombatAge_ = 0.0f;   // seconds in current combat (for accurate early-combat DPS)
+    bool dpsWasInCombat_ = false;
 
 public:
     void triggerDing(uint32_t newLevel);
