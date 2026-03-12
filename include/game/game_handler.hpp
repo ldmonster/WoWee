@@ -983,6 +983,7 @@ public:
 
     // Cooldowns
     float getSpellCooldown(uint32_t spellId) const;
+    const std::unordered_map<uint32_t, float>& getSpellCooldowns() const { return spellCooldowns; }
 
     // Player GUID
     uint64_t getPlayerGuid() const { return playerGuid; }

@@ -559,6 +559,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderRepBar(gameHandler);
     renderCastBar(gameHandler);
     renderMirrorTimers(gameHandler);
+    renderCooldownTracker(gameHandler);
     renderQuestObjectiveTracker(gameHandler);
     renderNameplates(gameHandler);  // player names always shown; NPC plates gated by showNameplates_
     renderBattlegroundScore(gameHandler);
@@ -7533,6 +7534,98 @@ void GameScreen::renderMirrorTimers(game::GameHandler& gameHandler) {
 }
 
 // ============================================================
+// Cooldown Tracker — floating panel showing all active spell CDs
+// ============================================================
+
+void GameScreen::renderCooldownTracker(game::GameHandler& gameHandler) {
+    if (!showCooldownTracker_) return;
+
+    const auto& cooldowns = gameHandler.getSpellCooldowns();
+    if (cooldowns.empty()) return;
+
+    // Collect spells with remaining cooldown > 0.5s (skip GCD noise)
+    struct CDEntry { uint32_t spellId; float remaining; };
+    std::vector<CDEntry> active;
+    active.reserve(16);
+    for (const auto& [sid, rem] : cooldowns) {
+        if (rem > 0.5f) active.push_back({sid, rem});
+    }
+    if (active.empty()) return;
+
+    // Sort: longest remaining first
+    std::sort(active.begin(), active.end(), [](const CDEntry& a, const CDEntry& b) {
+        return a.remaining > b.remaining;
+    });
+
+    auto* assetMgr = core::Application::getInstance().getAssetManager();
+    auto* window = core::Application::getInstance().getWindow();
+    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
+    float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
+
+    constexpr float TRACKER_W = 200.0f;
+    constexpr int MAX_SHOWN = 12;
+    float posX = screenW - TRACKER_W - 10.0f;
+    float posY = screenH - 220.0f;  // above the action bar area
+
+    ImGui::SetNextWindowPos(ImVec2(posX, posY), ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+    ImGui::SetNextWindowSize(ImVec2(TRACKER_W, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.75f);
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
+                             ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f, 4.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 2.0f));
+
+    if (ImGui::Begin("##CooldownTracker", nullptr, flags)) {
+        ImGui::TextDisabled("Cooldowns");
+        ImGui::Separator();
+
+        int shown = 0;
+        for (const auto& cd : active) {
+            if (shown >= MAX_SHOWN) break;
+
+            const std::string& name = gameHandler.getSpellName(cd.spellId);
+            if (name.empty()) continue;  // skip unnamed spells (internal/passive)
+
+            // Small icon if available
+            VkDescriptorSet icon = assetMgr ? getSpellIcon(cd.spellId, assetMgr) : VK_NULL_HANDLE;
+            if (icon) {
+                ImGui::Image((ImTextureID)(uintptr_t)icon, ImVec2(14, 14));
+                ImGui::SameLine(0, 3);
+            }
+
+            // Name (truncated) + remaining time
+            char timeStr[16];
+            if (cd.remaining >= 60.0f)
+                snprintf(timeStr, sizeof(timeStr), "%dm%ds", (int)cd.remaining / 60, (int)cd.remaining % 60);
+            else
+                snprintf(timeStr, sizeof(timeStr), "%.0fs", cd.remaining);
+
+            // Color: red > 30s, orange > 10s, yellow > 5s, green otherwise
+            ImVec4 cdColor = cd.remaining > 30.0f ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f) :
+                             cd.remaining > 10.0f ? ImVec4(1.0f, 0.6f, 0.2f, 1.0f) :
+                             cd.remaining > 5.0f  ? ImVec4(1.0f, 1.0f, 0.3f, 1.0f) :
+                                                    ImVec4(0.5f, 1.0f, 0.5f, 1.0f);
+
+            // Truncate name to fit
+            std::string displayName = name;
+            if (displayName.size() > 16) displayName = displayName.substr(0, 15) + "\xe2\x80\xa6"; // ellipsis
+
+            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "%s", displayName.c_str());
+            ImGui::SameLine(TRACKER_W - 48.0f);
+            ImGui::TextColored(cdColor, "%s", timeStr);
+
+            ++shown;
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(3);
+}
+
+// ============================================================
 // Quest Objective Tracker (right-side HUD)
 // ============================================================
 
@@ -14030,6 +14123,12 @@ void GameScreen::renderSettingsWindow() {
                 ImGui::SameLine();
                 ImGui::TextDisabled("(damage/healing per second above action bar)");
 
+                if (ImGui::Checkbox("Show Cooldown Tracker", &showCooldownTracker_)) {
+                    saveSettings();
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("(active spell cooldowns near action bar)");
+
                 ImGui::Spacing();
                 ImGui::SeparatorText("Screen Effects");
                 ImGui::Spacing();
@@ -16109,6 +16208,7 @@ void GameScreen::saveSettings() {
     out << "minimap_npc_dots=" << (pendingMinimapNpcDots ? 1 : 0) << "\n";
     out << "show_latency_meter=" << (pendingShowLatencyMeter ? 1 : 0) << "\n";
     out << "show_dps_meter=" << (showDPSMeter_ ? 1 : 0) << "\n";
+    out << "show_cooldown_tracker=" << (showCooldownTracker_ ? 1 : 0) << "\n";
     out << "separate_bags=" << (pendingSeparateBags ? 1 : 0) << "\n";
     out << "action_bar_scale=" << pendingActionBarScale << "\n";
     out << "nameplate_scale=" << nameplateScale_ << "\n";
@@ -16219,6 +16319,8 @@ void GameScreen::loadSettings() {
                 pendingShowLatencyMeter = showLatencyMeter_;
             } else if (key == "show_dps_meter") {
                 showDPSMeter_ = (std::stoi(val) != 0);
+            } else if (key == "show_cooldown_tracker") {
+                showCooldownTracker_ = (std::stoi(val) != 0);
             } else if (key == "separate_bags") {
                 pendingSeparateBags = (std::stoi(val) != 0);
                 inventoryScreen.setSeparateBags(pendingSeparateBags);

@@ -314,6 +314,7 @@ private:
     void renderRepBar(game::GameHandler& gameHandler);
     void renderCastBar(game::GameHandler& gameHandler);
     void renderMirrorTimers(game::GameHandler& gameHandler);
+    void renderCooldownTracker(game::GameHandler& gameHandler);
     void renderCombatText(game::GameHandler& gameHandler);
     void renderRaidWarningOverlay(game::GameHandler& gameHandler);
     void renderPartyFrames(game::GameHandler& gameHandler);
@@ -524,6 +525,9 @@ private:
     std::string zoneTextName_;
     std::string lastKnownZoneName_;
     void renderZoneText();
+
+    // Cooldown tracker
+    bool showCooldownTracker_ = false;
 
     // DPS / HPS meter
     bool showDPSMeter_ = false;
