@@ -2538,6 +2538,9 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                     whisperTargetBuffer[sizeof(whisperTargetBuffer) - 1] = '\0';
                     refocusChatInput = true;
                 }
+                if (ImGui::MenuItem("Follow")) {
+                    gameHandler.followTarget();
+                }
                 if (ImGui::MenuItem("Invite to Group")) {
                     gameHandler.inviteToGroup(name);
                 }
@@ -6239,6 +6242,10 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                     strncpy(whisperTargetBuffer, member.name.c_str(), sizeof(whisperTargetBuffer) - 1);
                     whisperTargetBuffer[sizeof(whisperTargetBuffer) - 1] = '\0';
                     refocusChatInput = true;
+                }
+                if (ImGui::MenuItem("Follow")) {
+                    gameHandler.setTarget(member.guid);
+                    gameHandler.followTarget();
                 }
                 if (ImGui::MenuItem("Trade")) {
                     gameHandler.initiateTrade(member.guid);
