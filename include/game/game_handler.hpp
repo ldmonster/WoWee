@@ -888,6 +888,14 @@ public:
     void cancelTalentWipe() { talentWipePending_ = false; }
     /** True when ghost is within 40 yards of corpse position (same map). */
     bool canReclaimCorpse() const;
+    /** Distance (yards) from ghost to corpse, or -1 if no corpse data. */
+    float getCorpseDistance() const {
+        if (corpseMapId_ == 0 || currentMapId_ != corpseMapId_) return -1.0f;
+        float dx = movementInfo.x - corpseX_;
+        float dy = movementInfo.y - corpseY_;
+        float dz = movementInfo.z - corpseZ_;
+        return std::sqrt(dx*dx + dy*dy + dz*dz);
+    }
     /** Send CMSG_RECLAIM_CORPSE; noop if not a ghost or not near corpse. */
     void reclaimCorpse();
     void releaseSpirit();

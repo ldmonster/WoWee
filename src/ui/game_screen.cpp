@@ -8942,6 +8942,14 @@ void GameScreen::renderReclaimCorpseButton(game::GameHandler& gameHandler) {
             gameHandler.reclaimCorpse();
         }
         ImGui::PopStyleColor(2);
+        float corpDist = gameHandler.getCorpseDistance();
+        if (corpDist >= 0.0f) {
+            char distBuf[48];
+            snprintf(distBuf, sizeof(distBuf), "Corpse: %.0f yards away", corpDist);
+            float dw = ImGui::CalcTextSize(distBuf).x;
+            ImGui::SetCursorPosX((btnW + 16.0f - dw) * 0.5f);
+            ImGui::TextDisabled("%s", distBuf);
+        }
     }
     ImGui::End();
     ImGui::PopStyleColor();
