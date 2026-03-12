@@ -4694,7 +4694,6 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
             ImGui::PopStyleColor();
         }
 
-        bool rightClicked = ImGui::IsItemClicked(ImGuiMouseButton_Right);
         bool hoveredOnRelease = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
                                 ImGui::IsMouseReleased(ImGuiMouseButton_Left);
 
@@ -4721,9 +4720,40 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
             } else if (slot.type == game::ActionBarSlot::ITEM && slot.id != 0) {
                 gameHandler.useItemById(slot.id);
             }
-        } else if (rightClicked && !slot.isEmpty()) {
-            actionBarDragSlot_ = absSlot;
-            actionBarDragIcon_ = iconTex;
+        }
+
+        // Right-click context menu for non-empty slots
+        if (!slot.isEmpty()) {
+            // Use a unique popup ID per slot so multiple slots don't share state
+            char ctxId[32];
+            snprintf(ctxId, sizeof(ctxId), "##ABCtx%d", absSlot);
+            if (ImGui::BeginPopupContextItem(ctxId)) {
+                if (slot.type == game::ActionBarSlot::SPELL) {
+                    std::string spellName = getSpellName(slot.id);
+                    ImGui::TextDisabled("%s", spellName.c_str());
+                    ImGui::Separator();
+                    if (onCooldown) ImGui::BeginDisabled();
+                    if (ImGui::MenuItem("Cast")) {
+                        uint64_t target = gameHandler.hasTarget() ? gameHandler.getTargetGuid() : 0;
+                        gameHandler.castSpell(slot.id, target);
+                    }
+                    if (onCooldown) ImGui::EndDisabled();
+                } else if (slot.type == game::ActionBarSlot::ITEM) {
+                    const char* iName = (barItemDef && !barItemDef->name.empty())
+                        ? barItemDef->name.c_str()
+                        : (!itemNameFromQuery.empty() ? itemNameFromQuery.c_str() : "Item");
+                    ImGui::TextDisabled("%s", iName);
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Use")) {
+                        gameHandler.useItemById(slot.id);
+                    }
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Clear Slot")) {
+                    gameHandler.setActionBarSlot(absSlot, game::ActionBarSlot::EMPTY, 0);
+                }
+                ImGui::EndPopup();
+            }
         }
 
         // Tooltip
