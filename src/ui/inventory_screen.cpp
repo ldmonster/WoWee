@@ -730,6 +730,9 @@ void InventoryScreen::render(game::Inventory& inventory, uint64_t moneyCopper) {
         KeybindingManager::Action::TOGGLE_CHARACTER_SCREEN, false);
     if (characterDown && !cKeyWasDown) {
         characterOpen = !characterOpen;
+        if (characterOpen && gameHandler_) {
+            gameHandler_->requestPlayedTime();
+        }
     }
     cKeyWasDown = characterDown;
 
@@ -1142,6 +1145,30 @@ void InventoryScreen::renderCharacterScreen(game::GameHandler& gameHandler) {
             for (int i = 0; i < 5; ++i) stats[i] = gameHandler.getPlayerStat(i);
             const int32_t* serverStats = (stats[0] >= 0) ? stats : nullptr;
             renderStatsPanel(inventory, gameHandler.getPlayerLevel(), gameHandler.getArmorRating(), serverStats);
+
+            // Played time (shown if available, fetched on character screen open)
+            uint32_t totalSec = gameHandler.getTotalTimePlayed();
+            uint32_t levelSec = gameHandler.getLevelTimePlayed();
+            if (totalSec > 0 || levelSec > 0) {
+                ImGui::Separator();
+                // Helper lambda to format seconds as "Xd Xh Xm"
+                auto fmtTime = [](uint32_t sec) -> std::string {
+                    uint32_t d = sec / 86400, h = (sec % 86400) / 3600, m = (sec % 3600) / 60;
+                    char buf[48];
+                    if (d > 0) snprintf(buf, sizeof(buf), "%ud %uh %um", d, h, m);
+                    else if (h > 0) snprintf(buf, sizeof(buf), "%uh %um", h, m);
+                    else snprintf(buf, sizeof(buf), "%um", m);
+                    return buf;
+                };
+                ImGui::TextDisabled("Time Played");
+                ImGui::Columns(2, "##playtime", false);
+                ImGui::SetColumnWidth(0, 130);
+                ImGui::Text("Total:");    ImGui::NextColumn();
+                ImGui::Text("%s", fmtTime(totalSec).c_str()); ImGui::NextColumn();
+                ImGui::Text("This level:"); ImGui::NextColumn();
+                ImGui::Text("%s", fmtTime(levelSec).c_str()); ImGui::NextColumn();
+                ImGui::Columns(1);
+            }
             ImGui::EndTabItem();
         }
 

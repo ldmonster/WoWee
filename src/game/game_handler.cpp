@@ -18149,6 +18149,9 @@ void GameHandler::handlePlayedTime(network::Packet& packet) {
         return;
     }
 
+    totalTimePlayed_ = data.totalTimePlayed;
+    levelTimePlayed_ = data.levelTimePlayed;
+
     if (data.triggerMessage) {
         // Format total time played
         uint32_t totalDays = data.totalTimePlayed / 86400;

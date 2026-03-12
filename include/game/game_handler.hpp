@@ -349,6 +349,8 @@ public:
     void queryServerTime();
     void requestPlayedTime();
     void queryWho(const std::string& playerName = "");
+    uint32_t getTotalTimePlayed() const { return totalTimePlayed_; }
+    uint32_t getLevelTimePlayed() const { return levelTimePlayed_; }
 
     // Social commands
     void addFriend(const std::string& playerName, const std::string& note = "");
@@ -2224,6 +2226,8 @@ private:
     uint64_t    summonerGuid_         = 0;
     std::string summonerName_;
     float       summonTimeoutSec_     = 0.0f;
+    uint32_t    totalTimePlayed_      = 0;
+    uint32_t    levelTimePlayed_      = 0;
 
     // Trade state
     TradeStatus tradeStatus_  = TradeStatus::None;
