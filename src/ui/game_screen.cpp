@@ -3161,6 +3161,36 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                 return;
             }
 
+            // /help command — list available slash commands
+            if (cmdLower == "help" || cmdLower == "?") {
+                static const char* kHelpLines[] = {
+                    "--- Wowee Slash Commands ---",
+                    "Chat: /s /y /p /g /raid /rw /o /bg /w <name> [msg]  /r [msg]",
+                    "Social: /who [filter]  /whois <name>  /friend add/remove <name>",
+                    "        /ignore <name>  /unignore <name>",
+                    "Party: /invite <name>  /uninvite <name>  /leave  /readycheck",
+                    "       /maintank  /mainassist  /roll [min-max]",
+                    "Guild: /ginvite  /gkick  /gquit  /gpromote  /gdemote  /gmotd",
+                    "       /gleader  /groster  /ginfo  /gcreate  /gdisband",
+                    "Combat: /startattack  /stopattack  /stopcasting  /duel  /pvp",
+                    "        /forfeit  /follow  /assist",
+                    "Target: /target <name>  /cleartarget  /focus  /clearfocus",
+                    "Movement: /sit  /stand  /kneel  /dismount",
+                    "Misc: /played  /time  /afk [msg]  /dnd [msg]  /inspect",
+                    "      /helm  /cloak  /trade  /join <channel>  /leave <channel>",
+                    "      /unstuck  /logout  /help",
+                };
+                for (const char* line : kHelpLines) {
+                    game::MessageChatData helpMsg;
+                    helpMsg.type = game::ChatType::SYSTEM;
+                    helpMsg.language = game::ChatLanguage::UNIVERSAL;
+                    helpMsg.message = line;
+                    gameHandler.addLocalChatMessage(helpMsg);
+                }
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+
             // /who commands
             if (cmdLower == "who" || cmdLower == "whois" || cmdLower == "online" || cmdLower == "players") {
                 std::string query;
