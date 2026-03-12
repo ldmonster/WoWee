@@ -587,6 +587,12 @@ private:
     bool itemLootCallbackSet_ = false;
     void renderItemLootToasts();
 
+    // Resurrection flash: brief "You have been resurrected!" overlay on ghost→alive transition
+    float resurrectFlashTimer_ = 0.0f;
+    static constexpr float kResurrectFlashDuration = 3.0f;
+    bool ghostStateCallbackSet_ = false;
+    void renderResurrectFlash();
+
     // Zone discovery text ("Entering: <ZoneName>")
     static constexpr float ZONE_TEXT_DURATION = 5.0f;
     float zoneTextTimer_ = 0.0f;

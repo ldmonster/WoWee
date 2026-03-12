@@ -378,6 +378,17 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         itemLootCallbackSet_ = true;
     }
 
+    // Set up ghost-state callback to flash "You have been resurrected!" on revival (once)
+    if (!ghostStateCallbackSet_) {
+        gameHandler.setGhostStateCallback([this](bool isGhost) {
+            if (!isGhost) {
+                // Transitioning ghost→alive: trigger the resurrection flash
+                resurrectFlashTimer_ = kResurrectFlashDuration;
+            }
+        });
+        ghostStateCallbackSet_ = true;
+    }
+
     // Set up UI error frame callback (once)
     if (!uiErrorCallbackSet_) {
         gameHandler.setUIErrorCallback([this](const std::string& msg) {
@@ -712,6 +723,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderPlayerLevelUpToasts(gameHandler);
     renderPvpHonorToasts();
     renderItemLootToasts();
+    renderResurrectFlash();
     renderZoneText();
 
     // World map (M key toggle handled inside)
@@ -18474,6 +18486,85 @@ void GameScreen::renderPlayerLevelUpToasts(game::GameHandler& gameHandler) {
         bgDL->AddText(ImVec2(toastX + 26.0f, ty + 11.0f),
                       IM_COL32(255, 230, 100, fgA), buf);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Resurrection flash — brief screen brightening + "You have been resurrected!"
+// banner when the player transitions from ghost back to alive.
+// ---------------------------------------------------------------------------
+
+void GameScreen::renderResurrectFlash() {
+    if (resurrectFlashTimer_ <= 0.0f) return;
+
+    float dt = ImGui::GetIO().DeltaTime;
+    resurrectFlashTimer_ -= dt;
+    if (resurrectFlashTimer_ <= 0.0f) {
+        resurrectFlashTimer_ = 0.0f;
+        return;
+    }
+
+    ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+    float screenW = displaySize.x > 0.0f ? displaySize.x : 1280.0f;
+    float screenH = displaySize.y > 0.0f ? displaySize.y : 720.0f;
+
+    // Normalised age in [0, 1] (0 = just fired, 1 = fully elapsed)
+    float t = 1.0f - resurrectFlashTimer_ / kResurrectFlashDuration;
+
+    // Alpha envelope: fast fade-in (first 0.15s), hold, then fade-out (last 0.8s)
+    float alpha;
+    const float fadeIn  = 0.15f / kResurrectFlashDuration;   // ~5% of lifetime
+    const float fadeOut = 0.8f  / kResurrectFlashDuration;   // ~27% of lifetime
+    if (t < fadeIn)
+        alpha = t / fadeIn;
+    else if (t < 1.0f - fadeOut)
+        alpha = 1.0f;
+    else
+        alpha = (1.0f - t) / fadeOut;
+    alpha = std::clamp(alpha, 0.0f, 1.0f);
+
+    ImDrawList* bg = ImGui::GetBackgroundDrawList();
+
+    // Soft golden/white vignette — brightening instead of darkening
+    uint8_t vigA = static_cast<uint8_t>(50 * alpha);
+    bg->AddRectFilled(ImVec2(0, 0), ImVec2(screenW, screenH),
+                      IM_COL32(200, 230, 255, vigA));
+
+    // Centered banner panel
+    constexpr float PANEL_W = 360.0f;
+    constexpr float PANEL_H = 52.0f;
+    float px = (screenW - PANEL_W) * 0.5f;
+    float py = screenH * 0.34f;
+
+    uint8_t bgA     = static_cast<uint8_t>(210 * alpha);
+    uint8_t borderA = static_cast<uint8_t>(255 * alpha);
+    uint8_t textA   = static_cast<uint8_t>(255 * alpha);
+
+    // Background: deep blue-black
+    bg->AddRectFilled(ImVec2(px, py), ImVec2(px + PANEL_W, py + PANEL_H),
+                      IM_COL32(10, 18, 40, bgA), 8.0f);
+
+    // Border glow: bright holy gold
+    bg->AddRect(ImVec2(px, py), ImVec2(px + PANEL_W, py + PANEL_H),
+                IM_COL32(200, 230, 100, borderA), 8.0f, 0, 2.0f);
+    // Inner halo line
+    bg->AddRect(ImVec2(px + 3.0f, py + 3.0f), ImVec2(px + PANEL_W - 3.0f, py + PANEL_H - 3.0f),
+                IM_COL32(255, 255, 180, static_cast<uint8_t>(80 * alpha)), 6.0f, 0, 1.0f);
+
+    // "✦ You have been resurrected! ✦" centered
+    // UTF-8 heavy four-pointed star U+2726: \xe2\x9c\xa6
+    const char* banner = "\xe2\x9c\xa6 You have been resurrected! \xe2\x9c\xa6";
+    ImFont* font = ImGui::GetFont();
+    float fontSize = ImGui::GetFontSize();
+    ImVec2 textSz = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, banner);
+    float tx = px + (PANEL_W - textSz.x) * 0.5f;
+    float ty = py + (PANEL_H - textSz.y) * 0.5f;
+
+    // Drop shadow
+    bg->AddText(font, fontSize, ImVec2(tx + 1.0f, ty + 1.0f),
+                IM_COL32(0, 0, 0, static_cast<uint8_t>(180 * alpha)), banner);
+    // Main text in warm gold
+    bg->AddText(font, fontSize, ImVec2(tx, ty),
+                IM_COL32(255, 240, 120, textA), banner);
 }
 
 // ---------------------------------------------------------------------------
