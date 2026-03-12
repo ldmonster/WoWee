@@ -7461,6 +7461,9 @@ void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
                             whisperTargetBuffer[sizeof(whisperTargetBuffer) - 1] = '\0';
                             refocusChatInput = true;
                         }
+                        if (c.isOnline() && ImGui::MenuItem("Invite to Group") && !c.name.empty()) {
+                            gameHandler.inviteToGroup(c.name);
+                        }
                         if (ImGui::MenuItem("Edit Note")) {
                             friendNoteTarget = c.name;
                             strncpy(friendNoteBuf, c.note.c_str(), sizeof(friendNoteBuf) - 1);
