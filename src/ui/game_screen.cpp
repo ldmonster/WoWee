@@ -11096,30 +11096,66 @@ void GameScreen::renderGuildBankWindow(game::GameHandler& gameHandler) {
     ImGui::Separator();
 
     // Tab items (98 slots = 14 columns × 7 rows)
+    constexpr float GB_SLOT = 34.0f;
+    ImDrawList* gbDraw = ImGui::GetWindowDrawList();
     for (size_t i = 0; i < data.tabItems.size(); i++) {
-        if (i % 14 != 0) ImGui::SameLine();
+        if (i % 14 != 0) ImGui::SameLine(0.0f, 2.0f);
         const auto& item = data.tabItems[i];
         ImGui::PushID(static_cast<int>(i) + 5000);
 
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+
         if (item.itemEntry == 0) {
-            ImGui::Button("##gb", ImVec2(34, 34));
+            gbDraw->AddRectFilled(pos, ImVec2(pos.x + GB_SLOT, pos.y + GB_SLOT),
+                                  IM_COL32(30, 30, 30, 200));
+            gbDraw->AddRect(pos, ImVec2(pos.x + GB_SLOT, pos.y + GB_SLOT),
+                            IM_COL32(60, 60, 60, 180));
+            ImGui::InvisibleButton("##gbempty", ImVec2(GB_SLOT, GB_SLOT));
         } else {
             auto* info = gameHandler.getItemInfo(item.itemEntry);
             game::ItemQuality quality = game::ItemQuality::COMMON;
             std::string name = "Item " + std::to_string(item.itemEntry);
+            uint32_t displayInfoId = 0;
             if (info) {
                 quality = static_cast<game::ItemQuality>(info->quality);
                 name = info->name;
+                displayInfoId = info->displayInfoId;
             }
             ImVec4 qc = InventoryScreen::getQualityColor(quality);
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(qc.x * 0.3f, qc.y * 0.3f, qc.z * 0.3f, 0.8f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(qc.x * 0.5f, qc.y * 0.5f, qc.z * 0.5f, 0.9f));
-            std::string lbl = item.stackCount > 1 ? std::to_string(item.stackCount) : ("##gi" + std::to_string(i));
-            if (ImGui::Button(lbl.c_str(), ImVec2(34, 34))) {
-                // Withdraw: auto-store to first free bag slot
+            ImU32 borderCol = ImGui::ColorConvertFloat4ToU32(qc);
+
+            VkDescriptorSet iconTex = displayInfoId ? inventoryScreen.getItemIcon(displayInfoId) : VK_NULL_HANDLE;
+            if (iconTex) {
+                gbDraw->AddImage((ImTextureID)(uintptr_t)iconTex, pos,
+                                 ImVec2(pos.x + GB_SLOT, pos.y + GB_SLOT));
+                gbDraw->AddRect(pos, ImVec2(pos.x + GB_SLOT, pos.y + GB_SLOT),
+                                borderCol, 0.0f, 0, 1.5f);
+            } else {
+                gbDraw->AddRectFilled(pos, ImVec2(pos.x + GB_SLOT, pos.y + GB_SLOT),
+                                      IM_COL32(40, 35, 30, 220));
+                gbDraw->AddRect(pos, ImVec2(pos.x + GB_SLOT, pos.y + GB_SLOT),
+                                borderCol, 0.0f, 0, 1.5f);
+                if (!name.empty() && name[0] != 'I') {
+                    char abbr[3] = { name[0], name.size() > 1 ? name[1] : '\0', '\0' };
+                    float tw = ImGui::CalcTextSize(abbr).x;
+                    gbDraw->AddText(ImVec2(pos.x + (GB_SLOT - tw) * 0.5f, pos.y + 2.0f),
+                                    borderCol, abbr);
+                }
+            }
+
+            if (item.stackCount > 1) {
+                char cnt[16];
+                snprintf(cnt, sizeof(cnt), "%u", item.stackCount);
+                float cw = ImGui::CalcTextSize(cnt).x;
+                gbDraw->AddText(ImVec2(pos.x + 1.0f, pos.y + 1.0f), IM_COL32(0, 0, 0, 200), cnt);
+                gbDraw->AddText(ImVec2(pos.x + GB_SLOT - cw - 2.0f, pos.y + GB_SLOT - 14.0f),
+                                IM_COL32(255, 255, 255, 220), cnt);
+            }
+
+            ImGui::InvisibleButton("##gbslot", ImVec2(GB_SLOT, GB_SLOT));
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
                 gameHandler.guildBankWithdrawItem(activeTab, item.slotId, 0xFF, 0);
             }
-            ImGui::PopStyleColor(2);
             if (ImGui::IsItemHovered()) {
                 ImGui::BeginTooltip();
                 ImGui::TextColored(qc, "%s", name.c_str());
