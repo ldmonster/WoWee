@@ -6327,6 +6327,15 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                     gameHandler.setTarget(member.guid);
                     gameHandler.inspectTarget();
                 }
+                ImGui::Separator();
+                if (!member.name.empty()) {
+                    if (ImGui::MenuItem("Add Friend")) {
+                        gameHandler.addFriend(member.name);
+                    }
+                    if (ImGui::MenuItem("Ignore")) {
+                        gameHandler.addIgnore(member.name);
+                    }
+                }
                 // Leader-only actions
                 bool isLeader = (gameHandler.getPartyData().leaderGuid == gameHandler.getPlayerGuid());
                 if (isLeader) {
