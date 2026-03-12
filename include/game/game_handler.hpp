@@ -1429,6 +1429,18 @@ public:
         static const std::string kEmpty;
         return kEmpty;
     }
+    /// Returns the description of an achievement by ID, or empty string if unknown.
+    const std::string& getAchievementDescription(uint32_t id) const {
+        auto it = achievementDescCache_.find(id);
+        if (it != achievementDescCache_.end()) return it->second;
+        static const std::string kEmpty;
+        return kEmpty;
+    }
+    /// Returns the point value of an achievement by ID, or 0 if unknown.
+    uint32_t getAchievementPoints(uint32_t id) const {
+        auto it = achievementPointsCache_.find(id);
+        return (it != achievementPointsCache_.end()) ? it->second : 0u;
+    }
 
     // Server-triggered music callback — fires when SMSG_PLAY_MUSIC is received.
     // The soundId corresponds to a SoundEntries.dbc record. The receiver is
@@ -2590,8 +2602,10 @@ private:
     std::unordered_map<uint32_t, SpellNameEntry> spellNameCache_;
     bool spellNameCacheLoaded_ = false;
 
-    // Achievement name cache (lazy-loaded from Achievement.dbc on first earned event)
+    // Achievement caches (lazy-loaded from Achievement.dbc on first earned event)
     std::unordered_map<uint32_t, std::string> achievementNameCache_;
+    std::unordered_map<uint32_t, std::string> achievementDescCache_;
+    std::unordered_map<uint32_t, uint32_t>    achievementPointsCache_;
     bool achievementNameCacheLoaded_ = false;
     void loadAchievementNameCache();
     // Set of achievement IDs earned by the player (populated from SMSG_ALL_ACHIEVEMENT_DATA)

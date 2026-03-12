@@ -17559,7 +17559,22 @@ void GameScreen::renderAchievementWindow(game::GameHandler& gameHandler) {
                     ImGui::TextUnformatted(display.c_str());
                     if (ImGui::IsItemHovered()) {
                         ImGui::BeginTooltip();
-                        ImGui::Text("Achievement ID: %u", id);
+                        // Points badge
+                        uint32_t pts = gameHandler.getAchievementPoints(id);
+                        if (pts > 0) {
+                            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, 1.0f),
+                                "%u Achievement Point%s", pts, pts == 1 ? "" : "s");
+                            ImGui::Separator();
+                        }
+                        // Description
+                        const std::string& desc = gameHandler.getAchievementDescription(id);
+                        if (!desc.empty()) {
+                            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 320.0f);
+                            ImGui::TextUnformatted(desc.c_str());
+                            ImGui::PopTextWrapPos();
+                            ImGui::Spacing();
+                        }
+                        // Earn date
                         uint32_t packed = gameHandler.getAchievementDate(id);
                         if (packed != 0) {
                             // WoW PackedTime: year[31:25] month[24:21] day[20:17] weekday[16:14] hour[13:9] minute[8:3]
@@ -17573,7 +17588,7 @@ void GameScreen::renderAchievementWindow(game::GameHandler& gameHandler) {
                                 "Jul","Aug","Sep","Oct","Nov","Dec"
                             };
                             const char* mname = (month >= 1 && month <= 12) ? kMonths[month - 1] : "?";
-                            ImGui::Text("Earned: %s %d, %d  %02d:%02d", mname, day, year, hour, minute);
+                            ImGui::TextDisabled("Earned: %s %d, %d  %02d:%02d", mname, day, year, hour, minute);
                         }
                         ImGui::EndTooltip();
                     }

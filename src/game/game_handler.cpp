@@ -20303,12 +20303,23 @@ void GameHandler::loadAchievementNameCache() {
         ? pipeline::getActiveDBCLayout()->getLayout("Achievement") : nullptr;
     uint32_t titleField = achL ? achL->field("Title") : 4;
     if (titleField == 0xFFFFFFFF) titleField = 4;
+    uint32_t descField = achL ? achL->field("Description") : 0xFFFFFFFF;
+    uint32_t ptsField  = achL ? achL->field("Points")      : 0xFFFFFFFF;
 
+    uint32_t fieldCount = dbc->getFieldCount();
     for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
         uint32_t id = dbc->getUInt32(i, 0);
         if (id == 0) continue;
         std::string title = dbc->getString(i, titleField);
         if (!title.empty()) achievementNameCache_[id] = std::move(title);
+        if (descField != 0xFFFFFFFF && descField < fieldCount) {
+            std::string desc = dbc->getString(i, descField);
+            if (!desc.empty()) achievementDescCache_[id] = std::move(desc);
+        }
+        if (ptsField != 0xFFFFFFFF && ptsField < fieldCount) {
+            uint32_t pts = dbc->getUInt32(i, ptsField);
+            if (pts > 0) achievementPointsCache_[id] = pts;
+        }
     }
     LOG_INFO("Achievement: loaded ", achievementNameCache_.size(), " names from Achievement.dbc");
 }
