@@ -1944,7 +1944,7 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                 static const std::vector<std::string> kCmds = {
                     "/afk", "/away", "/cast", "/chathelp", "/clear",
                     "/dance", "/do", "/dnd", "/e", "/emote",
-                    "/follow", "/g", "/guild", "/guildinfo",
+                    "/equip", "/follow", "/g", "/guild", "/guildinfo",
                     "/gmticket", "/grouploot", "/i", "/instance",
                     "/invite", "/j", "/join", "/kick",
                     "/l", "/leave", "/local", "/me",
@@ -1952,7 +1952,7 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                     "/raidwarning", "/random", "/reply", "/roll",
                     "/s", "/say", "/setloot", "/shout",
                     "/stopattack", "/stopfollow", "/t", "/time",
-                    "/trade", "/uninvite", "/w", "/whisper",
+                    "/trade", "/uninvite", "/use", "/w", "/whisper",
                     "/who", "/wts", "/wtb", "/y", "/yell", "/zone"
                 };
 
@@ -3900,6 +3900,7 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                     "       /gleader  /groster  /ginfo  /gcreate  /gdisband",
                     "Combat: /startattack  /stopattack  /stopcasting  /cast <spell>  /duel  /pvp",
                     "        /forfeit  /follow  /stopfollow  /assist",
+                    "Items: /use <item name>  /equip <item name>",
                     "Target: /target <name>  /cleartarget  /focus  /clearfocus",
                     "Movement: /sit  /stand  /kneel  /dismount",
                     "Misc: /played  /time  /zone  /afk [msg]  /dnd [msg]  /inspect",
@@ -4589,6 +4590,104 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                     sysMsg.message = requestedRank >= 0
                         ? "You don't know '" + spellName + "' (Rank " + std::to_string(requestedRank) + ")."
                         : "Unknown spell: '" + spellName + "'.";
+                    gameHandler.addLocalChatMessage(sysMsg);
+                }
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+
+            // /use <item name> — use an item from backpack/bags by name
+            if (cmdLower == "use" && spacePos != std::string::npos) {
+                std::string useArg = command.substr(spacePos + 1);
+                while (!useArg.empty() && useArg.front() == ' ') useArg.erase(useArg.begin());
+                while (!useArg.empty() && useArg.back()  == ' ') useArg.pop_back();
+                std::string useArgLower = useArg;
+                for (char& c : useArgLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+                bool found = false;
+                const auto& inv = gameHandler.getInventory();
+                // Search backpack
+                for (int s = 0; s < inv.getBackpackSize() && !found; ++s) {
+                    const auto& slot = inv.getBackpackSlot(s);
+                    if (slot.empty()) continue;
+                    const auto* info = gameHandler.getItemInfo(slot.item.itemId);
+                    if (!info) continue;
+                    std::string nameLow = info->name;
+                    for (char& c : nameLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    if (nameLow == useArgLower) {
+                        gameHandler.useItemBySlot(s);
+                        found = true;
+                    }
+                }
+                // Search bags
+                for (int b = 0; b < game::Inventory::NUM_BAG_SLOTS && !found; ++b) {
+                    for (int s = 0; s < inv.getBagSize(b) && !found; ++s) {
+                        const auto& slot = inv.getBagSlot(b, s);
+                        if (slot.empty()) continue;
+                        const auto* info = gameHandler.getItemInfo(slot.item.itemId);
+                        if (!info) continue;
+                        std::string nameLow = info->name;
+                        for (char& c : nameLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        if (nameLow == useArgLower) {
+                            gameHandler.useItemInBag(b, s);
+                            found = true;
+                        }
+                    }
+                }
+                if (!found) {
+                    game::MessageChatData sysMsg;
+                    sysMsg.type = game::ChatType::SYSTEM;
+                    sysMsg.language = game::ChatLanguage::UNIVERSAL;
+                    sysMsg.message = "Item not found: '" + useArg + "'.";
+                    gameHandler.addLocalChatMessage(sysMsg);
+                }
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+
+            // /equip <item name> — auto-equip an item from backpack/bags by name
+            if (cmdLower == "equip" && spacePos != std::string::npos) {
+                std::string equipArg = command.substr(spacePos + 1);
+                while (!equipArg.empty() && equipArg.front() == ' ') equipArg.erase(equipArg.begin());
+                while (!equipArg.empty() && equipArg.back()  == ' ') equipArg.pop_back();
+                std::string equipArgLower = equipArg;
+                for (char& c : equipArgLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+                bool found = false;
+                const auto& inv = gameHandler.getInventory();
+                // Search backpack
+                for (int s = 0; s < inv.getBackpackSize() && !found; ++s) {
+                    const auto& slot = inv.getBackpackSlot(s);
+                    if (slot.empty()) continue;
+                    const auto* info = gameHandler.getItemInfo(slot.item.itemId);
+                    if (!info) continue;
+                    std::string nameLow = info->name;
+                    for (char& c : nameLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    if (nameLow == equipArgLower) {
+                        gameHandler.autoEquipItemBySlot(s);
+                        found = true;
+                    }
+                }
+                // Search bags
+                for (int b = 0; b < game::Inventory::NUM_BAG_SLOTS && !found; ++b) {
+                    for (int s = 0; s < inv.getBagSize(b) && !found; ++s) {
+                        const auto& slot = inv.getBagSlot(b, s);
+                        if (slot.empty()) continue;
+                        const auto* info = gameHandler.getItemInfo(slot.item.itemId);
+                        if (!info) continue;
+                        std::string nameLow = info->name;
+                        for (char& c : nameLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        if (nameLow == equipArgLower) {
+                            gameHandler.autoEquipItemInBag(b, s);
+                            found = true;
+                        }
+                    }
+                }
+                if (!found) {
+                    game::MessageChatData sysMsg;
+                    sysMsg.type = game::ChatType::SYSTEM;
+                    sysMsg.language = game::ChatLanguage::UNIVERSAL;
+                    sysMsg.message = "Item not found: '" + equipArg + "'.";
                     gameHandler.addLocalChatMessage(sysMsg);
                 }
                 chatInputBuffer[0] = '\0';
