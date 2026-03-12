@@ -512,6 +512,15 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         msaaSettingsApplied_ = true;
     }
 
+    // Apply saved FXAA setting once when renderer is available
+    if (!fxaaSettingsApplied_) {
+        auto* renderer = core::Application::getInstance().getRenderer();
+        if (renderer) {
+            renderer->setFXAAEnabled(pendingFXAA);
+            fxaaSettingsApplied_ = true;
+        }
+    }
+
     // Apply saved water refraction setting once when renderer is available
     if (!waterRefractionApplied_) {
         auto* renderer = core::Application::getInstance().getRenderer();
@@ -13969,6 +13978,21 @@ void GameScreen::renderSettingsWindow() {
                         updateGraphicsPresetFromCurrentSettings();
                         saveSettings();
                     }
+                    // FXAA — post-process, combinable with any MSAA level (disabled with FSR2)
+                    if (fsr2Active) {
+                        ImGui::BeginDisabled();
+                        bool fxaaOff = false;
+                        ImGui::Checkbox("FXAA (disabled with FSR3)", &fxaaOff);
+                        ImGui::EndDisabled();
+                    } else {
+                        if (ImGui::Checkbox("FXAA (post-process)", &pendingFXAA)) {
+                            if (renderer) renderer->setFXAAEnabled(pendingFXAA);
+                            updateGraphicsPresetFromCurrentSettings();
+                            saveSettings();
+                        }
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("FXAA smooths jagged edges as a post-process pass.\nCan be combined with MSAA for extra quality.");
+                    }
                 }
                 // FSR Upscaling
                 {
@@ -16474,6 +16498,7 @@ void GameScreen::saveSettings() {
     out << "shadow_distance=" << pendingShadowDistance << "\n";
     out << "water_refraction=" << (pendingWaterRefraction ? 1 : 0) << "\n";
     out << "antialiasing=" << pendingAntiAliasing << "\n";
+    out << "fxaa=" << (pendingFXAA ? 1 : 0) << "\n";
     out << "normal_mapping=" << (pendingNormalMapping ? 1 : 0) << "\n";
     out << "normal_map_strength=" << pendingNormalMapStrength << "\n";
     out << "pom=" << (pendingPOM ? 1 : 0) << "\n";
@@ -16608,6 +16633,7 @@ void GameScreen::loadSettings() {
             else if (key == "shadow_distance") pendingShadowDistance = std::clamp(std::stof(val), 40.0f, 500.0f);
             else if (key == "water_refraction") pendingWaterRefraction = (std::stoi(val) != 0);
             else if (key == "antialiasing") pendingAntiAliasing = std::clamp(std::stoi(val), 0, 3);
+            else if (key == "fxaa") pendingFXAA = (std::stoi(val) != 0);
             else if (key == "normal_mapping") pendingNormalMapping = (std::stoi(val) != 0);
             else if (key == "normal_map_strength") pendingNormalMapStrength = std::clamp(std::stof(val), 0.0f, 2.0f);
             else if (key == "pom") pendingPOM = (std::stoi(val) != 0);

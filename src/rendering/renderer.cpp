@@ -858,6 +858,7 @@ void Renderer::shutdown() {
 
     destroyFSRResources();
     destroyFSR2Resources();
+    destroyFXAAResources();
     destroyPerFrameResources();
 
     zoneManager.reset();
@@ -960,8 +961,9 @@ void Renderer::applyMsaaChange() {
     VkDevice device = vkCtx->getDevice();
     if (selCirclePipeline) { vkDestroyPipeline(device, selCirclePipeline, nullptr); selCirclePipeline = VK_NULL_HANDLE; }
     if (overlayPipeline) { vkDestroyPipeline(device, overlayPipeline, nullptr); overlayPipeline = VK_NULL_HANDLE; }
-    if (fsr_.sceneFramebuffer) destroyFSRResources();  // Will be lazily recreated in beginFrame()
+    if (fsr_.sceneFramebuffer) destroyFSRResources();   // Will be lazily recreated in beginFrame()
     if (fsr2_.sceneFramebuffer) destroyFSR2Resources();
+    if (fxaa_.sceneFramebuffer) destroyFXAAResources(); // Will be lazily recreated in beginFrame()
 
     // Reinitialize ImGui Vulkan backend with new MSAA sample count
     ImGui_ImplVulkan_Shutdown();
@@ -1017,6 +1019,19 @@ void Renderer::beginFrame() {
         }
     }
 
+    // FXAA resource management (disabled when FSR2 is active — FSR2 has its own AA)
+    if (fxaa_.needsRecreate && fxaa_.sceneFramebuffer) {
+        destroyFXAAResources();
+        fxaa_.needsRecreate = false;
+        if (!fxaa_.enabled) LOG_INFO("FXAA: disabled");
+    }
+    if (fxaa_.enabled && !fsr2_.enabled && !fsr_.enabled && !fxaa_.sceneFramebuffer) {
+        if (!initFXAAResources()) {
+            LOG_ERROR("FXAA: initialization failed, disabling");
+            fxaa_.enabled = false;
+        }
+    }
+
     // Handle swapchain recreation if needed
     if (vkCtx->isSwapchainDirty()) {
         vkCtx->recreateSwapchain(window->getWidth(), window->getHeight());
@@ -1032,6 +1047,11 @@ void Renderer::beginFrame() {
         if (fsr2_.enabled) {
             destroyFSR2Resources();
             initFSR2Resources();
+        }
+        // Recreate FXAA resources for new swapchain dimensions
+        if (fxaa_.enabled && !fsr2_.enabled && !fsr_.enabled) {
+            destroyFXAAResources();
+            initFXAAResources();
         }
     }
 
@@ -1122,6 +1142,9 @@ void Renderer::beginFrame() {
     } else if (fsr_.enabled && fsr_.sceneFramebuffer) {
         rpInfo.framebuffer = fsr_.sceneFramebuffer;
         renderExtent = { fsr_.internalWidth, fsr_.internalHeight };
+    } else if (fxaa_.enabled && fxaa_.sceneFramebuffer) {
+        rpInfo.framebuffer = fxaa_.sceneFramebuffer;
+        renderExtent = vkCtx->getSwapchainExtent();  // native resolution — no downscaling
     } else {
         rpInfo.framebuffer = vkCtx->getSwapchainFramebuffers()[currentImageIndex];
         renderExtent = vkCtx->getSwapchainExtent();
@@ -1298,10 +1321,50 @@ void Renderer::endFrame() {
 
         // Draw FSR upscale fullscreen quad
         renderFSRUpscale();
+
+    } else if (fxaa_.enabled && fxaa_.sceneFramebuffer) {
+        // End the off-screen scene render pass
+        vkCmdEndRenderPass(currentCmd);
+
+        // Transition resolved scene color: PRESENT_SRC_KHR → SHADER_READ_ONLY
+        transitionImageLayout(currentCmd, fxaa_.sceneColor.image,
+            VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+
+        // Begin swapchain render pass (1x — no MSAA on the output pass)
+        VkRenderPassBeginInfo rpInfo{};
+        rpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        rpInfo.renderPass = vkCtx->getImGuiRenderPass();
+        rpInfo.framebuffer = vkCtx->getSwapchainFramebuffers()[currentImageIndex];
+        rpInfo.renderArea.offset = {0, 0};
+        rpInfo.renderArea.extent = vkCtx->getSwapchainExtent();
+        // The swapchain render pass always has 2 attachments when MSAA is off;
+        // FXAA output goes to the non-MSAA swapchain directly.
+        VkClearValue fxaaClear[2]{};
+        fxaaClear[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+        fxaaClear[1].depthStencil = {1.0f, 0};
+        rpInfo.clearValueCount = 2;
+        rpInfo.pClearValues = fxaaClear;
+
+        vkCmdBeginRenderPass(currentCmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        VkExtent2D ext = vkCtx->getSwapchainExtent();
+        VkViewport vp{};
+        vp.width = static_cast<float>(ext.width);
+        vp.height = static_cast<float>(ext.height);
+        vp.maxDepth = 1.0f;
+        vkCmdSetViewport(currentCmd, 0, 1, &vp);
+        VkRect2D sc{};
+        sc.extent = ext;
+        vkCmdSetScissor(currentCmd, 0, 1, &sc);
+
+        // Draw FXAA pass
+        renderFXAAPass();
     }
 
     // ImGui rendering — must respect subpass contents mode
-    if (!fsr_.enabled && !fsr2_.enabled && parallelRecordingEnabled_) {
+    if (!fsr_.enabled && !fsr2_.enabled && !fxaa_.enabled && parallelRecordingEnabled_) {
         // Scene pass was begun with VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS,
         // so ImGui must be recorded into a secondary command buffer.
         VkCommandBuffer imguiCmd = beginSecondary(SEC_IMGUI);
@@ -4697,6 +4760,247 @@ void Renderer::setAmdFsr3FramegenEnabled(bool enabled) {
 }
 
 // ========================= End FSR 2.2 =========================
+
+// ========================= FXAA Post-Process =========================
+
+bool Renderer::initFXAAResources() {
+    if (!vkCtx) return false;
+
+    VkDevice device = vkCtx->getDevice();
+    VmaAllocator alloc = vkCtx->getAllocator();
+    VkExtent2D ext = vkCtx->getSwapchainExtent();
+    VkSampleCountFlagBits msaa = vkCtx->getMsaaSamples();
+    bool useMsaa = (msaa > VK_SAMPLE_COUNT_1_BIT);
+    bool useDepthResolve = (vkCtx->getDepthResolveImageView() != VK_NULL_HANDLE);
+
+    LOG_INFO("FXAA: initializing at ", ext.width, "x", ext.height,
+             " (MSAA=", static_cast<int>(msaa), "x)");
+
+    VkFormat colorFmt = vkCtx->getSwapchainFormat();
+    VkFormat depthFmt = vkCtx->getDepthFormat();
+
+    // sceneColor: 1x resolved color target — FXAA reads from here
+    fxaa_.sceneColor = createImage(device, alloc, ext.width, ext.height,
+        colorFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+    if (!fxaa_.sceneColor.image) {
+        LOG_ERROR("FXAA: failed to create scene color image");
+        return false;
+    }
+
+    // sceneDepth: depth buffer at current MSAA sample count
+    fxaa_.sceneDepth = createImage(device, alloc, ext.width, ext.height,
+        depthFmt, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, msaa);
+    if (!fxaa_.sceneDepth.image) {
+        LOG_ERROR("FXAA: failed to create scene depth image");
+        destroyFXAAResources();
+        return false;
+    }
+
+    if (useMsaa) {
+        fxaa_.sceneMsaaColor = createImage(device, alloc, ext.width, ext.height,
+            colorFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, msaa);
+        if (!fxaa_.sceneMsaaColor.image) {
+            LOG_ERROR("FXAA: failed to create MSAA color image");
+            destroyFXAAResources();
+            return false;
+        }
+        if (useDepthResolve) {
+            fxaa_.sceneDepthResolve = createImage(device, alloc, ext.width, ext.height,
+                depthFmt, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+            if (!fxaa_.sceneDepthResolve.image) {
+                LOG_ERROR("FXAA: failed to create depth resolve image");
+                destroyFXAAResources();
+                return false;
+            }
+        }
+    }
+
+    // Framebuffer — same attachment layout as main render pass
+    VkImageView fbAttachments[4]{};
+    uint32_t fbCount;
+    if (useMsaa) {
+        fbAttachments[0] = fxaa_.sceneMsaaColor.imageView;
+        fbAttachments[1] = fxaa_.sceneDepth.imageView;
+        fbAttachments[2] = fxaa_.sceneColor.imageView;  // resolve target
+        fbCount = 3;
+        if (useDepthResolve) {
+            fbAttachments[3] = fxaa_.sceneDepthResolve.imageView;
+            fbCount = 4;
+        }
+    } else {
+        fbAttachments[0] = fxaa_.sceneColor.imageView;
+        fbAttachments[1] = fxaa_.sceneDepth.imageView;
+        fbCount = 2;
+    }
+
+    VkFramebufferCreateInfo fbInfo{};
+    fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fbInfo.renderPass = vkCtx->getImGuiRenderPass();
+    fbInfo.attachmentCount = fbCount;
+    fbInfo.pAttachments = fbAttachments;
+    fbInfo.width = ext.width;
+    fbInfo.height = ext.height;
+    fbInfo.layers = 1;
+    if (vkCreateFramebuffer(device, &fbInfo, nullptr, &fxaa_.sceneFramebuffer) != VK_SUCCESS) {
+        LOG_ERROR("FXAA: failed to create scene framebuffer");
+        destroyFXAAResources();
+        return false;
+    }
+
+    // Sampler
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    if (vkCreateSampler(device, &samplerInfo, nullptr, &fxaa_.sceneSampler) != VK_SUCCESS) {
+        LOG_ERROR("FXAA: failed to create sampler");
+        destroyFXAAResources();
+        return false;
+    }
+
+    // Descriptor set layout: binding 0 = combined image sampler
+    VkDescriptorSetLayoutBinding binding{};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &binding;
+    vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &fxaa_.descSetLayout);
+
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSize.descriptorCount = 1;
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = 1;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    vkCreateDescriptorPool(device, &poolInfo, nullptr, &fxaa_.descPool);
+
+    VkDescriptorSetAllocateInfo dsAllocInfo{};
+    dsAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAllocInfo.descriptorPool = fxaa_.descPool;
+    dsAllocInfo.descriptorSetCount = 1;
+    dsAllocInfo.pSetLayouts = &fxaa_.descSetLayout;
+    vkAllocateDescriptorSets(device, &dsAllocInfo, &fxaa_.descSet);
+
+    // Bind the resolved 1x sceneColor
+    VkDescriptorImageInfo imgInfo{};
+    imgInfo.sampler = fxaa_.sceneSampler;
+    imgInfo.imageView = fxaa_.sceneColor.imageView;
+    imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = fxaa_.descSet;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &imgInfo;
+    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+
+    // Pipeline layout — push constant holds vec2 rcpFrame
+    VkPushConstantRange pc{};
+    pc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pc.offset = 0;
+    pc.size = 8;  // vec2
+    VkPipelineLayoutCreateInfo plCI{};
+    plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plCI.setLayoutCount = 1;
+    plCI.pSetLayouts = &fxaa_.descSetLayout;
+    plCI.pushConstantRangeCount = 1;
+    plCI.pPushConstantRanges = &pc;
+    vkCreatePipelineLayout(device, &plCI, nullptr, &fxaa_.pipelineLayout);
+
+    // FXAA pipeline — fullscreen triangle into the swapchain render pass
+    // Uses VK_SAMPLE_COUNT_1_BIT: it always runs after MSAA resolve.
+    VkShaderModule vertMod, fragMod;
+    if (!vertMod.loadFromFile(device, "assets/shaders/postprocess.vert.spv") ||
+        !fragMod.loadFromFile(device, "assets/shaders/fxaa.frag.spv")) {
+        LOG_ERROR("FXAA: failed to load shaders");
+        destroyFXAAResources();
+        return false;
+    }
+
+    fxaa_.pipeline = PipelineBuilder()
+        .setShaders(vertMod.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
+                    fragMod.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
+        .setVertexInput({}, {})
+        .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+        .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+        .setNoDepthTest()
+        .setColorBlendAttachment(PipelineBuilder::blendDisabled())
+        .setMultisample(VK_SAMPLE_COUNT_1_BIT)  // swapchain pass is always 1x
+        .setLayout(fxaa_.pipelineLayout)
+        .setRenderPass(vkCtx->getImGuiRenderPass())
+        .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
+        .build(device);
+
+    vertMod.destroy();
+    fragMod.destroy();
+
+    if (!fxaa_.pipeline) {
+        LOG_ERROR("FXAA: failed to create pipeline");
+        destroyFXAAResources();
+        return false;
+    }
+
+    LOG_INFO("FXAA: initialized successfully");
+    return true;
+}
+
+void Renderer::destroyFXAAResources() {
+    if (!vkCtx) return;
+    VkDevice device = vkCtx->getDevice();
+    VmaAllocator alloc = vkCtx->getAllocator();
+    vkDeviceWaitIdle(device);
+
+    if (fxaa_.pipeline)       { vkDestroyPipeline(device, fxaa_.pipeline, nullptr);             fxaa_.pipeline = VK_NULL_HANDLE; }
+    if (fxaa_.pipelineLayout) { vkDestroyPipelineLayout(device, fxaa_.pipelineLayout, nullptr); fxaa_.pipelineLayout = VK_NULL_HANDLE; }
+    if (fxaa_.descPool)       { vkDestroyDescriptorPool(device, fxaa_.descPool, nullptr);       fxaa_.descPool = VK_NULL_HANDLE; fxaa_.descSet = VK_NULL_HANDLE; }
+    if (fxaa_.descSetLayout)  { vkDestroyDescriptorSetLayout(device, fxaa_.descSetLayout, nullptr); fxaa_.descSetLayout = VK_NULL_HANDLE; }
+    if (fxaa_.sceneFramebuffer) { vkDestroyFramebuffer(device, fxaa_.sceneFramebuffer, nullptr); fxaa_.sceneFramebuffer = VK_NULL_HANDLE; }
+    if (fxaa_.sceneSampler)   { vkDestroySampler(device, fxaa_.sceneSampler, nullptr);          fxaa_.sceneSampler = VK_NULL_HANDLE; }
+    destroyImage(device, alloc, fxaa_.sceneDepthResolve);
+    destroyImage(device, alloc, fxaa_.sceneMsaaColor);
+    destroyImage(device, alloc, fxaa_.sceneDepth);
+    destroyImage(device, alloc, fxaa_.sceneColor);
+}
+
+void Renderer::renderFXAAPass() {
+    if (!fxaa_.pipeline || currentCmd == VK_NULL_HANDLE) return;
+    VkExtent2D ext = vkCtx->getSwapchainExtent();
+
+    vkCmdBindPipeline(currentCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, fxaa_.pipeline);
+    vkCmdBindDescriptorSets(currentCmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            fxaa_.pipelineLayout, 0, 1, &fxaa_.descSet, 0, nullptr);
+
+    // Push rcpFrame = vec2(1/width, 1/height)
+    float rcpFrame[2] = {
+        1.0f / static_cast<float>(ext.width),
+        1.0f / static_cast<float>(ext.height)
+    };
+    vkCmdPushConstants(currentCmd, fxaa_.pipelineLayout,
+                       VK_SHADER_STAGE_FRAGMENT_BIT, 0, 8, rcpFrame);
+
+    vkCmdDraw(currentCmd, 3, 1, 0, 0);  // fullscreen triangle
+}
+
+void Renderer::setFXAAEnabled(bool enabled) {
+    if (fxaa_.enabled == enabled) return;
+    fxaa_.enabled = enabled;
+    if (!enabled) {
+        fxaa_.needsRecreate = true;  // defer destruction to next beginFrame()
+    }
+}
+
+// ========================= End FXAA =========================
 
 void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     (void)world;

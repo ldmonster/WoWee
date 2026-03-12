@@ -271,6 +271,10 @@ public:
     float getShadowDistance() const { return shadowDistance_; }
     void setMsaaSamples(VkSampleCountFlagBits samples);
 
+    // FXAA post-process anti-aliasing (combinable with MSAA)
+    void setFXAAEnabled(bool enabled);
+    bool isFXAAEnabled() const { return fxaa_.enabled; }
+
     // FSR (FidelityFX Super Resolution) upscaling
     void setFSREnabled(bool enabled);
     bool isFSREnabled() const { return fsr_.enabled; }
@@ -397,6 +401,31 @@ private:
     bool initFSRResources();
     void destroyFSRResources();
     void renderFSRUpscale();
+
+    // FXAA post-process state
+    struct FXAAState {
+        bool enabled       = false;
+        bool needsRecreate = false;
+
+        // Off-screen scene target (same resolution as swapchain — no scaling)
+        AllocatedImage sceneColor{};        // 1x resolved color target
+        AllocatedImage sceneDepth{};        // Depth (matches MSAA sample count)
+        AllocatedImage sceneMsaaColor{};    // MSAA color target (when MSAA > 1x)
+        AllocatedImage sceneDepthResolve{}; // Depth resolve (MSAA + depth resolve)
+        VkFramebuffer sceneFramebuffer = VK_NULL_HANDLE;
+        VkSampler sceneSampler         = VK_NULL_HANDLE;
+
+        // FXAA fullscreen pipeline
+        VkPipeline           pipeline          = VK_NULL_HANDLE;
+        VkPipelineLayout     pipelineLayout    = VK_NULL_HANDLE;
+        VkDescriptorSetLayout descSetLayout    = VK_NULL_HANDLE;
+        VkDescriptorPool     descPool          = VK_NULL_HANDLE;
+        VkDescriptorSet      descSet           = VK_NULL_HANDLE;
+    };
+    FXAAState fxaa_;
+    bool initFXAAResources();
+    void destroyFXAAResources();
+    void renderFXAAPass();
 
     // FSR 2.2 temporal upscaling state
     struct FSR2State {

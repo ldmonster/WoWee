@@ -204,6 +204,7 @@ private:
     float pendingLeftBarOffsetY  = 0.0f;  // Vertical offset from screen center
     int pendingGroundClutterDensity = 100;
     int pendingAntiAliasing = 0;  // 0=Off, 1=2x, 2=4x, 3=8x
+    bool pendingFXAA = false;     // FXAA post-process (combinable with MSAA)
     bool pendingNormalMapping = true;   // on by default
     float pendingNormalMapStrength = 0.8f;  // 0.0-2.0
     bool pendingPOM = true;             // on by default
@@ -238,6 +239,7 @@ private:
     bool minimapSettingsApplied_ = false;
     bool volumeSettingsApplied_ = false;  // True once saved volume settings applied to audio managers
     bool msaaSettingsApplied_ = false;   // True once saved MSAA setting applied to renderer
+    bool fxaaSettingsApplied_ = false;   // True once saved FXAA setting applied to renderer
     bool waterRefractionApplied_ = false;
     bool normalMapSettingsApplied_ = false;  // True once saved normal map/POM settings applied
 
