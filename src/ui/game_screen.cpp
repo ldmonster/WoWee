@@ -8651,6 +8651,27 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                 if (member.roles & 0x08) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), "[D]"); }
             }
 
+            // Raid mark symbol — shown on same line as name when this party member has a mark
+            {
+                static const struct { const char* sym; ImU32 col; } kPartyMarks[] = {
+                    { "\xe2\x98\x85", IM_COL32(255, 220,  50, 255) },  // 0 Star
+                    { "\xe2\x97\x8f", IM_COL32(255, 140,   0, 255) },  // 1 Circle
+                    { "\xe2\x97\x86", IM_COL32(160,  32, 240, 255) },  // 2 Diamond
+                    { "\xe2\x96\xb2", IM_COL32( 50, 200,  50, 255) },  // 3 Triangle
+                    { "\xe2\x97\x8c", IM_COL32( 80, 160, 255, 255) },  // 4 Moon
+                    { "\xe2\x96\xa0", IM_COL32( 50, 200, 220, 255) },  // 5 Square
+                    { "\xe2\x9c\x9d", IM_COL32(255,  80,  80, 255) },  // 6 Cross
+                    { "\xe2\x98\xa0", IM_COL32(255, 255, 255, 255) },  // 7 Skull
+                };
+                uint8_t pmk = gameHandler.getEntityRaidMark(member.guid);
+                if (pmk < game::GameHandler::kRaidMarkCount) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(
+                        ImGui::ColorConvertU32ToFloat4(kPartyMarks[pmk].col),
+                        "%s", kPartyMarks[pmk].sym);
+                }
+            }
+
             // Health bar: prefer party stats, fall back to entity
             uint32_t hp = 0, maxHp = 0;
             if (member.hasPartyStats && member.maxHealth > 0) {
