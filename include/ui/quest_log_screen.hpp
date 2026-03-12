@@ -31,6 +31,10 @@ private:
     uint32_t lastDetailRequestQuestId_ = 0;
     double lastDetailRequestAt_ = 0.0;
     std::unordered_set<uint32_t> questDetailQueryNoResponse_;
+    // Search / filter
+    char questSearchFilter_[64] = {};
+    // 0=all, 1=active only, 2=complete only
+    int questFilterMode_ = 0;
 };
 
 }} // namespace wowee::ui

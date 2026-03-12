@@ -248,6 +248,17 @@ void QuestLogScreen::render(game::GameHandler& gameHandler, InventoryScreen& inv
             else activeCount++;
         }
 
+        // Search bar + filter buttons on one row
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 210.0f);
+        ImGui::InputTextWithHint("##qsearch", "Search quests...", questSearchFilter_, sizeof(questSearchFilter_));
+        ImGui::SameLine();
+        if (ImGui::RadioButton("All", questFilterMode_ == 0))     questFilterMode_ = 0;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Active", questFilterMode_ == 1))  questFilterMode_ = 1;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Ready", questFilterMode_ == 2))   questFilterMode_ = 2;
+
+        // Summary counts
         ImGui::TextColored(ImVec4(0.95f, 0.85f, 0.35f, 1.0f), "Active: %d", activeCount);
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.45f, 1.0f), "Ready: %d", completeCount);
@@ -270,14 +281,36 @@ void QuestLogScreen::render(game::GameHandler& gameHandler, InventoryScreen& inv
                 for (size_t i = 0; i < quests.size(); i++) {
                     if (quests[i].questId == pendingSelectQuestId_) {
                         selectedIndex = static_cast<int>(i);
+                        // Clear filter so the target quest is visible
+                        questSearchFilter_[0] = '\0';
+                        questFilterMode_ = 0;
                         break;
                     }
                 }
                 pendingSelectQuestId_ = 0;
             }
 
+            // Build a case-insensitive lowercase copy of the search filter once
+            char filterLower[64] = {};
+            for (size_t fi = 0; fi < sizeof(questSearchFilter_) && questSearchFilter_[fi]; ++fi)
+                filterLower[fi] = static_cast<char>(std::tolower(static_cast<unsigned char>(questSearchFilter_[fi])));
+
+            int visibleQuestCount = 0;
             for (size_t i = 0; i < quests.size(); i++) {
                 const auto& q = quests[i];
+
+                // Apply mode filter
+                if (questFilterMode_ == 1 && q.complete) continue;
+                if (questFilterMode_ == 2 && !q.complete) continue;
+
+                // Apply name search filter
+                if (filterLower[0]) {
+                    std::string titleLower = cleanQuestTitleForUi(q.title, q.questId);
+                    for (char& c : titleLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    if (titleLower.find(filterLower) == std::string::npos) continue;
+                }
+
+                visibleQuestCount++;
                 ImGui::PushID(static_cast<int>(i));
 
                 bool selected = (selectedIndex == static_cast<int>(i));
@@ -320,6 +353,13 @@ void QuestLogScreen::render(game::GameHandler& gameHandler, InventoryScreen& inv
                     }
                 }
                 ImGui::PopID();
+            }
+            if (visibleQuestCount == 0) {
+                ImGui::Spacing();
+                if (filterLower[0] || questFilterMode_ != 0)
+                    ImGui::TextDisabled("No quests match the filter.");
+                else
+                    ImGui::TextDisabled("No active quests.");
             }
             ImGui::EndChild();
 
