@@ -3424,8 +3424,14 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
                         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar)) {
                     std::string totName = getEntityName(totEntity);
+                    // Class color for players; gray for NPCs
+                    ImVec4 totNameColor = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+                    if (totEntity->getType() == game::ObjectType::PLAYER) {
+                        uint8_t cid = entityClassId(totEntity.get());
+                        if (cid != 0) totNameColor = classColorVec4(cid);
+                    }
                     // Selectable so we can attach a right-click context menu
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.8f, 0.8f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, totNameColor);
                     ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0,0,0,0));
                     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(1,1,1,0.08f));
                     ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(1,1,1,0.12f));
