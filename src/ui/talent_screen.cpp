@@ -216,7 +216,9 @@ void TalentScreen::renderTalentTree(game::GameHandler& gameHandler, uint32_t tab
     float availW = ImGui::GetContentRegionAvail().x;
     float offsetX = std::max(0.0f, (availW - gridWidth) * 0.5f);
 
-    ImGui::BeginChild("TalentGrid", ImVec2(0, 0), false);
+    char childId[32];
+    snprintf(childId, sizeof(childId), "TalentGrid_%u", tabId);
+    ImGui::BeginChild(childId, ImVec2(0, 0), false);
 
     ImVec2 gridOrigin = ImGui::GetCursorScreenPos();
     gridOrigin.x += offsetX;
@@ -326,8 +328,9 @@ void TalentScreen::renderTalentTree(game::GameHandler& gameHandler, uint32_t tab
                 renderTalent(gameHandler, *talent, pointsInTree);
             } else {
                 // Empty cell — invisible placeholder
-                ImGui::InvisibleButton(("e_" + std::to_string(row) + "_" + std::to_string(col)).c_str(),
-                                       ImVec2(iconSize, iconSize));
+                char emptyId[32];
+                snprintf(emptyId, sizeof(emptyId), "e_%u_%u_%u", tabId, row, col);
+                ImGui::InvisibleButton(emptyId, ImVec2(iconSize, iconSize));
             }
         }
     }

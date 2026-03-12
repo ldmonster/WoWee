@@ -11192,8 +11192,51 @@ void GameHandler::handleInspectResults(network::Packet& packet) {
     uint8_t talentType = packet.readUInt8();
 
     if (talentType == 0) {
-        // Own talent info — silently consume (sent on login, talent changes, respecs)
-        LOG_DEBUG("SMSG_TALENTS_INFO: received own talent data, ignoring");
+        // Own talent info (type 0): uint32 unspentTalents, uint8 groupCount, uint8 activeGroup
+        // Per group: uint8 talentCount, [talentId(4)+rank(1)]..., uint8 glyphCount, [glyphId(2)]...
+        if (packet.getSize() - packet.getReadPos() < 6) {
+            LOG_DEBUG("SMSG_TALENTS_INFO type=0: too short");
+            return;
+        }
+        uint32_t unspentTalents    = packet.readUInt32();
+        uint8_t  talentGroupCount  = packet.readUInt8();
+        uint8_t  activeTalentGroup = packet.readUInt8();
+
+        if (activeTalentGroup > 1) activeTalentGroup = 0;
+        activeTalentSpec_ = activeTalentGroup;
+
+        for (uint8_t g = 0; g < talentGroupCount && g < 2; ++g) {
+            if (packet.getSize() - packet.getReadPos() < 1) break;
+            uint8_t talentCount = packet.readUInt8();
+            learnedTalents_[g].clear();
+            for (uint8_t t = 0; t < talentCount; ++t) {
+                if (packet.getSize() - packet.getReadPos() < 5) break;
+                uint32_t talentId = packet.readUInt32();
+                uint8_t  rank     = packet.readUInt8();
+                learnedTalents_[g][talentId] = rank;
+            }
+            if (packet.getSize() - packet.getReadPos() < 1) break;
+            uint8_t glyphCount = packet.readUInt8();
+            for (uint8_t gl = 0; gl < glyphCount; ++gl) {
+                if (packet.getSize() - packet.getReadPos() < 2) break;
+                packet.readUInt16(); // glyphId (skip)
+            }
+        }
+
+        unspentTalentPoints_[activeTalentGroup] = static_cast<uint8_t>(
+            unspentTalents > 255 ? 255 : unspentTalents);
+
+        if (!talentsInitialized_) {
+            talentsInitialized_ = true;
+            if (unspentTalents > 0) {
+                addSystemChatMessage("You have " + std::to_string(unspentTalents)
+                    + " unspent talent point" + (unspentTalents != 1 ? "s" : "") + ".");
+            }
+        }
+
+        LOG_INFO("SMSG_TALENTS_INFO type=0: unspent=", unspentTalents,
+                 " groups=", (int)talentGroupCount, " active=", (int)activeTalentGroup,
+                 " learned=", learnedTalents_[activeTalentGroup].size());
         return;
     }
 
