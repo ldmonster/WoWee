@@ -409,6 +409,10 @@ public:
     void setGuildOfficerNote(const std::string& name, const std::string& note);
     void acceptGuildInvite();
     void declineGuildInvite();
+
+    // GM Ticket
+    void submitGmTicket(const std::string& text);
+    void deleteGmTicket();
     void queryGuildInfo(uint32_t guildId);
     void createGuild(const std::string& guildName);
     void addGuildRank(const std::string& rankName);

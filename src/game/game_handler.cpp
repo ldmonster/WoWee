@@ -14968,6 +14968,34 @@ void GameHandler::declineGuildInvite() {
     LOG_INFO("Declined guild invite");
 }
 
+void GameHandler::submitGmTicket(const std::string& text) {
+    if (state != WorldState::IN_WORLD || !socket) return;
+
+    // CMSG_GMTICKET_CREATE (WotLK 3.3.5a):
+    // string   ticket_text
+    // float[3] position (server coords)
+    // float    facing
+    // uint32   mapId
+    // uint8    need_response (1 = yes)
+    network::Packet pkt(wireOpcode(Opcode::CMSG_GMTICKET_CREATE));
+    pkt.writeString(text);
+    pkt.writeFloat(movementInfo.x);
+    pkt.writeFloat(movementInfo.y);
+    pkt.writeFloat(movementInfo.z);
+    pkt.writeFloat(movementInfo.orientation);
+    pkt.writeUInt32(currentMapId_);
+    pkt.writeUInt8(1);  // need_response = yes
+    socket->send(pkt);
+    LOG_INFO("Submitted GM ticket: '", text, "'");
+}
+
+void GameHandler::deleteGmTicket() {
+    if (state != WorldState::IN_WORLD || !socket) return;
+    network::Packet pkt(wireOpcode(Opcode::CMSG_GMTICKET_DELETETICKET));
+    socket->send(pkt);
+    LOG_INFO("Deleting GM ticket");
+}
+
 void GameHandler::queryGuildInfo(uint32_t guildId) {
     if (state != WorldState::IN_WORLD || !socket) return;
     auto packet = GuildQueryPacket::build(guildId);

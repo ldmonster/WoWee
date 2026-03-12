@@ -498,6 +498,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderDungeonFinderWindow(gameHandler);
     renderInstanceLockouts(gameHandler);
     renderAchievementWindow(gameHandler);
+    renderGmTicketWindow(gameHandler);
     // renderQuestMarkers(gameHandler);  // Disabled - using 3D billboard markers now
     if (showMinimap_) {
         renderMinimapMarkers(gameHandler);
@@ -3161,6 +3162,13 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                 return;
             }
 
+            // /ticket command — open GM ticket window
+            if (cmdLower == "ticket" || cmdLower == "gmticket" || cmdLower == "gm") {
+                showGmTicketWindow_ = true;
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+
             // /help command — list available slash commands
             if (cmdLower == "help" || cmdLower == "?") {
                 static const char* kHelpLines[] = {
@@ -3178,7 +3186,7 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                     "Movement: /sit  /stand  /kneel  /dismount",
                     "Misc: /played  /time  /afk [msg]  /dnd [msg]  /inspect",
                     "      /helm  /cloak  /trade  /join <channel>  /leave <channel>",
-                    "      /unstuck  /logout  /help",
+                    "      /unstuck  /logout  /ticket  /help",
                 };
                 for (const char* line : kHelpLines) {
                     game::MessageChatData helpMsg;
@@ -9750,7 +9758,7 @@ void GameScreen::renderEscapeMenu() {
     ImGuiIO& io = ImGui::GetIO();
     float screenW = io.DisplaySize.x;
     float screenH = io.DisplaySize.y;
-    ImVec2 size(260.0f, 220.0f);
+    ImVec2 size(260.0f, 248.0f);
     ImVec2 pos((screenW - size.x) * 0.5f, (screenH - size.y) * 0.5f);
 
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
@@ -9784,6 +9792,10 @@ void GameScreen::renderEscapeMenu() {
         }
         if (ImGui::Button("Instance Lockouts", ImVec2(-1, 0))) {
             showInstanceLockouts_ = true;
+            showEscapeMenu = false;
+        }
+        if (ImGui::Button("Help / GM Ticket", ImVec2(-1, 0))) {
+            showGmTicketWindow_ = true;
             showEscapeMenu = false;
         }
 
@@ -14429,6 +14441,46 @@ void GameScreen::renderAchievementWindow(game::GameHandler& gameHandler) {
     }
 
     ImGui::EndChild();
+    ImGui::End();
+}
+
+// ─── GM Ticket Window ─────────────────────────────────────────────────────────
+void GameScreen::renderGmTicketWindow(game::GameHandler& gameHandler) {
+    if (!showGmTicketWindow_) return;
+
+    ImGui::SetNextWindowSize(ImVec2(400, 260), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(300, 200), ImGuiCond_FirstUseEver);
+
+    if (!ImGui::Begin("GM Ticket", &showGmTicketWindow_,
+                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::TextWrapped("Describe your issue and a Game Master will contact you.");
+    ImGui::Spacing();
+    ImGui::InputTextMultiline("##gmticket_body", gmTicketBuf_, sizeof(gmTicketBuf_),
+                               ImVec2(-1, 160));
+    ImGui::Spacing();
+
+    bool hasText = (gmTicketBuf_[0] != '\0');
+    if (!hasText) ImGui::BeginDisabled();
+    if (ImGui::Button("Submit Ticket", ImVec2(160, 0))) {
+        gameHandler.submitGmTicket(gmTicketBuf_);
+        gmTicketBuf_[0] = '\0';
+        showGmTicketWindow_ = false;
+    }
+    if (!hasText) ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+        showGmTicketWindow_ = false;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Delete Ticket", ImVec2(100, 0))) {
+        gameHandler.deleteGmTicket();
+    }
+
     ImGui::End();
 }
 
