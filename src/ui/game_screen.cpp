@@ -8179,8 +8179,17 @@ void GameScreen::renderVendorWindow(game::GameHandler& gameHandler) {
         if (vendor.items.empty()) {
             ImGui::TextDisabled("This vendor has nothing for sale.");
         } else {
-            ImGui::SetNextItemWidth(-1.0f);
+            // Search + quantity controls on one row
+            ImGui::SetNextItemWidth(200.0f);
             ImGui::InputTextWithHint("##VendorSearch", "Search...", vendorSearchFilter_, sizeof(vendorSearchFilter_));
+            ImGui::SameLine();
+            ImGui::Text("Qty:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(60.0f);
+            static int vendorBuyQty = 1;
+            ImGui::InputInt("##VendorQty", &vendorBuyQty, 1, 5);
+            if (vendorBuyQty < 1) vendorBuyQty = 1;
+            if (vendorBuyQty > 99) vendorBuyQty = 99;
             ImGui::Spacing();
 
             if (ImGui::BeginTable("VendorTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
@@ -8265,16 +8274,26 @@ void GameScreen::renderVendorWindow(game::GameHandler& gameHandler) {
 
                     ImGui::TableSetColumnIndex(3);
                     if (item.maxCount < 0) {
-                        ImGui::Text("Inf");
+                        ImGui::TextDisabled("Inf");
+                    } else if (item.maxCount == 0) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Out");
+                    } else if (item.maxCount <= 5) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.1f, 1.0f), "%d", item.maxCount);
                     } else {
                         ImGui::Text("%d", item.maxCount);
                     }
 
                     ImGui::TableSetColumnIndex(4);
+                    bool outOfStock = (item.maxCount == 0);
+                    if (outOfStock) ImGui::BeginDisabled();
                     std::string buyBtnId = "Buy##vendor_" + std::to_string(vi);
                     if (ImGui::SmallButton(buyBtnId.c_str())) {
-                        gameHandler.buyItem(vendor.vendorGuid, item.itemId, item.slot, 1);
+                        int qty = vendorBuyQty;
+                        if (item.maxCount > 0 && qty > item.maxCount) qty = item.maxCount;
+                        gameHandler.buyItem(vendor.vendorGuid, item.itemId, item.slot,
+                                            static_cast<uint32_t>(qty));
                     }
+                    if (outOfStock) ImGui::EndDisabled();
 
                     ImGui::PopID();
                 }
