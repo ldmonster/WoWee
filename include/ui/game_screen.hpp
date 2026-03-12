@@ -46,8 +46,9 @@ private:
     char chatInputBuffer[512] = "";
     char whisperTargetBuffer[256] = "";
     bool chatInputActive = false;
-    int selectedChatType = 0;  // 0=SAY, 1=YELL, 2=PARTY, 3=GUILD, 4=WHISPER
+    int selectedChatType = 0;  // 0=SAY, 1=YELL, 2=PARTY, 3=GUILD, 4=WHISPER, ..., 10=CHANNEL
     int lastChatType = 0;  // Track chat type changes
+    int selectedChannelIdx = 0; // Index into joinedChannels_ when selectedChatType==10
     bool chatInputMoveCursorToEnd = false;
 
     // Chat sent-message history (Up/Down arrow recall)

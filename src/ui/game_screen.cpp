@@ -1823,8 +1823,8 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
     ImGui::Text("Type:");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(100);
-    const char* chatTypes[] = { "SAY", "YELL", "PARTY", "GUILD", "WHISPER", "RAID", "OFFICER", "BATTLEGROUND", "RAID WARNING", "INSTANCE" };
-    ImGui::Combo("##ChatType", &selectedChatType, chatTypes, 10);
+    const char* chatTypes[] = { "SAY", "YELL", "PARTY", "GUILD", "WHISPER", "RAID", "OFFICER", "BATTLEGROUND", "RAID WARNING", "INSTANCE", "CHANNEL" };
+    ImGui::Combo("##ChatType", &selectedChatType, chatTypes, 11);
 
     // Auto-fill whisper target when switching to WHISPER mode
     if (selectedChatType == 4 && lastChatType != 4) {
@@ -1849,6 +1849,27 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(120);
         ImGui::InputText("##WhisperTarget", whisperTargetBuffer, sizeof(whisperTargetBuffer));
+    }
+
+    // Show channel picker if CHANNEL is selected
+    if (selectedChatType == 10) {
+        const auto& channels = gameHandler.getJoinedChannels();
+        if (channels.empty()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(no channels joined)");
+        } else {
+            ImGui::SameLine();
+            if (selectedChannelIdx >= static_cast<int>(channels.size())) selectedChannelIdx = 0;
+            ImGui::SetNextItemWidth(140);
+            if (ImGui::BeginCombo("##ChannelPicker", channels[selectedChannelIdx].c_str())) {
+                for (int ci = 0; ci < static_cast<int>(channels.size()); ++ci) {
+                    bool selected = (ci == selectedChannelIdx);
+                    if (ImGui::Selectable(channels[ci].c_str(), selected)) selectedChannelIdx = ci;
+                    if (selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+        }
     }
 
     ImGui::SameLine();
@@ -1881,7 +1902,16 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                 else if (cmd == "bg" || cmd == "battleground") detected = 7;
                 else if (cmd == "rw" || cmd == "raidwarning") detected = 8;
                 else if (cmd == "i" || cmd == "instance") detected = 9;
-                if (detected >= 0 && selectedChatType != detected) {
+                else if (cmd.size() == 1 && cmd[0] >= '1' && cmd[0] <= '9') detected = 10; // /1, /2 etc.
+                if (detected >= 0 && (selectedChatType != detected || detected == 10)) {
+                    // For channel shortcuts, also update selectedChannelIdx
+                    if (detected == 10) {
+                        int chanIdx = cmd[0] - '1'; // /1 -> index 0, /2 -> index 1, etc.
+                        const auto& chans = gameHandler.getJoinedChannels();
+                        if (chanIdx >= 0 && chanIdx < static_cast<int>(chans.size())) {
+                            selectedChannelIdx = chanIdx;
+                        }
+                    }
                     selectedChatType = detected;
                     // Strip the prefix, keep only the message part
                     std::string remaining = buf.substr(sp + 1);
@@ -1919,7 +1949,8 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
         case 6: inputColor = ImVec4(0.3f, 1.0f, 0.3f, 1.0f); break;  // OFFICER - green
         case 7: inputColor = ImVec4(1.0f, 0.5f, 0.0f, 1.0f); break;  // BG - orange
         case 8: inputColor = ImVec4(1.0f, 0.3f, 0.0f, 1.0f); break;  // RAID WARNING - red-orange
-        case 9: inputColor = ImVec4(0.4f, 0.6f, 1.0f, 1.0f); break;  // INSTANCE - blue
+        case 9:  inputColor = ImVec4(0.4f, 0.6f, 1.0f, 1.0f); break;  // INSTANCE - blue
+        case 10: inputColor = ImVec4(0.3f, 0.9f, 0.9f, 1.0f); break; // CHANNEL - cyan
         default: inputColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f); break; // SAY - white
     }
     ImGui::PushStyleColor(ImGuiCol_Text, inputColor);
@@ -5153,6 +5184,14 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                     case 7: type = game::ChatType::BATTLEGROUND; break;
                     case 8: type = game::ChatType::RAID_WARNING; break;
                     case 9: type = game::ChatType::PARTY; break; // INSTANCE uses PARTY
+                    case 10: { // CHANNEL
+                        const auto& chans = gameHandler.getJoinedChannels();
+                        if (!chans.empty() && selectedChannelIdx < static_cast<int>(chans.size())) {
+                            type = game::ChatType::CHANNEL;
+                            target = chans[selectedChannelIdx];
+                        } else { type = game::ChatType::SAY; }
+                        break;
+                    }
                     default: type = game::ChatType::SAY; break;
                 }
             }
@@ -5169,6 +5208,14 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                 case 7: type = game::ChatType::BATTLEGROUND; break;
                 case 8: type = game::ChatType::RAID_WARNING; break;
                 case 9: type = game::ChatType::PARTY; break; // INSTANCE uses PARTY
+                case 10: { // CHANNEL
+                    const auto& chans = gameHandler.getJoinedChannels();
+                    if (!chans.empty() && selectedChannelIdx < static_cast<int>(chans.size())) {
+                        type = game::ChatType::CHANNEL;
+                        target = chans[selectedChannelIdx];
+                    } else { type = game::ChatType::SAY; }
+                    break;
+                }
                 default: type = game::ChatType::SAY; break;
             }
         }
