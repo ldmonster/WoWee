@@ -551,6 +551,18 @@ private:
     bool questProgressCallbackSet_ = false;
     void renderQuestProgressToasts();
 
+    // Nearby player level-up toast ("<Name> is now level X!")
+    struct PlayerLevelUpToastEntry {
+        uint64_t guid = 0;
+        std::string playerName;  // resolved lazily at render time
+        uint32_t newLevel = 0;
+        float age = 0.0f;
+    };
+    static constexpr float PLAYER_LEVELUP_TOAST_DURATION = 4.0f;
+    std::vector<PlayerLevelUpToastEntry> playerLevelUpToasts_;
+    bool otherPlayerLevelUpCallbackSet_ = false;
+    void renderPlayerLevelUpToasts(game::GameHandler& gameHandler);
+
     // Zone discovery text ("Entering: <ZoneName>")
     static constexpr float ZONE_TEXT_DURATION = 5.0f;
     float zoneTextTimer_ = 0.0f;

@@ -330,6 +330,24 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         questProgressCallbackSet_ = true;
     }
 
+    // Set up other-player level-up toast callback (once)
+    if (!otherPlayerLevelUpCallbackSet_) {
+        gameHandler.setOtherPlayerLevelUpCallback([this](uint64_t guid, uint32_t newLevel) {
+            // Coalesce: update existing toast for same player
+            for (auto& t : playerLevelUpToasts_) {
+                if (t.guid == guid) {
+                    t.newLevel = newLevel;
+                    t.age = 0.0f;
+                    return;
+                }
+            }
+            if (playerLevelUpToasts_.size() >= 3)
+                playerLevelUpToasts_.erase(playerLevelUpToasts_.begin());
+            playerLevelUpToasts_.push_back({guid, "", newLevel, 0.0f});
+        });
+        otherPlayerLevelUpCallbackSet_ = true;
+    }
+
     // Set up UI error frame callback (once)
     if (!uiErrorCallbackSet_) {
         gameHandler.setUIErrorCallback([this](const std::string& msg) {
@@ -661,6 +679,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderDiscoveryToast();
     renderWhisperToasts();
     renderQuestProgressToasts();
+    renderPlayerLevelUpToasts(gameHandler);
     renderZoneText();
 
     // World map (M key toggle handled inside)
@@ -18192,6 +18211,85 @@ void GameScreen::renderQuestProgressToasts() {
             snprintf(progBuf, sizeof(progBuf), "%u/%u", toast.current, toast.required);
         bgDL->AddText(ImVec2(toastX + 8.0f, ty + 32.0f),
                       IM_COL32(220, 220, 200, static_cast<uint8_t>(210 * alpha)), progBuf);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Nearby player level-up toasts — shown at screen bottom-centre
+// ---------------------------------------------------------------------------
+
+void GameScreen::renderPlayerLevelUpToasts(game::GameHandler& gameHandler) {
+    if (playerLevelUpToasts_.empty()) return;
+
+    float dt = ImGui::GetIO().DeltaTime;
+    for (auto& t : playerLevelUpToasts_) {
+        t.age += dt;
+        // Lazy name resolution — fill in once the name cache has it
+        if (t.playerName.empty() && t.guid != 0) {
+            t.playerName = gameHandler.lookupName(t.guid);
+        }
+    }
+    playerLevelUpToasts_.erase(
+        std::remove_if(playerLevelUpToasts_.begin(), playerLevelUpToasts_.end(),
+            [](const PlayerLevelUpToastEntry& t) {
+                return t.age >= PLAYER_LEVELUP_TOAST_DURATION;
+            }),
+        playerLevelUpToasts_.end());
+    if (playerLevelUpToasts_.empty()) return;
+
+    ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+    float screenW = displaySize.x > 0.0f ? displaySize.x : 1280.0f;
+    float screenH = displaySize.y > 0.0f ? displaySize.y : 720.0f;
+
+    // Stack toasts at screen bottom-centre, above action bars
+    constexpr float TOAST_W   = 230.0f;
+    constexpr float TOAST_H   = 38.0f;
+    constexpr float TOAST_GAP = 4.0f;
+    float baseY  = screenH * 0.72f;
+    float toastX = (screenW - TOAST_W) * 0.5f;
+
+    ImDrawList* bgDL = ImGui::GetBackgroundDrawList();
+    const int count = static_cast<int>(playerLevelUpToasts_.size());
+
+    for (int i = 0; i < count; ++i) {
+        const auto& toast = playerLevelUpToasts_[i];
+
+        float remaining = PLAYER_LEVELUP_TOAST_DURATION - toast.age;
+        float alpha;
+        if (toast.age < 0.2f)
+            alpha = toast.age / 0.2f;
+        else if (remaining < 1.0f)
+            alpha = remaining;
+        else
+            alpha = 1.0f;
+        alpha = std::clamp(alpha, 0.0f, 1.0f);
+
+        // Subtle pop-up from below during first 0.2s
+        float slideY = (toast.age < 0.2f) ? (TOAST_H * (1.0f - toast.age / 0.2f)) : 0.0f;
+        float ty = baseY - (count - i) * (TOAST_H + TOAST_GAP) + slideY;
+
+        uint8_t bgA = static_cast<uint8_t>(200 * alpha);
+        uint8_t fgA = static_cast<uint8_t>(255 * alpha);
+
+        // Background: dark gold tint
+        bgDL->AddRectFilled(ImVec2(toastX, ty), ImVec2(toastX + TOAST_W, ty + TOAST_H),
+                            IM_COL32(30, 22, 5, bgA), 5.0f);
+        // Gold border with glow at peak
+        float glowStr = (toast.age < 0.5f) ? (1.0f - toast.age / 0.5f) : 0.0f;
+        uint8_t borderA = static_cast<uint8_t>((160 + 80 * glowStr) * alpha);
+        bgDL->AddRect(ImVec2(toastX, ty), ImVec2(toastX + TOAST_W, ty + TOAST_H),
+                      IM_COL32(255, 210, 50, borderA), 5.0f, 0, 1.5f + glowStr * 1.5f);
+
+        // Star ★ icon on left
+        bgDL->AddText(ImVec2(toastX + 8.0f, ty + 10.0f),
+                      IM_COL32(255, 220, 60, fgA), "\xe2\x98\x85");  // UTF-8 ★
+
+        // "<Name> is now level X!" text
+        const char* displayName = toast.playerName.empty() ? "A player" : toast.playerName.c_str();
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%.18s is now level %u!", displayName, toast.newLevel);
+        bgDL->AddText(ImVec2(toastX + 26.0f, ty + 11.0f),
+                      IM_COL32(255, 230, 100, fgA), buf);
     }
 }
 
