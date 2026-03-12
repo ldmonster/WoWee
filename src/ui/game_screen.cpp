@@ -4969,6 +4969,27 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
         bool onCooldown = !slot.isReady();
         const bool onGCD = gameHandler.isGCDActive() && !onCooldown && !slot.isEmpty();
 
+        // Out-of-range check: red tint when a targeted spell cannot reach the current target.
+        // Only applies to SPELL slots with a known max range (>5 yd) and an active target.
+        bool outOfRange = false;
+        if (!slot.isEmpty() && slot.type == game::ActionBarSlot::SPELL && slot.id != 0
+            && !onCooldown && gameHandler.hasTarget()) {
+            uint32_t maxRange = spellbookScreen.getSpellMaxRange(slot.id, assetMgr);
+            if (maxRange > 5) {  // >5 yd = not melee/self
+                auto& em = gameHandler.getEntityManager();
+                auto playerEnt = em.getEntity(gameHandler.getPlayerGuid());
+                auto targetEnt = em.getEntity(gameHandler.getTargetGuid());
+                if (playerEnt && targetEnt) {
+                    float dx = playerEnt->getX() - targetEnt->getX();
+                    float dy = playerEnt->getY() - targetEnt->getY();
+                    float dz = playerEnt->getZ() - targetEnt->getZ();
+                    float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+                    if (dist > static_cast<float>(maxRange))
+                        outOfRange = true;
+                }
+            }
+        }
+
         auto getSpellName = [&](uint32_t spellId) -> std::string {
             std::string name = spellbookScreen.lookupSpellName(spellId, assetMgr);
             if (!name.empty()) return name;
@@ -5021,6 +5042,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
             ImVec4 bgColor(0.1f, 0.1f, 0.1f, 0.9f);
             if (onCooldown) { tintColor = ImVec4(0.4f, 0.4f, 0.4f, 0.8f); }
             else if (onGCD) { tintColor = ImVec4(0.6f, 0.6f, 0.6f, 0.85f); }
+            else if (outOfRange) { tintColor = ImVec4(0.85f, 0.35f, 0.35f, 0.9f); }
             clicked = ImGui::ImageButton("##icon",
                 (ImTextureID)(uintptr_t)iconTex,
                 ImVec2(slotSize, slotSize),
@@ -5028,6 +5050,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
                 bgColor, tintColor);
         } else {
             if (onCooldown)         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.8f));
+            else if (outOfRange)    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.15f, 0.15f, 0.9f));
             else if (slot.isEmpty())ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.15f, 0.15f, 0.8f));
             else                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.5f, 0.9f));
 
@@ -5136,6 +5159,9 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
                         }
                         ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Home: %s", mapName);
                     }
+                }
+                if (outOfRange) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "Out of range");
                 }
                 if (onCooldown) {
                     float cd = slot.cooldownRemaining;

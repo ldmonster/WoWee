@@ -54,6 +54,10 @@ public:
     uint32_t getDragSpellId() const { return dragSpellId_; }
     void consumeDragSpell() { draggingSpell_ = false; dragSpellId_ = 0; dragSpellIconTex_ = VK_NULL_HANDLE; }
 
+    /// Returns the max range in yards for a spell (0 if self-cast, unknown, or melee).
+    /// Triggers DBC load if needed. Used by the action bar for out-of-range tinting.
+    uint32_t getSpellMaxRange(uint32_t spellId, pipeline::AssetManager* assetManager);
+
     /// Returns a WoW spell link string if the user shift-clicked a spell, then clears it.
     std::string getAndClearPendingChatLink() {
         std::string out = std::move(pendingChatSpellLink_);

@@ -203,6 +203,15 @@ std::string SpellbookScreen::lookupSpellName(uint32_t spellId, pipeline::AssetMa
     return {};
 }
 
+uint32_t SpellbookScreen::getSpellMaxRange(uint32_t spellId, pipeline::AssetManager* assetManager) {
+    if (!dbcLoadAttempted) {
+        loadSpellDBC(assetManager);
+    }
+    auto it = spellData.find(spellId);
+    if (it != spellData.end()) return it->second.rangeIndex;
+    return 0;
+}
+
 void SpellbookScreen::loadSpellIconDBC(pipeline::AssetManager* assetManager) {
     if (iconDbLoaded) return;
     iconDbLoaded = true;
