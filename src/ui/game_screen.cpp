@@ -10683,17 +10683,62 @@ void GameScreen::renderMailWindow(game::GameHandler& gameHandler) {
                 // Attachments
                 if (!mail.attachments.empty()) {
                     ImGui::Text("Attachments: %zu", mail.attachments.size());
+                    ImDrawList* mailDraw = ImGui::GetWindowDrawList();
+                    constexpr float MAIL_SLOT = 34.0f;
                     for (size_t j = 0; j < mail.attachments.size(); ++j) {
                         const auto& att = mail.attachments[j];
                         ImGui::PushID(static_cast<int>(j));
 
                         auto* info = gameHandler.getItemInfo(att.itemId);
+                        game::ItemQuality quality = game::ItemQuality::COMMON;
+                        std::string name = "Item " + std::to_string(att.itemId);
+                        uint32_t displayInfoId = 0;
                         if (info && info->valid) {
-                            ImGui::BulletText("%s x%u", info->name.c_str(), att.stackCount);
+                            quality = static_cast<game::ItemQuality>(info->quality);
+                            name = info->name;
+                            displayInfoId = info->displayInfoId;
                         } else {
-                            ImGui::BulletText("Item %u x%u", att.itemId, att.stackCount);
                             gameHandler.ensureItemInfo(att.itemId);
                         }
+                        ImVec4 qc = InventoryScreen::getQualityColor(quality);
+                        ImU32 borderCol = ImGui::ColorConvertFloat4ToU32(qc);
+
+                        ImVec2 pos = ImGui::GetCursorScreenPos();
+                        VkDescriptorSet iconTex = displayInfoId
+                            ? inventoryScreen.getItemIcon(displayInfoId) : VK_NULL_HANDLE;
+                        if (iconTex) {
+                            mailDraw->AddImage((ImTextureID)(uintptr_t)iconTex, pos,
+                                              ImVec2(pos.x + MAIL_SLOT, pos.y + MAIL_SLOT));
+                            mailDraw->AddRect(pos, ImVec2(pos.x + MAIL_SLOT, pos.y + MAIL_SLOT),
+                                             borderCol, 0.0f, 0, 1.5f);
+                        } else {
+                            mailDraw->AddRectFilled(pos,
+                                ImVec2(pos.x + MAIL_SLOT, pos.y + MAIL_SLOT),
+                                IM_COL32(40, 35, 30, 220));
+                            mailDraw->AddRect(pos,
+                                ImVec2(pos.x + MAIL_SLOT, pos.y + MAIL_SLOT),
+                                borderCol, 0.0f, 0, 1.5f);
+                        }
+                        if (att.stackCount > 1) {
+                            char cnt[16];
+                            snprintf(cnt, sizeof(cnt), "%u", att.stackCount);
+                            float cw = ImGui::CalcTextSize(cnt).x;
+                            mailDraw->AddText(ImVec2(pos.x + 1.0f, pos.y + 1.0f),
+                                             IM_COL32(0, 0, 0, 200), cnt);
+                            mailDraw->AddText(
+                                ImVec2(pos.x + MAIL_SLOT - cw - 2.0f, pos.y + MAIL_SLOT - 14.0f),
+                                IM_COL32(255, 255, 255, 220), cnt);
+                        }
+
+                        ImGui::InvisibleButton("##mailatt", ImVec2(MAIL_SLOT, MAIL_SLOT));
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::BeginTooltip();
+                            ImGui::TextColored(qc, "%s", name.c_str());
+                            if (att.stackCount > 1) ImGui::Text("Count: %u", att.stackCount);
+                            ImGui::EndTooltip();
+                        }
+                        ImGui::SameLine();
+                        ImGui::TextColored(qc, "%s", name.c_str());
                         ImGui::SameLine();
                         if (ImGui::SmallButton("Take")) {
                             gameHandler.mailTakeItem(mail.messageId, att.slot);
