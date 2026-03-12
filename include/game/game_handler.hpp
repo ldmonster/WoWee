@@ -447,6 +447,8 @@ public:
     // AFK/DND status
     void toggleAfk(const std::string& message = "");
     void toggleDnd(const std::string& message = "");
+    bool isAfk() const { return afkStatus_; }
+    bool isDnd() const { return dndStatus_; }
     void replyToLastWhisper(const std::string& message);
     std::string getLastWhisperSender() const { return lastWhisperSender_; }
     void setLastWhisperSender(const std::string& name) { lastWhisperSender_ = name; }

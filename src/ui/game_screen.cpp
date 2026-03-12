@@ -2074,6 +2074,15 @@ void GameScreen::renderPlayerFrame(game::GameHandler& gameHandler) {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.9f, 0.2f, 0.2f, 1.0f), "DEAD");
         }
+        if (gameHandler.isAfk()) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.3f, 1.0f), "<AFK>");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Away from keyboard — /afk to cancel");
+        } else if (gameHandler.isDnd()) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.2f, 1.0f), "<DND>");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Do not disturb — /dnd to cancel");
+        }
 
         // Try to get real HP/mana from the player entity
         auto playerEntity = gameHandler.getEntityManager().getEntity(gameHandler.getPlayerGuid());
