@@ -313,6 +313,8 @@ const char* getQualityName(ItemQuality quality) {
         case ItemQuality::RARE:      return "Rare";
         case ItemQuality::EPIC:      return "Epic";
         case ItemQuality::LEGENDARY: return "Legendary";
+        case ItemQuality::ARTIFACT:  return "Artifact";
+        case ItemQuality::HEIRLOOM:  return "Heirloom";
         default:                     return "Unknown";
     }
 }

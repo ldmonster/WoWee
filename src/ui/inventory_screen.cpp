@@ -103,6 +103,8 @@ ImVec4 InventoryScreen::getQualityColor(game::ItemQuality quality) {
         case game::ItemQuality::RARE:      return ImVec4(0.0f, 0.44f, 0.87f, 1.0f);  // Blue
         case game::ItemQuality::EPIC:      return ImVec4(0.64f, 0.21f, 0.93f, 1.0f); // Purple
         case game::ItemQuality::LEGENDARY: return ImVec4(1.0f, 0.50f, 0.0f, 1.0f);   // Orange
+        case game::ItemQuality::ARTIFACT:  return ImVec4(0.90f, 0.80f, 0.50f, 1.0f); // Light gold
+        case game::ItemQuality::HEIRLOOM:  return ImVec4(0.90f, 0.80f, 0.50f, 1.0f); // Light gold
         default:                           return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
     }
 }
@@ -2268,6 +2270,8 @@ void InventoryScreen::renderItemSlot(game::Inventory& inventory, const game::Ite
                 case game::ItemQuality::RARE:      qualHex = "0070dd"; break;
                 case game::ItemQuality::EPIC:      qualHex = "a335ee"; break;
                 case game::ItemQuality::LEGENDARY: qualHex = "ff8000"; break;
+                case game::ItemQuality::ARTIFACT:  qualHex = "e6cc80"; break;
+                case game::ItemQuality::HEIRLOOM:  qualHex = "e6cc80"; break;
                 default: break;
             }
             char linkBuf[512];

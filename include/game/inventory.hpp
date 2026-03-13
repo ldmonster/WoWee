@@ -15,6 +15,8 @@ enum class ItemQuality : uint8_t {
     RARE = 3,       // Blue
     EPIC = 4,       // Purple
     LEGENDARY = 5,  // Orange
+    ARTIFACT = 6,   // Yellow (unused in 3.3.5a but valid quality value)
+    HEIRLOOM = 7,   // Yellow/gold (WotLK bind-on-account heirlooms)
 };
 
 enum class EquipSlot : uint8_t {
