@@ -8195,6 +8195,15 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     playerArmorRating_ = 0;
     std::fill(std::begin(playerResistances_), std::end(playerResistances_), 0);
     std::fill(std::begin(playerStats_), std::end(playerStats_), -1);
+    playerMeleeAP_ = -1;
+    playerRangedAP_ = -1;
+    playerDodgePct_ = -1.0f;
+    playerParryPct_ = -1.0f;
+    playerBlockPct_ = -1.0f;
+    playerCritPct_  = -1.0f;
+    playerRangedCritPct_ = -1.0f;
+    std::fill(std::begin(playerSpellCritPct_), std::end(playerSpellCritPct_), -1.0f);
+    std::fill(std::begin(playerCombatRatings_), std::end(playerCombatRatings_), -1);
     knownSpells.clear();
     spellCooldowns.clear();
     spellFlatMods_.clear();
@@ -10374,6 +10383,15 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                         fieldIndex(UF::UNIT_FIELD_STAT2), fieldIndex(UF::UNIT_FIELD_STAT3),
                         fieldIndex(UF::UNIT_FIELD_STAT4)
                     };
+                    const uint16_t ufMeleeAP   = fieldIndex(UF::UNIT_FIELD_ATTACK_POWER);
+                    const uint16_t ufRangedAP  = fieldIndex(UF::UNIT_FIELD_RANGED_ATTACK_POWER);
+                    const uint16_t ufBlockPct  = fieldIndex(UF::PLAYER_BLOCK_PERCENTAGE);
+                    const uint16_t ufDodgePct  = fieldIndex(UF::PLAYER_DODGE_PERCENTAGE);
+                    const uint16_t ufParryPct  = fieldIndex(UF::PLAYER_PARRY_PERCENTAGE);
+                    const uint16_t ufCritPct   = fieldIndex(UF::PLAYER_CRIT_PERCENTAGE);
+                    const uint16_t ufRCritPct  = fieldIndex(UF::PLAYER_RANGED_CRIT_PERCENTAGE);
+                    const uint16_t ufSCrit1    = fieldIndex(UF::PLAYER_SPELL_CRIT_PERCENTAGE1);
+                    const uint16_t ufRating1   = fieldIndex(UF::PLAYER_FIELD_COMBAT_RATING_1);
                     for (const auto& [key, val] : block.fields) {
                         if (key == ufPlayerXp) { playerXp_ = val; }
                         else if (key == ufPlayerNextXp) { playerNextLevelXp_ = val; }
@@ -10408,6 +10426,19 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                         else if (ufChosenTitle != 0xFFFF && key == ufChosenTitle) {
                             chosenTitleBit_ = static_cast<int32_t>(val);
                             LOG_DEBUG("PLAYER_CHOSEN_TITLE from update fields: ", chosenTitleBit_);
+                        }
+                        else if (ufMeleeAP  != 0xFFFF && key == ufMeleeAP)  { playerMeleeAP_  = static_cast<int32_t>(val); }
+                        else if (ufRangedAP != 0xFFFF && key == ufRangedAP) { playerRangedAP_ = static_cast<int32_t>(val); }
+                        else if (ufBlockPct != 0xFFFF && key == ufBlockPct) { std::memcpy(&playerBlockPct_, &val, 4); }
+                        else if (ufDodgePct != 0xFFFF && key == ufDodgePct) { std::memcpy(&playerDodgePct_, &val, 4); }
+                        else if (ufParryPct != 0xFFFF && key == ufParryPct) { std::memcpy(&playerParryPct_, &val, 4); }
+                        else if (ufCritPct  != 0xFFFF && key == ufCritPct)  { std::memcpy(&playerCritPct_,  &val, 4); }
+                        else if (ufRCritPct != 0xFFFF && key == ufRCritPct) { std::memcpy(&playerRangedCritPct_, &val, 4); }
+                        else if (ufSCrit1   != 0xFFFF && key >= ufSCrit1 && key < ufSCrit1 + 7) {
+                            std::memcpy(&playerSpellCritPct_[key - ufSCrit1], &val, 4);
+                        }
+                        else if (ufRating1  != 0xFFFF && key >= ufRating1 && key < ufRating1 + 25) {
+                            playerCombatRatings_[key - ufRating1] = static_cast<int32_t>(val);
                         }
                         else {
                             for (int si = 0; si < 5; ++si) {
@@ -10766,6 +10797,15 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                             fieldIndex(UF::UNIT_FIELD_STAT2), fieldIndex(UF::UNIT_FIELD_STAT3),
                             fieldIndex(UF::UNIT_FIELD_STAT4)
                         };
+                        const uint16_t ufMeleeAPV  = fieldIndex(UF::UNIT_FIELD_ATTACK_POWER);
+                        const uint16_t ufRangedAPV = fieldIndex(UF::UNIT_FIELD_RANGED_ATTACK_POWER);
+                        const uint16_t ufBlockPctV = fieldIndex(UF::PLAYER_BLOCK_PERCENTAGE);
+                        const uint16_t ufDodgePctV = fieldIndex(UF::PLAYER_DODGE_PERCENTAGE);
+                        const uint16_t ufParryPctV = fieldIndex(UF::PLAYER_PARRY_PERCENTAGE);
+                        const uint16_t ufCritPctV  = fieldIndex(UF::PLAYER_CRIT_PERCENTAGE);
+                        const uint16_t ufRCritPctV = fieldIndex(UF::PLAYER_RANGED_CRIT_PERCENTAGE);
+                        const uint16_t ufSCrit1V   = fieldIndex(UF::PLAYER_SPELL_CRIT_PERCENTAGE1);
+                        const uint16_t ufRating1V  = fieldIndex(UF::PLAYER_FIELD_COMBAT_RATING_1);
                         for (const auto& [key, val] : block.fields) {
                             if (key == ufPlayerXp) {
                                 playerXp_ = val;
@@ -10829,6 +10869,19 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                                     LOG_INFO("Player resurrected (PLAYER_FLAGS ghost cleared)");
                                     if (ghostStateCallback_) ghostStateCallback_(false);
                                 }
+                            }
+                            else if (ufMeleeAPV  != 0xFFFF && key == ufMeleeAPV)  { playerMeleeAP_  = static_cast<int32_t>(val); }
+                            else if (ufRangedAPV != 0xFFFF && key == ufRangedAPV) { playerRangedAP_ = static_cast<int32_t>(val); }
+                            else if (ufBlockPctV != 0xFFFF && key == ufBlockPctV) { std::memcpy(&playerBlockPct_, &val, 4); }
+                            else if (ufDodgePctV != 0xFFFF && key == ufDodgePctV) { std::memcpy(&playerDodgePct_, &val, 4); }
+                            else if (ufParryPctV != 0xFFFF && key == ufParryPctV) { std::memcpy(&playerParryPct_, &val, 4); }
+                            else if (ufCritPctV  != 0xFFFF && key == ufCritPctV)  { std::memcpy(&playerCritPct_,  &val, 4); }
+                            else if (ufRCritPctV != 0xFFFF && key == ufRCritPctV) { std::memcpy(&playerRangedCritPct_, &val, 4); }
+                            else if (ufSCrit1V   != 0xFFFF && key >= ufSCrit1V && key < ufSCrit1V + 7) {
+                                std::memcpy(&playerSpellCritPct_[key - ufSCrit1V], &val, 4);
+                            }
+                            else if (ufRating1V  != 0xFFFF && key >= ufRating1V && key < ufRating1V + 25) {
+                                playerCombatRatings_[key - ufRating1V] = static_cast<int32_t>(val);
                             }
                             else {
                                 for (int si = 0; si < 5; ++si) {

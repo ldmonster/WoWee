@@ -309,6 +309,31 @@ public:
         return playerStats_[idx];
     }
 
+    // Server-authoritative attack power (WotLK: UNIT_FIELD_ATTACK_POWER / RANGED).
+    // Returns -1 if not yet received.
+    int32_t getMeleeAttackPower()  const { return playerMeleeAP_; }
+    int32_t getRangedAttackPower() const { return playerRangedAP_; }
+
+    // Server-authoritative combat chance percentages (WotLK: PLAYER_* float fields).
+    // Returns -1.0f if not yet received.
+    float getDodgePct()  const { return playerDodgePct_; }
+    float getParryPct()  const { return playerParryPct_; }
+    float getBlockPct()  const { return playerBlockPct_; }
+    float getCritPct()   const { return playerCritPct_; }
+    float getRangedCritPct() const { return playerRangedCritPct_; }
+    // Spell crit by school (0=Physical,1=Holy,2=Fire,3=Nature,4=Frost,5=Shadow,6=Arcane)
+    float getSpellCritPct(int school = 1) const {
+        if (school < 0 || school > 6) return -1.0f;
+        return playerSpellCritPct_[school];
+    }
+
+    // Server-authoritative combat ratings (WotLK: PLAYER_FIELD_COMBAT_RATING_1+idx).
+    // Returns -1 if not yet received. Indices match AzerothCore CombatRating enum.
+    int32_t getCombatRating(int cr) const {
+        if (cr < 0 || cr > 24) return -1;
+        return playerCombatRatings_[cr];
+    }
+
     // Inventory
     Inventory& getInventory() { return inventory; }
     const Inventory& getInventory() const { return inventory; }
@@ -2792,6 +2817,16 @@ private:
     int32_t playerResistances_[6] = {};  // [0]=Holy,[1]=Fire,[2]=Nature,[3]=Frost,[4]=Shadow,[5]=Arcane
     // Server-authoritative primary stats: [0]=STR [1]=AGI [2]=STA [3]=INT [4]=SPI; -1 = not received yet
     int32_t playerStats_[5] = {-1, -1, -1, -1, -1};
+    // WotLK secondary combat stats (-1 = not yet received)
+    int32_t playerMeleeAP_    = -1;
+    int32_t playerRangedAP_   = -1;
+    float playerDodgePct_     = -1.0f;
+    float playerParryPct_     = -1.0f;
+    float playerBlockPct_     = -1.0f;
+    float playerCritPct_      = -1.0f;
+    float playerRangedCritPct_ = -1.0f;
+    float playerSpellCritPct_[7] = {-1.0f,-1.0f,-1.0f,-1.0f,-1.0f,-1.0f,-1.0f};
+    int32_t playerCombatRatings_[25] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
     // Some servers/custom clients shift update field indices. We can auto-detect coinage by correlating
     // money-notify deltas with update-field diffs and then overriding UF::PLAYER_FIELD_COINAGE at runtime.
     uint32_t pendingMoneyDelta_ = 0;

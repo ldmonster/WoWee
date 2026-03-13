@@ -149,7 +149,8 @@ private:
     void renderEquipmentPanel(game::Inventory& inventory);
     void renderBackpackPanel(game::Inventory& inventory, bool collapseEmptySections = false);
     void renderStatsPanel(game::Inventory& inventory, uint32_t playerLevel, int32_t serverArmor = 0,
-                          const int32_t* serverStats = nullptr, const int32_t* serverResists = nullptr);
+                          const int32_t* serverStats = nullptr, const int32_t* serverResists = nullptr,
+                          const game::GameHandler* gh = nullptr);
     void renderReputationPanel(game::GameHandler& gameHandler);
 
     void renderItemSlot(game::Inventory& inventory, const game::ItemSlot& slot,

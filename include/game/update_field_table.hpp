@@ -42,6 +42,10 @@ enum class UF : uint16_t {
     UNIT_FIELD_STAT4,         // Spirit
     UNIT_END,
 
+    // Unit combat fields (WotLK: PRIVATE+OWNER — only visible for the player character)
+    UNIT_FIELD_ATTACK_POWER,         // Melee attack power (int32)
+    UNIT_FIELD_RANGED_ATTACK_POWER,  // Ranged attack power (int32)
+
     // Player fields
     PLAYER_FLAGS,
     PLAYER_BYTES,
@@ -58,6 +62,15 @@ enum class UF : uint16_t {
     PLAYER_SKILL_INFO_START,
     PLAYER_EXPLORED_ZONES_START,
     PLAYER_CHOSEN_TITLE,         // Active title index (-1 = no title)
+
+    // Player combat stats (WotLK: PRIVATE — float values)
+    PLAYER_BLOCK_PERCENTAGE,         // Block chance %
+    PLAYER_DODGE_PERCENTAGE,         // Dodge chance %
+    PLAYER_PARRY_PERCENTAGE,         // Parry chance %
+    PLAYER_CRIT_PERCENTAGE,          // Melee crit chance %
+    PLAYER_RANGED_CRIT_PERCENTAGE,   // Ranged crit chance %
+    PLAYER_SPELL_CRIT_PERCENTAGE1,   // Spell crit chance % (first school; 7 consecutive float fields)
+    PLAYER_FIELD_COMBAT_RATING_1,    // First of 25 int32 combat rating slots (CR_* indices)
 
     // GameObject fields
     GAMEOBJECT_DISPLAYID,

@@ -1161,7 +1161,7 @@ void InventoryScreen::renderCharacterScreen(game::GameHandler& gameHandler) {
             const int32_t* serverStats = (stats[0] >= 0) ? stats : nullptr;
             int32_t resists[6];
             for (int i = 0; i < 6; ++i) resists[i] = gameHandler.getResistance(i + 1);
-            renderStatsPanel(inventory, gameHandler.getPlayerLevel(), gameHandler.getArmorRating(), serverStats, resists);
+            renderStatsPanel(inventory, gameHandler.getPlayerLevel(), gameHandler.getArmorRating(), serverStats, resists, &gameHandler);
 
             // Played time (shown if available, fetched on character screen open)
             uint32_t totalSec = gameHandler.getTotalTimePlayed();
@@ -1606,7 +1606,8 @@ void InventoryScreen::renderEquipmentPanel(game::Inventory& inventory) {
 
 void InventoryScreen::renderStatsPanel(game::Inventory& inventory, uint32_t playerLevel,
                                         int32_t serverArmor, const int32_t* serverStats,
-                                        const int32_t* serverResists) {
+                                        const int32_t* serverResists,
+                                        const game::GameHandler* gh) {
     // Sum equipment stats for item-query bonus display
     int32_t itemStr = 0, itemAgi = 0, itemSta = 0, itemInt = 0, itemSpi = 0;
     // Secondary stat sums from extraStats
@@ -1774,6 +1775,47 @@ void InventoryScreen::renderStatsPanel(game::Inventory& inventory, uint32_t play
                         "%s: %d", kResistNames[i], serverResists[i]);
                 }
             }
+        }
+    }
+
+    // Server-authoritative combat stats (WotLK update fields — only shown when received)
+    if (gh) {
+        int32_t meleeAP  = gh->getMeleeAttackPower();
+        int32_t rangedAP = gh->getRangedAttackPower();
+        float dodgePct   = gh->getDodgePct();
+        float parryPct   = gh->getParryPct();
+        float blockPct   = gh->getBlockPct();
+        float critPct    = gh->getCritPct();
+        float rCritPct   = gh->getRangedCritPct();
+        float sCritPct   = gh->getSpellCritPct(1);  // Holy school (avg proxy for spell crit)
+        // Hit rating (CR_HIT_MELEE = 5), expertise (CR_EXPERTISE = 23), haste (CR_HASTE_MELEE = 17)
+        int32_t hitRating   = gh->getCombatRating(5);
+        int32_t expertiseR  = gh->getCombatRating(23);
+        int32_t hasteR      = gh->getCombatRating(17);
+        int32_t armorPenR   = gh->getCombatRating(24);
+        int32_t resilR      = gh->getCombatRating(14);  // CR_CRIT_TAKEN_MELEE = Resilience
+
+        bool hasAny = (meleeAP >= 0 || dodgePct >= 0.0f || parryPct >= 0.0f ||
+                       blockPct >= 0.0f || critPct >= 0.0f || hitRating >= 0);
+        if (hasAny) {
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "Combat");
+            ImVec4 cyan(0.5f, 0.9f, 1.0f, 1.0f);
+            if (meleeAP  >= 0) ImGui::TextColored(cyan, "Attack Power: %d", meleeAP);
+            if (rangedAP >= 0 && rangedAP != meleeAP)
+                ImGui::TextColored(cyan, "Ranged Attack Power: %d", rangedAP);
+            if (dodgePct  >= 0.0f) ImGui::TextColored(cyan, "Dodge: %.2f%%", dodgePct);
+            if (parryPct  >= 0.0f) ImGui::TextColored(cyan, "Parry: %.2f%%", parryPct);
+            if (blockPct  >= 0.0f) ImGui::TextColored(cyan, "Block: %.2f%%", blockPct);
+            if (critPct   >= 0.0f) ImGui::TextColored(cyan, "Melee Crit: %.2f%%", critPct);
+            if (rCritPct  >= 0.0f) ImGui::TextColored(cyan, "Ranged Crit: %.2f%%", rCritPct);
+            if (sCritPct  >= 0.0f) ImGui::TextColored(cyan, "Spell Crit: %.2f%%", sCritPct);
+            if (hitRating   >= 0)  ImGui::TextColored(cyan, "Hit Rating: %d", hitRating);
+            if (expertiseR  >= 0)  ImGui::TextColored(cyan, "Expertise Rating: %d", expertiseR);
+            if (hasteR      >= 0)  ImGui::TextColored(cyan, "Haste Rating: %d", hasteR);
+            if (armorPenR   >= 0)  ImGui::TextColored(cyan, "Armor Penetration: %d", armorPenR);
+            if (resilR      >= 0)  ImGui::TextColored(cyan, "Resilience: %d", resilR);
         }
     }
 }
