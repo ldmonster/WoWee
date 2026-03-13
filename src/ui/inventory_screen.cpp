@@ -2930,6 +2930,46 @@ void InventoryScreen::renderItemTooltip(const game::ItemQueryResponseData& info,
             fIt != s_factionNames.end() ? fIt->second.c_str() : "Unknown Faction");
     }
 
+    // Class restriction (e.g. "Classes: Paladin, Warrior")
+    if (info.allowableClass != 0) {
+        static const struct { uint32_t mask; const char* name; } kClasses[] = {
+            { 1,    "Warrior" },
+            { 2,    "Paladin" },
+            { 4,    "Hunter" },
+            { 8,    "Rogue" },
+            { 16,   "Priest" },
+            { 32,   "Death Knight" },
+            { 64,   "Shaman" },
+            { 128,  "Mage" },
+            { 256,  "Warlock" },
+            { 1024, "Druid" },
+        };
+        // Count matching classes
+        int matchCount = 0;
+        for (const auto& kc : kClasses)
+            if (info.allowableClass & kc.mask) ++matchCount;
+        // Only show if restricted to a subset (not all classes)
+        if (matchCount > 0 && matchCount < 10) {
+            char classBuf[128] = "Classes: ";
+            bool first = true;
+            for (const auto& kc : kClasses) {
+                if (!(info.allowableClass & kc.mask)) continue;
+                if (!first) strncat(classBuf, ", ", sizeof(classBuf) - strlen(classBuf) - 1);
+                strncat(classBuf, kc.name, sizeof(classBuf) - strlen(classBuf) - 1);
+                first = false;
+            }
+            // Check if player's class is allowed
+            bool playerAllowed = true;
+            if (gameHandler_) {
+                uint8_t pc = gameHandler_->getPlayerClass();
+                uint32_t pmask = (pc > 0 && pc <= 10) ? (1u << (pc - 1)) : 0;
+                playerAllowed = (pmask == 0 || (info.allowableClass & pmask));
+            }
+            ImVec4 clColor = playerAllowed ? ImVec4(1.0f, 1.0f, 1.0f, 0.75f) : ImVec4(1.0f, 0.5f, 0.5f, 1.0f);
+            ImGui::TextColored(clColor, "%s", classBuf);
+        }
+    }
+
     // Spell effects
     for (const auto& sp : info.spells) {
         if (sp.spellId == 0) continue;
