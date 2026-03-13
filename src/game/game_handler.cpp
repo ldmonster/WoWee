@@ -7607,6 +7607,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 msg = "You have been removed from the group: " + reason;
             else if (reasonType == 1)
                 msg = "You have been removed from the group for being AFK.";
+            else if (reasonType == 2)
+                msg = "You have been removed from the group by vote.";
             addSystemChatMessage(msg);
             addUIError(msg);
             LOG_INFO("SMSG_KICK_REASON: reasonType=", reasonType,
@@ -15305,12 +15307,6 @@ void GameHandler::handleArenaTeamEvent(network::Packet& packet) {
     if (packet.getSize() - packet.getReadPos() < 1) return;
     uint8_t event = packet.readUInt8();
 
-    static const char* events[] = {
-        "joined", "left", "removed", "leader changed",
-        "disbanded", "created"
-    };
-    std::string eventName = (event < 6) ? events[event] : "unknown event";
-
     // Read string params (up to 3)
     uint8_t strCount = 0;
     if (packet.getSize() - packet.getReadPos() >= 1) {
@@ -15321,11 +15317,45 @@ void GameHandler::handleArenaTeamEvent(network::Packet& packet) {
     if (strCount >= 1 && packet.getSize() > packet.getReadPos()) param1 = packet.readString();
     if (strCount >= 2 && packet.getSize() > packet.getReadPos()) param2 = packet.readString();
 
-    std::string msg = "Arena team " + eventName;
-    if (!param1.empty()) msg += ": " + param1;
-    if (!param2.empty()) msg += " (" + param2 + ")";
+    // Build natural-language message based on event type
+    // Event params: 0=joined(name), 1=left(name), 2=removed(name,kicker),
+    //               3=leader_changed(new,old), 4=disbanded, 5=created(name)
+    std::string msg;
+    switch (event) {
+        case 0: // joined
+            msg = param1.empty() ? "A player has joined your arena team."
+                                 : param1 + " has joined your arena team.";
+            break;
+        case 1: // left
+            msg = param1.empty() ? "A player has left the arena team."
+                                 : param1 + " has left the arena team.";
+            break;
+        case 2: // removed
+            if (!param1.empty() && !param2.empty())
+                msg = param1 + " has been removed from the arena team by " + param2 + ".";
+            else if (!param1.empty())
+                msg = param1 + " has been removed from the arena team.";
+            else
+                msg = "A player has been removed from the arena team.";
+            break;
+        case 3: // leader changed
+            msg = param1.empty() ? "The arena team captain has changed."
+                                 : param1 + " is now the arena team captain.";
+            break;
+        case 4: // disbanded
+            msg = "Your arena team has been disbanded.";
+            break;
+        case 5: // created
+            msg = param1.empty() ? "Your arena team has been created."
+                                 : "Arena team \"" + param1 + "\" has been created.";
+            break;
+        default:
+            msg = "Arena team event " + std::to_string(event);
+            if (!param1.empty()) msg += ": " + param1;
+            break;
+    }
     addSystemChatMessage(msg);
-    LOG_INFO("Arena team event: ", eventName, " ", param1, " ", param2);
+    LOG_INFO("Arena team event: ", (int)event, " ", param1, " ", param2);
 }
 
 void GameHandler::handleArenaTeamStats(network::Packet& packet) {
