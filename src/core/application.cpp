@@ -4464,7 +4464,7 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
                                 glm::vec3 worldPos = glm::vec3(worldMatrix[3]);
 
                                 uint32_t doodadModelId = static_cast<uint32_t>(std::hash<std::string>{}(m2Path));
-                                m2Renderer->loadModel(m2Model, doodadModelId);
+                                if (!m2Renderer->loadModel(m2Model, doodadModelId)) continue;
                                 uint32_t doodadInstId = m2Renderer->createInstanceWithMatrix(doodadModelId, worldMatrix, worldPos);
                                 if (doodadInstId) m2Renderer->setSkipCollision(doodadInstId, true);
                                 loadedDoodads++;
