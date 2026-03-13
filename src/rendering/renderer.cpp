@@ -5159,6 +5159,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 m2Renderer->render(cmd, perFrameSet, *camera);
                 m2Renderer->renderSmokeParticles(cmd, perFrameSet);
                 m2Renderer->renderM2Particles(cmd, perFrameSet);
+                m2Renderer->renderM2Ribbons(cmd, perFrameSet);
                 vkEndCommandBuffer(cmd);
                 return std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - t0).count();
@@ -5344,6 +5345,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             m2Renderer->render(currentCmd, perFrameSet, *camera);
             m2Renderer->renderSmokeParticles(currentCmd, perFrameSet);
             m2Renderer->renderM2Particles(currentCmd, perFrameSet);
+            m2Renderer->renderM2Ribbons(currentCmd, perFrameSet);
             lastM2RenderMs = std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - m2Start).count();
         }

@@ -540,6 +540,54 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
             .build(device);
     }
 
+    // --- Build ribbon pipelines ---
+    // Vertex format: pos(3) + color(3) + alpha(1) + uv(2) = 9 floats = 36 bytes
+    {
+        rendering::VkShaderModule ribVert, ribFrag;
+        ribVert.loadFromFile(device, "assets/shaders/m2_ribbon.vert.spv");
+        ribFrag.loadFromFile(device, "assets/shaders/m2_ribbon.frag.spv");
+        if (ribVert.isValid() && ribFrag.isValid()) {
+            // Reuse particleTexLayout_ for set 1 (single texture sampler)
+            VkDescriptorSetLayout ribLayouts[] = {perFrameLayout, particleTexLayout_};
+            VkPipelineLayoutCreateInfo lci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            lci.setLayoutCount = 2;
+            lci.pSetLayouts = ribLayouts;
+            vkCreatePipelineLayout(device, &lci, nullptr, &ribbonPipelineLayout_);
+
+            VkVertexInputBindingDescription rBind{};
+            rBind.binding = 0;
+            rBind.stride = 9 * sizeof(float);
+            rBind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+            std::vector<VkVertexInputAttributeDescription> rAttrs = {
+                {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},                    // pos
+                {1, 0, VK_FORMAT_R32G32B32_SFLOAT, 3 * sizeof(float)},    // color
+                {2, 0, VK_FORMAT_R32_SFLOAT,       6 * sizeof(float)},    // alpha
+                {3, 0, VK_FORMAT_R32G32_SFLOAT,    7 * sizeof(float)},    // uv
+            };
+
+            auto buildRibbonPipeline = [&](VkPipelineColorBlendAttachmentState blend) -> VkPipeline {
+                return PipelineBuilder()
+                    .setShaders(ribVert.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
+                                ribFrag.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
+                    .setVertexInput({rBind}, rAttrs)
+                    .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP)
+                    .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+                    .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
+                    .setColorBlendAttachment(blend)
+                    .setMultisample(vkCtx_->getMsaaSamples())
+                    .setLayout(ribbonPipelineLayout_)
+                    .setRenderPass(mainPass)
+                    .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
+                    .build(device);
+            };
+
+            ribbonPipeline_         = buildRibbonPipeline(PipelineBuilder::blendAlpha());
+            ribbonAdditivePipeline_ = buildRibbonPipeline(PipelineBuilder::blendAdditive());
+        }
+        ribVert.destroy(); ribFrag.destroy();
+    }
+
     // Clean up shader modules
     m2Vert.destroy(); m2Frag.destroy();
     particleVert.destroy(); particleFrag.destroy();
@@ -570,6 +618,11 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
         bci.size = MAX_GLOW_SPRITES * 9 * sizeof(float);
         vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci, &glowVB_, &glowVBAlloc_, &allocInfo);
         glowVBMapped_ = allocInfo.pMappedData;
+
+        // Ribbon vertex buffer — triangle strip: pos(3)+color(3)+alpha(1)+uv(2)=9 floats/vert
+        bci.size = MAX_RIBBON_VERTS * 9 * sizeof(float);
+        vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci, &ribbonVB_, &ribbonVBAlloc_, &allocInfo);
+        ribbonVBMapped_ = allocInfo.pMappedData;
     }
 
     // --- Create white fallback texture ---
@@ -666,10 +719,11 @@ void M2Renderer::shutdown() {
     whiteTexture_.reset();
     glowTexture_.reset();
 
-    // Clean up particle buffers
+    // Clean up particle/ribbon buffers
     if (smokeVB_) { vmaDestroyBuffer(alloc, smokeVB_, smokeVBAlloc_); smokeVB_ = VK_NULL_HANDLE; }
     if (m2ParticleVB_) { vmaDestroyBuffer(alloc, m2ParticleVB_, m2ParticleVBAlloc_); m2ParticleVB_ = VK_NULL_HANDLE; }
     if (glowVB_) { vmaDestroyBuffer(alloc, glowVB_, glowVBAlloc_); glowVB_ = VK_NULL_HANDLE; }
+    if (ribbonVB_) { vmaDestroyBuffer(alloc, ribbonVB_, ribbonVBAlloc_); ribbonVB_ = VK_NULL_HANDLE; }
     smokeParticles.clear();
 
     // Destroy pipelines
@@ -681,10 +735,13 @@ void M2Renderer::shutdown() {
     destroyPipeline(particlePipeline_);
     destroyPipeline(particleAdditivePipeline_);
     destroyPipeline(smokePipeline_);
+    destroyPipeline(ribbonPipeline_);
+    destroyPipeline(ribbonAdditivePipeline_);
 
     if (pipelineLayout_) { vkDestroyPipelineLayout(device, pipelineLayout_, nullptr); pipelineLayout_ = VK_NULL_HANDLE; }
     if (particlePipelineLayout_) { vkDestroyPipelineLayout(device, particlePipelineLayout_, nullptr); particlePipelineLayout_ = VK_NULL_HANDLE; }
     if (smokePipelineLayout_) { vkDestroyPipelineLayout(device, smokePipelineLayout_, nullptr); smokePipelineLayout_ = VK_NULL_HANDLE; }
+    if (ribbonPipelineLayout_) { vkDestroyPipelineLayout(device, ribbonPipelineLayout_, nullptr); ribbonPipelineLayout_ = VK_NULL_HANDLE; }
 
     // Destroy descriptor pools and layouts
     if (materialDescPool_) { vkDestroyDescriptorPool(device, materialDescPool_, nullptr); materialDescPool_ = VK_NULL_HANDLE; }
@@ -719,6 +776,11 @@ void M2Renderer::destroyModelGPU(M2ModelGPU& model) {
         if (pSet) { vkFreeDescriptorSets(device, materialDescPool_, 1, &pSet); pSet = VK_NULL_HANDLE; }
     }
     model.particleTexSets.clear();
+    // Free ribbon texture descriptor sets
+    for (auto& rSet : model.ribbonTexSets) {
+        if (rSet) { vkFreeDescriptorSets(device, materialDescPool_, 1, &rSet); rSet = VK_NULL_HANDLE; }
+    }
+    model.ribbonTexSets.clear();
 }
 
 void M2Renderer::destroyInstanceBones(M2Instance& inst) {
@@ -1343,6 +1405,43 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
                 vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
             }
         }
+    }
+
+    // Copy ribbon emitter data and resolve textures
+    gpuModel.ribbonEmitters = model.ribbonEmitters;
+    if (!model.ribbonEmitters.empty()) {
+        VkDevice device = vkCtx_->getDevice();
+        gpuModel.ribbonTextures.resize(model.ribbonEmitters.size(), whiteTexture_.get());
+        gpuModel.ribbonTexSets.resize(model.ribbonEmitters.size(), VK_NULL_HANDLE);
+        for (size_t ri = 0; ri < model.ribbonEmitters.size(); ri++) {
+            // Resolve texture via textureLookup table
+            uint16_t texLookupIdx = model.ribbonEmitters[ri].textureIndex;
+            uint32_t texIdx = (texLookupIdx < model.textureLookup.size())
+                              ? model.textureLookup[texLookupIdx] : UINT32_MAX;
+            if (texIdx < allTextures.size() && allTextures[texIdx] != nullptr) {
+                gpuModel.ribbonTextures[ri] = allTextures[texIdx];
+            }
+            // Allocate descriptor set (reuse particleTexLayout_ = single sampler)
+            if (particleTexLayout_ && materialDescPool_) {
+                VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+                ai.descriptorPool = materialDescPool_;
+                ai.descriptorSetCount = 1;
+                ai.pSetLayouts = &particleTexLayout_;
+                if (vkAllocateDescriptorSets(device, &ai, &gpuModel.ribbonTexSets[ri]) == VK_SUCCESS) {
+                    VkTexture* tex = gpuModel.ribbonTextures[ri];
+                    VkDescriptorImageInfo imgInfo = tex->descriptorInfo();
+                    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                    write.dstSet = gpuModel.ribbonTexSets[ri];
+                    write.dstBinding = 0;
+                    write.descriptorCount = 1;
+                    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                    write.pImageInfo = &imgInfo;
+                    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+                }
+            }
+        }
+        LOG_DEBUG("  Ribbon emitters loaded: ", model.ribbonEmitters.size());
     }
 
     // Copy texture transform data for UV animation
@@ -2241,6 +2340,9 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         if (!instance.cachedModel) continue;
         emitParticles(instance, *instance.cachedModel, deltaTime);
         updateParticles(instance, deltaTime);
+        if (!instance.cachedModel->ribbonEmitters.empty()) {
+            updateRibbons(instance, *instance.cachedModel, deltaTime);
+        }
     }
 
 }
@@ -3375,6 +3477,214 @@ void M2Renderer::updateParticles(M2Instance& inst, float dt) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Ribbon emitter simulation
+// ---------------------------------------------------------------------------
+void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt) {
+    const auto& emitters = gpu.ribbonEmitters;
+    if (emitters.empty()) return;
+
+    // Grow per-instance state arrays if needed
+    if (inst.ribbonEdges.size() != emitters.size()) {
+        inst.ribbonEdges.resize(emitters.size());
+    }
+    if (inst.ribbonEdgeAccumulators.size() != emitters.size()) {
+        inst.ribbonEdgeAccumulators.resize(emitters.size(), 0.0f);
+    }
+
+    for (size_t ri = 0; ri < emitters.size(); ri++) {
+        const auto& em = emitters[ri];
+        auto& edges    = inst.ribbonEdges[ri];
+        auto& accum    = inst.ribbonEdgeAccumulators[ri];
+
+        // Determine bone world position for spine
+        glm::vec3 spineWorld = inst.position;
+        if (em.bone < inst.boneMatrices.size()) {
+            glm::vec4 local(em.position.x, em.position.y, em.position.z, 1.0f);
+            spineWorld = glm::vec3(inst.modelMatrix * inst.boneMatrices[em.bone] * local);
+        } else {
+            glm::vec4 local(em.position.x, em.position.y, em.position.z, 1.0f);
+            spineWorld = glm::vec3(inst.modelMatrix * local);
+        }
+
+        // Evaluate animated tracks (use first available sequence key, or fallback value)
+        auto getFloatVal = [&](const pipeline::M2AnimationTrack& track, float fallback) -> float {
+            for (const auto& seq : track.sequences) {
+                if (!seq.floatValues.empty()) return seq.floatValues[0];
+            }
+            return fallback;
+        };
+        auto getVec3Val = [&](const pipeline::M2AnimationTrack& track, glm::vec3 fallback) -> glm::vec3 {
+            for (const auto& seq : track.sequences) {
+                if (!seq.vec3Values.empty()) return seq.vec3Values[0];
+            }
+            return fallback;
+        };
+
+        float visibility  = getFloatVal(em.visibilityTrack, 1.0f);
+        float heightAbove = getFloatVal(em.heightAboveTrack, 0.5f);
+        float heightBelow = getFloatVal(em.heightBelowTrack, 0.5f);
+        glm::vec3 color   = getVec3Val(em.colorTrack, glm::vec3(1.0f));
+        float alpha       = getFloatVal(em.alphaTrack, 1.0f);
+
+        // Age existing edges and remove expired ones
+        for (auto& e : edges) {
+            e.age += dt;
+            // Apply gravity
+            if (em.gravity != 0.0f) {
+                e.worldPos.z -= em.gravity * dt * dt * 0.5f;
+            }
+        }
+        while (!edges.empty() && edges.front().age >= em.edgeLifetime) {
+            edges.pop_front();
+        }
+
+        // Emit new edges based on edgesPerSecond
+        if (visibility > 0.5f) {
+            accum += em.edgesPerSecond * dt;
+            while (accum >= 1.0f) {
+                accum -= 1.0f;
+                M2Instance::RibbonEdge e;
+                e.worldPos    = spineWorld;
+                e.color       = color;
+                e.alpha       = alpha;
+                e.heightAbove = heightAbove;
+                e.heightBelow = heightBelow;
+                e.age         = 0.0f;
+                edges.push_back(e);
+                // Cap trail length
+                if (edges.size() > 128) edges.pop_front();
+            }
+        } else {
+            accum = 0.0f;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ribbon rendering
+// ---------------------------------------------------------------------------
+void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSet) {
+    if (!ribbonPipeline_ || !ribbonVB_ || !ribbonVBMapped_) return;
+
+    // Build camera right vector for billboard orientation
+    // For ribbons we orient the quad strip along the spine with screen-space up.
+    // Simple approach: use world-space Z=up for the ribbon cross direction.
+    const glm::vec3 upWorld(0.0f, 0.0f, 1.0f);
+
+    float* dst     = static_cast<float*>(ribbonVBMapped_);
+    size_t written = 0;
+
+    struct DrawCall {
+        VkDescriptorSet texSet;
+        VkPipeline      pipeline;
+        uint32_t        firstVertex;
+        uint32_t        vertexCount;
+    };
+    std::vector<DrawCall> draws;
+
+    for (const auto& inst : instances) {
+        if (!inst.cachedModel) continue;
+        const auto& gpu = *inst.cachedModel;
+        if (gpu.ribbonEmitters.empty()) continue;
+
+        for (size_t ri = 0; ri < gpu.ribbonEmitters.size(); ri++) {
+            if (ri >= inst.ribbonEdges.size()) continue;
+            const auto& edges = inst.ribbonEdges[ri];
+            if (edges.size() < 2) continue;
+
+            const auto& em = gpu.ribbonEmitters[ri];
+
+            // Select blend pipeline based on material blend mode
+            bool additive = false;
+            if (em.materialIndex < gpu.batches.size()) {
+                additive = (gpu.batches[em.materialIndex].blendMode >= 3);
+            }
+            VkPipeline pipe = additive ? ribbonAdditivePipeline_ : ribbonPipeline_;
+
+            // Descriptor set for texture
+            VkDescriptorSet texSet = (ri < gpu.ribbonTexSets.size())
+                                     ? gpu.ribbonTexSets[ri] : VK_NULL_HANDLE;
+            if (!texSet) continue;
+
+            uint32_t firstVert = static_cast<uint32_t>(written);
+
+            // Emit triangle strip: 2 verts per edge (top + bottom)
+            for (size_t ei = 0; ei < edges.size(); ei++) {
+                if (written + 2 > MAX_RIBBON_VERTS) break;
+                const auto& e = edges[ei];
+                float t = (em.edgeLifetime > 0.0f)
+                          ? 1.0f - (e.age / em.edgeLifetime) : 1.0f;
+                float a = e.alpha * t;
+                float u = static_cast<float>(ei) / static_cast<float>(edges.size() - 1);
+
+                // Top vertex (above spine along upWorld)
+                glm::vec3 top = e.worldPos + upWorld * e.heightAbove;
+                dst[written * 9 + 0] = top.x;
+                dst[written * 9 + 1] = top.y;
+                dst[written * 9 + 2] = top.z;
+                dst[written * 9 + 3] = e.color.r;
+                dst[written * 9 + 4] = e.color.g;
+                dst[written * 9 + 5] = e.color.b;
+                dst[written * 9 + 6] = a;
+                dst[written * 9 + 7] = u;
+                dst[written * 9 + 8] = 0.0f; // v = top
+                written++;
+
+                // Bottom vertex (below spine)
+                glm::vec3 bot = e.worldPos - upWorld * e.heightBelow;
+                dst[written * 9 + 0] = bot.x;
+                dst[written * 9 + 1] = bot.y;
+                dst[written * 9 + 2] = bot.z;
+                dst[written * 9 + 3] = e.color.r;
+                dst[written * 9 + 4] = e.color.g;
+                dst[written * 9 + 5] = e.color.b;
+                dst[written * 9 + 6] = a;
+                dst[written * 9 + 7] = u;
+                dst[written * 9 + 8] = 1.0f; // v = bottom
+                written++;
+            }
+
+            uint32_t vertCount = static_cast<uint32_t>(written) - firstVert;
+            if (vertCount >= 4) {
+                draws.push_back({texSet, pipe, firstVert, vertCount});
+            } else {
+                // Rollback if too few verts
+                written = firstVert;
+            }
+        }
+    }
+
+    if (draws.empty() || written == 0) return;
+
+    VkExtent2D ext = vkCtx_->getSwapchainExtent();
+    VkViewport vp{};
+    vp.x = 0; vp.y = 0;
+    vp.width  = static_cast<float>(ext.width);
+    vp.height = static_cast<float>(ext.height);
+    vp.minDepth = 0.0f; vp.maxDepth = 1.0f;
+    VkRect2D sc{};
+    sc.offset = {0, 0};
+    sc.extent = ext;
+    vkCmdSetViewport(cmd, 0, 1, &vp);
+    vkCmdSetScissor(cmd, 0, 1, &sc);
+
+    VkPipeline lastPipe = VK_NULL_HANDLE;
+    for (const auto& dc : draws) {
+        if (dc.pipeline != lastPipe) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, dc.pipeline);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    ribbonPipelineLayout_, 0, 1, &perFrameSet, 0, nullptr);
+            lastPipe = dc.pipeline;
+        }
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                ribbonPipelineLayout_, 1, 1, &dc.texSet, 0, nullptr);
+        VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &ribbonVB_, &offset);
+        vkCmdDraw(cmd, dc.vertexCount, 1, dc.firstVertex, 0);
+    }
+}
+
 void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrameSet) {
     if (!particlePipeline_ || !m2ParticleVB_) return;
 
@@ -4505,6 +4815,8 @@ void M2Renderer::recreatePipelines() {
     if (particlePipeline_)          { vkDestroyPipeline(device, particlePipeline_, nullptr); particlePipeline_ = VK_NULL_HANDLE; }
     if (particleAdditivePipeline_)  { vkDestroyPipeline(device, particleAdditivePipeline_, nullptr); particleAdditivePipeline_ = VK_NULL_HANDLE; }
     if (smokePipeline_)             { vkDestroyPipeline(device, smokePipeline_, nullptr); smokePipeline_ = VK_NULL_HANDLE; }
+    if (ribbonPipeline_)            { vkDestroyPipeline(device, ribbonPipeline_, nullptr); ribbonPipeline_ = VK_NULL_HANDLE; }
+    if (ribbonAdditivePipeline_)    { vkDestroyPipeline(device, ribbonAdditivePipeline_, nullptr); ribbonAdditivePipeline_ = VK_NULL_HANDLE; }
 
     // --- Load shaders ---
     rendering::VkShaderModule m2Vert, m2Frag;
@@ -4622,6 +4934,46 @@ void M2Renderer::recreatePipelines() {
             .setRenderPass(mainPass)
             .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
             .build(device);
+    }
+
+    // --- Ribbon pipelines ---
+    {
+        rendering::VkShaderModule ribVert, ribFrag;
+        ribVert.loadFromFile(device, "assets/shaders/m2_ribbon.vert.spv");
+        ribFrag.loadFromFile(device, "assets/shaders/m2_ribbon.frag.spv");
+        if (ribVert.isValid() && ribFrag.isValid()) {
+            VkVertexInputBindingDescription rBind{};
+            rBind.binding = 0;
+            rBind.stride = 9 * sizeof(float);
+            rBind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+            std::vector<VkVertexInputAttributeDescription> rAttrs = {
+                {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
+                {1, 0, VK_FORMAT_R32G32B32_SFLOAT, 3 * sizeof(float)},
+                {2, 0, VK_FORMAT_R32_SFLOAT,       6 * sizeof(float)},
+                {3, 0, VK_FORMAT_R32G32_SFLOAT,    7 * sizeof(float)},
+            };
+
+            auto buildRibbonPipeline = [&](VkPipelineColorBlendAttachmentState blend) -> VkPipeline {
+                return PipelineBuilder()
+                    .setShaders(ribVert.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
+                                ribFrag.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
+                    .setVertexInput({rBind}, rAttrs)
+                    .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP)
+                    .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
+                    .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL)
+                    .setColorBlendAttachment(blend)
+                    .setMultisample(vkCtx_->getMsaaSamples())
+                    .setLayout(ribbonPipelineLayout_)
+                    .setRenderPass(mainPass)
+                    .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
+                    .build(device);
+            };
+
+            ribbonPipeline_         = buildRibbonPipeline(PipelineBuilder::blendAlpha());
+            ribbonAdditivePipeline_ = buildRibbonPipeline(PipelineBuilder::blendAdditive());
+        }
+        ribVert.destroy(); ribFrag.destroy();
     }
 
     m2Vert.destroy(); m2Frag.destroy();

@@ -165,6 +165,29 @@ struct M2ParticleEmitter {
     bool enabled = true;
 };
 
+// Ribbon emitter definition parsed from M2 (WotLK format)
+struct M2RibbonEmitter {
+    int32_t  ribbonId   = 0;
+    uint32_t bone       = 0;        // Bone that drives the ribbon spine
+    glm::vec3 position{0.0f};       // Offset from bone pivot
+
+    uint16_t textureIndex  = 0;     // First texture lookup index
+    uint16_t materialIndex = 0;     // First material lookup index (blend mode)
+
+    // Animated tracks
+    M2AnimationTrack colorTrack;       // RGB 0..1
+    M2AnimationTrack alphaTrack;       // float 0..1 (stored as fixed16 on disk)
+    M2AnimationTrack heightAboveTrack; // Half-width above bone
+    M2AnimationTrack heightBelowTrack; // Half-width below bone
+    M2AnimationTrack visibilityTrack;  // 0=hidden, 1=visible
+
+    float edgesPerSecond = 15.0f;   // How many edge points are generated per second
+    float edgeLifetime   = 0.5f;    // Seconds before edges expire
+    float gravity        = 0.0f;    // Downward pull on edges per s²
+    uint16_t textureRows = 1;
+    uint16_t textureCols = 1;
+};
+
 // Complete M2 model structure
 struct M2Model {
     // Model metadata
@@ -212,6 +235,9 @@ struct M2Model {
 
     // Particle emitters
     std::vector<M2ParticleEmitter> particleEmitters;
+
+    // Ribbon emitters
+    std::vector<M2RibbonEmitter> ribbonEmitters;
 
     // Collision mesh (simplified geometry for physics)
     std::vector<glm::vec3> collisionVertices;

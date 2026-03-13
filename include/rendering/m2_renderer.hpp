@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <deque>
 #include <string>
 #include <optional>
 #include <random>
@@ -130,6 +131,11 @@ struct M2ModelGPU {
     std::vector<VkTexture*> particleTextures;    // Resolved Vulkan textures per emitter
     std::vector<VkDescriptorSet> particleTexSets; // Pre-allocated descriptor sets per emitter (stable, avoids per-frame alloc)
 
+    // Ribbon emitter data (kept from M2Model)
+    std::vector<pipeline::M2RibbonEmitter> ribbonEmitters;
+    std::vector<VkTexture*> ribbonTextures;       // Resolved texture per ribbon emitter
+    std::vector<VkDescriptorSet> ribbonTexSets;   // Descriptor sets per ribbon emitter
+
     // Texture transform data for UV animation
     std::vector<pipeline::M2TextureTransform> textureTransforms;
     std::vector<uint16_t> textureTransformLookup;
@@ -179,6 +185,19 @@ struct M2Instance {
     // Particle emitter state
     std::vector<float> emitterAccumulators;  // fractional particle counter per emitter
     std::vector<M2Particle> particles;
+
+    // Ribbon emitter state
+    struct RibbonEdge {
+        glm::vec3 worldPos;   // Spine world position when this edge was born
+        glm::vec3 color;      // Interpolated color at birth
+        float     alpha;      // Interpolated alpha at birth
+        float     heightAbove;// Half-width above spine
+        float     heightBelow;// Half-width below spine
+        float     age;        // Seconds since spawned
+    };
+    // One deque of edges per ribbon emitter on this instance
+    std::vector<std::deque<RibbonEdge>> ribbonEdges;
+    std::vector<float> ribbonEdgeAccumulators; // fractional edge counter per emitter
 
     // Cached model flags (set at creation to avoid per-frame hash lookups)
     bool cachedHasAnimation = false;
@@ -295,6 +314,11 @@ public:
      */
     void renderSmokeParticles(VkCommandBuffer cmd, VkDescriptorSet perFrameSet);
 
+    /**
+     * Render M2 ribbon emitters (spell trails / wing effects)
+     */
+    void renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSet);
+
     void setInstancePosition(uint32_t instanceId, const glm::vec3& position);
     void setInstanceTransform(uint32_t instanceId, const glm::mat4& transform);
     void setInstanceAnimationFrozen(uint32_t instanceId, bool frozen);
@@ -374,6 +398,11 @@ private:
     VkPipeline smokePipeline_ = VK_NULL_HANDLE;           // Smoke particles
     VkPipelineLayout smokePipelineLayout_ = VK_NULL_HANDLE;
 
+    // Ribbon pipelines (additive + alpha-blend)
+    VkPipeline ribbonPipeline_ = VK_NULL_HANDLE;          // Alpha-blend ribbons
+    VkPipeline ribbonAdditivePipeline_ = VK_NULL_HANDLE;  // Additive ribbons
+    VkPipelineLayout ribbonPipelineLayout_ = VK_NULL_HANDLE;
+
     // Descriptor set layouts
     VkDescriptorSetLayout materialSetLayout_ = VK_NULL_HANDLE;  // set 1
     VkDescriptorSetLayout boneSetLayout_ = VK_NULL_HANDLE;      // set 2
@@ -384,6 +413,12 @@ private:
     VkDescriptorPool boneDescPool_ = VK_NULL_HANDLE;
     static constexpr uint32_t MAX_MATERIAL_SETS = 8192;
     static constexpr uint32_t MAX_BONE_SETS = 8192;
+
+    // Dynamic ribbon vertex buffer (CPU-written triangle strip)
+    static constexpr size_t MAX_RIBBON_VERTS = 2048;  // 9 floats each
+    ::VkBuffer ribbonVB_ = VK_NULL_HANDLE;
+    VmaAllocation ribbonVBAlloc_ = VK_NULL_HANDLE;
+    void* ribbonVBMapped_ = nullptr;
 
     // Dynamic particle buffers
     ::VkBuffer smokeVB_ = VK_NULL_HANDLE;
@@ -535,6 +570,7 @@ private:
     glm::vec3 interpFBlockVec3(const pipeline::M2FBlock& fb, float lifeRatio);
     void emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt);
     void updateParticles(M2Instance& inst, float dt);
+    void updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt);
 
     // Helper to allocate descriptor sets
     VkDescriptorSet allocateMaterialSet();
