@@ -17365,6 +17365,7 @@ void GameHandler::handleGuildQueryResponse(network::Packet& packet) {
     GuildQueryResponseData data;
     if (!packetParsers_->parseGuildQueryResponse(packet, data)) return;
 
+    const bool wasUnknown = guildName_.empty();
     guildName_ = data.guildName;
     guildQueryData_ = data;
     guildRankNames_.clear();
@@ -17372,7 +17373,10 @@ void GameHandler::handleGuildQueryResponse(network::Packet& packet) {
         guildRankNames_.push_back(data.rankNames[i]);
     }
     LOG_INFO("Guild name set to: ", guildName_);
-    addSystemChatMessage("Guild: <" + guildName_ + ">");
+    // Only announce once — when we first learn our own guild name at login.
+    // Subsequent queries (e.g. querying other players' guilds) are silent.
+    if (wasUnknown && !guildName_.empty())
+        addSystemChatMessage("Guild: <" + guildName_ + ">");
 }
 
 void GameHandler::handleGuildEvent(network::Packet& packet) {
@@ -17471,12 +17475,73 @@ void GameHandler::handleGuildCommandResult(network::Packet& packet) {
     GuildCommandResultData data;
     if (!GuildCommandResultParser::parse(packet, data)) return;
 
-    if (data.errorCode != 0) {
-        std::string msg = "Guild command failed";
+    // command: 0=CREATE, 1=INVITE, 2=QUIT, 3=FOUNDER
+    if (data.errorCode == 0) {
+        switch (data.command) {
+            case 0: // CREATE
+                addSystemChatMessage("Guild created.");
+                break;
+            case 1: // INVITE — invited another player
+                if (!data.name.empty())
+                    addSystemChatMessage("You have invited " + data.name + " to the guild.");
+                break;
+            case 2: // QUIT — player successfully left
+                addSystemChatMessage("You have left the guild.");
+                guildName_.clear();
+                guildRankNames_.clear();
+                guildRoster_ = GuildRosterData{};
+                hasGuildRoster_ = false;
+                break;
+            default:
+                break;
+        }
+        return;
+    }
+
+    // Error codes from AzerothCore SharedDefines.h GuildCommandError
+    const char* errStr = nullptr;
+    switch (data.errorCode) {
+        case 2:  errStr = "You are not in a guild."; break;
+        case 3:  errStr = "That player is not in a guild."; break;
+        case 4:  errStr = "No player named \"%s\" is online."; break;
+        case 7:  errStr = "You are the guild leader."; break;
+        case 8:  errStr = "You must transfer leadership before leaving."; break;
+        case 11: errStr = "\"%s\" is already in a guild."; break;
+        case 13: errStr = "You are already in a guild."; break;
+        case 14: errStr = "\"%s\" has already been invited to a guild."; break;
+        case 15: errStr = "You cannot invite yourself."; break;
+        case 16:
+        case 17: errStr = "You are not the guild leader."; break;
+        case 18: errStr = "That player's rank is too high to remove."; break;
+        case 19: errStr = "You cannot remove someone with a higher rank."; break;
+        case 20: errStr = "Guild ranks are locked."; break;
+        case 21: errStr = "That rank is in use."; break;
+        case 22: errStr = "That player is ignoring you."; break;
+        case 25: errStr = "Insufficient guild bank withdrawal quota."; break;
+        case 26: errStr = "Guild doesn't have enough money."; break;
+        case 28: errStr = "Guild bank is full."; break;
+        case 31: errStr = "Too many guild ranks."; break;
+        case 37: errStr = "That player is the guild leader."; break;
+        case 49: errStr = "Guild reputation is too low."; break;
+        default: break;
+    }
+
+    std::string msg;
+    if (errStr) {
+        // Substitute %s with player name where applicable
+        std::string fmt = errStr;
+        auto pos = fmt.find("%s");
+        if (pos != std::string::npos && !data.name.empty())
+            fmt.replace(pos, 2, data.name);
+        else if (pos != std::string::npos)
+            fmt.replace(pos, 2, "that player");
+        msg = fmt;
+    } else {
+        msg = "Guild command failed";
         if (!data.name.empty()) msg += " for " + data.name;
         msg += " (error " + std::to_string(data.errorCode) + ")";
-        addSystemChatMessage(msg);
     }
+    addSystemChatMessage(msg);
 }
 
 // ============================================================
