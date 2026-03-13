@@ -113,5 +113,8 @@
     "Threshold0": 38, "Threshold1": 39, "Threshold2": 40, "Threshold3": 41,
     "Threshold4": 42, "Threshold5": 43, "Threshold6": 44, "Threshold7": 45,
     "Threshold8": 46, "Threshold9": 47
+  },
+  "LFGDungeons": {
+    "ID": 0, "Name": 1
   }
 }

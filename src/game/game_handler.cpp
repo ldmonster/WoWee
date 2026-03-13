@@ -14809,7 +14809,13 @@ void GameHandler::handleLfgJoinResult(network::Packet& packet) {
         // Success — state tells us what phase we're entering
         lfgState_ = static_cast<LfgState>(state);
         LOG_INFO("SMSG_LFG_JOIN_RESULT: success, state=", static_cast<int>(state));
-        addSystemChatMessage("Dungeon Finder: Joined the queue.");
+        {
+            std::string dName = getLfgDungeonName(lfgDungeonId_);
+            if (!dName.empty())
+                addSystemChatMessage("Dungeon Finder: Joined the queue for " + dName + ".");
+            else
+                addSystemChatMessage("Dungeon Finder: Joined the queue.");
+        }
     } else {
         const char* msg = lfgJoinResultString(result);
         std::string errMsg = std::string("Dungeon Finder: ") + (msg ? msg : "Join failed.");
@@ -14860,15 +14866,25 @@ void GameHandler::handleLfgProposalUpdate(network::Packet& packet) {
             lfgProposalId_ = 0;
             addSystemChatMessage("Dungeon Finder: Group proposal failed.");
             break;
-        case 1:
+        case 1: {
             lfgState_      = LfgState::InDungeon;
             lfgProposalId_ = 0;
-            addSystemChatMessage("Dungeon Finder: Group found! Entering dungeon...");
+            std::string dName = getLfgDungeonName(dungeonId);
+            if (!dName.empty())
+                addSystemChatMessage("Dungeon Finder: Group found for " + dName + "! Entering dungeon...");
+            else
+                addSystemChatMessage("Dungeon Finder: Group found! Entering dungeon...");
             break;
-        case 2:
+        }
+        case 2: {
             lfgState_ = LfgState::Proposal;
-            addSystemChatMessage("Dungeon Finder: A group has been found. Accept or decline.");
+            std::string dName = getLfgDungeonName(dungeonId);
+            if (!dName.empty())
+                addSystemChatMessage("Dungeon Finder: A group has been found for " + dName + ". Accept or decline.");
+            else
+                addSystemChatMessage("Dungeon Finder: A group has been found. Accept or decline.");
             break;
+        }
         default:
             break;
     }
@@ -23116,6 +23132,42 @@ std::string GameHandler::getMapName(uint32_t mapId) const {
     const_cast<GameHandler*>(this)->loadMapNameCache();
     auto it = mapNameCache_.find(mapId);
     return (it != mapNameCache_.end()) ? it->second : std::string{};
+}
+
+// ---------------------------------------------------------------------------
+// LFG dungeon name cache (WotLK: LFGDungeons.dbc)
+// ---------------------------------------------------------------------------
+
+void GameHandler::loadLfgDungeonDbc() {
+    if (lfgDungeonNameCacheLoaded_) return;
+    lfgDungeonNameCacheLoaded_ = true;
+
+    auto* am = core::Application::getInstance().getAssetManager();
+    if (!am || !am->isInitialized()) return;
+
+    auto dbc = am->loadDBC("LFGDungeons.dbc");
+    if (!dbc || !dbc->isLoaded()) return;
+
+    const auto* layout = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("LFGDungeons") : nullptr;
+    const uint32_t idField   = layout ? (*layout)["ID"]   : 0;
+    const uint32_t nameField = layout ? (*layout)["Name"] : 1;
+
+    for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+        uint32_t id = dbc->getUInt32(i, idField);
+        if (id == 0) continue;
+        std::string name = dbc->getString(i, nameField);
+        if (!name.empty())
+            lfgDungeonNameCache_[id] = std::move(name);
+    }
+    LOG_INFO("LFGDungeons.dbc: loaded ", lfgDungeonNameCache_.size(), " dungeon names");
+}
+
+std::string GameHandler::getLfgDungeonName(uint32_t dungeonId) const {
+    if (dungeonId == 0) return {};
+    const_cast<GameHandler*>(this)->loadLfgDungeonDbc();
+    auto it = lfgDungeonNameCache_.find(dungeonId);
+    return (it != lfgDungeonNameCache_.end()) ? it->second : std::string{};
 }
 
 // ---------------------------------------------------------------------------

@@ -2977,6 +2977,12 @@ private:
     bool mapNameCacheLoaded_ = false;
     void loadMapNameCache();
     std::string getMapName(uint32_t mapId) const;
+
+    // LFG dungeon name cache (lazy-loaded from LFGDungeons.dbc; WotLK only)
+    std::unordered_map<uint32_t, std::string> lfgDungeonNameCache_;
+    bool lfgDungeonNameCacheLoaded_ = false;
+    void loadLfgDungeonDbc();
+    std::string getLfgDungeonName(uint32_t dungeonId) const;
     std::vector<TrainerTab> trainerTabs_;
     void handleTrainerList(network::Packet& packet);
     void loadSpellNameCache();
