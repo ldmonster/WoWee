@@ -3546,6 +3546,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 bool wasSet = hasHomeBind_;
                 hasHomeBind_ = true;
                 homeBindMapId_ = data.mapId;
+                homeBindZoneId_ = data.zoneId;
                 homeBindPos_ = canonical;
                 if (bindPointCallback_) {
                     bindPointCallback_(data.mapId, canonical.x, canonical.y, canonical.z);

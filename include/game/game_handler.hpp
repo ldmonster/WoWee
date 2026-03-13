@@ -218,6 +218,7 @@ public:
         pos = homeBindPos_;
         return true;
     }
+    uint32_t getHomeBindZoneId() const { return homeBindZoneId_; }
 
     /**
      * Send a movement packet
@@ -2466,6 +2467,7 @@ private:
     uint32_t currentMapId_ = 0;
     bool hasHomeBind_ = false;
     uint32_t homeBindMapId_ = 0;
+    uint32_t homeBindZoneId_ = 0;
     glm::vec3 homeBindPos_{0.0f};
 
     // ---- Phase 1: Name caches ----
