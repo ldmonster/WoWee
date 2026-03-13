@@ -12701,7 +12701,7 @@ void GameHandler::handleInspectResults(network::Packet& packet) {
                 if (packet.getSize() - packet.getReadPos() < 5) break;
                 uint32_t talentId = packet.readUInt32();
                 uint8_t  rank     = packet.readUInt8();
-                learnedTalents_[g][talentId] = rank;
+                learnedTalents_[g][talentId] = rank + 1u; // wire sends 0-indexed; store 1-indexed
             }
             if (packet.getSize() - packet.getReadPos() < 1) break;
             learnedGlyphs_[g].fill(0);
@@ -16545,7 +16545,7 @@ void GameHandler::handleTalentsInfo(network::Packet& packet) {
             if (packet.getSize() - packet.getReadPos() < 5) break;
             uint32_t talentId = packet.readUInt32();
             uint8_t  rank     = packet.readUInt8();
-            learnedTalents_[g][talentId] = rank;
+            learnedTalents_[g][talentId] = rank + 1u; // wire sends 0-indexed; store 1-indexed
         }
         learnedGlyphs_[g].fill(0);
         if (packet.getSize() - packet.getReadPos() < 1) break;

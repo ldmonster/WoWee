@@ -303,7 +303,7 @@ void TalentScreen::renderTalentTree(game::GameHandler& gameHandler, uint32_t tab
             if (fromIt == talentPositions.end() || toIt == talentPositions.end()) continue;
 
             uint8_t prereqRank = gameHandler.getTalentRank(talent->prereqTalent[i]);
-            bool met = prereqRank >= talent->prereqRank[i];
+            bool met = prereqRank > talent->prereqRank[i]; // storage 1-indexed, DBC 0-indexed
             ImU32 lineCol = met ? IM_COL32(100, 220, 100, 200) : IM_COL32(120, 120, 120, 150);
 
             ImVec2 from = fromIt->second.center;
@@ -374,7 +374,7 @@ void TalentScreen::renderTalent(game::GameHandler& gameHandler,
     for (int i = 0; i < 3; ++i) {
         if (talent.prereqTalent[i] != 0) {
             uint8_t prereqRank = gameHandler.getTalentRank(talent.prereqTalent[i]);
-            if (prereqRank < talent.prereqRank[i]) {
+            if (prereqRank <= talent.prereqRank[i]) { // storage 1-indexed, DBC 0-indexed
                 prereqsMet = false;
                 canLearn = false;
                 break;
@@ -541,14 +541,15 @@ void TalentScreen::renderTalent(game::GameHandler& gameHandler,
             if (!prereq || prereq->rankSpells[0] == 0) continue;
 
             uint8_t prereqCurrentRank = gameHandler.getTalentRank(talent.prereqTalent[i]);
-            bool met = prereqCurrentRank >= talent.prereqRank[i];
+            bool met = prereqCurrentRank > talent.prereqRank[i]; // storage 1-indexed, DBC 0-indexed
             ImVec4 pColor = met ? ImVec4(0.3f, 0.9f, 0.3f, 1) : ImVec4(1.0f, 0.3f, 0.3f, 1);
 
             const std::string& prereqName = gameHandler.getSpellName(prereq->rankSpells[0]);
             ImGui::Spacing();
+            const uint8_t reqRankDisplay = talent.prereqRank[i] + 1u; // DBC 0-indexed → display 1-indexed
             ImGui::TextColored(pColor, "Requires %u point%s in %s",
-                talent.prereqRank[i],
-                talent.prereqRank[i] > 1 ? "s" : "",
+                reqRankDisplay,
+                reqRankDisplay > 1 ? "s" : "",
                 prereqName.empty() ? "prerequisite" : prereqName.c_str());
         }
 
@@ -573,16 +574,10 @@ void TalentScreen::renderTalent(game::GameHandler& gameHandler,
         ImGui::EndTooltip();
     }
 
-    // Handle click
+    // Handle click — currentRank is 1-indexed (0=not learned, 1=rank1, ...)
+    // CMSG_LEARN_TALENT requestedRank must equal current count of learned ranks (same value)
     if (clicked && canLearn && prereqsMet) {
-        const auto& learned = gameHandler.getLearnedTalents();
-        uint8_t desiredRank;
-        if (learned.find(talent.talentId) == learned.end()) {
-            desiredRank = 0;  // First rank (0-indexed on wire)
-        } else {
-            desiredRank = currentRank;  // currentRank is already the next 0-indexed rank to learn
-        }
-        gameHandler.learnTalent(talent.talentId, desiredRank);
+        gameHandler.learnTalent(talent.talentId, currentRank);
     }
 
     ImGui::PopID();
