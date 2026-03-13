@@ -711,6 +711,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderAchievementWindow(gameHandler);
     renderGmTicketWindow(gameHandler);
     renderInspectWindow(gameHandler);
+    renderBookWindow(gameHandler);
     renderThreatWindow(gameHandler);
     renderBgScoreboard(gameHandler);
     // renderQuestMarkers(gameHandler);  // Disabled - using 3D billboard markers now
@@ -20192,6 +20193,82 @@ void GameScreen::renderBgScoreboard(game::GameHandler& gameHandler) {
 void GameScreen::renderObjectiveTracker(game::GameHandler&) {
     // No-op: consolidated into renderQuestObjectiveTracker which renders the
     // full-featured draggable tracker with context menus and item icons.
+}
+
+// ─── Book / Scroll / Note Window ──────────────────────────────────────────────
+void GameScreen::renderBookWindow(game::GameHandler& gameHandler) {
+    // Auto-open when new pages arrive
+    if (gameHandler.hasBookOpen() && !showBookWindow_) {
+        showBookWindow_  = true;
+        bookCurrentPage_ = 0;
+    }
+    if (!showBookWindow_) return;
+
+    const auto& pages = gameHandler.getBookPages();
+    if (pages.empty()) { showBookWindow_ = false; return; }
+
+    // Clamp page index
+    if (bookCurrentPage_ < 0) bookCurrentPage_ = 0;
+    if (bookCurrentPage_ >= static_cast<int>(pages.size()))
+        bookCurrentPage_ = static_cast<int>(pages.size()) - 1;
+
+    ImGui::SetNextWindowSize(ImVec2(420, 340), ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(ImVec2(400, 180), ImGuiCond_Appearing);
+
+    bool open = showBookWindow_;
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.12f, 0.09f, 0.06f, 0.98f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.25f, 0.18f, 0.08f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.5f, 0.37f, 0.18f, 1.0f));
+
+    char title[64];
+    if (pages.size() > 1)
+        snprintf(title, sizeof(title), "Page %d / %d###BookWin",
+                 bookCurrentPage_ + 1, static_cast<int>(pages.size()));
+    else
+        snprintf(title, sizeof(title), "###BookWin");
+
+    if (ImGui::Begin(title, &open, ImGuiWindowFlags_NoCollapse)) {
+        // Parchment text colour
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.78f, 0.62f, 1.0f));
+
+        const std::string& text = pages[bookCurrentPage_].text;
+        // Use a child region with word-wrap
+        ImGui::SetNextWindowContentSize(ImVec2(ImGui::GetContentRegionAvail().x, 0));
+        if (ImGui::BeginChild("##BookText",
+                              ImVec2(0, ImGui::GetContentRegionAvail().y - 34),
+                              false, ImGuiWindowFlags_HorizontalScrollbar)) {
+            ImGui::SetNextItemWidth(-1);
+            ImGui::TextWrapped("%s", text.c_str());
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+
+        // Navigation row
+        ImGui::Separator();
+        bool canPrev = (bookCurrentPage_ > 0);
+        bool canNext = (bookCurrentPage_ < static_cast<int>(pages.size()) - 1);
+
+        if (!canPrev) ImGui::BeginDisabled();
+        if (ImGui::Button("< Prev", ImVec2(80, 0))) bookCurrentPage_--;
+        if (!canPrev) ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        if (!canNext) ImGui::BeginDisabled();
+        if (ImGui::Button("Next >", ImVec2(80, 0))) bookCurrentPage_++;
+        if (!canNext) ImGui::EndDisabled();
+
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60);
+        if (ImGui::Button("Close", ImVec2(60, 0))) {
+            open = false;
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor(3);
+
+    if (!open) {
+        showBookWindow_ = false;
+        gameHandler.clearBook();
+    }
 }
 
 // ─── Inspect Window ───────────────────────────────────────────────────────────

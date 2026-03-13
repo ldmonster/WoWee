@@ -437,6 +437,11 @@ private:
     bool  showInspectWindow_ = false;
     void  renderInspectWindow(game::GameHandler& gameHandler);
 
+    // Readable text window (books / scrolls / notes)
+    bool  showBookWindow_ = false;
+    int   bookCurrentPage_ = 0;
+    void  renderBookWindow(game::GameHandler& gameHandler);
+
     // Threat window
     bool  showThreatWindow_ = false;
     void  renderThreatWindow(game::GameHandler& gameHandler);

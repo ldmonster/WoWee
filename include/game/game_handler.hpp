@@ -1462,6 +1462,13 @@ public:
     uint32_t getTempEnchantRemainingMs(uint32_t slot) const;
     static constexpr const char* kTempEnchantSlotNames[] = { "Main Hand", "Off Hand", "Ranged" };
 
+    // ---- Readable text (books / scrolls / notes) ----
+    // Populated by handlePageTextQueryResponse(); multi-page items chain via nextPageId.
+    struct BookPage { uint32_t pageId = 0; std::string text; };
+    const std::vector<BookPage>& getBookPages() const { return bookPages_; }
+    bool hasBookOpen() const { return !bookPages_.empty(); }
+    void clearBook() { bookPages_.clear(); }
+
     // Other player level-up callback — fires when another player gains a level
     using OtherPlayerLevelUpCallback = std::function<void(uint64_t guid, uint32_t newLevel)>;
     void setOtherPlayerLevelUpCallback(OtherPlayerLevelUpCallback cb) { otherPlayerLevelUpCallback_ = std::move(cb); }
@@ -2820,6 +2827,7 @@ private:
     LevelUpCallback levelUpCallback_;
     LevelUpDeltas lastLevelUpDeltas_;
     std::vector<TempEnchantTimer> tempEnchantTimers_;
+    std::vector<BookPage> bookPages_;            // pages collected for the current readable item
     OtherPlayerLevelUpCallback otherPlayerLevelUpCallback_;
     AchievementEarnedCallback achievementEarnedCallback_;
     AreaDiscoveryCallback areaDiscoveryCallback_;

@@ -6098,7 +6098,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
 
         // ---- Read item results ----
         case Opcode::SMSG_READ_ITEM_OK:
-            addSystemChatMessage("You read the item.");
+            bookPages_.clear();  // fresh book for this item read
             packet.setReadPos(packet.getSize());
             break;
         case Opcode::SMSG_READ_ITEM_FAILED:
@@ -11327,6 +11327,7 @@ void GameHandler::handleGameObjectPageText(network::Packet& packet) {
     else if (info.type == 10) pageId = info.data[7];
 
     if (pageId != 0 && socket && state == WorldState::IN_WORLD) {
+        bookPages_.clear();  // start a fresh book for this interaction
         auto req = PageTextQueryPacket::build(pageId, guid);
         socket->send(req);
         return;
@@ -11341,19 +11342,31 @@ void GameHandler::handlePageTextQueryResponse(network::Packet& packet) {
     PageTextQueryResponseData data;
     if (!PageTextQueryResponseParser::parse(packet, data)) return;
 
-    if (!data.text.empty()) {
-        std::istringstream iss(data.text);
-        std::string line;
-        bool wrote = false;
-        while (std::getline(iss, line)) {
-            if (line.empty()) continue;
-            addSystemChatMessage(line);
-            wrote = true;
+    if (!data.isValid()) return;
+
+    // Append page if not already collected
+    bool alreadyHave = false;
+    for (const auto& bp : bookPages_) {
+        if (bp.pageId == data.pageId) { alreadyHave = true; break; }
+    }
+    if (!alreadyHave) {
+        bookPages_.push_back({data.pageId, data.text});
+    }
+
+    // Follow the chain: if there's a next page we haven't fetched yet, request it
+    if (data.nextPageId != 0) {
+        bool nextHave = false;
+        for (const auto& bp : bookPages_) {
+            if (bp.pageId == data.nextPageId) { nextHave = true; break; }
         }
-        if (!wrote) {
-            addSystemChatMessage(data.text);
+        if (!nextHave && socket && state == WorldState::IN_WORLD) {
+            auto req = PageTextQueryPacket::build(data.nextPageId, playerGuid);
+            socket->send(req);
         }
     }
+    LOG_DEBUG("handlePageTextQueryResponse: pageId=", data.pageId,
+              " nextPage=", data.nextPageId,
+              " totalPages=", bookPages_.size());
 }
 
 // ============================================================
