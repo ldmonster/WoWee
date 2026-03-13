@@ -4113,6 +4113,7 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
 
         gameObjectInstances_.clear();
         gameObjectDisplayIdModelCache_.clear();
+        gameObjectDisplayIdFailedCache_.clear();
 
         // Force player character re-spawn on new map
         playerCharacterSpawned = false;
