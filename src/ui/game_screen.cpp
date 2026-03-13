@@ -14234,20 +14234,19 @@ void GameScreen::renderSettingsWindow() {
                         updateGraphicsPresetFromCurrentSettings();
                         saveSettings();
                     }
-                    // FXAA — post-process, combinable with any MSAA level (disabled with FSR2)
-                    if (fsr2Active) {
-                        ImGui::BeginDisabled();
-                        bool fxaaOff = false;
-                        ImGui::Checkbox("FXAA (disabled with FSR3)", &fxaaOff);
-                        ImGui::EndDisabled();
-                    } else {
+                    // FXAA — post-process, combinable with MSAA or FSR3
+                    {
                         if (ImGui::Checkbox("FXAA (post-process)", &pendingFXAA)) {
                             if (renderer) renderer->setFXAAEnabled(pendingFXAA);
                             updateGraphicsPresetFromCurrentSettings();
                             saveSettings();
                         }
-                        if (ImGui::IsItemHovered())
-                            ImGui::SetTooltip("FXAA smooths jagged edges as a post-process pass.\nCan be combined with MSAA for extra quality.");
+                        if (ImGui::IsItemHovered()) {
+                            if (fsr2Active)
+                                ImGui::SetTooltip("FXAA applies spatial anti-aliasing after FSR3 upscaling.\nFSR3 + FXAA is the recommended ultra-quality combination.");
+                            else
+                                ImGui::SetTooltip("FXAA smooths jagged edges as a post-process pass.\nCan be combined with MSAA for extra quality.");
+                        }
                     }
                 }
                 // FSR Upscaling
@@ -15187,6 +15186,7 @@ void GameScreen::applyGraphicsPreset(GraphicsPreset preset) {
             pendingShadows = true;
             pendingShadowDistance = 500.0f;
             pendingAntiAliasing = 3;  // 8x MSAA
+            pendingFXAA = true;       // FXAA on top of MSAA for maximum smoothness
             pendingNormalMapping = true;
             pendingNormalMapStrength = 1.2f;
             pendingPOM = true;
@@ -15196,6 +15196,7 @@ void GameScreen::applyGraphicsPreset(GraphicsPreset preset) {
                 renderer->setShadowsEnabled(true);
                 renderer->setShadowDistance(500.0f);
                 renderer->setMsaaSamples(VK_SAMPLE_COUNT_8_BIT);
+                renderer->setFXAAEnabled(true);
                 if (auto* wr = renderer->getWMORenderer()) {
                     wr->setNormalMappingEnabled(true);
                     wr->setNormalMapStrength(1.2f);
@@ -15241,7 +15242,7 @@ void GameScreen::updateGraphicsPresetFromCurrentSettings() {
                        pendingGroundClutterDensity >= 90 && pendingGroundClutterDensity <= 110;
             case GraphicsPreset::ULTRA:
                 return pendingShadows && pendingShadowDistance >= 480 && pendingAntiAliasing == 3 &&
-                       pendingNormalMapping && pendingPOM && pendingGroundClutterDensity >= 140;
+                       pendingFXAA && pendingNormalMapping && pendingPOM && pendingGroundClutterDensity >= 140;
             default:
                 return false;
         }
