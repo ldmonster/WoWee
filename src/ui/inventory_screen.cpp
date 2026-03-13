@@ -1809,12 +1809,18 @@ void InventoryScreen::renderStatsPanel(game::Inventory& inventory, uint32_t play
         float critPct    = gh->getCritPct();
         float rCritPct   = gh->getRangedCritPct();
         float sCritPct   = gh->getSpellCritPct(1);  // Holy school (avg proxy for spell crit)
-        // Hit rating (CR_HIT_MELEE = 5), expertise (CR_EXPERTISE = 23), haste (CR_HASTE_MELEE = 17)
-        int32_t hitRating   = gh->getCombatRating(5);
-        int32_t expertiseR  = gh->getCombatRating(23);
-        int32_t hasteR      = gh->getCombatRating(17);
-        int32_t armorPenR   = gh->getCombatRating(24);
-        int32_t resilR      = gh->getCombatRating(14);  // CR_CRIT_TAKEN_MELEE = Resilience
+        // Hit rating: CR_HIT_MELEE=5, CR_HIT_RANGED=6, CR_HIT_SPELL=7
+        // Haste rating: CR_HASTE_MELEE=17, CR_HASTE_RANGED=18, CR_HASTE_SPELL=19
+        // Other: CR_EXPERTISE=23, CR_ARMOR_PENETRATION=24, CR_CRIT_TAKEN_MELEE=14
+        int32_t hitRating     = gh->getCombatRating(5);
+        int32_t hitRangedR    = gh->getCombatRating(6);
+        int32_t hitSpellR     = gh->getCombatRating(7);
+        int32_t expertiseR    = gh->getCombatRating(23);
+        int32_t hasteR        = gh->getCombatRating(17);
+        int32_t hasteRangedR  = gh->getCombatRating(18);
+        int32_t hasteSpellR   = gh->getCombatRating(19);
+        int32_t armorPenR     = gh->getCombatRating(24);
+        int32_t resilR        = gh->getCombatRating(14);  // CR_CRIT_TAKEN_MELEE = Resilience
 
         bool hasAny = (meleeAP >= 0 || spellPow >= 0 || dodgePct >= 0.0f || parryPct >= 0.0f ||
                        blockPct >= 0.0f || critPct >= 0.0f || hitRating >= 0);
@@ -1860,6 +1866,22 @@ void InventoryScreen::renderStatsPanel(game::Inventory& inventory, uint32_t play
                 else
                     ImGui::TextColored(cyan, "Hit Rating: %d", hitRating);
             }
+            // Show ranged/spell hit only when they differ from melee hit
+            if (hitRangedR >= 0 && hitRangedR != hitRating) {
+                float pct = ratingPct(hitRangedR, 26.23);
+                if (pct >= 0.0f)
+                    ImGui::TextColored(cyan, "Ranged Hit Rating: %d (%.2f%%)", hitRangedR, pct);
+                else
+                    ImGui::TextColored(cyan, "Ranged Hit Rating: %d", hitRangedR);
+            }
+            if (hitSpellR >= 0 && hitSpellR != hitRating) {
+                // Spell hit cap at 17% (446 rating at 80); divisor same as melee hit
+                float pct = ratingPct(hitSpellR, 26.23);
+                if (pct >= 0.0f)
+                    ImGui::TextColored(cyan, "Spell Hit Rating: %d (%.2f%%)", hitSpellR, pct);
+                else
+                    ImGui::TextColored(cyan, "Spell Hit Rating: %d", hitSpellR);
+            }
             if (expertiseR >= 0) {
                 // Each expertise point reduces dodge and parry chance by 0.25%
                 // expertise_points = rating / 8.19
@@ -1878,6 +1900,20 @@ void InventoryScreen::renderStatsPanel(game::Inventory& inventory, uint32_t play
                     ImGui::TextColored(cyan, "Haste Rating: %d (%.2f%%)", hasteR, pct);
                 else
                     ImGui::TextColored(cyan, "Haste Rating: %d", hasteR);
+            }
+            if (hasteRangedR >= 0 && hasteRangedR != hasteR) {
+                float pct = ratingPct(hasteRangedR, 32.79);
+                if (pct >= 0.0f)
+                    ImGui::TextColored(cyan, "Ranged Haste Rating: %d (%.2f%%)", hasteRangedR, pct);
+                else
+                    ImGui::TextColored(cyan, "Ranged Haste Rating: %d", hasteRangedR);
+            }
+            if (hasteSpellR >= 0 && hasteSpellR != hasteR) {
+                float pct = ratingPct(hasteSpellR, 32.79);
+                if (pct >= 0.0f)
+                    ImGui::TextColored(cyan, "Spell Haste Rating: %d (%.2f%%)", hasteSpellR, pct);
+                else
+                    ImGui::TextColored(cyan, "Spell Haste Rating: %d", hasteSpellR);
             }
             if (armorPenR >= 0) {
                 float pct = ratingPct(armorPenR, 13.99);
