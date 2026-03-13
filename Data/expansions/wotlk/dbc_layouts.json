@@ -31,6 +31,7 @@
     "ReputationBase0": 10, "ReputationBase1": 11,
     "ReputationBase2": 12, "ReputationBase3": 13
   },
+  "CharTitles": { "ID": 0, "Title": 2, "TitleBit": 36 },
   "Achievement": { "ID": 0, "Title": 4, "Description": 21, "Points": 39 },
   "AchievementCriteria": { "ID": 0, "AchievementID": 1, "Quantity": 4, "Description": 9 },
   "AreaTable": { "ID": 0, "MapID": 1, "ParentAreaNum": 2, "ExploreFlag": 3 },

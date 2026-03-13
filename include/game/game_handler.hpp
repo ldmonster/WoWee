@@ -2694,6 +2694,12 @@ private:
     std::unordered_map<uint32_t, SpellNameEntry> spellNameCache_;
     bool spellNameCacheLoaded_ = false;
 
+    // Title cache: maps titleBit → title string (lazy-loaded from CharTitles.dbc)
+    // The strings use "%s" as a player-name placeholder (e.g. "Commander %s", "%s the Explorer").
+    std::unordered_map<uint32_t, std::string> titleNameCache_;
+    bool titleNameCacheLoaded_ = false;
+    void loadTitleNameCache();
+
     // Achievement caches (lazy-loaded from Achievement.dbc on first earned event)
     std::unordered_map<uint32_t, std::string> achievementNameCache_;
     std::unordered_map<uint32_t, std::string> achievementDescCache_;

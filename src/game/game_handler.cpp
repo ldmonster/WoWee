@@ -2095,12 +2095,40 @@ void GameHandler::handlePacket(network::Packet& packet) {
             if (packet.getSize() - packet.getReadPos() < 8) break;
             uint32_t titleBit = packet.readUInt32();
             uint32_t isLost   = packet.readUInt32();
-            char buf[128];
-            std::snprintf(buf, sizeof(buf),
-                          isLost ? "Title removed (ID %u)." : "Title earned (ID %u)!",
-                          titleBit);
-            addSystemChatMessage(buf);
-            LOG_INFO("SMSG_TITLE_EARNED: id=", titleBit, " lost=", isLost);
+            loadTitleNameCache();
+
+            // Format the title string using the player's own name
+            std::string titleStr;
+            auto tit = titleNameCache_.find(titleBit);
+            if (tit != titleNameCache_.end() && !tit->second.empty()) {
+                // Title strings contain "%s" as a player-name placeholder.
+                // Replace it with the local player's name if known.
+                auto nameIt = playerNameCache.find(playerGuid);
+                const std::string& pName = (nameIt != playerNameCache.end())
+                    ? nameIt->second : "you";
+                const std::string& fmt = tit->second;
+                size_t pos = fmt.find("%s");
+                if (pos != std::string::npos) {
+                    titleStr = fmt.substr(0, pos) + pName + fmt.substr(pos + 2);
+                } else {
+                    titleStr = fmt;
+                }
+            }
+
+            std::string msg;
+            if (!titleStr.empty()) {
+                msg = isLost ? ("Title removed: " + titleStr + ".")
+                             : ("Title earned: " + titleStr + "!");
+            } else {
+                char buf[64];
+                std::snprintf(buf, sizeof(buf),
+                    isLost ? "Title removed (bit %u)." : "Title earned (bit %u)!",
+                    titleBit);
+                msg = buf;
+            }
+            addSystemChatMessage(msg);
+            LOG_INFO("SMSG_TITLE_EARNED: bit=", titleBit, " lost=", isLost,
+                     " title='", titleStr, "'");
             break;
         }
 
@@ -20539,6 +20567,33 @@ void GameHandler::sendLootRoll(uint64_t objectGuid, uint32_t slot, uint8_t rollT
 //   PackedTime date      — uint32 bitfield (seconds since epoch)
 //   uint32 realmFirst    — how many on realm also got it (0 = realm first)
 // ---------------------------------------------------------------------------
+void GameHandler::loadTitleNameCache() {
+    if (titleNameCacheLoaded_) return;
+    titleNameCacheLoaded_ = true;
+
+    auto* am = core::Application::getInstance().getAssetManager();
+    if (!am || !am->isInitialized()) return;
+
+    auto dbc = am->loadDBC("CharTitles.dbc");
+    if (!dbc || !dbc->isLoaded() || dbc->getFieldCount() < 5) return;
+
+    const auto* layout = pipeline::getActiveDBCLayout()
+        ? pipeline::getActiveDBCLayout()->getLayout("CharTitles") : nullptr;
+
+    uint32_t titleField = layout ? layout->field("Title")    : 2;
+    uint32_t bitField   = layout ? layout->field("TitleBit") : 36;
+    if (titleField == 0xFFFFFFFF) titleField = 2;
+    if (bitField   == 0xFFFFFFFF) bitField   = static_cast<uint32_t>(dbc->getFieldCount() - 1);
+
+    for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+        uint32_t bit = dbc->getUInt32(i, bitField);
+        if (bit == 0) continue;
+        std::string name = dbc->getString(i, titleField);
+        if (!name.empty()) titleNameCache_[bit] = std::move(name);
+    }
+    LOG_INFO("CharTitles: loaded ", titleNameCache_.size(), " title names from DBC");
+}
+
 void GameHandler::loadAchievementNameCache() {
     if (achievementNameCacheLoaded_) return;
     achievementNameCacheLoaded_ = true;
