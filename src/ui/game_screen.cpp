@@ -687,6 +687,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderGuildInvitePopup(gameHandler);
     renderReadyCheckPopup(gameHandler);
     renderBgInvitePopup(gameHandler);
+    renderBfMgrInvitePopup(gameHandler);
     renderLfgProposalPopup(gameHandler);
     renderGuildRoster(gameHandler);
     renderSocialFrame(gameHandler);
@@ -10938,6 +10939,63 @@ void GameScreen::renderBgInvitePopup(game::GameHandler& gameHandler) {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
         if (ImGui::Button("Leave Queue", ImVec2(175, 30))) {
             gameHandler.declineBattlefield(slot->queueSlot);
+        }
+        ImGui::PopStyleColor(2);
+    }
+    ImGui::End();
+
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(3);
+}
+
+void GameScreen::renderBfMgrInvitePopup(game::GameHandler& gameHandler) {
+    // Only shown on WotLK servers (outdoor battlefields like Wintergrasp use the BF Manager)
+    if (!gameHandler.hasBfMgrInvite()) return;
+
+    auto* window = core::Application::getInstance().getWindow();
+    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
+    float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
+
+    ImGui::SetNextWindowPos(ImVec2(screenW / 2.0f - 190.0f, screenH / 2.0f - 55.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(380.0f, 0.0f), ImGuiCond_Always);
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg,      ImVec4(0.08f, 0.10f, 0.20f, 0.96f));
+    ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.5f, 0.5f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.15f, 0.15f, 0.45f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+
+    const ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
+
+    if (ImGui::Begin("Battlefield", nullptr, flags)) {
+        // Resolve zone name for Wintergrasp (zoneId 4197)
+        uint32_t zoneId = gameHandler.getBfMgrZoneId();
+        const char* zoneName = nullptr;
+        if (zoneId == 4197) zoneName = "Wintergrasp";
+        else if (zoneId == 5095) zoneName = "Tol Barad";
+
+        if (zoneName) {
+            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "%s", zoneName);
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "Outdoor Battlefield");
+        }
+        ImGui::Spacing();
+        ImGui::TextWrapped("You are invited to join the outdoor battlefield. Do you want to enter?");
+        ImGui::Spacing();
+
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.15f, 0.5f, 0.15f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
+        if (ImGui::Button("Enter Battlefield", ImVec2(178, 28))) {
+            gameHandler.acceptBfMgrInvite();
+        }
+        ImGui::PopStyleColor(2);
+
+        ImGui::SameLine();
+
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.5f, 0.15f, 0.15f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
+        if (ImGui::Button("Decline", ImVec2(175, 28))) {
+            gameHandler.declineBfMgrInvite();
         }
         ImGui::PopStyleColor(2);
     }

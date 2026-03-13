@@ -6881,6 +6881,308 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 static_cast<uint32_t>(MovementFlags::FLYING), false);
             break;
 
+        // ---- Battlefield Manager (WotLK outdoor battlefields: Wintergrasp, Tol Barad) ----
+        case Opcode::SMSG_BATTLEFIELD_MGR_ENTRY_INVITE: {
+            // uint64 battlefieldGuid + uint32 zoneId + uint64 expireUnixTime (seconds)
+            if (packet.getSize() - packet.getReadPos() < 20) {
+                packet.setReadPos(packet.getSize()); break;
+            }
+            uint64_t bfGuid    = packet.readUInt64();
+            uint32_t bfZoneId  = packet.readUInt32();
+            uint64_t expireTime = packet.readUInt64();
+            (void)bfGuid; (void)expireTime;
+            // Store the invitation so the UI can show a prompt
+            bfMgrInvitePending_ = true;
+            bfMgrZoneId_        = bfZoneId;
+            char buf[128];
+            std::snprintf(buf, sizeof(buf),
+                "You are invited to the outdoor battlefield in zone %u. Click to enter.", bfZoneId);
+            addSystemChatMessage(buf);
+            LOG_INFO("SMSG_BATTLEFIELD_MGR_ENTRY_INVITE: zoneId=", bfZoneId);
+            break;
+        }
+        case Opcode::SMSG_BATTLEFIELD_MGR_ENTERED: {
+            // uint64 battlefieldGuid + uint8 isSafe (1=pvp zones enabled) + uint8 onQueue
+            if (packet.getSize() - packet.getReadPos() >= 8) {
+                uint64_t bfGuid2 = packet.readUInt64();
+                (void)bfGuid2;
+                uint8_t isSafe  = (packet.getSize() - packet.getReadPos() >= 1) ? packet.readUInt8() : 0;
+                uint8_t onQueue = (packet.getSize() - packet.getReadPos() >= 1) ? packet.readUInt8() : 0;
+                bfMgrInvitePending_ = false;
+                bfMgrActive_        = true;
+                addSystemChatMessage(isSafe ? "You are in the battlefield zone (safe area)."
+                                            : "You have entered the battlefield!");
+                if (onQueue) addSystemChatMessage("You are in the battlefield queue.");
+                LOG_INFO("SMSG_BATTLEFIELD_MGR_ENTERED: isSafe=", (int)isSafe, " onQueue=", (int)onQueue);
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+        case Opcode::SMSG_BATTLEFIELD_MGR_QUEUE_INVITE: {
+            // uint64 battlefieldGuid + uint32 battlefieldId + uint64 expireTime
+            if (packet.getSize() - packet.getReadPos() < 20) {
+                packet.setReadPos(packet.getSize()); break;
+            }
+            uint64_t bfGuid3   = packet.readUInt64();
+            uint32_t bfId      = packet.readUInt32();
+            uint64_t expTime   = packet.readUInt64();
+            (void)bfGuid3; (void)expTime;
+            bfMgrInvitePending_ = true;
+            bfMgrZoneId_        = bfId;
+            char buf[128];
+            std::snprintf(buf, sizeof(buf),
+                "A spot has opened in the battlefield queue (battlefield %u).", bfId);
+            addSystemChatMessage(buf);
+            LOG_INFO("SMSG_BATTLEFIELD_MGR_QUEUE_INVITE: bfId=", bfId);
+            break;
+        }
+        case Opcode::SMSG_BATTLEFIELD_MGR_QUEUE_REQUEST_RESPONSE: {
+            // uint32 battlefieldId + uint32 teamId + uint8 accepted + uint8 loggingEnabled + uint8 result
+            // result: 0=queued, 1=not_in_group, 2=too_high_level, 3=too_low_level,
+            //         4=in_cooldown, 5=queued_other_bf, 6=bf_full
+            if (packet.getSize() - packet.getReadPos() < 11) {
+                packet.setReadPos(packet.getSize()); break;
+            }
+            uint32_t bfId2    = packet.readUInt32();
+            /*uint32_t teamId =*/ packet.readUInt32();
+            uint8_t accepted  = packet.readUInt8();
+            /*uint8_t logging =*/ packet.readUInt8();
+            uint8_t result    = packet.readUInt8();
+            (void)bfId2;
+            if (accepted) {
+                addSystemChatMessage("You have joined the battlefield queue.");
+            } else {
+                static const char* kBfQueueErrors[] = {
+                    "Queued for battlefield.", "Not in a group.", "Level too high.",
+                    "Level too low.", "Battlefield in cooldown.", "Already queued for another battlefield.",
+                    "Battlefield is full."
+                };
+                const char* msg = (result < 7) ? kBfQueueErrors[result]
+                                               : "Battlefield queue request failed.";
+                addSystemChatMessage(std::string("Battlefield: ") + msg);
+            }
+            LOG_INFO("SMSG_BATTLEFIELD_MGR_QUEUE_REQUEST_RESPONSE: accepted=", (int)accepted,
+                     " result=", (int)result);
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+        case Opcode::SMSG_BATTLEFIELD_MGR_EJECT_PENDING: {
+            // uint64 battlefieldGuid + uint8 remove
+            if (packet.getSize() - packet.getReadPos() >= 9) {
+                uint64_t bfGuid4 = packet.readUInt64();
+                uint8_t  remove  = packet.readUInt8();
+                (void)bfGuid4;
+                if (remove) {
+                    addSystemChatMessage("You will be removed from the battlefield shortly.");
+                }
+                LOG_INFO("SMSG_BATTLEFIELD_MGR_EJECT_PENDING: remove=", (int)remove);
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+        case Opcode::SMSG_BATTLEFIELD_MGR_EJECTED: {
+            // uint64 battlefieldGuid + uint32 reason + uint32 battleStatus + uint8 relocated
+            if (packet.getSize() - packet.getReadPos() >= 17) {
+                uint64_t bfGuid5    = packet.readUInt64();
+                uint32_t reason     = packet.readUInt32();
+                /*uint32_t status  =*/ packet.readUInt32();
+                uint8_t relocated   = packet.readUInt8();
+                (void)bfGuid5;
+                static const char* kEjectReasons[] = {
+                    "Removed from battlefield.", "Transported from battlefield.",
+                    "Left battlefield voluntarily.", "Offline.",
+                };
+                const char* msg = (reason < 4) ? kEjectReasons[reason]
+                                               : "You have been ejected from the battlefield.";
+                addSystemChatMessage(msg);
+                if (relocated) addSystemChatMessage("You have been relocated outside the battlefield.");
+                LOG_INFO("SMSG_BATTLEFIELD_MGR_EJECTED: reason=", reason, " relocated=", (int)relocated);
+            }
+            bfMgrActive_        = false;
+            bfMgrInvitePending_ = false;
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+        case Opcode::SMSG_BATTLEFIELD_MGR_STATE_CHANGE: {
+            // uint32 oldState + uint32 newState
+            // States: 0=Waiting, 1=Starting, 2=InProgress, 3=Ending, 4=Cooldown
+            if (packet.getSize() - packet.getReadPos() >= 8) {
+                /*uint32_t oldState =*/ packet.readUInt32();
+                uint32_t newState   = packet.readUInt32();
+                static const char* kBfStates[] = {
+                    "waiting", "starting", "in progress", "ending", "in cooldown"
+                };
+                const char* stateStr = (newState < 5) ? kBfStates[newState] : "unknown state";
+                char buf[128];
+                std::snprintf(buf, sizeof(buf), "Battlefield is now %s.", stateStr);
+                addSystemChatMessage(buf);
+                LOG_INFO("SMSG_BATTLEFIELD_MGR_STATE_CHANGE: newState=", newState);
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+
+        // ---- WotLK Calendar system (pending invites, event notifications, command results) ----
+        case Opcode::SMSG_CALENDAR_SEND_NUM_PENDING: {
+            // uint32 numPending — number of unacknowledged calendar invites
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                uint32_t numPending = packet.readUInt32();
+                calendarPendingInvites_ = numPending;
+                if (numPending > 0) {
+                    char buf[64];
+                    std::snprintf(buf, sizeof(buf),
+                        "You have %u pending calendar invite%s.",
+                        numPending, numPending == 1 ? "" : "s");
+                    addSystemChatMessage(buf);
+                }
+                LOG_DEBUG("SMSG_CALENDAR_SEND_NUM_PENDING: ", numPending, " pending invites");
+            }
+            break;
+        }
+        case Opcode::SMSG_CALENDAR_COMMAND_RESULT: {
+            // uint32 command + uint8 result + cstring info
+            // result 0 = success; non-zero = error code
+            // command values: 0=add,1=get,2=guild_filter,3=arena_team,4=update,5=remove,
+            //                 6=copy,7=invite,8=rsvp,9=remove_invite,10=status,11=moderator_status
+            if (packet.getSize() - packet.getReadPos() < 5) {
+                packet.setReadPos(packet.getSize()); break;
+            }
+            /*uint32_t command =*/ packet.readUInt32();
+            uint8_t result    = packet.readUInt8();
+            std::string info  = (packet.getReadPos() < packet.getSize()) ? packet.readString() : "";
+            if (result != 0) {
+                // Map common calendar error codes to friendly strings
+                static const char* kCalendarErrors[] = {
+                    "",
+                    "Calendar: Internal error.",           // 1 = CALENDAR_ERROR_INTERNAL
+                    "Calendar: Guild event limit reached.",// 2
+                    "Calendar: Event limit reached.",      // 3
+                    "Calendar: You cannot invite that player.", // 4
+                    "Calendar: No invites remaining.",     // 5
+                    "Calendar: Invalid date.",             // 6
+                    "Calendar: Cannot invite yourself.",   // 7
+                    "Calendar: Cannot modify this event.", // 8
+                    "Calendar: Not invited.",              // 9
+                    "Calendar: Already invited.",          // 10
+                    "Calendar: Player not found.",         // 11
+                    "Calendar: Not enough focus.",         // 12
+                    "Calendar: Event locked.",             // 13
+                    "Calendar: Event deleted.",            // 14
+                    "Calendar: Not a moderator.",          // 15
+                };
+                const char* errMsg = (result < 16) ? kCalendarErrors[result]
+                                                   : "Calendar: Command failed.";
+                if (errMsg && errMsg[0] != '\0') addSystemChatMessage(errMsg);
+                else if (!info.empty()) addSystemChatMessage("Calendar: " + info);
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+        case Opcode::SMSG_CALENDAR_EVENT_INVITE_ALERT: {
+            // Rich notification: eventId(8) + title(cstring) + eventTime(8) + flags(4) +
+            //                   eventType(1) + dungeonId(4) + inviteId(8) + status(1) + rank(1) +
+            //                   isGuildEvent(1) + inviterGuid(8)
+            if (packet.getSize() - packet.getReadPos() < 9) {
+                packet.setReadPos(packet.getSize()); break;
+            }
+            /*uint64_t eventId =*/ packet.readUInt64();
+            std::string title = (packet.getReadPos() < packet.getSize()) ? packet.readString() : "";
+            packet.setReadPos(packet.getSize()); // consume remaining fields
+            if (!title.empty()) {
+                addSystemChatMessage("Calendar invite: " + title);
+            } else {
+                addSystemChatMessage("You have a new calendar invite.");
+            }
+            if (calendarPendingInvites_ < 255) ++calendarPendingInvites_;
+            LOG_INFO("SMSG_CALENDAR_EVENT_INVITE_ALERT: title='", title, "'");
+            break;
+        }
+        // Remaining calendar informational packets — parse title where possible and consume
+        case Opcode::SMSG_CALENDAR_EVENT_STATUS: {
+            // Sent when an event invite's RSVP status changes for the local player
+            // Format: inviteId(8) + eventId(8) + eventType(1) + flags(4) +
+            //         inviteTime(8) + status(1) + rank(1) + isGuildEvent(1) + title(cstring)
+            if (packet.getSize() - packet.getReadPos() < 31) {
+                packet.setReadPos(packet.getSize()); break;
+            }
+            /*uint64_t inviteId =*/ packet.readUInt64();
+            /*uint64_t eventId  =*/ packet.readUInt64();
+            /*uint8_t  evType   =*/ packet.readUInt8();
+            /*uint32_t flags    =*/ packet.readUInt32();
+            /*uint64_t invTime  =*/ packet.readUInt64();
+            uint8_t status     = packet.readUInt8();
+            /*uint8_t rank      =*/ packet.readUInt8();
+            /*uint8_t isGuild   =*/ packet.readUInt8();
+            std::string evTitle = (packet.getReadPos() < packet.getSize()) ? packet.readString() : "";
+            // status: 0=Invited,1=Accepted,2=Declined,3=Confirmed,4=Out,5=Standby,6=SignedUp,7=Not Signed Up,8=Tentative
+            static const char* kRsvpStatus[] = {
+                "invited", "accepted", "declined", "confirmed",
+                "out", "on standby", "signed up", "not signed up", "tentative"
+            };
+            const char* statusStr = (status < 9) ? kRsvpStatus[status] : "unknown";
+            if (!evTitle.empty()) {
+                char buf[256];
+                std::snprintf(buf, sizeof(buf), "Calendar event '%s': your RSVP is %s.",
+                              evTitle.c_str(), statusStr);
+                addSystemChatMessage(buf);
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+        case Opcode::SMSG_CALENDAR_RAID_LOCKOUT_ADDED: {
+            // uint64 inviteId + uint64 eventId + uint32 mapId + uint32 difficulty + uint64 resetTime
+            if (packet.getSize() - packet.getReadPos() >= 28) {
+                /*uint64_t inviteId =*/ packet.readUInt64();
+                /*uint64_t eventId  =*/ packet.readUInt64();
+                uint32_t mapId     = packet.readUInt32();
+                uint32_t difficulty = packet.readUInt32();
+                /*uint64_t resetTime =*/ packet.readUInt64();
+                char buf[128];
+                std::snprintf(buf, sizeof(buf),
+                    "Calendar: Raid lockout added for map %u (difficulty %u).", mapId, difficulty);
+                addSystemChatMessage(buf);
+                LOG_DEBUG("SMSG_CALENDAR_RAID_LOCKOUT_ADDED: mapId=", mapId, " difficulty=", difficulty);
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+        case Opcode::SMSG_CALENDAR_RAID_LOCKOUT_REMOVED: {
+            // uint64 inviteId + uint64 eventId + uint32 mapId + uint32 difficulty
+            if (packet.getSize() - packet.getReadPos() >= 20) {
+                /*uint64_t inviteId =*/ packet.readUInt64();
+                /*uint64_t eventId  =*/ packet.readUInt64();
+                uint32_t mapId     = packet.readUInt32();
+                uint32_t difficulty = packet.readUInt32();
+                (void)mapId; (void)difficulty;
+                LOG_DEBUG("SMSG_CALENDAR_RAID_LOCKOUT_REMOVED: mapId=", mapId,
+                          " difficulty=", difficulty);
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+        case Opcode::SMSG_CALENDAR_RAID_LOCKOUT_UPDATED: {
+            // Same format as LOCKOUT_ADDED; consume
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+        // Remaining calendar opcodes: safe consume — data surfaced via SEND_CALENDAR/SEND_EVENT
+        case Opcode::SMSG_CALENDAR_SEND_CALENDAR:
+        case Opcode::SMSG_CALENDAR_SEND_EVENT:
+        case Opcode::SMSG_CALENDAR_ARENA_TEAM:
+        case Opcode::SMSG_CALENDAR_FILTER_GUILD:
+        case Opcode::SMSG_CALENDAR_CLEAR_PENDING_ACTION:
+        case Opcode::SMSG_CALENDAR_EVENT_INVITE:
+        case Opcode::SMSG_CALENDAR_EVENT_INVITE_NOTES:
+        case Opcode::SMSG_CALENDAR_EVENT_INVITE_NOTES_ALERT:
+        case Opcode::SMSG_CALENDAR_EVENT_INVITE_REMOVED:
+        case Opcode::SMSG_CALENDAR_EVENT_INVITE_REMOVED_ALERT:
+        case Opcode::SMSG_CALENDAR_EVENT_INVITE_STATUS_ALERT:
+        case Opcode::SMSG_CALENDAR_EVENT_MODERATOR_STATUS_ALERT:
+        case Opcode::SMSG_CALENDAR_EVENT_REMOVED_ALERT:
+        case Opcode::SMSG_CALENDAR_EVENT_UPDATED_ALERT:
+            packet.setReadPos(packet.getSize());
+            break;
+
         default:
             // In pre-world states we need full visibility (char create/login handshakes).
             // In-world we keep de-duplication to avoid heavy log I/O in busy areas.
@@ -21651,6 +21953,41 @@ void GameHandler::handleSetForcedReactions(network::Packet& packet) {
         forcedReactions_[factionId] = static_cast<uint8_t>(reaction);
     }
     LOG_INFO("SMSG_SET_FORCED_REACTIONS: ", forcedReactions_.size(), " faction overrides");
+}
+
+// ---- Battlefield Manager (WotLK Wintergrasp / outdoor battlefields) ----
+
+void GameHandler::acceptBfMgrInvite() {
+    if (!bfMgrInvitePending_ || state != WorldState::IN_WORLD || !socket) return;
+    // CMSG_BATTLEFIELD_MGR_ENTRY_INVITE_RESPONSE: uint8 accepted = 1
+    network::Packet pkt(wireOpcode(Opcode::CMSG_BATTLEFIELD_MGR_ENTRY_INVITE_RESPONSE));
+    pkt.writeUInt8(1);  // accepted
+    socket->send(pkt);
+    bfMgrInvitePending_ = false;
+    LOG_INFO("acceptBfMgrInvite: sent CMSG_BATTLEFIELD_MGR_ENTRY_INVITE_RESPONSE accepted=1");
+}
+
+void GameHandler::declineBfMgrInvite() {
+    if (!bfMgrInvitePending_ || state != WorldState::IN_WORLD || !socket) return;
+    // CMSG_BATTLEFIELD_MGR_ENTRY_INVITE_RESPONSE: uint8 accepted = 0
+    network::Packet pkt(wireOpcode(Opcode::CMSG_BATTLEFIELD_MGR_ENTRY_INVITE_RESPONSE));
+    pkt.writeUInt8(0);  // declined
+    socket->send(pkt);
+    bfMgrInvitePending_ = false;
+    LOG_INFO("declineBfMgrInvite: sent CMSG_BATTLEFIELD_MGR_ENTRY_INVITE_RESPONSE accepted=0");
+}
+
+// ---- WotLK Calendar ----
+
+void GameHandler::requestCalendar() {
+    if (state != WorldState::IN_WORLD || !socket) return;
+    // CMSG_CALENDAR_GET_CALENDAR has no payload
+    network::Packet pkt(wireOpcode(Opcode::CMSG_CALENDAR_GET_CALENDAR));
+    socket->send(pkt);
+    LOG_INFO("requestCalendar: sent CMSG_CALENDAR_GET_CALENDAR");
+    // Also request pending invite count
+    network::Packet numPkt(wireOpcode(Opcode::CMSG_CALENDAR_GET_NUM_PENDING));
+    socket->send(numPkt);
 }
 
 } // namespace game

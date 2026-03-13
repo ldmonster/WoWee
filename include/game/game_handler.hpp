@@ -501,6 +501,17 @@ public:
     const std::string& getGmTicketText() const { return gmTicketText_; }
     bool isGmSupportAvailable() const { return gmSupportAvailable_; }
     float getGmTicketWaitHours() const { return gmTicketWaitHours_; }
+
+    // Battlefield Manager (Wintergrasp)
+    bool hasBfMgrInvite()  const { return bfMgrInvitePending_; }
+    bool isInBfMgrZone()   const { return bfMgrActive_; }
+    uint32_t getBfMgrZoneId() const { return bfMgrZoneId_; }
+    void acceptBfMgrInvite();
+    void declineBfMgrInvite();
+
+    // WotLK Calendar
+    uint32_t getCalendarPendingInvites() const { return calendarPendingInvites_; }
+    void requestCalendar(); ///< Send CMSG_CALENDAR_GET_CALENDAR to the server
     void queryGuildInfo(uint32_t guildId);
     void createGuild(const std::string& guildName);
     void addGuildRank(const std::string& rankName);
@@ -3034,6 +3045,14 @@ private:
     std::string gmTicketText_;               ///< Text of the open ticket (from SMSG_GMTICKET_GETTICKET)
     float       gmTicketWaitHours_ = 0.0f;  ///< Server-estimated wait time in hours
     bool        gmSupportAvailable_ = true; ///< GM support system online (SMSG_GMTICKET_SYSTEMSTATUS)
+
+    // ---- Battlefield Manager state (WotLK Wintergrasp / outdoor battlefields) ----
+    bool        bfMgrInvitePending_ = false; ///< True when an entry/queue invite is pending acceptance
+    bool        bfMgrActive_        = false; ///< True while the player is inside an outdoor battlefield
+    uint32_t    bfMgrZoneId_        = 0;     ///< Zone ID of the pending/active battlefield
+
+    // ---- WotLK Calendar: pending invite counter ----
+    uint32_t    calendarPendingInvites_ = 0; ///< Unacknowledged calendar invites (SMSG_CALENDAR_SEND_NUM_PENDING)
 };
 
 } // namespace game
