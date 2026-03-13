@@ -3836,6 +3836,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
         }
         case Opcode::SMSG_EQUIPMENT_SET_SAVED:
             // uint32 setIndex + uint64 guid — equipment set was successfully saved
+            addSystemChatMessage("Equipment set saved.");
             LOG_DEBUG("Equipment set saved");
             break;
         case Opcode::SMSG_PERIODICAURALOG: {
@@ -5178,17 +5179,18 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 uint32_t msgType   = packet.readUInt32();
                 uint32_t mapId     = packet.readUInt32();
                 /*uint32_t diff =*/  packet.readUInt32();
+                std::string mapLabel = getMapName(mapId);
+                if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
                 // type: 1=warning(time left), 2=saved, 3=welcome
                 if (msgType == 1 && packet.getSize() - packet.getReadPos() >= 4) {
                     uint32_t timeLeft = packet.readUInt32();
                     uint32_t minutes  = timeLeft / 60;
-                    std::string msg = "Instance " + std::to_string(mapId) +
-                        " will reset in " + std::to_string(minutes) + " minute(s).";
-                    addSystemChatMessage(msg);
+                    addSystemChatMessage(mapLabel + " will reset in " +
+                                        std::to_string(minutes) + " minute(s).");
                 } else if (msgType == 2) {
-                    addSystemChatMessage("You have been saved to instance " + std::to_string(mapId) + ".");
+                    addSystemChatMessage("You have been saved to " + mapLabel + ".");
                 } else if (msgType == 3) {
-                    addSystemChatMessage("Welcome to instance " + std::to_string(mapId) + ".");
+                    addSystemChatMessage("Welcome to " + mapLabel + ".");
                 }
                 LOG_INFO("SMSG_RAID_INSTANCE_MESSAGE: type=", msgType, " map=", mapId);
             }
@@ -5201,7 +5203,9 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 auto it = std::remove_if(instanceLockouts_.begin(), instanceLockouts_.end(),
                     [mapId](const InstanceLockout& lo){ return lo.mapId == mapId; });
                 instanceLockouts_.erase(it, instanceLockouts_.end());
-                addSystemChatMessage("Instance " + std::to_string(mapId) + " has been reset.");
+                std::string mapLabel = getMapName(mapId);
+                if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
+                addSystemChatMessage(mapLabel + " has been reset.");
                 LOG_INFO("SMSG_INSTANCE_RESET: mapId=", mapId);
             }
             break;
@@ -5214,8 +5218,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     "Not max level.", "Offline party members.", "Party members inside.",
                     "Party members changing zone.", "Heroic difficulty only."
                 };
-                const char* msg = (reason < 5) ? resetFailReasons[reason] : "Unknown reason.";
-                addSystemChatMessage("Cannot reset instance " + std::to_string(mapId) + ": " + msg);
+                const char* reasonMsg = (reason < 5) ? resetFailReasons[reason] : "Unknown reason.";
+                std::string mapLabel = getMapName(mapId);
+                if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
+                addSystemChatMessage("Cannot reset " + mapLabel + ": " + reasonMsg);
                 LOG_INFO("SMSG_INSTANCE_RESET_FAILED: mapId=", mapId, " reason=", reason);
             }
             break;
@@ -7014,16 +7020,65 @@ void GameHandler::handlePacket(network::Packet& packet) {
 
         // ---- Misc consume (no state change needed) ----
         case Opcode::SMSG_SET_PLAYER_DECLINED_NAMES_RESULT:
-        case Opcode::SMSG_PROPOSE_LEVEL_GRANT:
-        case Opcode::SMSG_REFER_A_FRIEND_EXPIRED:
-        case Opcode::SMSG_REFER_A_FRIEND_FAILURE:
-        case Opcode::SMSG_REPORT_PVP_AFK_RESULT:
         case Opcode::SMSG_REDIRECT_CLIENT:
         case Opcode::SMSG_PVP_QUEUE_STATS:
         case Opcode::SMSG_NOTIFY_DEST_LOC_SPELL_CAST:
         case Opcode::SMSG_PLAYER_SKINNED:
             packet.setReadPos(packet.getSize());
             break;
+        case Opcode::SMSG_PROPOSE_LEVEL_GRANT: {
+            // Recruit-A-Friend: a mentor is offering to grant you a level
+            if (packet.getSize() - packet.getReadPos() >= 8) {
+                uint64_t mentorGuid = packet.readUInt64();
+                std::string mentorName;
+                auto ent = entityManager.getEntity(mentorGuid);
+                if (auto* unit = dynamic_cast<Unit*>(ent.get())) mentorName = unit->getName();
+                if (mentorName.empty()) {
+                    auto nit = playerNameCache.find(mentorGuid);
+                    if (nit != playerNameCache.end()) mentorName = nit->second;
+                }
+                addSystemChatMessage(mentorName.empty()
+                    ? "A player is offering to grant you a level."
+                    : (mentorName + " is offering to grant you a level."));
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+        case Opcode::SMSG_REFER_A_FRIEND_EXPIRED:
+            addSystemChatMessage("Your Recruit-A-Friend link has expired.");
+            packet.setReadPos(packet.getSize());
+            break;
+        case Opcode::SMSG_REFER_A_FRIEND_FAILURE: {
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                uint32_t reason = packet.readUInt32();
+                static const char* kRafErrors[] = {
+                    "Not eligible",            // 0
+                    "Target not eligible",     // 1
+                    "Too many referrals",      // 2
+                    "Wrong faction",           // 3
+                    "Not a recruit",           // 4
+                    "Recruit requirements not met", // 5
+                    "Level above requirement", // 6
+                    "Friend needs account upgrade", // 7
+                };
+                const char* msg = (reason < 8) ? kRafErrors[reason]
+                                               : "Recruit-A-Friend failed.";
+                addSystemChatMessage(std::string("Recruit-A-Friend: ") + msg);
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+        case Opcode::SMSG_REPORT_PVP_AFK_RESULT: {
+            if (packet.getSize() - packet.getReadPos() >= 1) {
+                uint8_t result = packet.readUInt8();
+                if (result == 0)
+                    addSystemChatMessage("AFK report submitted.");
+                else
+                    addSystemChatMessage("Cannot report that player as AFK right now.");
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
         case Opcode::SMSG_RESPOND_INSPECT_ACHIEVEMENTS:
             handleRespondInspectAchievements(packet);
             break;
@@ -22058,6 +22113,11 @@ void GameHandler::handleQuestConfirmAccept(network::Packet& packet) {
         sharedQuestSharerName_ = unit->getName();
     }
     if (sharedQuestSharerName_.empty()) {
+        auto nit = playerNameCache.find(sharedQuestSharerGuid_);
+        if (nit != playerNameCache.end())
+            sharedQuestSharerName_ = nit->second;
+    }
+    if (sharedQuestSharerName_.empty()) {
         char tmp[32];
         std::snprintf(tmp, sizeof(tmp), "0x%llX",
                       static_cast<unsigned long long>(sharedQuestSharerGuid_));
@@ -22869,6 +22929,35 @@ std::string GameHandler::getAreaName(uint32_t areaId) const {
     const_cast<GameHandler*>(this)->loadAreaNameCache();
     auto it = areaNameCache_.find(areaId);
     return (it != areaNameCache_.end()) ? it->second : std::string{};
+}
+
+void GameHandler::loadMapNameCache() {
+    if (mapNameCacheLoaded_) return;
+    mapNameCacheLoaded_ = true;
+
+    auto* am = core::Application::getInstance().getAssetManager();
+    if (!am || !am->isInitialized()) return;
+
+    auto dbc = am->loadDBC("Map.dbc");
+    if (!dbc || !dbc->isLoaded()) return;
+
+    for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+        uint32_t id = dbc->getUInt32(i, 0);
+        // Field 2 = MapName_enUS (first localized); field 1 = InternalName fallback
+        std::string name = dbc->getString(i, 2);
+        if (name.empty()) name = dbc->getString(i, 1);
+        if (!name.empty() && !mapNameCache_.count(id)) {
+            mapNameCache_[id] = std::move(name);
+        }
+    }
+    LOG_INFO("Map.dbc: loaded ", mapNameCache_.size(), " map names");
+}
+
+std::string GameHandler::getMapName(uint32_t mapId) const {
+    if (mapId == 0) return {};
+    const_cast<GameHandler*>(this)->loadMapNameCache();
+    auto it = mapNameCache_.find(mapId);
+    return (it != mapNameCache_.end()) ? it->second : std::string{};
 }
 
 // ---------------------------------------------------------------------------

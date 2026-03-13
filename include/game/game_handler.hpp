@@ -2971,6 +2971,12 @@ private:
     bool areaNameCacheLoaded_ = false;
     void loadAreaNameCache();
     std::string getAreaName(uint32_t areaId) const;
+
+    // Map name cache (lazy-loaded from Map.dbc; maps mapId → localized display name)
+    std::unordered_map<uint32_t, std::string> mapNameCache_;
+    bool mapNameCacheLoaded_ = false;
+    void loadMapNameCache();
+    std::string getMapName(uint32_t mapId) const;
     std::vector<TrainerTab> trainerTabs_;
     void handleTrainerList(network::Packet& packet);
     void loadSpellNameCache();
