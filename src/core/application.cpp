@@ -6612,7 +6612,7 @@ void Application::spawnOnlinePlayer(uint64_t guid,
         }
 
         pipeline::M2Model model = pipeline::M2Loader::load(m2Data);
-        if (!model.isValid() || model.vertices.empty()) {
+        if (model.vertices.empty()) {
             LOG_WARNING("spawnOnlinePlayer: failed to parse M2: ", m2Path);
             return;
         }
@@ -6622,6 +6622,12 @@ void Application::spawnOnlinePlayer(uint64_t guid,
         auto skinData = assetManager->readFile(skinPath);
         if (!skinData.empty() && model.version >= 264) {
             pipeline::M2Loader::loadSkin(skinData, model);
+        }
+
+        // After skin loading, full model must be valid (vertices + indices)
+        if (!model.isValid()) {
+            LOG_WARNING("spawnOnlinePlayer: failed to load skin for M2: ", m2Path);
+            return;
         }
 
         // Load only core external animations (stand/walk/run) to avoid stalls
