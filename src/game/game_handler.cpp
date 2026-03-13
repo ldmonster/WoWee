@@ -2363,6 +2363,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
             // Server forces player into dead state (GM command, scripted event, etc.)
             playerDead_ = true;
             if (ghostStateCallback_) ghostStateCallback_(false); // dead but not ghost yet
+            addSystemChatMessage("You have been killed.");
             LOG_INFO("SMSG_FORCED_DEATH_UPDATE: player force-killed");
             packet.setReadPos(packet.getSize());
             break;
@@ -5871,9 +5872,15 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 uint8_t  levelMin = packet.readUInt8();
                 uint8_t  levelMax = packet.readUInt8();
                 char buf[128];
-                std::snprintf(buf, sizeof(buf),
-                    "You are now in the Meeting Stone queue for zone %u (levels %u-%u).",
-                    zoneId, levelMin, levelMax);
+                std::string zoneName = getAreaName(zoneId);
+                if (!zoneName.empty())
+                    std::snprintf(buf, sizeof(buf),
+                        "You are now in the Meeting Stone queue for %s (levels %u-%u).",
+                        zoneName.c_str(), levelMin, levelMax);
+                else
+                    std::snprintf(buf, sizeof(buf),
+                        "You are now in the Meeting Stone queue for zone %u (levels %u-%u).",
+                        zoneId, levelMin, levelMax);
                 addSystemChatMessage(buf);
                 LOG_INFO("SMSG_MEETINGSTONE_SETQUEUE: zone=", zoneId,
                          " levels=", (int)levelMin, "-", (int)levelMax);
