@@ -6579,19 +6579,26 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_QUESTGIVER_QUEST_FAILED: {
             // uint32 questId + uint32 reason
             if (packet.getSize() - packet.getReadPos() >= 8) {
-                /*uint32_t questId =*/ packet.readUInt32();
+                uint32_t questId = packet.readUInt32();
                 uint32_t reason = packet.readUInt32();
-                const char* reasonStr = "Unknown reason";
+                std::string questTitle;
+                for (const auto& q : questLog_)
+                    if (q.questId == questId && !q.title.empty()) { questTitle = q.title; break; }
+                const char* reasonStr = nullptr;
                 switch (reason) {
-                    case 1: reasonStr = "Quest failed: failed conditions"; break;
-                    case 2: reasonStr = "Quest failed: inventory full"; break;
-                    case 3: reasonStr = "Quest failed: too far away"; break;
-                    case 4: reasonStr = "Quest failed: another quest is blocking"; break;
-                    case 5: reasonStr = "Quest failed: wrong time of day"; break;
-                    case 6: reasonStr = "Quest failed: wrong race"; break;
-                    case 7: reasonStr = "Quest failed: wrong class"; break;
+                    case 1: reasonStr = "failed conditions"; break;
+                    case 2: reasonStr = "inventory full"; break;
+                    case 3: reasonStr = "too far away"; break;
+                    case 4: reasonStr = "another quest is blocking"; break;
+                    case 5: reasonStr = "wrong time of day"; break;
+                    case 6: reasonStr = "wrong race"; break;
+                    case 7: reasonStr = "wrong class"; break;
                 }
-                addSystemChatMessage(reasonStr);
+                std::string msg = questTitle.empty() ? "Quest" : ('"' + questTitle + '"');
+                msg += " failed";
+                if (reasonStr) msg += std::string(": ") + reasonStr;
+                msg += '.';
+                addSystemChatMessage(msg);
             }
             break;
         }
@@ -22452,6 +22459,11 @@ void GameHandler::handleAchievementEarned(network::Packet& packet) {
         auto entity = entityManager.getEntity(guid);
         if (auto* unit = dynamic_cast<Unit*>(entity.get())) {
             senderName = unit->getName();
+        }
+        if (senderName.empty()) {
+            auto nit = playerNameCache.find(guid);
+            if (nit != playerNameCache.end())
+                senderName = nit->second;
         }
         if (senderName.empty()) {
             char tmp[32];
