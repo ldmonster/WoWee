@@ -6102,18 +6102,18 @@ void GameHandler::handlePacket(network::Packet& packet) {
             if (packet.getSize() - packet.getReadPos() < 12) {
                 packet.setReadPos(packet.getSize()); break;
             }
-            /*uint32_t spellId =*/ packet.readUInt32();
-            uint32_t damage      = packet.readUInt32();
+            uint32_t shieldSpellId = packet.readUInt32();
+            uint32_t damage        = packet.readUInt32();
             if (!shieldClassicLike && packet.getSize() - packet.getReadPos() >= 4)
                 /*uint32_t absorbed =*/ packet.readUInt32();
             /*uint32_t school =*/  packet.readUInt32();
             // Show combat text: damage shield reflect
             if (casterGuid == playerGuid) {
                 // We have a damage shield that reflected damage
-                addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(damage), 0, true);
+                addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(damage), shieldSpellId, true, 0, casterGuid, victimGuid);
             } else if (victimGuid == playerGuid) {
                 // A damage shield hit us (e.g. target's Thorns)
-                addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(damage), 0, false);
+                addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(damage), shieldSpellId, false, 0, casterGuid, victimGuid);
             }
             break;
         }
@@ -6131,13 +6131,13 @@ void GameHandler::handlePacket(network::Packet& packet) {
             uint64_t victimGuid = immuneTbcLike
                 ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
             if (packet.getSize() - packet.getReadPos() < 5) break;
-            /*uint32_t spellId =*/ packet.readUInt32();
+            uint32_t immuneSpellId = packet.readUInt32();
             /*uint8_t saveType =*/ packet.readUInt8();
             // Show IMMUNE text when the player is the caster (we hit an immune target)
             // or the victim (we are immune)
             if (casterGuid == playerGuid || victimGuid == playerGuid) {
-                addCombatText(CombatTextEntry::IMMUNE, 0, 0,
-                              casterGuid == playerGuid);
+                addCombatText(CombatTextEntry::IMMUNE, 0, immuneSpellId,
+                              casterGuid == playerGuid, 0, casterGuid, victimGuid);
             }
             break;
         }
