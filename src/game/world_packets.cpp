@@ -1031,6 +1031,7 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
 
             // Legacy UPDATE_OBJECT spline layout used by many servers:
             // timePassed, duration, splineId, durationMod, durationModNext,
+            // [ANIMATION: animType(1)+animTime(4) if SPLINEFLAG_ANIMATION(0x00400000)],
             // verticalAccel, effectStartTime, pointCount, points, splineMode, endPoint.
             const size_t legacyStart = packet.getReadPos();
             if (!bytesAvailable(12 + 8 + 8 + 4)) return false;
@@ -1039,6 +1040,12 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
             /*uint32_t splineId =*/ packet.readUInt32();
             /*float durationMod =*/ packet.readFloat();
             /*float durationModNext =*/ packet.readFloat();
+            // Animation flag inserts 5 bytes (uint8 type + int32 time) before verticalAccel
+            if (splineFlags & 0x00400000) { // SPLINEFLAG_ANIMATION
+                if (!bytesAvailable(5)) return false;
+                packet.readUInt8();   // animationType
+                packet.readUInt32();  // animTime
+            }
             /*float verticalAccel =*/ packet.readFloat();
             /*uint32_t effectStartTime =*/ packet.readUInt32();
             uint32_t pointCount = packet.readUInt32();
