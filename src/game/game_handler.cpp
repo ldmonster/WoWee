@@ -4333,6 +4333,11 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 weatherIntensity_ = wIntensity;
                 const char* typeName = (wType == 1) ? "Rain" : (wType == 2) ? "Snow" : (wType == 3) ? "Storm" : "Clear";
                 LOG_INFO("Weather changed: type=", wType, " (", typeName, "), intensity=", wIntensity);
+                // Storm transition: trigger a low-frequency thunder rumble shake
+                if (wType == 3 && wIntensity > 0.3f && cameraShakeCallback_) {
+                    float mag = 0.03f + wIntensity * 0.04f; // 0.03–0.07 units
+                    cameraShakeCallback_(mag, 6.0f, 0.6f);
+                }
             }
             break;
         }
