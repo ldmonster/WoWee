@@ -11699,9 +11699,8 @@ void GameHandler::targetEnemy(bool reverse) {
 
     for (const auto& [guid, entity] : entities) {
         if (entity->getType() == ObjectType::UNIT) {
-            // Check if hostile (this is simplified - would need faction checking)
             auto unit = std::dynamic_pointer_cast<Unit>(entity);
-            if (unit && guid != playerGuid) {
+            if (unit && guid != playerGuid && unit->isHostile()) {
                 hostiles.push_back(guid);
             }
         }
