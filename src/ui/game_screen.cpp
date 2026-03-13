@@ -711,6 +711,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderCombatLog(gameHandler);
     renderAchievementWindow(gameHandler);
     renderTitlesWindow(gameHandler);
+    renderEquipSetWindow(gameHandler);
     renderGmTicketWindow(gameHandler);
     renderInspectWindow(gameHandler);
     renderBookWindow(gameHandler);
@@ -2337,6 +2338,11 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
         // Toggle Titles window with H (hero/title screen — no conflicting keybinding)
         if (input.isKeyJustPressed(SDL_SCANCODE_H) && !ImGui::GetIO().WantCaptureKeyboard) {
             showTitlesWindow_ = !showTitlesWindow_;
+        }
+
+        // Toggle Equipment Set Manager with ` (backtick / grave — unused in standard WoW)
+        if (input.isKeyJustPressed(SDL_SCANCODE_GRAVE) && !ImGui::GetIO().WantCaptureKeyboard) {
+            showEquipSetWindow_ = !showEquipSetWindow_;
         }
 
         // Action bar keys (1-9, 0, -, =)
@@ -20712,6 +20718,71 @@ void GameScreen::renderTitlesWindow(game::GameHandler& gameHandler) {
             ImGui::TextDisabled("<-- active");
         }
 
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+
+    ImGui::End();
+}
+
+// ─── Equipment Set Manager Window ─────────────────────────────────────────────
+void GameScreen::renderEquipSetWindow(game::GameHandler& gameHandler) {
+    if (!showEquipSetWindow_) return;
+
+    ImGui::SetNextWindowSize(ImVec2(280, 320), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(260, 180), ImGuiCond_FirstUseEver);
+
+    if (!ImGui::Begin("Equipment Sets##equipsets", &showEquipSetWindow_)) {
+        ImGui::End();
+        return;
+    }
+
+    const auto& sets = gameHandler.getEquipmentSets();
+
+    if (sets.empty()) {
+        ImGui::TextDisabled("No equipment sets saved.");
+        ImGui::Spacing();
+        ImGui::TextWrapped("Create equipment sets in-game using the default WoW equipment manager (Shift+click the Equipment Sets button).");
+        ImGui::End();
+        return;
+    }
+
+    ImGui::TextUnformatted("Click a set to equip it:");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::BeginChild("##equipsetlist", ImVec2(0, 0), false);
+    for (const auto& set : sets) {
+        ImGui::PushID(static_cast<int>(set.setId));
+
+        // Icon placeholder (use a coloured square if no icon texture available)
+        ImVec2 iconSize(32.0f, 32.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.20f, 0.10f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.40f, 0.30f, 0.15f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.60f, 0.45f, 0.20f, 1.0f));
+        if (ImGui::Button("##icon", iconSize)) {
+            gameHandler.useEquipmentSet(set.setId);
+        }
+        ImGui::PopStyleColor(3);
+
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Equip set: %s", set.name.c_str());
+        }
+
+        ImGui::SameLine();
+
+        // Name and equip button
+        ImGui::BeginGroup();
+        ImGui::TextUnformatted(set.name.c_str());
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.35f, 0.15f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.50f, 0.22f, 1.0f));
+        if (ImGui::SmallButton("Equip")) {
+            gameHandler.useEquipmentSet(set.setId);
+        }
+        ImGui::PopStyleColor(2);
+        ImGui::EndGroup();
+
+        ImGui::Spacing();
         ImGui::PopID();
     }
     ImGui::EndChild();

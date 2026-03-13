@@ -433,6 +433,10 @@ private:
     bool  showTitlesWindow_ = false;
     void  renderTitlesWindow(game::GameHandler& gameHandler);
 
+    // Equipment Set Manager window
+    bool  showEquipSetWindow_ = false;
+    void  renderEquipSetWindow(game::GameHandler& gameHandler);
+
     // GM Ticket window
     bool  showGmTicketWindow_ = false;
     char  gmTicketBuf_[2048] = {};
