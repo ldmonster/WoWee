@@ -7300,8 +7300,15 @@ void GameHandler::handlePacket(network::Packet& packet) {
             bfMgrInvitePending_ = true;
             bfMgrZoneId_        = bfZoneId;
             char buf[128];
-            std::snprintf(buf, sizeof(buf),
-                "You are invited to the outdoor battlefield in zone %u. Click to enter.", bfZoneId);
+            std::string bfZoneName = getAreaName(bfZoneId);
+            if (!bfZoneName.empty())
+                std::snprintf(buf, sizeof(buf),
+                    "You are invited to the outdoor battlefield in %s. Click to enter.",
+                    bfZoneName.c_str());
+            else
+                std::snprintf(buf, sizeof(buf),
+                    "You are invited to the outdoor battlefield in zone %u. Click to enter.",
+                    bfZoneId);
             addSystemChatMessage(buf);
             LOG_INFO("SMSG_BATTLEFIELD_MGR_ENTRY_INVITE: zoneId=", bfZoneId);
             break;
