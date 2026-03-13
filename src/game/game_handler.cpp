@@ -8924,6 +8924,37 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                             if (ghostStateCallback_) ghostStateCallback_(true);
                         }
                     }
+                    // Classic: rebuild playerAuras from UNIT_FIELD_AURAS on initial object create
+                    if (block.guid == playerGuid && isClassicLikeExpansion()) {
+                        const uint16_t ufAuras = fieldIndex(UF::UNIT_FIELD_AURAS);
+                        if (ufAuras != 0xFFFF) {
+                            bool hasAuraField = false;
+                            for (const auto& [fk, fv] : block.fields) {
+                                if (fk >= ufAuras && fk < ufAuras + 48) { hasAuraField = true; break; }
+                            }
+                            if (hasAuraField) {
+                                playerAuras.clear();
+                                playerAuras.resize(48);
+                                uint64_t nowMs = static_cast<uint64_t>(
+                                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now().time_since_epoch()).count());
+                                const auto& allFields = entity->getFields();
+                                for (int slot = 0; slot < 48; ++slot) {
+                                    auto it = allFields.find(static_cast<uint16_t>(ufAuras + slot));
+                                    if (it != allFields.end() && it->second != 0) {
+                                        AuraSlot& a = playerAuras[slot];
+                                        a.spellId = it->second;
+                                        a.flags = 0;
+                                        a.durationMs = -1;
+                                        a.maxDurationMs = -1;
+                                        a.casterGuid = playerGuid;
+                                        a.receivedAtMs = nowMs;
+                                    }
+                                }
+                                LOG_DEBUG("[Classic] Rebuilt playerAuras from UNIT_FIELD_AURAS (CREATE_OBJECT)");
+                            }
+                        }
+                    }
                     // Determine hostility from faction template for online creatures.
                     // Always call isHostileFaction — factionTemplate=0 defaults to hostile
                     // in the lookup rather than silently staying at the struct default (false).
@@ -9334,6 +9365,38 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                                 unit->setPowerByType(static_cast<uint8_t>(key - ufPowerBase), val);
                             } else if (key >= ufMaxPowerBase && key < ufMaxPowerBase + 7) {
                                 unit->setMaxPowerByType(static_cast<uint8_t>(key - ufMaxPowerBase), val);
+                            }
+                        }
+
+                        // Classic: sync playerAuras from UNIT_FIELD_AURAS when those fields are updated
+                        if (block.guid == playerGuid && isClassicLikeExpansion()) {
+                            const uint16_t ufAuras = fieldIndex(UF::UNIT_FIELD_AURAS);
+                            if (ufAuras != 0xFFFF) {
+                                bool hasAuraUpdate = false;
+                                for (const auto& [fk, fv] : block.fields) {
+                                    if (fk >= ufAuras && fk < ufAuras + 48) { hasAuraUpdate = true; break; }
+                                }
+                                if (hasAuraUpdate) {
+                                    playerAuras.clear();
+                                    playerAuras.resize(48);
+                                    uint64_t nowMs = static_cast<uint64_t>(
+                                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                                            std::chrono::steady_clock::now().time_since_epoch()).count());
+                                    const auto& allFields = entity->getFields();
+                                    for (int slot = 0; slot < 48; ++slot) {
+                                        auto it = allFields.find(static_cast<uint16_t>(ufAuras + slot));
+                                        if (it != allFields.end() && it->second != 0) {
+                                            AuraSlot& a = playerAuras[slot];
+                                            a.spellId = it->second;
+                                            a.flags = 0;
+                                            a.durationMs = -1;
+                                            a.maxDurationMs = -1;
+                                            a.casterGuid = playerGuid;
+                                            a.receivedAtMs = nowMs;
+                                        }
+                                    }
+                                    LOG_DEBUG("[Classic] Rebuilt playerAuras from UNIT_FIELD_AURAS (VALUES)");
+                                }
                             }
                         }
 
