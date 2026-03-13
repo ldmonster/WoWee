@@ -16653,6 +16653,28 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
         }
     }
 
+    // Calendar pending invites indicator (WotLK only)
+    {
+        auto* expReg = core::Application::getInstance().getExpansionRegistry();
+        bool isWotLK = expReg && expReg->getActive() && expReg->getActive()->id == "wotlk";
+        if (isWotLK) {
+            uint32_t calPending = gameHandler.getCalendarPendingInvites();
+            if (calPending > 0) {
+                ImGui::SetNextWindowPos(ImVec2(indicatorX, nextIndicatorY), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(ImVec2(indicatorW, kIndicatorH), ImGuiCond_Always);
+                if (ImGui::Begin("##CalendarIndicator", nullptr, indicatorFlags)) {
+                    float pulse = 0.7f + 0.3f * std::sin(static_cast<float>(ImGui::GetTime()) * 2.0f);
+                    char calBuf[48];
+                    snprintf(calBuf, sizeof(calBuf), "Calendar: %u Invite%s",
+                             calPending, calPending == 1 ? "" : "s");
+                    ImGui::TextColored(ImVec4(0.6f, 0.5f, 1.0f, pulse), "%s", calBuf);
+                }
+                ImGui::End();
+                nextIndicatorY += kIndicatorH;
+            }
+        }
+    }
+
     // Latency indicator — centered at top of screen
     uint32_t latMs = gameHandler.getLatencyMs();
     if (showLatencyMeter_ && latMs > 0 && gameHandler.getState() == game::WorldState::IN_WORLD) {
