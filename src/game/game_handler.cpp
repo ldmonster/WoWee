@@ -2084,6 +2084,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
             pendingLootRoll_.objectGuid = objectGuid;
             pendingLootRoll_.slot       = slot;
             pendingLootRoll_.itemId     = itemId;
+            // Ensure item info is queried so the roll popup can show the name/icon.
+            // The popup re-reads getItemInfo() live, so the name will populate once
+            // SMSG_ITEM_QUERY_SINGLE_RESPONSE arrives (usually within ~100 ms).
+            queryItemInfo(itemId, 0);
             auto* info = getItemInfo(itemId);
             pendingLootRoll_.itemName    = info ? info->name : std::to_string(itemId);
             pendingLootRoll_.itemQuality = info ? static_cast<uint8_t>(info->quality) : 0;

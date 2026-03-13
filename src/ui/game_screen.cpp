@@ -10716,7 +10716,14 @@ void GameScreen::renderLootRollPopup(game::GameHandler& gameHandler) {
             ImGui::Image((ImTextureID)(uintptr_t)rollIcon, ImVec2(24, 24));
             ImGui::SameLine();
         }
-        ImGui::TextColored(col, "[%s]", roll.itemName.c_str());
+        // Prefer live item info (arrives via SMSG_ITEM_QUERY_SINGLE_RESPONSE after the
+        // roll popup opens); fall back to the name cached at SMSG_LOOT_START_ROLL time.
+        const char* displayName = (rollInfo && rollInfo->valid && !rollInfo->name.empty())
+            ? rollInfo->name.c_str()
+            : roll.itemName.c_str();
+        if (rollInfo && rollInfo->valid)
+            col = (rollInfo->quality < 6) ? kQualityColors[rollInfo->quality] : kQualityColors[1];
+        ImGui::TextColored(col, "[%s]", displayName);
         if (ImGui::IsItemHovered() && rollInfo && rollInfo->valid) {
             inventoryScreen.renderItemTooltip(*rollInfo);
         }
