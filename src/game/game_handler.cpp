@@ -2061,13 +2061,13 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 return UpdateObjectParser::readPackedGuid(packet);
             };
             if (packet.getSize() - packet.getReadPos() < (prTbcLike ? 8u : 1u)) break;
-            /*uint64_t caster =*/ readPrGuid();
+            uint64_t caster = readPrGuid();
             if (packet.getSize() - packet.getReadPos() < (prTbcLike ? 8u : 1u)) break;
             uint64_t victim = readPrGuid();
             if (packet.getSize() - packet.getReadPos() < 4) break;
             uint32_t spellId = packet.readUInt32();
             if (victim == playerGuid)
-                addCombatText(CombatTextEntry::RESIST, 0, spellId, false);
+                addCombatText(CombatTextEntry::RESIST, 0, spellId, false, 0, caster, victim);
             packet.setReadPos(packet.getSize());
             break;
         }
@@ -2692,10 +2692,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 CombatTextEntry::Type ct = (missInfo < 9) ? missTypes[missInfo] : CombatTextEntry::MISS;
                 if (casterGuid == playerGuid) {
                     // We cast a spell and it missed the target
-                    addCombatText(ct, 0, 0, true);
+                    addCombatText(ct, 0, 0, true, 0, casterGuid, victimGuid);
                 } else if (victimGuid == playerGuid) {
                     // Enemy spell missed us (we dodged/parried/blocked/resisted/etc.)
-                    addCombatText(ct, 0, 0, false);
+                    addCombatText(ct, 0, 0, false, 0, casterGuid, victimGuid);
                 }
             }
             break;
@@ -6831,12 +6831,11 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
             if (rl_rem() < 4) { packet.setReadPos(packet.getSize()); break; }
             uint32_t spellId = packet.readUInt32();
-            (void)attackerGuid;
             // Show RESIST when player is the victim; show as caster-side MISS when player is attacker
             if (victimGuid == playerGuid) {
-                addCombatText(CombatTextEntry::MISS, 0, spellId, false);
+                addCombatText(CombatTextEntry::MISS, 0, spellId, false, 0, attackerGuid, victimGuid);
             } else if (attackerGuid == playerGuid) {
-                addCombatText(CombatTextEntry::MISS, 0, spellId, true);
+                addCombatText(CombatTextEntry::MISS, 0, spellId, true, 0, attackerGuid, victimGuid);
             }
             packet.setReadPos(packet.getSize());
             break;
