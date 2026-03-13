@@ -1230,6 +1230,11 @@ public:
     void setAutoLoot(bool enabled) { autoLoot_ = enabled; }
     bool isAutoLoot() const { return autoLoot_; }
 
+    // Master loot candidates (from SMSG_LOOT_MASTER_LIST)
+    const std::vector<uint64_t>& getMasterLootCandidates() const { return masterLootCandidates_; }
+    bool hasMasterLootCandidates() const { return !masterLootCandidates_.empty(); }
+    void lootMasterGive(uint8_t lootSlot, uint64_t targetGuid);
+
     // Group loot roll
     struct LootRollEntry {
         uint64_t objectGuid    = 0;
@@ -2493,6 +2498,7 @@ private:
     bool lootWindowOpen = false;
     bool autoLoot_ = false;
     LootResponseData currentLoot;
+    std::vector<uint64_t> masterLootCandidates_;  // from SMSG_LOOT_MASTER_LIST
 
     // Group loot roll state
     bool          pendingLootRollActive_ = false;

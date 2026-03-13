@@ -3342,10 +3342,19 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_LOOT_ROLL_WON:
             handleLootRollWon(packet);
             break;
-        case Opcode::SMSG_LOOT_MASTER_LIST:
-            // Master looter list — no UI yet; consume to avoid unhandled warning.
-            packet.setReadPos(packet.getSize());
+        case Opcode::SMSG_LOOT_MASTER_LIST: {
+            // uint8 count + count * uint64 guid — eligible recipients for master looter
+            masterLootCandidates_.clear();
+            if (packet.getSize() - packet.getReadPos() < 1) break;
+            uint8_t mlCount = packet.readUInt8();
+            masterLootCandidates_.reserve(mlCount);
+            for (uint8_t i = 0; i < mlCount; ++i) {
+                if (packet.getSize() - packet.getReadPos() < 8) break;
+                masterLootCandidates_.push_back(packet.readUInt64());
+            }
+            LOG_INFO("SMSG_LOOT_MASTER_LIST: ", (int)masterLootCandidates_.size(), " candidates");
             break;
+        }
         case Opcode::SMSG_GOSSIP_MESSAGE:
             handleGossipMessage(packet);
             break;
@@ -15585,6 +15594,7 @@ void GameHandler::lootItem(uint8_t slotIndex) {
 void GameHandler::closeLoot() {
     if (!lootWindowOpen) return;
     lootWindowOpen = false;
+    masterLootCandidates_.clear();
     if (currentLoot.lootGuid != 0 && targetGuid == currentLoot.lootGuid) {
         clearTarget();
     }
@@ -15593,6 +15603,16 @@ void GameHandler::closeLoot() {
         socket->send(packet);
     }
     currentLoot = LootResponseData{};
+}
+
+void GameHandler::lootMasterGive(uint8_t lootSlot, uint64_t targetGuid) {
+    if (state != WorldState::IN_WORLD || !socket) return;
+    // CMSG_LOOT_MASTER_GIVE: uint64 lootGuid + uint8 slotIndex + uint64 targetGuid
+    network::Packet pkt(wireOpcode(Opcode::CMSG_LOOT_MASTER_GIVE));
+    pkt.writeUInt64(currentLoot.lootGuid);
+    pkt.writeUInt8(lootSlot);
+    pkt.writeUInt64(targetGuid);
+    socket->send(pkt);
 }
 
 void GameHandler::interactWithNpc(uint64_t guid) {

@@ -12164,7 +12164,43 @@ void GameScreen::renderLootWindow(game::GameHandler& gameHandler) {
 
         // Process deferred loot pickup (after loop to avoid iterator invalidation)
         if (lootSlotClicked >= 0) {
-            gameHandler.lootItem(static_cast<uint8_t>(lootSlotClicked));
+            if (gameHandler.hasMasterLootCandidates()) {
+                // Master looter: open popup to choose recipient
+                char popupId[32];
+                snprintf(popupId, sizeof(popupId), "##MLGive%d", lootSlotClicked);
+                ImGui::OpenPopup(popupId);
+            } else {
+                gameHandler.lootItem(static_cast<uint8_t>(lootSlotClicked));
+            }
+        }
+
+        // Master loot "Give to" popups
+        if (gameHandler.hasMasterLootCandidates()) {
+            for (const auto& item : loot.items) {
+                char popupId[32];
+                snprintf(popupId, sizeof(popupId), "##MLGive%d", item.slotIndex);
+                if (ImGui::BeginPopup(popupId)) {
+                    ImGui::TextDisabled("Give to:");
+                    ImGui::Separator();
+                    const auto& candidates = gameHandler.getMasterLootCandidates();
+                    for (uint64_t candidateGuid : candidates) {
+                        auto entity = gameHandler.getEntityManager().getEntity(candidateGuid);
+                        auto* unit = entity ? dynamic_cast<game::Unit*>(entity.get()) : nullptr;
+                        const char* cName = unit ? unit->getName().c_str() : nullptr;
+                        char nameBuf[64];
+                        if (!cName || cName[0] == '\0') {
+                            snprintf(nameBuf, sizeof(nameBuf), "Player 0x%llx",
+                                     static_cast<unsigned long long>(candidateGuid));
+                            cName = nameBuf;
+                        }
+                        if (ImGui::MenuItem(cName)) {
+                            gameHandler.lootMasterGive(item.slotIndex, candidateGuid);
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                    ImGui::EndPopup();
+                }
+            }
         }
 
         if (loot.items.empty() && loot.gold == 0) {
