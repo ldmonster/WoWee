@@ -8991,7 +8991,8 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                     }
                     // Classic: rebuild playerAuras from UNIT_FIELD_AURAS on initial object create
                     if (block.guid == playerGuid && isClassicLikeExpansion()) {
-                        const uint16_t ufAuras = fieldIndex(UF::UNIT_FIELD_AURAS);
+                        const uint16_t ufAuras     = fieldIndex(UF::UNIT_FIELD_AURAS);
+                        const uint16_t ufAuraFlags = fieldIndex(UF::UNIT_FIELD_AURAFLAGS);
                         if (ufAuras != 0xFFFF) {
                             bool hasAuraField = false;
                             for (const auto& [fk, fv] : block.fields) {
@@ -9009,7 +9010,14 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                                     if (it != allFields.end() && it->second != 0) {
                                         AuraSlot& a = playerAuras[slot];
                                         a.spellId = it->second;
-                                        a.flags = 0;
+                                        // Read aura flag byte: packed 4-per-uint32 at ufAuraFlags
+                                        uint8_t aFlag = 0;
+                                        if (ufAuraFlags != 0xFFFF) {
+                                            auto fit = allFields.find(static_cast<uint16_t>(ufAuraFlags + slot / 4));
+                                            if (fit != allFields.end())
+                                                aFlag = static_cast<uint8_t>((fit->second >> ((slot % 4) * 8)) & 0xFF);
+                                        }
+                                        a.flags = aFlag;
                                         a.durationMs = -1;
                                         a.maxDurationMs = -1;
                                         a.casterGuid = playerGuid;
@@ -9435,7 +9443,8 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
 
                         // Classic: sync playerAuras from UNIT_FIELD_AURAS when those fields are updated
                         if (block.guid == playerGuid && isClassicLikeExpansion()) {
-                            const uint16_t ufAuras = fieldIndex(UF::UNIT_FIELD_AURAS);
+                            const uint16_t ufAuras     = fieldIndex(UF::UNIT_FIELD_AURAS);
+                            const uint16_t ufAuraFlags = fieldIndex(UF::UNIT_FIELD_AURAFLAGS);
                             if (ufAuras != 0xFFFF) {
                                 bool hasAuraUpdate = false;
                                 for (const auto& [fk, fv] : block.fields) {
@@ -9453,7 +9462,14 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                                         if (it != allFields.end() && it->second != 0) {
                                             AuraSlot& a = playerAuras[slot];
                                             a.spellId = it->second;
-                                            a.flags = 0;
+                                            // Read aura flag byte: packed 4-per-uint32 at ufAuraFlags
+                                            uint8_t aFlag = 0;
+                                            if (ufAuraFlags != 0xFFFF) {
+                                                auto fit = allFields.find(static_cast<uint16_t>(ufAuraFlags + slot / 4));
+                                                if (fit != allFields.end())
+                                                    aFlag = static_cast<uint8_t>((fit->second >> ((slot % 4) * 8)) & 0xFF);
+                                            }
+                                            a.flags = aFlag;
                                             a.durationMs = -1;
                                             a.maxDurationMs = -1;
                                             a.casterGuid = playerGuid;
