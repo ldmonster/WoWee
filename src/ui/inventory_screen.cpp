@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 #include <unordered_set>
 
 namespace wowee {
@@ -1816,11 +1817,65 @@ void InventoryScreen::renderStatsPanel(game::Inventory& inventory, uint32_t play
             if (critPct   >= 0.0f) ImGui::TextColored(cyan, "Melee Crit: %.2f%%", critPct);
             if (rCritPct  >= 0.0f) ImGui::TextColored(cyan, "Ranged Crit: %.2f%%", rCritPct);
             if (sCritPct  >= 0.0f) ImGui::TextColored(cyan, "Spell Crit: %.2f%%", sCritPct);
-            if (hitRating   >= 0)  ImGui::TextColored(cyan, "Hit Rating: %d", hitRating);
-            if (expertiseR  >= 0)  ImGui::TextColored(cyan, "Expertise Rating: %d", expertiseR);
-            if (hasteR      >= 0)  ImGui::TextColored(cyan, "Haste Rating: %d", hasteR);
-            if (armorPenR   >= 0)  ImGui::TextColored(cyan, "Armor Penetration: %d", armorPenR);
-            if (resilR      >= 0)  ImGui::TextColored(cyan, "Resilience: %d", resilR);
+
+            // Combat ratings with percentage conversion (WotLK level-80 divisors scaled by level).
+            // Formula: pct = rating / (divisorAt80 * pow(level/80.0, 0.93))
+            // Level-80 divisors derived from gtCombatRatings.dbc (well-known WotLK constants):
+            //   Hit: 26.23,  Expertise: 8.19/expertise (0.25% each),
+            //   Haste: 32.79,  ArmorPen: 13.99,  Resilience: 94.27
+            uint32_t level = playerLevel > 0 ? playerLevel : gh->getPlayerLevel();
+            if (level == 0) level = 80;
+            double lvlScale = level <= 80
+                ? std::pow(static_cast<double>(level) / 80.0, 0.93)
+                : 1.0;
+
+            auto ratingPct = [&](int32_t rating, double divisorAt80) -> float {
+                if (rating < 0 || divisorAt80 <= 0.0) return -1.0f;
+                double d = divisorAt80 * lvlScale;
+                return static_cast<float>(rating / d);
+            };
+
+            if (hitRating >= 0) {
+                float pct = ratingPct(hitRating, 26.23);
+                if (pct >= 0.0f)
+                    ImGui::TextColored(cyan, "Hit Rating: %d (%.2f%%)", hitRating, pct);
+                else
+                    ImGui::TextColored(cyan, "Hit Rating: %d", hitRating);
+            }
+            if (expertiseR >= 0) {
+                // Each expertise point reduces dodge and parry chance by 0.25%
+                // expertise_points = rating / 8.19
+                float exp_pts = ratingPct(expertiseR, 8.19);
+                if (exp_pts >= 0.0f) {
+                    float exp_pct = exp_pts * 0.25f;  // % dodge/parry reduction
+                    ImGui::TextColored(cyan, "Expertise: %d (%.1f / %.2f%%)",
+                                       expertiseR, exp_pts, exp_pct);
+                } else {
+                    ImGui::TextColored(cyan, "Expertise Rating: %d", expertiseR);
+                }
+            }
+            if (hasteR >= 0) {
+                float pct = ratingPct(hasteR, 32.79);
+                if (pct >= 0.0f)
+                    ImGui::TextColored(cyan, "Haste Rating: %d (%.2f%%)", hasteR, pct);
+                else
+                    ImGui::TextColored(cyan, "Haste Rating: %d", hasteR);
+            }
+            if (armorPenR >= 0) {
+                float pct = ratingPct(armorPenR, 13.99);
+                if (pct >= 0.0f)
+                    ImGui::TextColored(cyan, "Armor Pen: %d (%.2f%%)", armorPenR, pct);
+                else
+                    ImGui::TextColored(cyan, "Armor Penetration: %d", armorPenR);
+            }
+            if (resilR >= 0) {
+                // Resilience: reduces crit chance against you by pct%, and crit damage by 2*pct%
+                float pct = ratingPct(resilR, 94.27);
+                if (pct >= 0.0f)
+                    ImGui::TextColored(cyan, "Resilience: %d (%.2f%%)", resilR, pct);
+                else
+                    ImGui::TextColored(cyan, "Resilience: %d", resilR);
+            }
         }
     }
 }
