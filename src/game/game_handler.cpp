@@ -6062,7 +6062,64 @@ void GameHandler::handlePacket(network::Packet& packet) {
             packet.setReadPos(packet.getSize());
             break;
         }
-        case Opcode::SMSG_SPELLLOGEXECUTE:
+        case Opcode::SMSG_SPELLLOGEXECUTE: {
+            // WotLK: packed_guid caster + uint32 spellId + uint32 effectCount
+            // TBC/Classic: uint64 caster + uint32 spellId + uint32 effectCount
+            // Per-effect: uint8 effectType + uint32 effectLogCount + effect-specific data
+            // Effect 24 = SPELL_EFFECT_CREATE_ITEM: uint32 itemEntry per entry
+            const bool exeTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+            if (packet.getSize() - packet.getReadPos() < (exeTbcLike ? 8u : 1u)) {
+                packet.setReadPos(packet.getSize()); break;
+            }
+            uint64_t exeCaster = exeTbcLike
+                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+            if (packet.getSize() - packet.getReadPos() < 8) {
+                packet.setReadPos(packet.getSize()); break;
+            }
+            uint32_t exeSpellId = packet.readUInt32();
+            uint32_t exeEffectCount = packet.readUInt32();
+            exeEffectCount = std::min(exeEffectCount, 32u); // sanity
+
+            const bool isPlayerCaster = (exeCaster == playerGuid);
+            for (uint32_t ei = 0; ei < exeEffectCount; ++ei) {
+                if (packet.getSize() - packet.getReadPos() < 5) break;
+                uint8_t  effectType     = packet.readUInt8();
+                uint32_t effectLogCount = packet.readUInt32();
+                effectLogCount = std::min(effectLogCount, 64u); // sanity
+                if (effectType == 24) {
+                    // SPELL_EFFECT_CREATE_ITEM: uint32 itemEntry per log entry
+                    for (uint32_t li = 0; li < effectLogCount; ++li) {
+                        if (packet.getSize() - packet.getReadPos() < 4) break;
+                        uint32_t itemEntry = packet.readUInt32();
+                        if (isPlayerCaster && itemEntry != 0) {
+                            ensureItemInfo(itemEntry);
+                            const ItemQueryResponseData* info = getItemInfo(itemEntry);
+                            std::string itemName = info && !info->name.empty()
+                                ? info->name : ("item #" + std::to_string(itemEntry));
+                            loadSpellNameCache();
+                            auto spellIt = spellNameCache_.find(exeSpellId);
+                            std::string spellName = (spellIt != spellNameCache_.end() && !spellIt->second.name.empty())
+                                ? spellIt->second.name : "";
+                            std::string msg = spellName.empty()
+                                ? ("You create: " + itemName + ".")
+                                : ("You create " + itemName + " using " + spellName + ".");
+                            addSystemChatMessage(msg);
+                            LOG_DEBUG("SMSG_SPELLLOGEXECUTE CREATE_ITEM: spell=", exeSpellId,
+                                      " item=", itemEntry, " name=", itemName);
+                        }
+                    }
+                } else {
+                    // Other effect types: consume their data safely
+                    // Most effects have no trailing per-entry data beyond the count header,
+                    // or use variable-length sub-records we cannot safely skip.
+                    // Stop parsing at first unknown effect to avoid misalignment.
+                    packet.setReadPos(packet.getSize());
+                    break;
+                }
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
         case Opcode::SMSG_SPELL_CHANCE_RESIST_PUSHBACK:
         case Opcode::SMSG_SPELL_UPDATE_CHAIN_TARGETS:
             packet.setReadPos(packet.getSize());
