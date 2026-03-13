@@ -2679,6 +2679,142 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
         }
     }
 
+    // Gem socket slots and item set — look up from query cache
+    if (gameHandler_) {
+        const auto* qi2 = gameHandler_->getItemInfo(item.itemId);
+        if (qi2 && qi2->valid) {
+            // Gem sockets
+            {
+                static const struct { uint32_t mask; const char* label; ImVec4 col; } kSocketTypes[] = {
+                    { 1, "Meta Socket",   { 0.7f, 0.7f, 0.9f, 1.0f } },
+                    { 2, "Red Socket",    { 1.0f, 0.3f, 0.3f, 1.0f } },
+                    { 4, "Yellow Socket", { 1.0f, 0.9f, 0.3f, 1.0f } },
+                    { 8, "Blue Socket",   { 0.3f, 0.6f, 1.0f, 1.0f } },
+                };
+                bool hasSocket = false;
+                for (int i = 0; i < 3; ++i) {
+                    if (qi2->socketColor[i] == 0) continue;
+                    if (!hasSocket) { ImGui::Spacing(); hasSocket = true; }
+                    for (const auto& st : kSocketTypes) {
+                        if (qi2->socketColor[i] & st.mask) {
+                            ImGui::TextColored(st.col, "%s", st.label);
+                            break;
+                        }
+                    }
+                }
+                if (hasSocket && qi2->socketBonus != 0) {
+                    static std::unordered_map<uint32_t, std::string> s_enchantNamesD;
+                    static bool s_enchantNamesLoadedD = false;
+                    if (!s_enchantNamesLoadedD && assetManager_) {
+                        s_enchantNamesLoadedD = true;
+                        auto dbc = assetManager_->loadDBC("SpellItemEnchantment.dbc");
+                        if (dbc && dbc->isLoaded()) {
+                            const auto* lay = pipeline::getActiveDBCLayout()
+                                ? pipeline::getActiveDBCLayout()->getLayout("SpellItemEnchantment") : nullptr;
+                            uint32_t nameField = lay ? lay->field("Name") : 8u;
+                            if (nameField == 0xFFFFFFFF) nameField = 8;
+                            uint32_t fc = dbc->getFieldCount();
+                            for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
+                                uint32_t eid = dbc->getUInt32(r, 0);
+                                if (eid == 0 || nameField >= fc) continue;
+                                std::string ename = dbc->getString(r, nameField);
+                                if (!ename.empty()) s_enchantNamesD[eid] = std::move(ename);
+                            }
+                        }
+                    }
+                    auto enchIt = s_enchantNamesD.find(qi2->socketBonus);
+                    if (enchIt != s_enchantNamesD.end())
+                        ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Socket Bonus: %s", enchIt->second.c_str());
+                    else
+                        ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Socket Bonus: (id %u)", qi2->socketBonus);
+                }
+            }
+            // Item set membership
+            if (qi2->itemSetId != 0) {
+                struct SetEntryD {
+                    std::string name;
+                    std::array<uint32_t, 10> itemIds{};
+                    std::array<uint32_t, 10> spellIds{};
+                    std::array<uint32_t, 10> thresholds{};
+                };
+                static std::unordered_map<uint32_t, SetEntryD> s_setDataD;
+                static bool s_setDataLoadedD = false;
+                if (!s_setDataLoadedD && assetManager_) {
+                    s_setDataLoadedD = true;
+                    auto dbc = assetManager_->loadDBC("ItemSet.dbc");
+                    if (dbc && dbc->isLoaded()) {
+                        const auto* layout = pipeline::getActiveDBCLayout()
+                            ? pipeline::getActiveDBCLayout()->getLayout("ItemSet") : nullptr;
+                        auto lf = [&](const char* k, uint32_t def) -> uint32_t {
+                            return layout ? (*layout)[k] : def;
+                        };
+                        uint32_t idF = lf("ID", 0), nameF = lf("Name", 1);
+                        static const char* itemKeys[10] = {
+                            "Item0","Item1","Item2","Item3","Item4",
+                            "Item5","Item6","Item7","Item8","Item9" };
+                        static const char* spellKeys[10] = {
+                            "Spell0","Spell1","Spell2","Spell3","Spell4",
+                            "Spell5","Spell6","Spell7","Spell8","Spell9" };
+                        static const char* thrKeys[10] = {
+                            "Threshold0","Threshold1","Threshold2","Threshold3","Threshold4",
+                            "Threshold5","Threshold6","Threshold7","Threshold8","Threshold9" };
+                        uint32_t itemFB[10], spellFB[10], thrFB[10];
+                        for (int i = 0; i < 10; ++i) {
+                            itemFB[i] = 18+i; spellFB[i] = 28+i; thrFB[i] = 38+i;
+                        }
+                        for (uint32_t r = 0; r < dbc->getRecordCount(); ++r) {
+                            uint32_t id = dbc->getUInt32(r, idF);
+                            if (!id) continue;
+                            SetEntryD e;
+                            e.name = dbc->getString(r, nameF);
+                            for (int i = 0; i < 10; ++i) {
+                                e.itemIds[i]    = dbc->getUInt32(r, layout ? (*layout)[itemKeys[i]]  : itemFB[i]);
+                                e.spellIds[i]   = dbc->getUInt32(r, layout ? (*layout)[spellKeys[i]] : spellFB[i]);
+                                e.thresholds[i] = dbc->getUInt32(r, layout ? (*layout)[thrKeys[i]]   : thrFB[i]);
+                            }
+                            s_setDataD[id] = std::move(e);
+                        }
+                    }
+                }
+                auto setIt = s_setDataD.find(qi2->itemSetId);
+                ImGui::Spacing();
+                if (setIt != s_setDataD.end()) {
+                    const SetEntryD& se = setIt->second;
+                    int equipped = 0, total = 0;
+                    for (int i = 0; i < 10; ++i) {
+                        if (se.itemIds[i] == 0) continue;
+                        ++total;
+                        if (inventory) {
+                            for (int s = 0; s < game::Inventory::NUM_EQUIP_SLOTS; s++) {
+                                const auto& eSlot = inventory->getEquipSlot(static_cast<game::EquipSlot>(s));
+                                if (!eSlot.empty() && eSlot.item.itemId == se.itemIds[i]) { ++equipped; break; }
+                            }
+                        }
+                    }
+                    if (total > 0) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f),
+                            "%s (%d/%d)", se.name.empty() ? "Set" : se.name.c_str(), equipped, total);
+                    } else if (!se.name.empty()) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "%s", se.name.c_str());
+                    }
+                    for (int i = 0; i < 10; ++i) {
+                        if (se.spellIds[i] == 0 || se.thresholds[i] == 0) continue;
+                        const std::string& bname = gameHandler_->getSpellName(se.spellIds[i]);
+                        bool active = (equipped >= static_cast<int>(se.thresholds[i]));
+                        ImVec4 col = active ? ImVec4(0.5f, 1.0f, 0.5f, 1.0f)
+                                           : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
+                        if (!bname.empty())
+                            ImGui::TextColored(col, "(%u) %s", se.thresholds[i], bname.c_str());
+                        else
+                            ImGui::TextColored(col, "(%u) Set Bonus", se.thresholds[i]);
+                    }
+                } else {
+                    ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Set (id %u)", qi2->itemSetId);
+                }
+            }
+        }
+    }
+
     // "Begins a Quest" line (shown in yellow-green like the game)
     if (item.startQuestId != 0) {
         ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Begins a Quest");
