@@ -3172,20 +3172,22 @@ void GameHandler::handlePacket(network::Packet& packet) {
             //              [+ count × uint32 failedSpellId]
             const bool dispelTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
             uint32_t dispelSpellId = 0;
+            uint64_t dispelCasterGuid = 0;
             if (dispelTbcLike) {
                 if (packet.getSize() - packet.getReadPos() < 20) break;
-                /*uint64_t caster =*/ packet.readUInt64();
+                dispelCasterGuid = packet.readUInt64();
                 /*uint64_t victim =*/ packet.readUInt64();
                 dispelSpellId = packet.readUInt32();
             } else {
                 if (packet.getSize() - packet.getReadPos() < 4) break;
                 dispelSpellId = packet.readUInt32();
                 if (packet.getSize() - packet.getReadPos() < 1) break;
-                /*uint64_t caster =*/ UpdateObjectParser::readPackedGuid(packet);
+                dispelCasterGuid = UpdateObjectParser::readPackedGuid(packet);
                 if (packet.getSize() - packet.getReadPos() < 1) break;
                 /*uint64_t victim =*/ UpdateObjectParser::readPackedGuid(packet);
             }
-            {
+            // Only show failure to the player who attempted the dispel
+            if (dispelCasterGuid == playerGuid) {
                 loadSpellNameCache();
                 auto it = spellNameCache_.find(dispelSpellId);
                 char buf[128];
