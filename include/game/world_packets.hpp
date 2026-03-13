@@ -1619,6 +1619,13 @@ struct ItemQueryResponseData {
     std::array<uint32_t, 3> socketColor{};
     uint32_t socketBonus = 0;   // enchantmentId of socket bonus; 0=none
     uint32_t itemSetId   = 0;   // ItemSet.dbc entry; 0=not part of a set
+    // Requirement fields
+    uint32_t requiredSkill = 0;       // SkillLine.dbc ID (0 = no skill required)
+    uint32_t requiredSkillRank = 0;   // Minimum skill value
+    uint32_t allowableClass = 0;      // Class bitmask (0 = all classes)
+    uint32_t allowableRace  = 0;      // Race bitmask (0 = all races)
+    uint32_t requiredReputationFaction = 0;  // Faction.dbc ID (0 = none)
+    uint32_t requiredReputationRank    = 0;  // 0=Hated..8=Exalted
     bool valid = false;
 };
 

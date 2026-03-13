@@ -2868,17 +2868,17 @@ bool ItemQueryResponseParser::parse(network::Packet& packet, ItemQueryResponseDa
         LOG_ERROR("SMSG_ITEM_QUERY_SINGLE_RESPONSE: truncated before statsCount (entry=", data.entry, ")");
         return false;
     }
-    packet.readUInt32(); // AllowableClass
-    packet.readUInt32(); // AllowableRace
+    data.allowableClass = packet.readUInt32(); // AllowableClass
+    data.allowableRace  = packet.readUInt32(); // AllowableRace
     data.itemLevel = packet.readUInt32();
     data.requiredLevel = packet.readUInt32();
-    packet.readUInt32(); // RequiredSkill
-    packet.readUInt32(); // RequiredSkillRank
+    data.requiredSkill     = packet.readUInt32(); // RequiredSkill
+    data.requiredSkillRank = packet.readUInt32(); // RequiredSkillRank
     packet.readUInt32(); // RequiredSpell
     packet.readUInt32(); // RequiredHonorRank
     packet.readUInt32(); // RequiredCityRank
-    packet.readUInt32(); // RequiredReputationFaction
-    packet.readUInt32(); // RequiredReputationRank
+    data.requiredReputationFaction = packet.readUInt32(); // RequiredReputationFaction
+    data.requiredReputationRank    = packet.readUInt32(); // RequiredReputationRank
     packet.readUInt32(); // MaxCount
     data.maxStack = static_cast<int32_t>(packet.readUInt32()); // Stackable
     data.containerSlots = packet.readUInt32();

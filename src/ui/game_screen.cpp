@@ -12462,8 +12462,9 @@ void GameScreen::renderLootWindow(game::GameHandler& gameHandler) {
             // Show item tooltip on hover
             if (hovered && info && info->valid) {
                 inventoryScreen.renderItemTooltip(*info);
-            } else if (hovered && !itemName.empty() && itemName[0] != 'I') {
-                ImGui::SetTooltip("%s", itemName.c_str());
+            } else if (hovered && info && !info->name.empty()) {
+                // Item info received but not yet fully valid — show name at minimum
+                ImGui::SetTooltip("%s", info->name.c_str());
             }
 
             ImDrawList* drawList = ImGui::GetWindowDrawList();
