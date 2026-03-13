@@ -6203,7 +6203,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
                             if (drainTarget == playerGuid)
                                 addCombatText(CombatTextEntry::PERIODIC_DAMAGE, static_cast<int32_t>(drainAmount), exeSpellId, false);
                             else if (isPlayerCaster)
-                                addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(drainAmount), exeSpellId, true);
+                                addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(drainAmount), exeSpellId, true,
+                                              static_cast<uint8_t>(drainPower));
                         }
                         LOG_DEBUG("SMSG_SPELLLOGEXECUTE POWER_DRAIN: spell=", exeSpellId,
                                   " power=", drainPower, " amount=", drainAmount);
