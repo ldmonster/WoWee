@@ -39,6 +39,7 @@ class StarField;
 class Clouds;
 class LensFlare;
 class Weather;
+class Lightning;
 class LightingManager;
 class SwimEffects;
 class MountDust;
@@ -127,6 +128,7 @@ public:
     Clouds* getClouds() const { return skySystem ? skySystem->getClouds() : nullptr; }
     LensFlare* getLensFlare() const { return skySystem ? skySystem->getLensFlare() : nullptr; }
     Weather* getWeather() const { return weather.get(); }
+    Lightning* getLightning() const { return lightning.get(); }
     CharacterRenderer* getCharacterRenderer() const { return characterRenderer.get(); }
     WMORenderer* getWMORenderer() const { return wmoRenderer.get(); }
     M2Renderer* getM2Renderer() const { return m2Renderer.get(); }
@@ -216,6 +218,7 @@ private:
     std::unique_ptr<Clouds> clouds;
     std::unique_ptr<LensFlare> lensFlare;
     std::unique_ptr<Weather> weather;
+    std::unique_ptr<Lightning> lightning;
     std::unique_ptr<LightingManager> lightingManager;
     std::unique_ptr<SkySystem> skySystem;  // Coordinator for sky rendering
     std::unique_ptr<SwimEffects> swimEffects;

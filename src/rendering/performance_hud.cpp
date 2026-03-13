@@ -10,6 +10,7 @@
 #include "rendering/clouds.hpp"
 #include "rendering/lens_flare.hpp"
 #include "rendering/weather.hpp"
+#include "rendering/lightning.hpp"
 #include "rendering/character_renderer.hpp"
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/m2_renderer.hpp"
@@ -367,6 +368,11 @@ void PerformanceHUD::render(const Renderer* renderer, const Camera* camera) {
             if (weather->isEnabled()) {
                 ImGui::Text("Particles: %d", weather->getParticleCount());
                 ImGui::Text("Intensity: %.0f%%", weather->getIntensity() * 100.0f);
+            }
+
+            auto* lightning = renderer->getLightning();
+            if (lightning && lightning->isEnabled()) {
+                ImGui::Text("Lightning: active (%.0f%%)", lightning->getIntensity() * 100.0f);
             }
 
             ImGui::Spacing();

@@ -12,6 +12,7 @@
 #include "rendering/clouds.hpp"
 #include "rendering/lens_flare.hpp"
 #include "rendering/weather.hpp"
+#include "rendering/lightning.hpp"
 #include "rendering/lighting_manager.hpp"
 #include "rendering/sky_system.hpp"
 #include "rendering/swim_effects.hpp"
@@ -699,6 +700,9 @@ bool Renderer::initialize(core::Window* win) {
     weather = std::make_unique<Weather>();
     weather->initialize(vkCtx, perFrameSetLayout);
 
+    lightning = std::make_unique<Lightning>();
+    lightning->initialize(vkCtx, perFrameSetLayout);
+
     swimEffects = std::make_unique<SwimEffects>();
     swimEffects->initialize(vkCtx, perFrameSetLayout);
 
@@ -800,6 +804,11 @@ void Renderer::shutdown() {
 
     if (weather) {
         weather.reset();
+    }
+
+    if (lightning) {
+        lightning->shutdown();
+        lightning.reset();
     }
 
     if (swimEffects) {
@@ -942,6 +951,7 @@ void Renderer::applyMsaaChange() {
     if (characterRenderer) characterRenderer->recreatePipelines();
     if (questMarkerRenderer) questMarkerRenderer->recreatePipelines();
     if (weather) weather->recreatePipelines();
+    if (lightning) lightning->recreatePipelines();
     if (swimEffects) swimEffects->recreatePipelines();
     if (mountDust) mountDust->recreatePipelines();
     if (chargeEffect) chargeEffect->recreatePipelines();
@@ -2863,6 +2873,20 @@ void Renderer::update(float deltaTime) {
                 weather->updateZoneWeather(currentZoneId, deltaTime);
             }
             weather->setEnabled(true);
+
+            // Enable lightning during storms (wType==3) and heavy rain
+            if (lightning) {
+                uint32_t wType2 = gh->getWeatherType();
+                float wInt2 = gh->getWeatherIntensity();
+                bool stormActive = (wType2 == 3 && wInt2 > 0.1f)
+                                || (wType2 == 1 && wInt2 > 0.7f);
+                lightning->setEnabled(stormActive);
+                if (stormActive) {
+                    // Scale intensity: storm at full, heavy rain proportionally
+                    float lIntensity = (wType2 == 3) ? wInt2 : (wInt2 - 0.7f) / 0.3f;
+                    lightning->setIntensity(lIntensity);
+                }
+            }
         } else if (weather) {
             // No game handler (single-player without network) — zone weather only
             weather->updateZoneWeather(currentZoneId, deltaTime);
@@ -2930,6 +2954,11 @@ void Renderer::update(float deltaTime) {
     // Update weather particles
     if (weather && camera) {
         weather->update(*camera, deltaTime);
+    }
+
+    // Update lightning (storm / heavy rain)
+    if (lightning && camera && lightning->isEnabled()) {
+        lightning->update(deltaTime, *camera);
     }
 
     // Update swim effects
@@ -5217,6 +5246,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             if (waterRenderer && camera)
                 waterRenderer->render(cmd, perFrameSet, *camera, globalTime, false, frameIdx);
             if (weather && camera) weather->render(cmd, perFrameSet);
+            if (lightning && camera && lightning->isEnabled()) lightning->render(cmd, perFrameSet);
             if (swimEffects && camera) swimEffects->render(cmd, perFrameSet);
             if (mountDust && camera) mountDust->render(cmd, perFrameSet);
             if (chargeEffect && camera) chargeEffect->render(cmd, perFrameSet);
@@ -5353,6 +5383,7 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
         if (waterRenderer && camera)
             waterRenderer->render(currentCmd, perFrameSet, *camera, globalTime, false, frameIdx);
         if (weather && camera) weather->render(currentCmd, perFrameSet);
+        if (lightning && camera && lightning->isEnabled()) lightning->render(currentCmd, perFrameSet);
         if (swimEffects && camera) swimEffects->render(currentCmd, perFrameSet);
         if (mountDust && camera) mountDust->render(currentCmd, perFrameSet);
         if (chargeEffect && camera) chargeEffect->render(currentCmd, perFrameSet);
