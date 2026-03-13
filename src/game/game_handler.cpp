@@ -3879,11 +3879,11 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     // OBS_MOD_POWER / PERIODIC_ENERGIZE: miscValue(powerType) + amount
                     // Common in WotLK: Replenishment, Mana Spring Totem, Divine Plea, etc.
                     if (packet.getSize() - packet.getReadPos() < 8) break;
-                    /*uint32_t powerType =*/ packet.readUInt32();
+                    uint8_t periodicPowerType = static_cast<uint8_t>(packet.readUInt32());
                     uint32_t amount = packet.readUInt32();
                     if ((isPlayerVictim || isPlayerCaster) && amount > 0)
                         addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(amount),
-                                      spellId, isPlayerCaster);
+                                      spellId, isPlayerCaster, periodicPowerType);
                 } else if (auraType == 98) {
                     // PERIODIC_MANA_LEECH: miscValue(powerType) + amount + float multiplier
                     if (packet.getSize() - packet.getReadPos() < 12) break;
@@ -3916,13 +3916,13 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
             rem = packet.getSize() - packet.getReadPos();
             if (rem < 6) { packet.setReadPos(packet.getSize()); break; }
-            uint32_t spellId   = packet.readUInt32();
-            /*uint8_t powerType =*/ packet.readUInt8();
-            int32_t  amount    = static_cast<int32_t>(packet.readUInt32());
+            uint32_t spellId       = packet.readUInt32();
+            uint8_t  energizePowerType = packet.readUInt8();
+            int32_t  amount        = static_cast<int32_t>(packet.readUInt32());
             bool isPlayerVictim = (victimGuid == playerGuid);
             bool isPlayerCaster = (casterGuid == playerGuid);
             if ((isPlayerVictim || isPlayerCaster) && amount > 0)
-                addCombatText(CombatTextEntry::ENERGIZE, amount, spellId, isPlayerCaster);
+                addCombatText(CombatTextEntry::ENERGIZE, amount, spellId, isPlayerCaster, energizePowerType);
             packet.setReadPos(packet.getSize());
             break;
         }
@@ -13629,13 +13629,14 @@ void GameHandler::stopAutoAttack() {
     LOG_INFO("Stopping auto-attack");
 }
 
-void GameHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId, bool isPlayerSource) {
+void GameHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId, bool isPlayerSource, uint8_t powerType) {
     CombatTextEntry entry;
     entry.type = type;
     entry.amount = amount;
     entry.spellId = spellId;
     entry.age = 0.0f;
     entry.isPlayerSource = isPlayerSource;
+    entry.powerType = powerType;
     combatText.push_back(entry);
 
     // Persistent combat log

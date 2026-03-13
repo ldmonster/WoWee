@@ -8287,7 +8287,13 @@ void GameScreen::renderCombatText(game::GameHandler& gameHandler) {
                     break;
                 case game::CombatTextEntry::ENERGIZE:
                     snprintf(text, sizeof(text), "+%d", entry.amount);
-                    color = ImVec4(0.3f, 0.6f, 1.0f, alpha);  // Blue for mana/energy
+                    switch (entry.powerType) {
+                        case 1:  color = ImVec4(1.0f, 0.2f, 0.2f, alpha); break; // Rage: red
+                        case 2:  color = ImVec4(1.0f, 0.6f, 0.1f, alpha); break; // Focus: orange
+                        case 3:  color = ImVec4(1.0f, 0.9f, 0.2f, alpha); break; // Energy: yellow
+                        case 6:  color = ImVec4(0.3f, 0.9f, 0.8f, alpha); break; // Runic Power: teal
+                        default: color = ImVec4(0.3f, 0.6f, 1.0f, alpha); break; // Mana (0): blue
+                    }
                     break;
                 case game::CombatTextEntry::XP_GAIN:
                     snprintf(text, sizeof(text), "+%d XP", entry.amount);

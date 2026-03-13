@@ -59,6 +59,7 @@ struct CombatTextEntry {
     uint32_t spellId = 0;
     float age = 0.0f;           // Seconds since creation (for fadeout)
     bool isPlayerSource = false; // True if player dealt this
+    uint8_t powerType = 0;      // For ENERGIZE: 0=mana,1=rage,2=focus,3=energy,6=runicpower
 
     static constexpr float LIFETIME = 2.5f;
     bool isExpired() const { return age >= LIFETIME; }

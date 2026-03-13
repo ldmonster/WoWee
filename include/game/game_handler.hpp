@@ -2314,7 +2314,7 @@ private:
     void handleLogoutResponse(network::Packet& packet);
     void handleLogoutComplete(network::Packet& packet);
 
-    void addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId, bool isPlayerSource);
+    void addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId, bool isPlayerSource, uint8_t powerType = 0);
     void addSystemChatMessage(const std::string& message);
 
     /**
