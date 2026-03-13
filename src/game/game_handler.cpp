@@ -4528,6 +4528,25 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 if (gameObjectCustomAnimCallback_) {
                     gameObjectCustomAnimCallback_(guid, animId);
                 }
+                // animId == 0 is the fishing bobber splash ("fish hooked").
+                // Detect by GO type 17 (FISHINGNODE) and notify the player so they
+                // know to click the bobber before the fish escapes.
+                if (animId == 0) {
+                    auto goEnt = entityManager.getEntity(guid);
+                    if (goEnt && goEnt->getType() == ObjectType::GAMEOBJECT) {
+                        auto go = std::static_pointer_cast<GameObject>(goEnt);
+                        auto* info = getCachedGameObjectInfo(go->getEntry());
+                        if (info && info->type == 17) {  // GO_TYPE_FISHINGNODE
+                            addSystemChatMessage("A fish is on your line!");
+                            // Play a distinctive UI sound to alert the player
+                            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                                if (auto* sfx = renderer->getUiSoundManager()) {
+                                    sfx->playQuestUpdate(); // Distinct "ping" sound
+                                }
+                            }
+                        }
+                    }
+                }
             }
             break;
         }
