@@ -20162,9 +20162,15 @@ void GameScreen::renderAchievementWindow(game::GameHandler& gameHandler) {
 
 // ─── GM Ticket Window ─────────────────────────────────────────────────────────
 void GameScreen::renderGmTicketWindow(game::GameHandler& gameHandler) {
+    // Fire a one-shot query when the window first becomes visible
+    if (showGmTicketWindow_ && !gmTicketWindowWasOpen_) {
+        gameHandler.requestGmTicket();
+    }
+    gmTicketWindowWasOpen_ = showGmTicketWindow_;
+
     if (!showGmTicketWindow_) return;
 
-    ImGui::SetNextWindowSize(ImVec2(400, 260), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(440, 320), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(300, 200), ImGuiCond_FirstUseEver);
 
     if (!ImGui::Begin("GM Ticket", &showGmTicketWindow_,
@@ -20173,10 +20179,33 @@ void GameScreen::renderGmTicketWindow(game::GameHandler& gameHandler) {
         return;
     }
 
+    // Show GM support availability
+    if (!gameHandler.isGmSupportAvailable()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "GM support is currently unavailable.");
+        ImGui::Spacing();
+    }
+
+    // Show existing open ticket if any
+    if (gameHandler.hasActiveGmTicket()) {
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "You have an open GM ticket.");
+        const std::string& existingText = gameHandler.getGmTicketText();
+        if (!existingText.empty()) {
+            ImGui::TextWrapped("Current ticket: %s", existingText.c_str());
+        }
+        float waitHours = gameHandler.getGmTicketWaitHours();
+        if (waitHours > 0.0f) {
+            char waitBuf[64];
+            std::snprintf(waitBuf, sizeof(waitBuf), "Estimated wait: %.1f hours", waitHours);
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.4f, 1.0f), "%s", waitBuf);
+        }
+        ImGui::Separator();
+        ImGui::Spacing();
+    }
+
     ImGui::TextWrapped("Describe your issue and a Game Master will contact you.");
     ImGui::Spacing();
     ImGui::InputTextMultiline("##gmticket_body", gmTicketBuf_, sizeof(gmTicketBuf_),
-                               ImVec2(-1, 160));
+                               ImVec2(-1, 120));
     ImGui::Spacing();
 
     bool hasText = (gmTicketBuf_[0] != '\0');
@@ -20193,8 +20222,11 @@ void GameScreen::renderGmTicketWindow(game::GameHandler& gameHandler) {
         showGmTicketWindow_ = false;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Delete Ticket", ImVec2(100, 0))) {
-        gameHandler.deleteGmTicket();
+    if (gameHandler.hasActiveGmTicket()) {
+        if (ImGui::Button("Delete Ticket", ImVec2(110, 0))) {
+            gameHandler.deleteGmTicket();
+            showGmTicketWindow_ = false;
+        }
     }
 
     ImGui::End();

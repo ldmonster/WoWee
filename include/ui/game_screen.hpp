@@ -438,7 +438,8 @@ private:
     void  renderEquipSetWindow(game::GameHandler& gameHandler);
 
     // GM Ticket window
-    bool  showGmTicketWindow_ = false;
+    bool  showGmTicketWindow_     = false;
+    bool  gmTicketWindowWasOpen_  = false; ///< Previous frame state; used to fire one-shot query
     char  gmTicketBuf_[2048] = {};
     void  renderGmTicketWindow(game::GameHandler& gameHandler);
 

@@ -494,6 +494,13 @@ public:
     // GM Ticket
     void submitGmTicket(const std::string& text);
     void deleteGmTicket();
+    void requestGmTicket();          ///< Send CMSG_GMTICKET_GETTICKET to query open ticket
+
+    // GM ticket status accessors
+    bool hasActiveGmTicket() const { return gmTicketActive_; }
+    const std::string& getGmTicketText() const { return gmTicketText_; }
+    bool isGmSupportAvailable() const { return gmSupportAvailable_; }
+    float getGmTicketWaitHours() const { return gmTicketWaitHours_; }
     void queryGuildInfo(uint32_t guildId);
     void createGuild(const std::string& guildName);
     void addGuildRank(const std::string& rankName);
@@ -3021,6 +3028,12 @@ private:
 
     // ---- Quest completion callback ----
     QuestCompleteCallback questCompleteCallback_;
+
+    // ---- GM Ticket state (SMSG_GMTICKET_GETTICKET / SMSG_GMTICKET_SYSTEMSTATUS) ----
+    bool        gmTicketActive_    = false;  ///< True when an open ticket exists on the server
+    std::string gmTicketText_;               ///< Text of the open ticket (from SMSG_GMTICKET_GETTICKET)
+    float       gmTicketWaitHours_ = 0.0f;  ///< Server-estimated wait time in hours
+    bool        gmSupportAvailable_ = true; ///< GM support system online (SMSG_GMTICKET_SYSTEMSTATUS)
 };
 
 } // namespace game

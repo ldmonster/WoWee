@@ -5761,10 +5761,70 @@ void GameHandler::handlePacket(network::Packet& packet) {
             }
             break;
         }
-        case Opcode::SMSG_GMTICKET_GETTICKET:
-        case Opcode::SMSG_GMTICKET_SYSTEMSTATUS:
+        case Opcode::SMSG_GMTICKET_GETTICKET: {
+            // WotLK 3.3.5a format:
+            //   uint8  status  — 1=no ticket, 6=has open ticket, 3=closed, 10=suspended
+            // If status == 6 (GMTICKET_STATUS_HASTEXT):
+            //   cstring ticketText
+            //   uint32  ticketAge       (seconds old)
+            //   uint32  daysUntilOld    (days remaining before escalation)
+            //   float   waitTimeHours   (estimated GM wait time)
+            if (packet.getSize() - packet.getReadPos() < 1) { packet.setReadPos(packet.getSize()); break; }
+            uint8_t gmStatus = packet.readUInt8();
+            // Status 6 = GMTICKET_STATUS_HASTEXT — open ticket with text
+            if (gmStatus == 6 && packet.getSize() - packet.getReadPos() >= 1) {
+                gmTicketText_    = packet.readString();
+                uint32_t ageSec  = (packet.getSize() - packet.getReadPos() >= 4) ? packet.readUInt32() : 0;
+                /*uint32_t daysLeft =*/ (packet.getSize() - packet.getReadPos() >= 4) ? packet.readUInt32() : 0;
+                gmTicketWaitHours_ = (packet.getSize() - packet.getReadPos() >= 4)
+                    ? packet.readFloat() : 0.0f;
+                gmTicketActive_ = true;
+                char buf[256];
+                if (ageSec < 60) {
+                    std::snprintf(buf, sizeof(buf),
+                        "You have an open GM ticket (submitted %us ago). Estimated wait: %.1f hours.",
+                        ageSec, gmTicketWaitHours_);
+                } else {
+                    uint32_t ageMin = ageSec / 60;
+                    std::snprintf(buf, sizeof(buf),
+                        "You have an open GM ticket (submitted %um ago). Estimated wait: %.1f hours.",
+                        ageMin, gmTicketWaitHours_);
+                }
+                addSystemChatMessage(buf);
+                LOG_INFO("SMSG_GMTICKET_GETTICKET: open ticket age=", ageSec,
+                         "s wait=", gmTicketWaitHours_, "h");
+            } else if (gmStatus == 3) {
+                gmTicketActive_ = false;
+                gmTicketText_.clear();
+                addSystemChatMessage("Your GM ticket has been closed.");
+                LOG_INFO("SMSG_GMTICKET_GETTICKET: ticket closed");
+            } else if (gmStatus == 10) {
+                gmTicketActive_ = false;
+                gmTicketText_.clear();
+                addSystemChatMessage("Your GM ticket has been suspended.");
+                LOG_INFO("SMSG_GMTICKET_GETTICKET: ticket suspended");
+            } else {
+                // Status 1 = no open ticket (default/no ticket)
+                gmTicketActive_ = false;
+                gmTicketText_.clear();
+                LOG_DEBUG("SMSG_GMTICKET_GETTICKET: no open ticket (status=", (int)gmStatus, ")");
+            }
             packet.setReadPos(packet.getSize());
             break;
+        }
+        case Opcode::SMSG_GMTICKET_SYSTEMSTATUS: {
+            // uint32 status: 1 = GM support available, 0 = offline/unavailable
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                uint32_t sysStatus = packet.readUInt32();
+                gmSupportAvailable_ = (sysStatus != 0);
+                addSystemChatMessage(gmSupportAvailable_
+                    ? "GM support is currently available."
+                    : "GM support is currently unavailable.");
+                LOG_INFO("SMSG_GMTICKET_SYSTEMSTATUS: available=", gmSupportAvailable_);
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
 
         // ---- DK rune tracking ----
         case Opcode::SMSG_CONVERT_RUNE: {
@@ -5975,7 +6035,33 @@ void GameHandler::handlePacket(network::Packet& packet) {
             packet.setReadPos(packet.getSize());
             break;
         }
-        case Opcode::SMSG_SPELLINSTAKILLLOG:
+        case Opcode::SMSG_SPELLINSTAKILLLOG: {
+            // Sent when a unit is killed by a spell with SPELL_ATTR_EX2_INSTAKILL (e.g. Execute, Obliterate, etc.)
+            // WotLK: packed_guid caster + packed_guid victim + uint32 spellId
+            // TBC/Classic: full uint64 caster + full uint64 victim + uint32 spellId
+            const bool ikTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+            auto ik_rem = [&]() { return packet.getSize() - packet.getReadPos(); };
+            if (ik_rem() < (ikTbcLike ? 8u : 1u)) { packet.setReadPos(packet.getSize()); break; }
+            uint64_t ikCaster = ikTbcLike
+                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+            if (ik_rem() < (ikTbcLike ? 8u : 1u)) { packet.setReadPos(packet.getSize()); break; }
+            uint64_t ikVictim = ikTbcLike
+                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+            uint32_t ikSpell = (ik_rem() >= 4) ? packet.readUInt32() : 0;
+            // Show kill/death feedback for the local player
+            if (ikCaster == playerGuid) {
+                // We killed a target instantly — show a KILL combat text hit
+                addCombatText(CombatTextEntry::MELEE_DAMAGE, 0, ikSpell, true);
+            } else if (ikVictim == playerGuid) {
+                // We were instantly killed — show a large incoming hit
+                addCombatText(CombatTextEntry::MELEE_DAMAGE, 0, ikSpell, false);
+                addSystemChatMessage("You were killed by an instant-kill effect.");
+            }
+            LOG_DEBUG("SMSG_SPELLINSTAKILLLOG: caster=0x", std::hex, ikCaster,
+                      " victim=0x", ikVictim, std::dec, " spell=", ikSpell);
+            packet.setReadPos(packet.getSize());
+            break;
+        }
         case Opcode::SMSG_SPELLLOGEXECUTE:
         case Opcode::SMSG_SPELL_CHANCE_RESIST_PUSHBACK:
         case Opcode::SMSG_SPELL_UPDATE_CHAIN_TARGETS:
@@ -16153,7 +16239,17 @@ void GameHandler::deleteGmTicket() {
     if (state != WorldState::IN_WORLD || !socket) return;
     network::Packet pkt(wireOpcode(Opcode::CMSG_GMTICKET_DELETETICKET));
     socket->send(pkt);
+    gmTicketActive_ = false;
+    gmTicketText_.clear();
     LOG_INFO("Deleting GM ticket");
+}
+
+void GameHandler::requestGmTicket() {
+    if (state != WorldState::IN_WORLD || !socket) return;
+    // CMSG_GMTICKET_GETTICKET has no payload — server responds with SMSG_GMTICKET_GETTICKET
+    network::Packet pkt(wireOpcode(Opcode::CMSG_GMTICKET_GETTICKET));
+    socket->send(pkt);
+    LOG_DEBUG("Sent CMSG_GMTICKET_GETTICKET — querying open ticket status");
 }
 
 void GameHandler::queryGuildInfo(uint32_t guildId) {
