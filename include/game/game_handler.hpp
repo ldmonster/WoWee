@@ -433,11 +433,18 @@ public:
         uint32_t    bonusHonor      = 0;
         std::vector<std::pair<std::string, uint32_t>> bgStats;  // BG-specific fields
     };
+    struct ArenaTeamScore {
+        std::string teamName;
+        uint32_t    ratingChange = 0;  // signed delta packed as uint32
+        uint32_t    newRating    = 0;
+    };
     struct BgScoreboardData {
         std::vector<BgPlayerScore> players;
         bool hasWinner = false;
         uint8_t winner = 0;      // 0=Horde, 1=Alliance
         bool isArena   = false;
+        // Arena-only fields (valid when isArena=true)
+        ArenaTeamScore arenaTeams[2];  // team 0 = first, team 1 = second
     };
     void requestPvpLog();
     const BgScoreboardData* getBgScoreboard() const {

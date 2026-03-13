@@ -14992,12 +14992,19 @@ void GameHandler::handlePvpLogData(network::Packet& packet) {
     bgScoreboard_.isArena = (packet.readUInt8() != 0);
 
     if (bgScoreboard_.isArena) {
-        // Skip arena-specific header (two teams × (rating change uint32 + name string + 5×uint32))
-        // Rather than hardcoding arena parse we skip gracefully up to playerCount
-        // Each arena team block: uint32 + string + uint32*5 — variable length due to string.
-        // Skip by scanning for the uint32 playerCount heuristically; simply consume rest.
-        packet.setReadPos(packet.getSize());
-        return;
+        // WotLK 3.3.5a MSG_PVP_LOG_DATA arena header:
+        //   two team blocks × (uint32 ratingChange + uint32 newRating + uint32 unk1 + uint32 unk2 + uint32 unk3 + CString teamName)
+        // After both team blocks: same player list and winner fields as battleground.
+        for (int t = 0; t < 2; ++t) {
+            if (remaining() < 20) { packet.setReadPos(packet.getSize()); return; }
+            bgScoreboard_.arenaTeams[t].ratingChange = packet.readUInt32();
+            bgScoreboard_.arenaTeams[t].newRating    = packet.readUInt32();
+            packet.readUInt32(); // unk1
+            packet.readUInt32(); // unk2
+            packet.readUInt32(); // unk3
+            bgScoreboard_.arenaTeams[t].teamName = remaining() > 0 ? packet.readString() : "";
+        }
+        // Fall through to parse player list and winner fields below (same layout as BG)
     }
 
     if (remaining() < 4) return;
@@ -15046,8 +15053,17 @@ void GameHandler::handlePvpLogData(network::Packet& packet) {
             bgScoreboard_.winner = packet.readUInt8();
     }
 
-    LOG_INFO("PvP log: ", bgScoreboard_.players.size(), " players, hasWinner=",
-             bgScoreboard_.hasWinner, " winner=", (int)bgScoreboard_.winner);
+    if (bgScoreboard_.isArena) {
+        LOG_INFO("Arena log: ", bgScoreboard_.players.size(), " players, hasWinner=",
+                 bgScoreboard_.hasWinner, " winner=", (int)bgScoreboard_.winner,
+                 " team0='", bgScoreboard_.arenaTeams[0].teamName,
+                 "' ratingChange=", (int32_t)bgScoreboard_.arenaTeams[0].ratingChange,
+                 " team1='", bgScoreboard_.arenaTeams[1].teamName,
+                 "' ratingChange=", (int32_t)bgScoreboard_.arenaTeams[1].ratingChange);
+    } else {
+        LOG_INFO("PvP log: ", bgScoreboard_.players.size(), " players, hasWinner=",
+                 bgScoreboard_.hasWinner, " winner=", (int)bgScoreboard_.winner);
+    }
 }
 
 void GameHandler::handleOtherPlayerMovement(network::Packet& packet) {

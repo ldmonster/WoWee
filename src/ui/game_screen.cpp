@@ -20400,7 +20400,8 @@ void GameScreen::renderBgScoreboard(game::GameHandler& gameHandler) {
     ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(150, 100), ImGuiCond_FirstUseEver);
 
-    const char* title = "Battleground Score###BgScore";
+    const char* title = data && data->isArena ? "Arena Score###BgScore"
+                                              : "Battleground Score###BgScore";
     if (!ImGui::Begin(title, &showBgScoreboard_, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         return;
@@ -20408,16 +20409,46 @@ void GameScreen::renderBgScoreboard(game::GameHandler& gameHandler) {
 
     if (!data) {
         ImGui::TextDisabled("No score data yet.");
-        ImGui::TextDisabled("Use /score to request the scoreboard while in a battleground.");
+        ImGui::TextDisabled("Use /score to request the scoreboard while in a battleground or arena.");
         ImGui::End();
         return;
     }
 
+    // Arena team rating banner (shown only for arenas)
+    if (data->isArena) {
+        for (int t = 0; t < 2; ++t) {
+            const auto& at = data->arenaTeams[t];
+            if (at.teamName.empty()) continue;
+            int32_t ratingDelta = static_cast<int32_t>(at.ratingChange);
+            ImVec4 teamCol = (t == 0) ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)   // team 0: red
+                                      : ImVec4(0.4f, 0.6f, 1.0f, 1.0f);    // team 1: blue
+            ImGui::TextColored(teamCol, "%s", at.teamName.c_str());
+            ImGui::SameLine();
+            char ratingBuf[32];
+            if (ratingDelta >= 0)
+                std::snprintf(ratingBuf, sizeof(ratingBuf), "Rating: %u (+%d)", at.newRating, ratingDelta);
+            else
+                std::snprintf(ratingBuf, sizeof(ratingBuf), "Rating: %u (%d)", at.newRating, ratingDelta);
+            ImGui::TextDisabled("%s", ratingBuf);
+        }
+        ImGui::Separator();
+    }
+
     // Winner banner
     if (data->hasWinner) {
-        const char* winnerStr = (data->winner == 1) ? "Alliance" : "Horde";
-        ImVec4 winnerColor    = (data->winner == 1) ? ImVec4(0.4f, 0.6f, 1.0f, 1.0f)
-                                                    : ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
+        const char* winnerStr;
+        ImVec4 winnerColor;
+        if (data->isArena) {
+            // For arenas, winner byte 0/1 refers to team index in arenaTeams[]
+            const auto& winTeam = data->arenaTeams[data->winner & 1];
+            winnerStr  = winTeam.teamName.empty() ? "Team 1" : winTeam.teamName.c_str();
+            winnerColor = (data->winner == 0) ? ImVec4(1.0f, 0.35f, 0.35f, 1.0f)
+                                              : ImVec4(0.4f, 0.6f, 1.0f, 1.0f);
+        } else {
+            winnerStr  = (data->winner == 1) ? "Alliance" : "Horde";
+            winnerColor = (data->winner == 1) ? ImVec4(0.4f, 0.6f, 1.0f, 1.0f)
+                                              : ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
+        }
         float textW = ImGui::CalcTextSize(winnerStr).x + ImGui::CalcTextSize("  Victory!").x;
         ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - textW) * 0.5f);
         ImGui::TextColored(winnerColor, "%s", winnerStr);
