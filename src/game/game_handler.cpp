@@ -6252,6 +6252,9 @@ void GameHandler::handlePacket(network::Packet& packet) {
             handleQuestPoiQueryResponse(packet);
             break;
         case Opcode::SMSG_ON_CANCEL_EXPECTED_RIDE_VEHICLE_AURA:
+            vehicleId_ = 0;  // Vehicle ride cancelled; clear UI
+            packet.setReadPos(packet.getSize());
+            break;
         case Opcode::SMSG_RESET_RANGED_COMBAT_TIMER:
         case Opcode::SMSG_PROFILEDATA_RESPONSE:
             packet.setReadPos(packet.getSize());
@@ -6891,6 +6894,8 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
     talentsInitialized_ = false;
     learnedTalents_[0].clear();
     learnedTalents_[1].clear();
+    learnedGlyphs_[0].fill(0);
+    learnedGlyphs_[1].fill(0);
     unspentTalentPoints_[0] = 0;
     unspentTalentPoints_[1] = 0;
     activeTalentSpec_ = 0;
@@ -11338,10 +11343,12 @@ void GameHandler::handleInspectResults(network::Packet& packet) {
                 learnedTalents_[g][talentId] = rank;
             }
             if (packet.getSize() - packet.getReadPos() < 1) break;
+            learnedGlyphs_[g].fill(0);
             uint8_t glyphCount = packet.readUInt8();
             for (uint8_t gl = 0; gl < glyphCount; ++gl) {
                 if (packet.getSize() - packet.getReadPos() < 2) break;
-                packet.readUInt16(); // glyphId (skip)
+                uint16_t glyphId = packet.readUInt16();
+                if (gl < MAX_GLYPH_SLOTS) learnedGlyphs_[g][gl] = glyphId;
             }
         }
 

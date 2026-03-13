@@ -76,6 +76,7 @@ void TalentScreen::renderTalentTrees(game::GameHandler& gameHandler) {
         gameHandler.loadTalentDbc();
         loadSpellDBC(assetManager);
         loadSpellIconDBC(assetManager);
+        loadGlyphPropertiesDBC(assetManager);
     }
 
     uint8_t playerClass = gameHandler.getPlayerClass();
@@ -161,6 +162,18 @@ void TalentScreen::renderTalentTrees(game::GameHandler& gameHandler) {
                 ImGui::EndTabItem();
             }
         }
+
+        // Glyphs tab (WotLK only — visible when any glyph slot is populated or DBC data loaded)
+        if (!glyphProperties_.empty() || [&]() {
+                const auto& g = gameHandler.getGlyphs();
+                for (auto id : g) if (id != 0) return true;
+                return false; }()) {
+            if (ImGui::BeginTabItem("Glyphs")) {
+                renderGlyphs(gameHandler);
+                ImGui::EndTabItem();
+            }
+        }
+
         ImGui::EndTabBar();
     }
 }
@@ -614,6 +627,99 @@ void TalentScreen::loadSpellIconDBC(pipeline::AssetManager* assetManager) {
             spellIconPaths[id] = path;
         }
     }
+}
+
+void TalentScreen::loadGlyphPropertiesDBC(pipeline::AssetManager* assetManager) {
+    if (glyphDbcLoaded) return;
+    glyphDbcLoaded = true;
+
+    if (!assetManager || !assetManager->isInitialized()) return;
+
+    auto dbc = assetManager->loadDBC("GlyphProperties.dbc");
+    if (!dbc || !dbc->isLoaded()) return;
+
+    // GlyphProperties.dbc: field 0=ID, field 1=SpellID, field 2=GlyphSlotFlags (1=minor), field 3=SpellIconID
+    for (uint32_t i = 0; i < dbc->getRecordCount(); i++) {
+        uint32_t id      = dbc->getUInt32(i, 0);
+        uint32_t spellId = dbc->getUInt32(i, 1);
+        uint32_t flags   = dbc->getUInt32(i, 2);
+        if (id == 0) continue;
+        GlyphInfo info;
+        info.spellId = spellId;
+        info.isMajor = (flags == 0);  // flag 0 = major, flag 1 = minor
+        glyphProperties_[id] = info;
+    }
+}
+
+void TalentScreen::renderGlyphs(game::GameHandler& gameHandler) {
+    auto* assetManager = core::Application::getInstance().getAssetManager();
+    const auto& glyphs = gameHandler.getGlyphs();
+
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, 1.0f), "Major Glyphs");
+    ImGui::Separator();
+
+    // WotLK: 6 glyph slots total. Slots 0,2,4 are major by convention from the server,
+    // but we check GlyphProperties.dbc flags when available.
+    // Display all 6 slots grouped: show major (non-minor) first, then minor.
+    std::vector<std::pair<int, bool>> majorSlots, minorSlots;
+    for (int i = 0; i < game::GameHandler::MAX_GLYPH_SLOTS; i++) {
+        uint16_t glyphId = glyphs[i];
+        bool isMajor = true;
+        if (glyphId != 0) {
+            auto git = glyphProperties_.find(glyphId);
+            if (git != glyphProperties_.end()) isMajor = git->second.isMajor;
+            else isMajor = (i % 2 == 0);  // fallback: even slots = major
+        } else {
+            isMajor = (i % 2 == 0);  // empty slots follow same pattern
+        }
+        if (isMajor) majorSlots.push_back({i, true});
+        else         minorSlots.push_back({i, false});
+    }
+
+    auto renderGlyphSlot = [&](int slotIdx) {
+        uint16_t glyphId = glyphs[slotIdx];
+        char label[64];
+        if (glyphId == 0) {
+            snprintf(label, sizeof(label), "Slot %d  [Empty]", slotIdx + 1);
+            ImGui::TextDisabled("%s", label);
+            return;
+        }
+
+        uint32_t spellId = 0;
+        uint32_t iconId  = 0;
+        auto git = glyphProperties_.find(glyphId);
+        if (git != glyphProperties_.end()) {
+            spellId = git->second.spellId;
+            auto iit = spellIconIds.find(spellId);
+            if (iit != spellIconIds.end()) iconId = iit->second;
+        }
+
+        // Icon (24x24)
+        VkDescriptorSet icon = getSpellIcon(iconId, assetManager);
+        if (icon != VK_NULL_HANDLE) {
+            ImGui::Image((ImTextureID)(uintptr_t)icon, ImVec2(24, 24));
+            ImGui::SameLine(0, 6);
+        } else {
+            ImGui::Dummy(ImVec2(24, 24));
+            ImGui::SameLine(0, 6);
+        }
+
+        // Spell name
+        const std::string& name = spellId ? gameHandler.getSpellName(spellId) : "";
+        if (!name.empty()) {
+            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "%s", name.c_str());
+        } else {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Glyph #%u", (uint32_t)glyphId);
+        }
+    };
+
+    for (auto& [idx, major] : majorSlots) renderGlyphSlot(idx);
+
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Minor Glyphs");
+    ImGui::Separator();
+    for (auto& [idx, major] : minorSlots) renderGlyphSlot(idx);
 }
 
 VkDescriptorSet TalentScreen::getSpellIcon(uint32_t iconId, pipeline::AssetManager* assetManager) {

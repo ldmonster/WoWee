@@ -28,6 +28,8 @@ private:
 
     void loadSpellDBC(pipeline::AssetManager* assetManager);
     void loadSpellIconDBC(pipeline::AssetManager* assetManager);
+    void loadGlyphPropertiesDBC(pipeline::AssetManager* assetManager);
+    void renderGlyphs(game::GameHandler& gameHandler);
     VkDescriptorSet getSpellIcon(uint32_t iconId, pipeline::AssetManager* assetManager);
 
     bool open = false;
@@ -36,11 +38,16 @@ private:
     // DBC caches
     bool spellDbcLoaded = false;
     bool iconDbcLoaded = false;
+    bool glyphDbcLoaded = false;
     std::unordered_map<uint32_t, uint32_t> spellIconIds;       // spellId -> iconId
     std::unordered_map<uint32_t, std::string> spellIconPaths;  // iconId -> path
     std::unordered_map<uint32_t, VkDescriptorSet> spellIconCache;  // iconId -> texture
     std::unordered_map<uint32_t, std::string> spellTooltips;   // spellId -> description
     std::unordered_map<uint32_t, VkDescriptorSet> bgTextureCache_;  // tabId -> bg texture
+
+    // GlyphProperties.dbc cache: glyphId -> { spellId, isMajor }
+    struct GlyphInfo { uint32_t spellId = 0; bool isMajor = false; };
+    std::unordered_map<uint32_t, GlyphInfo> glyphProperties_;  // glyphId -> info
 };
 
 } // namespace ui

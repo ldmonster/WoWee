@@ -706,6 +706,14 @@ public:
         static std::unordered_map<uint32_t, uint8_t> empty;
         return spec < 2 ? learnedTalents_[spec] : empty;
     }
+
+    // Glyphs (WotLK): up to 6 glyph slots per spec (3 major + 3 minor)
+    static constexpr uint8_t MAX_GLYPH_SLOTS = 6;
+    const std::array<uint16_t, MAX_GLYPH_SLOTS>& getGlyphs() const { return learnedGlyphs_[activeTalentSpec_]; }
+    const std::array<uint16_t, MAX_GLYPH_SLOTS>& getGlyphs(uint8_t spec) const {
+        static std::array<uint16_t, MAX_GLYPH_SLOTS> empty{};
+        return spec < 2 ? learnedGlyphs_[spec] : empty;
+    }
     uint8_t getTalentRank(uint32_t talentId) const {
         auto it = learnedTalents_[activeTalentSpec_].find(talentId);
         return (it != learnedTalents_[activeTalentSpec_].end()) ? it->second : 0;
@@ -2308,6 +2316,7 @@ private:
     uint8_t activeTalentSpec_ = 0;                              // Currently active spec (0 or 1)
     uint8_t unspentTalentPoints_[2] = {0, 0};                   // Unspent points per spec
     std::unordered_map<uint32_t, uint8_t> learnedTalents_[2];  // Learned talents per spec
+    std::array<std::array<uint16_t, MAX_GLYPH_SLOTS>, 2> learnedGlyphs_{};  // Glyphs per spec
     std::unordered_map<uint32_t, TalentEntry> talentCache_;      // talentId -> entry
     std::unordered_map<uint32_t, TalentTabEntry> talentTabCache_; // tabId -> entry
     bool talentDbcLoaded_ = false;
