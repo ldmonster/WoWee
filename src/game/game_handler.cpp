@@ -1646,6 +1646,29 @@ void GameHandler::handlePacket(network::Packet& packet) {
             }
             break;
 
+        case Opcode::SMSG_WHOIS: {
+            // GM/admin response to /whois command: cstring with account/IP info
+            // Format: string (the whois result text, typically "Name: ...\nAccount: ...\nIP: ...")
+            if (packet.getReadPos() < packet.getSize()) {
+                std::string whoisText = packet.readString();
+                if (!whoisText.empty()) {
+                    // Display each line of the whois response in system chat
+                    std::string line;
+                    for (char c : whoisText) {
+                        if (c == '\n') {
+                            if (!line.empty()) addSystemChatMessage("[Whois] " + line);
+                            line.clear();
+                        } else {
+                            line += c;
+                        }
+                    }
+                    if (!line.empty()) addSystemChatMessage("[Whois] " + line);
+                    LOG_INFO("SMSG_WHOIS: ", whoisText);
+                }
+            }
+            break;
+        }
+
         case Opcode::SMSG_FRIEND_STATUS:
             if (state == WorldState::IN_WORLD) {
                 handleFriendStatus(packet);
@@ -5609,6 +5632,110 @@ void GameHandler::handlePacket(network::Packet& packet) {
             packet.setReadPos(packet.getSize());
             break;
 
+        // ---- LFG error/timeout states ----
+        case Opcode::SMSG_LFG_TIMEDOUT:
+            // Server-side LFG invite timed out (no response within time limit)
+            addSystemChatMessage("Dungeon Finder: Invite timed out.");
+            if (openLfgCallback_) openLfgCallback_();
+            packet.setReadPos(packet.getSize());
+            break;
+        case Opcode::SMSG_LFG_OTHER_TIMEDOUT:
+            // Another party member failed to respond to a LFG role-check in time
+            addSystemChatMessage("Dungeon Finder: Another player's invite timed out.");
+            if (openLfgCallback_) openLfgCallback_();
+            packet.setReadPos(packet.getSize());
+            break;
+        case Opcode::SMSG_LFG_AUTOJOIN_FAILED: {
+            // uint32 result — LFG auto-join attempt failed (player selected auto-join at queue time)
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                uint32_t result = packet.readUInt32();
+                (void)result;
+            }
+            addSystemChatMessage("Dungeon Finder: Auto-join failed.");
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+        case Opcode::SMSG_LFG_AUTOJOIN_FAILED_NO_PLAYER:
+            // No eligible players found for auto-join
+            addSystemChatMessage("Dungeon Finder: No players available for auto-join.");
+            packet.setReadPos(packet.getSize());
+            break;
+        case Opcode::SMSG_LFG_LEADER_IS_LFM:
+            // Party leader is currently set to Looking for More (LFM) mode
+            addSystemChatMessage("Your party leader is currently Looking for More.");
+            packet.setReadPos(packet.getSize());
+            break;
+
+        // ---- Meeting stone (Classic/TBC group-finding via summon stone) ----
+        case Opcode::SMSG_MEETINGSTONE_SETQUEUE: {
+            // uint32 zoneId + uint8 level_min + uint8 level_max — player queued for meeting stone
+            if (packet.getSize() - packet.getReadPos() >= 6) {
+                uint32_t zoneId   = packet.readUInt32();
+                uint8_t  levelMin = packet.readUInt8();
+                uint8_t  levelMax = packet.readUInt8();
+                char buf[128];
+                std::snprintf(buf, sizeof(buf),
+                    "You are now in the Meeting Stone queue for zone %u (levels %u-%u).",
+                    zoneId, levelMin, levelMax);
+                addSystemChatMessage(buf);
+                LOG_INFO("SMSG_MEETINGSTONE_SETQUEUE: zone=", zoneId,
+                         " levels=", (int)levelMin, "-", (int)levelMax);
+            }
+            packet.setReadPos(packet.getSize());
+            break;
+        }
+        case Opcode::SMSG_MEETINGSTONE_COMPLETE:
+            // Server confirms group found and teleport summon is ready
+            addSystemChatMessage("Meeting Stone: Your group is ready! Use the Meeting Stone to summon.");
+            LOG_INFO("SMSG_MEETINGSTONE_COMPLETE");
+            packet.setReadPos(packet.getSize());
+            break;
+        case Opcode::SMSG_MEETINGSTONE_IN_PROGRESS:
+            // Meeting stone search is still ongoing
+            addSystemChatMessage("Meeting Stone: Searching for group members...");
+            LOG_DEBUG("SMSG_MEETINGSTONE_IN_PROGRESS");
+            packet.setReadPos(packet.getSize());
+            break;
+        case Opcode::SMSG_MEETINGSTONE_MEMBER_ADDED: {
+            // uint64 memberGuid — a player was added to your group via meeting stone
+            if (packet.getSize() - packet.getReadPos() >= 8) {
+                uint64_t memberGuid = packet.readUInt64();
+                auto nit = playerNameCache.find(memberGuid);
+                if (nit != playerNameCache.end() && !nit->second.empty()) {
+                    addSystemChatMessage("Meeting Stone: " + nit->second +
+                                         " has been added to your group.");
+                } else {
+                    addSystemChatMessage("Meeting Stone: A new player has been added to your group.");
+                }
+                LOG_INFO("SMSG_MEETINGSTONE_MEMBER_ADDED: guid=0x", std::hex, memberGuid, std::dec);
+            }
+            break;
+        }
+        case Opcode::SMSG_MEETINGSTONE_JOINFAILED: {
+            // uint8 reason — failed to join group via meeting stone
+            // 0=target_not_in_lfg, 1=target_in_party, 2=target_invalid_map, 3=target_not_available
+            static const char* kMeetingstoneErrors[] = {
+                "Target player is not using the Meeting Stone.",
+                "Target player is already in a group.",
+                "You are not in a valid zone for that Meeting Stone.",
+                "Target player is not available.",
+            };
+            if (packet.getSize() - packet.getReadPos() >= 1) {
+                uint8_t reason = packet.readUInt8();
+                const char* msg = (reason < 4) ? kMeetingstoneErrors[reason]
+                                               : "Meeting Stone: Could not join group.";
+                addSystemChatMessage(msg);
+                LOG_INFO("SMSG_MEETINGSTONE_JOINFAILED: reason=", (int)reason);
+            }
+            break;
+        }
+        case Opcode::SMSG_MEETINGSTONE_LEAVE:
+            // Player was removed from the meeting stone queue (left, or group disbanded)
+            addSystemChatMessage("You have left the Meeting Stone queue.");
+            LOG_DEBUG("SMSG_MEETINGSTONE_LEAVE");
+            packet.setReadPos(packet.getSize());
+            break;
+
         // ---- GM Ticket responses ----
         case Opcode::SMSG_GMTICKET_CREATE: {
             if (packet.getSize() - packet.getReadPos() >= 1) {
@@ -6595,6 +6722,41 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_VOICESESSION_FULL:
             packet.setReadPos(packet.getSize());
             break;
+
+        // ---- Mirror image data (WotLK: Mage ability Mirror Image) ----
+        case Opcode::SMSG_MIRRORIMAGE_DATA: {
+            // WotLK 3.3.5a format:
+            //   uint64 mirrorGuid — GUID of the mirror image unit
+            //   uint32 displayId  — display ID to render the image with
+            //   uint8  raceId     — race of caster
+            //   uint8  genderFlag — gender of caster
+            //   uint8  classId    — class of caster
+            //   uint64 casterGuid — GUID of the player who cast the spell
+            //   Followed by equipped item display IDs (11 × uint32) if casterGuid != 0
+            // Purpose: tells client how to render the image (same appearance as caster).
+            // We parse the GUIDs so units render correctly via their existing display IDs.
+            if (packet.getSize() - packet.getReadPos() < 8) break;
+            uint64_t mirrorGuid = packet.readUInt64();
+            if (packet.getSize() - packet.getReadPos() < 4) break;
+            uint32_t displayId  = packet.readUInt32();
+            if (packet.getSize() - packet.getReadPos() < 3) break;
+            /*uint8_t raceId   =*/ packet.readUInt8();
+            /*uint8_t gender   =*/ packet.readUInt8();
+            /*uint8_t classId  =*/ packet.readUInt8();
+            // Apply display ID to the mirror image unit so it renders correctly
+            if (mirrorGuid != 0 && displayId != 0) {
+                auto entity = entityManager.getEntity(mirrorGuid);
+                if (entity) {
+                    auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
+                    if (unit && unit->getDisplayId() == 0)
+                        unit->setDisplayId(displayId);
+                }
+            }
+            LOG_DEBUG("SMSG_MIRRORIMAGE_DATA: mirrorGuid=0x", std::hex, mirrorGuid,
+                      " displayId=", std::dec, displayId);
+            packet.setReadPos(packet.getSize());
+            break;
+        }
 
         // ---- Player movement flag changes (server-pushed) ----
         case Opcode::SMSG_MOVE_GRAVITY_DISABLE:
