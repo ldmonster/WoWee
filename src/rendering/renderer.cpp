@@ -5256,14 +5256,14 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                 if (cameraController) {
                     float facingRad = glm::radians(characterYaw);
                     glm::vec3 facingFwd(std::cos(facingRad), std::sin(facingRad), 0.0f);
-                    minimapPlayerOrientation = std::atan2(-facingFwd.x, facingFwd.y);
+                    // atan2(-x,y) = canonical yaw (0=North); negate for shader convention.
+                    minimapPlayerOrientation = -std::atan2(-facingFwd.x, facingFwd.y);
                     hasMinimapPlayerOrientation = true;
                 } else if (gameHandler) {
-                    // Server orientation is in WoW space: π/2 = North, 0 = East.
-                    // Minimap arrow expects render space: 0 = North, π/2 = East.
-                    // Convert: minimap_angle = server_orientation - π/2
-                    minimapPlayerOrientation = gameHandler->getMovementInfo().orientation
-                                              - static_cast<float>(M_PI_2);
+                    // movementInfo.orientation is canonical yaw: 0=North, π/2=East.
+                    // Minimap shader: arrowRotation=0 points up (North), positive rotates CW
+                    // (π/2=West, -π/2=East). Correct mapping: arrowRotation = -canonical_yaw.
+                    minimapPlayerOrientation = -gameHandler->getMovementInfo().orientation;
                     hasMinimapPlayerOrientation = true;
                 }
                 minimap->render(cmd, *camera, minimapCenter,
@@ -5393,14 +5393,14 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
             if (cameraController) {
                 float facingRad = glm::radians(characterYaw);
                 glm::vec3 facingFwd(std::cos(facingRad), std::sin(facingRad), 0.0f);
-                minimapPlayerOrientation = std::atan2(-facingFwd.x, facingFwd.y);
+                // atan2(-x,y) = canonical yaw (0=North); negate for shader convention.
+                minimapPlayerOrientation = -std::atan2(-facingFwd.x, facingFwd.y);
                 hasMinimapPlayerOrientation = true;
             } else if (gameHandler) {
-                // Server orientation is in WoW space: π/2 = North, 0 = East.
-                // Minimap arrow expects render space: 0 = North, π/2 = East.
-                // Convert: minimap_angle = server_orientation - π/2
-                minimapPlayerOrientation = gameHandler->getMovementInfo().orientation
-                                          - static_cast<float>(M_PI_2);
+                // movementInfo.orientation is canonical yaw: 0=North, π/2=East.
+                // Minimap shader: arrowRotation=0 points up (North), positive rotates CW
+                // (π/2=West, -π/2=East). Correct mapping: arrowRotation = -canonical_yaw.
+                minimapPlayerOrientation = -gameHandler->getMovementInfo().orientation;
                 hasMinimapPlayerOrientation = true;
             }
             minimap->render(currentCmd, *camera, minimapCenter,

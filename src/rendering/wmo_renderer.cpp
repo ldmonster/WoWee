@@ -2063,6 +2063,18 @@ void WMORenderer::getVisibleGroupsViaPortals(const ModelData& model,
         return;
     }
 
+    // If the camera group has no portal refs, it's a dead-end group (utility/transition group).
+    // Fall back to showing all groups to avoid the rest of the WMO going invisible.
+    if (cameraGroup < static_cast<int>(model.groupPortalRefs.size())) {
+        auto [portalStart, portalCount] = model.groupPortalRefs[cameraGroup];
+        if (portalCount == 0) {
+            for (size_t gi = 0; gi < model.groups.size(); gi++) {
+                outVisibleGroups.insert(static_cast<uint32_t>(gi));
+            }
+            return;
+        }
+    }
+
     // BFS through portals from camera's group
     std::vector<bool> visited(model.groups.size(), false);
     std::vector<uint32_t> queue;
