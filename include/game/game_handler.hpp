@@ -1274,6 +1274,7 @@ public:
     bool isLfgQueued()    const { return lfgState_ == LfgState::Queued; }
     bool isLfgInDungeon() const { return lfgState_ == LfgState::InDungeon; }
     uint32_t getLfgDungeonId()   const { return lfgDungeonId_; }
+    std::string getCurrentLfgDungeonName() const { return getLfgDungeonName(lfgDungeonId_); }
     uint32_t getLfgProposalId()  const { return lfgProposalId_; }
     int32_t  getLfgAvgWaitSec()  const { return lfgAvgWaitSec_; }
     uint32_t getLfgTimeInQueueMs() const { return lfgTimeInQueueMs_; }

@@ -19328,7 +19328,12 @@ void GameScreen::renderDungeonFinderWindow(game::GameHandler& gameHandler) {
             uint32_t qMs    = gameHandler.getLfgTimeInQueueMs();
             int      qMin   = static_cast<int>(qMs / 60000);
             int      qSec   = static_cast<int>((qMs % 60000) / 1000);
-            ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), "Status: In queue (%d:%02d)", qMin, qSec);
+            std::string dName = gameHandler.getCurrentLfgDungeonName();
+            if (!dName.empty())
+                ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f),
+                                   "Status: In queue for %s (%d:%02d)", dName.c_str(), qMin, qSec);
+            else
+                ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), "Status: In queue (%d:%02d)", qMin, qSec);
             if (avgSec >= 0) {
                 int aMin = avgSec / 60;
                 int aSec = avgSec % 60;
@@ -19337,18 +19342,33 @@ void GameScreen::renderDungeonFinderWindow(game::GameHandler& gameHandler) {
             }
             break;
         }
-        case LfgState::Proposal:
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.1f, 1.0f), "Status: Group found!");
+        case LfgState::Proposal: {
+            std::string dName = gameHandler.getCurrentLfgDungeonName();
+            if (!dName.empty())
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.1f, 1.0f), "Status: Group found for %s!", dName.c_str());
+            else
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.1f, 1.0f), "Status: Group found!");
             break;
+        }
         case LfgState::Boot:
             ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Status: Vote kick in progress");
             break;
-        case LfgState::InDungeon:
-            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Status: In dungeon");
+        case LfgState::InDungeon: {
+            std::string dName = gameHandler.getCurrentLfgDungeonName();
+            if (!dName.empty())
+                ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Status: In dungeon (%s)", dName.c_str());
+            else
+                ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Status: In dungeon");
             break;
-        case LfgState::FinishedDungeon:
-            ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "Status: Dungeon complete");
+        }
+        case LfgState::FinishedDungeon: {
+            std::string dName = gameHandler.getCurrentLfgDungeonName();
+            if (!dName.empty())
+                ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "Status: %s complete", dName.c_str());
+            else
+                ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "Status: Dungeon complete");
             break;
+        }
         case LfgState::RaidBrowser:
             ImGui::TextColored(ImVec4(0.8f, 0.6f, 1.0f, 1.0f), "Status: Raid browser");
             break;
@@ -19358,8 +19378,13 @@ void GameScreen::renderDungeonFinderWindow(game::GameHandler& gameHandler) {
 
     // ---- Proposal accept/decline ----
     if (state == LfgState::Proposal) {
-        ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.3f, 1.0f),
-                           "A group has been found for your dungeon!");
+        std::string dName = gameHandler.getCurrentLfgDungeonName();
+        if (!dName.empty())
+            ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.3f, 1.0f),
+                               "A group has been found for %s!", dName.c_str());
+        else
+            ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.3f, 1.0f),
+                               "A group has been found for your dungeon!");
         ImGui::Spacing();
         if (ImGui::Button("Accept", ImVec2(120, 0))) {
             gameHandler.lfgAcceptProposal(gameHandler.getLfgProposalId(), true);
