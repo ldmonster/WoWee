@@ -1722,6 +1722,15 @@ network::Packet InspectPacket::build(uint64_t targetGuid) {
     return packet;
 }
 
+network::Packet QueryInspectAchievementsPacket::build(uint64_t targetGuid) {
+    // CMSG_QUERY_INSPECT_ACHIEVEMENTS: uint64 targetGuid + uint8 unk (always 0)
+    network::Packet packet(wireOpcode(Opcode::CMSG_QUERY_INSPECT_ACHIEVEMENTS));
+    packet.writeUInt64(targetGuid);
+    packet.writeUInt8(0);  // unk / achievementSlot — always 0 for WotLK
+    LOG_DEBUG("Built CMSG_QUERY_INSPECT_ACHIEVEMENTS: target=0x", std::hex, targetGuid, std::dec);
+    return packet;
+}
+
 // ============================================================
 // Server Info Commands
 // ============================================================

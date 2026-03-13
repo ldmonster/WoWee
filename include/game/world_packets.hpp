@@ -1448,6 +1448,12 @@ public:
     static network::Packet build(uint64_t targetGuid);
 };
 
+/** CMSG_QUERY_INSPECT_ACHIEVEMENTS packet builder (WotLK 3.3.5a) */
+class QueryInspectAchievementsPacket {
+public:
+    static network::Packet build(uint64_t targetGuid);
+};
+
 /** CMSG_NAME_QUERY packet builder */
 class NameQueryPacket {
 public:

@@ -6884,9 +6884,11 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_REDIRECT_CLIENT:
         case Opcode::SMSG_PVP_QUEUE_STATS:
         case Opcode::SMSG_NOTIFY_DEST_LOC_SPELL_CAST:
-        case Opcode::SMSG_RESPOND_INSPECT_ACHIEVEMENTS:
         case Opcode::SMSG_PLAYER_SKINNED:
             packet.setReadPos(packet.getSize());
+            break;
+        case Opcode::SMSG_RESPOND_INSPECT_ACHIEVEMENTS:
+            handleRespondInspectAchievements(packet);
             break;
         case Opcode::SMSG_QUEST_POI_QUERY_RESPONSE:
             handleQuestPoiQueryResponse(packet);
@@ -8038,6 +8040,9 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
     // Clear boss encounter unit slots and raid marks on world transfer
     encounterUnitGuids_.fill(0);
     raidTargetGuids_.fill(0);
+
+    // Clear inspect caches on world entry to avoid showing stale data
+    inspectedPlayerAchievements_.clear();
 
     // Reset talent initialization so the first SMSG_TALENTS_INFO after login
     // correctly sets the active spec (static locals don't reset across logins)
@@ -11300,6 +11305,12 @@ void GameHandler::inspectTarget() {
 
     auto packet = InspectPacket::build(targetGuid);
     socket->send(packet);
+
+    // WotLK: also query the player's achievement data so the inspect UI can display it
+    if (isActiveExpansion("wotlk")) {
+        auto achPkt = QueryInspectAchievementsPacket::build(targetGuid);
+        socket->send(achPkt);
+    }
 
     auto player = std::static_pointer_cast<Player>(target);
     std::string name = player->getName().empty() ? "Target" : player->getName();
@@ -22075,6 +22086,55 @@ void GameHandler::handleAllAchievementData(network::Packet& packet) {
 
     LOG_INFO("SMSG_ALL_ACHIEVEMENT_DATA: loaded ", earnedAchievements_.size(),
              " achievements, ", criteriaProgress_.size(), " criteria");
+}
+
+// ---------------------------------------------------------------------------
+// SMSG_RESPOND_INSPECT_ACHIEVEMENTS (WotLK 3.3.5a)
+//   Wire format: packed_guid (inspected player) + same achievement/criteria
+//   blocks as SMSG_ALL_ACHIEVEMENT_DATA:
+//     Achievement records: repeated { uint32 id, uint32 packedDate } until 0xFFFFFFFF sentinel
+//     Criteria records:    repeated { uint32 id, uint64 counter, uint32 date, uint32 unk }
+//                          until 0xFFFFFFFF sentinel
+//   We store only the earned achievement IDs (not criteria) per inspected player.
+// ---------------------------------------------------------------------------
+void GameHandler::handleRespondInspectAchievements(network::Packet& packet) {
+    loadAchievementNameCache();
+
+    // Read the inspected player's packed guid
+    if (packet.getSize() - packet.getReadPos() < 1) return;
+    uint64_t inspectedGuid = UpdateObjectParser::readPackedGuid(packet);
+    if (inspectedGuid == 0) {
+        packet.setReadPos(packet.getSize());
+        return;
+    }
+
+    std::unordered_set<uint32_t> achievements;
+
+    // Achievement records: { uint32 id, uint32 packedDate } until sentinel 0xFFFFFFFF
+    while (packet.getSize() - packet.getReadPos() >= 4) {
+        uint32_t id = packet.readUInt32();
+        if (id == 0xFFFFFFFF) break;
+        if (packet.getSize() - packet.getReadPos() < 4) break;
+        /*uint32_t date =*/ packet.readUInt32();
+        achievements.insert(id);
+    }
+
+    // Criteria records: { uint32 id, uint64 counter, uint32 date, uint32 unk }
+    // until sentinel 0xFFFFFFFF — consume but don't store for inspect use
+    while (packet.getSize() - packet.getReadPos() >= 4) {
+        uint32_t id = packet.readUInt32();
+        if (id == 0xFFFFFFFF) break;
+        // counter(8) + date(4) + unk(4) = 16 bytes
+        if (packet.getSize() - packet.getReadPos() < 16) break;
+        packet.readUInt64();  // counter
+        packet.readUInt32();  // date
+        packet.readUInt32();  // unk
+    }
+
+    inspectedPlayerAchievements_[inspectedGuid] = std::move(achievements);
+
+    LOG_INFO("SMSG_RESPOND_INSPECT_ACHIEVEMENTS: guid=0x", std::hex, inspectedGuid, std::dec,
+             " achievements=", inspectedPlayerAchievements_[inspectedGuid].size());
 }
 
 // ---------------------------------------------------------------------------

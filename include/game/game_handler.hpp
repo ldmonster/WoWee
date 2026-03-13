@@ -1611,6 +1611,12 @@ public:
         auto it = achievementPointsCache_.find(id);
         return (it != achievementPointsCache_.end()) ? it->second : 0u;
     }
+    /// Returns the set of achievement IDs earned by an inspected player (via SMSG_RESPOND_INSPECT_ACHIEVEMENTS).
+    /// Returns nullptr if no inspect data is available for the given GUID.
+    const std::unordered_set<uint32_t>* getInspectedPlayerAchievements(uint64_t guid) const {
+        auto it = inspectedPlayerAchievements_.find(guid);
+        return (it != inspectedPlayerAchievements_.end()) ? &it->second : nullptr;
+    }
 
     // Server-triggered music callback — fires when SMSG_PLAY_MUSIC is received.
     // The soundId corresponds to a SoundEntries.dbc record. The receiver is
@@ -2834,6 +2840,11 @@ private:
     // Criteria progress: criteriaId → current value (from SMSG_CRITERIA_UPDATE)
     std::unordered_map<uint32_t, uint64_t> criteriaProgress_;
     void handleAllAchievementData(network::Packet& packet);
+
+    // Per-player achievement data from SMSG_RESPOND_INSPECT_ACHIEVEMENTS
+    // Key: inspected player's GUID; value: set of earned achievement IDs
+    std::unordered_map<uint64_t, std::unordered_set<uint32_t>> inspectedPlayerAchievements_;
+    void handleRespondInspectAchievements(network::Packet& packet);
 
     // Area name cache (lazy-loaded from WorldMapArea.dbc; maps AreaTable ID → display name)
     std::unordered_map<uint32_t, std::string> areaNameCache_;
