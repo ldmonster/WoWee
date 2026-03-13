@@ -5531,16 +5531,21 @@ void GameHandler::handlePacket(network::Packet& packet) {
             break;
         case Opcode::SMSG_AUCTION_OWNER_NOTIFICATION: {
             // auctionId(u32) + action(u32) + error(u32) + itemEntry(u32) + ...
+            // action: 0=sold/won, 1=expired, 2=bid placed on your auction
             if (packet.getSize() - packet.getReadPos() >= 16) {
-                uint32_t auctionId = packet.readUInt32();
-                uint32_t action = packet.readUInt32();
-                uint32_t error = packet.readUInt32();
+                /*uint32_t auctionId =*/ packet.readUInt32();
+                uint32_t action    = packet.readUInt32();
+                /*uint32_t error   =*/ packet.readUInt32();
                 uint32_t itemEntry = packet.readUInt32();
-                (void)auctionId; (void)action; (void)error;
                 ensureItemInfo(itemEntry);
                 auto* info = getItemInfo(itemEntry);
                 std::string itemName = info ? info->name : ("Item #" + std::to_string(itemEntry));
-                addSystemChatMessage("Your auction of " + itemName + " has sold!");
+                if (action == 1)
+                    addSystemChatMessage("Your auction of " + itemName + " has expired.");
+                else if (action == 2)
+                    addSystemChatMessage("A bid has been placed on your auction of " + itemName + ".");
+                else
+                    addSystemChatMessage("Your auction of " + itemName + " has sold!");
             }
             packet.setReadPos(packet.getSize());
             break;
