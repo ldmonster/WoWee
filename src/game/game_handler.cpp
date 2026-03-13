@@ -9011,13 +9011,16 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                                         AuraSlot& a = playerAuras[slot];
                                         a.spellId = it->second;
                                         // Read aura flag byte: packed 4-per-uint32 at ufAuraFlags
-                                        uint8_t aFlag = 0;
+                                        // Classic flags: 0x01=cancelable, 0x02=harmful, 0x04=helpful
+                                        // Normalize to WotLK convention: 0x80 = negative (debuff)
+                                        uint8_t classicFlag = 0;
                                         if (ufAuraFlags != 0xFFFF) {
                                             auto fit = allFields.find(static_cast<uint16_t>(ufAuraFlags + slot / 4));
                                             if (fit != allFields.end())
-                                                aFlag = static_cast<uint8_t>((fit->second >> ((slot % 4) * 8)) & 0xFF);
+                                                classicFlag = static_cast<uint8_t>((fit->second >> ((slot % 4) * 8)) & 0xFF);
                                         }
-                                        a.flags = aFlag;
+                                        // Map Classic harmful bit (0x02) → WotLK debuff bit (0x80)
+                                        a.flags = (classicFlag & 0x02) ? 0x80u : 0u;
                                         a.durationMs = -1;
                                         a.maxDurationMs = -1;
                                         a.casterGuid = playerGuid;
