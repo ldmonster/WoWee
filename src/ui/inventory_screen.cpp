@@ -2315,6 +2315,23 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 0.7f), "Item Level %u", item.itemLevel);
     }
 
+    // Heroic / Unique / Unique-Equipped indicators
+    if (gameHandler_) {
+        const auto* qi = gameHandler_->getItemInfo(item.itemId);
+        if (qi && qi->valid) {
+            constexpr uint32_t kFlagHeroic         = 0x8;
+            constexpr uint32_t kFlagUniqueEquipped = 0x1000000;
+            if (qi->itemFlags & kFlagHeroic) {
+                ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "Heroic");
+            }
+            if (qi->maxCount == 1) {
+                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Unique");
+            } else if (qi->itemFlags & kFlagUniqueEquipped) {
+                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Unique-Equipped");
+            }
+        }
+    }
+
     // Binding type
     switch (item.bindType) {
         case 1: ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Binds when picked up"); break;
@@ -2808,6 +2825,18 @@ void InventoryScreen::renderItemTooltip(const game::ItemQueryResponseData& info,
     ImGui::TextColored(qColor, "%s", info.name.c_str());
     if (info.itemLevel > 0) {
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 0.7f), "Item Level %u", info.itemLevel);
+    }
+
+    // Unique / Heroic indicators
+    constexpr uint32_t kFlagHeroic          = 0x8;         // ITEM_FLAG_HEROIC_TOOLTIP
+    constexpr uint32_t kFlagUniqueEquipped  = 0x1000000;   // ITEM_FLAG_UNIQUE_EQUIPPABLE
+    if (info.itemFlags & kFlagHeroic) {
+        ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "Heroic");
+    }
+    if (info.maxCount == 1) {
+        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Unique");
+    } else if (info.itemFlags & kFlagUniqueEquipped) {
+        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Unique-Equipped");
     }
 
     // Binding type

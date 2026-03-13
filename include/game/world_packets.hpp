@@ -1587,7 +1587,9 @@ struct ItemQueryResponseData {
     uint32_t subClass = 0;
     uint32_t displayInfoId = 0;
     uint32_t quality = 0;
+    uint32_t itemFlags = 0;     // Item flag bitmask (Heroic=0x8, Unique-Equipped=0x1000000)
     uint32_t inventoryType = 0;
+    int32_t maxCount = 0;       // Max that can be carried (1 = Unique, 0 = unlimited)
     int32_t maxStack = 1;
     uint32_t containerSlots = 0;
     float damageMin = 0.0f;

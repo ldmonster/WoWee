@@ -998,7 +998,7 @@ bool TbcPacketParsers::parseItemQueryResponse(network::Packet& packet, ItemQuery
         return false;
     }
 
-    packet.readUInt32(); // Flags  (TBC: 1 flags field only — no Flags2)
+    data.itemFlags = packet.readUInt32(); // Flags  (TBC: 1 flags field only — no Flags2)
     // TBC: NO Flags2, NO BuyCount
     packet.readUInt32(); // BuyPrice
     data.sellPrice = packet.readUInt32();
@@ -1022,8 +1022,8 @@ bool TbcPacketParsers::parseItemQueryResponse(network::Packet& packet, ItemQuery
     packet.readUInt32(); // RequiredCityRank
     data.requiredReputationFaction = packet.readUInt32(); // RequiredReputationFaction
     data.requiredReputationRank    = packet.readUInt32(); // RequiredReputationRank
-    packet.readUInt32(); // MaxCount
-    data.maxStack       = static_cast<int32_t>(packet.readUInt32()); // Stackable
+    data.maxCount = static_cast<int32_t>(packet.readUInt32()); // MaxCount (1 = Unique)
+    data.maxStack = static_cast<int32_t>(packet.readUInt32()); // Stackable
     data.containerSlots = packet.readUInt32();
 
     // TBC: statsCount prefix + exactly statsCount pairs (WotLK always sends 10)

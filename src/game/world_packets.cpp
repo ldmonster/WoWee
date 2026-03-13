@@ -2846,7 +2846,7 @@ bool ItemQueryResponseParser::parse(network::Packet& packet, ItemQueryResponseDa
         LOG_ERROR("SMSG_ITEM_QUERY_SINGLE_RESPONSE: truncated before flags (entry=", data.entry, ")");
         return false;
     }
-    packet.readUInt32(); // Flags
+    data.itemFlags = packet.readUInt32(); // Flags
     packet.readUInt32(); // Flags2
     packet.readUInt32(); // BuyCount
     packet.readUInt32(); // BuyPrice
@@ -2856,7 +2856,7 @@ bool ItemQueryResponseParser::parse(network::Packet& packet, ItemQueryResponseDa
     if (data.inventoryType > 28) {
         // inventoryType out of range — BuyCount probably not present; rewind and try 4 fields
         packet.setReadPos(postQualityPos);
-        packet.readUInt32(); // Flags
+        data.itemFlags = packet.readUInt32(); // Flags
         packet.readUInt32(); // Flags2
         packet.readUInt32(); // BuyPrice
         data.sellPrice = packet.readUInt32(); // SellPrice
@@ -2879,7 +2879,7 @@ bool ItemQueryResponseParser::parse(network::Packet& packet, ItemQueryResponseDa
     packet.readUInt32(); // RequiredCityRank
     data.requiredReputationFaction = packet.readUInt32(); // RequiredReputationFaction
     data.requiredReputationRank    = packet.readUInt32(); // RequiredReputationRank
-    packet.readUInt32(); // MaxCount
+    data.maxCount = static_cast<int32_t>(packet.readUInt32()); // MaxCount (1 = Unique)
     data.maxStack = static_cast<int32_t>(packet.readUInt32()); // Stackable
     data.containerSlots = packet.readUInt32();
 
