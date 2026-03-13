@@ -70,6 +70,12 @@ public:
     bool loadModel(const pipeline::WMOModel& model, uint32_t id);
 
     /**
+     * Check if a WMO model is currently resident in the renderer
+     * @param id WMO model identifier
+     */
+    bool isModelLoaded(uint32_t id) const;
+
+    /**
      * Unload WMO model and free GPU resources
      * @param id WMO model identifier
      */

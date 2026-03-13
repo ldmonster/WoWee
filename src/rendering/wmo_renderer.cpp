@@ -805,6 +805,10 @@ bool WMORenderer::loadModel(const pipeline::WMOModel& model, uint32_t id) {
     return true;
 }
 
+bool WMORenderer::isModelLoaded(uint32_t id) const {
+    return loadedModels.find(id) != loadedModels.end();
+}
+
 void WMORenderer::unloadModel(uint32_t id) {
     auto it = loadedModels.find(id);
     if (it == loadedModels.end()) {

@@ -4113,6 +4113,7 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
 
         gameObjectInstances_.clear();
         gameObjectDisplayIdModelCache_.clear();
+        gameObjectDisplayIdWmoCache_.clear();
         gameObjectDisplayIdFailedCache_.clear();
 
         // Force player character re-spawn on new map
@@ -7115,8 +7116,15 @@ void Application::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_t 
         auto itCache = gameObjectDisplayIdWmoCache_.find(displayId);
         if (itCache != gameObjectDisplayIdWmoCache_.end()) {
             modelId = itCache->second;
-            loadedAsWmo = true;
-        } else {
+            // Only use cached entry if the model is still resident in the renderer
+            if (wmoRenderer->isModelLoaded(modelId)) {
+                loadedAsWmo = true;
+            } else {
+                gameObjectDisplayIdWmoCache_.erase(itCache);
+                modelId = 0;
+            }
+        }
+        if (!loadedAsWmo && modelId == 0) {
             auto wmoData = assetManager->readFile(modelPath);
             if (!wmoData.empty()) {
                 pipeline::WMOModel wmoModel = pipeline::WMOLoader::load(wmoData);
