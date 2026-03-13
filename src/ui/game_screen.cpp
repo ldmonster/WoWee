@@ -395,6 +395,10 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         gameHandler.setUIErrorCallback([this](const std::string& msg) {
             uiErrors_.push_back({msg, 0.0f});
             if (uiErrors_.size() > 5) uiErrors_.erase(uiErrors_.begin());
+            // Play error sound for each new error (rate-limited by deque cap of 5)
+            if (auto* r = core::Application::getInstance().getRenderer()) {
+                if (auto* sfx = r->getUiSoundManager()) sfx->playError();
+            }
         });
         uiErrorCallbackSet_ = true;
     }
