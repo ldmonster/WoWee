@@ -2274,10 +2274,12 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
 void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
     auto& io = ImGui::GetIO();
     auto& input = core::Input::getInstance();
+    const bool textFocus = chatInputActive || io.WantTextInput;
 
     // Tab targeting (when keyboard not captured by UI)
     if (!io.WantCaptureKeyboard) {
-        if (input.isKeyJustPressed(SDL_SCANCODE_TAB)) {
+        // When typing in chat (or any text input), never treat keys as gameplay/UI shortcuts.
+        if (!textFocus && input.isKeyJustPressed(SDL_SCANCODE_TAB)) {
             const auto& movement = gameHandler.getMovementInfo();
             gameHandler.tabTarget(movement.x, movement.y, movement.z);
         }
@@ -2300,69 +2302,70 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             }
         }
 
-        // Toggle character screen (C) and inventory/bags (I)
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_CHARACTER_SCREEN)) {
-            inventoryScreen.toggleCharacter();
-        }
+        if (!textFocus) {
+            // Toggle character screen (C) and inventory/bags (I)
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_CHARACTER_SCREEN)) {
+                inventoryScreen.toggleCharacter();
+            }
 
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_INVENTORY)) {
-            inventoryScreen.toggle();
-        }
-
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_BAGS)) {
-            if (inventoryScreen.isSeparateBags()) {
-                inventoryScreen.openAllBags();
-            } else {
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_INVENTORY)) {
                 inventoryScreen.toggle();
             }
-        }
 
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_NAMEPLATES)) {
-            showNameplates_ = !showNameplates_;
-        }
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_BAGS)) {
+                if (inventoryScreen.isSeparateBags()) {
+                    inventoryScreen.openAllBags();
+                } else {
+                    inventoryScreen.toggle();
+                }
+            }
 
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_WORLD_MAP)) {
-            showWorldMap_ = !showWorldMap_;
-        }
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_NAMEPLATES)) {
+                showNameplates_ = !showNameplates_;
+            }
 
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_MINIMAP)) {
-            showMinimap_ = !showMinimap_;
-        }
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_WORLD_MAP)) {
+                showWorldMap_ = !showWorldMap_;
+            }
 
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_RAID_FRAMES)) {
-            showRaidFrames_ = !showRaidFrames_;
-        }
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_MINIMAP)) {
+                showMinimap_ = !showMinimap_;
+            }
 
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_QUEST_LOG)) {
-            questLogScreen.toggle();
-        }
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_RAID_FRAMES)) {
+                showRaidFrames_ = !showRaidFrames_;
+            }
 
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_ACHIEVEMENTS)) {
-            showAchievementWindow_ = !showAchievementWindow_;
-        }
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_QUEST_LOG)) {
+                questLogScreen.toggle();
+            }
 
-        // Toggle Titles window with H (hero/title screen — no conflicting keybinding)
-        if (input.isKeyJustPressed(SDL_SCANCODE_H) && !ImGui::GetIO().WantCaptureKeyboard) {
-            showTitlesWindow_ = !showTitlesWindow_;
-        }
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_ACHIEVEMENTS)) {
+                showAchievementWindow_ = !showAchievementWindow_;
+            }
 
+            // Toggle Titles window with H (hero/title screen — no conflicting keybinding)
+            if (input.isKeyJustPressed(SDL_SCANCODE_H) && !ImGui::GetIO().WantCaptureKeyboard) {
+                showTitlesWindow_ = !showTitlesWindow_;
+            }
 
-        // Action bar keys (1-9, 0, -, =)
-        static const SDL_Scancode actionBarKeys[] = {
-            SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4,
-            SDL_SCANCODE_5, SDL_SCANCODE_6, SDL_SCANCODE_7, SDL_SCANCODE_8,
-            SDL_SCANCODE_9, SDL_SCANCODE_0, SDL_SCANCODE_MINUS, SDL_SCANCODE_EQUALS
-        };
-        const bool shiftDown = input.isKeyPressed(SDL_SCANCODE_LSHIFT) || input.isKeyPressed(SDL_SCANCODE_RSHIFT);
-        const auto& bar = gameHandler.getActionBar();
-        for (int i = 0; i < game::GameHandler::SLOTS_PER_BAR; ++i) {
-            if (input.isKeyJustPressed(actionBarKeys[i])) {
-                int slotIdx = shiftDown ? (game::GameHandler::SLOTS_PER_BAR + i) : i;
-                if (bar[slotIdx].type == game::ActionBarSlot::SPELL && bar[slotIdx].isReady()) {
-                    uint64_t target = gameHandler.hasTarget() ? gameHandler.getTargetGuid() : 0;
-                    gameHandler.castSpell(bar[slotIdx].id, target);
-                } else if (bar[slotIdx].type == game::ActionBarSlot::ITEM && bar[slotIdx].id != 0) {
-                    gameHandler.useItemById(bar[slotIdx].id);
+            // Action bar keys (1-9, 0, -, =)
+            static const SDL_Scancode actionBarKeys[] = {
+                SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4,
+                SDL_SCANCODE_5, SDL_SCANCODE_6, SDL_SCANCODE_7, SDL_SCANCODE_8,
+                SDL_SCANCODE_9, SDL_SCANCODE_0, SDL_SCANCODE_MINUS, SDL_SCANCODE_EQUALS
+            };
+            const bool shiftDown = input.isKeyPressed(SDL_SCANCODE_LSHIFT) || input.isKeyPressed(SDL_SCANCODE_RSHIFT);
+            const auto& bar = gameHandler.getActionBar();
+            for (int i = 0; i < game::GameHandler::SLOTS_PER_BAR; ++i) {
+                if (input.isKeyJustPressed(actionBarKeys[i])) {
+                    int slotIdx = shiftDown ? (game::GameHandler::SLOTS_PER_BAR + i) : i;
+                    if (bar[slotIdx].type == game::ActionBarSlot::SPELL && bar[slotIdx].isReady()) {
+                        uint64_t target = gameHandler.hasTarget() ? gameHandler.getTargetGuid() : 0;
+                        gameHandler.castSpell(bar[slotIdx].id, target);
+                    } else if (bar[slotIdx].type == game::ActionBarSlot::ITEM && bar[slotIdx].id != 0) {
+                        gameHandler.useItemById(bar[slotIdx].id);
+                    }
                 }
             }
         }
@@ -11224,7 +11227,9 @@ void GameScreen::renderLfgProposalPopup(game::GameHandler& gameHandler) {
 
 void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
     // Guild Roster toggle (customizable keybind)
-    if (!ImGui::GetIO().WantCaptureKeyboard && KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_GUILD_ROSTER)) {
+    if (!chatInputActive && !ImGui::GetIO().WantTextInput &&
+        !ImGui::GetIO().WantCaptureKeyboard &&
+        KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_GUILD_ROSTER)) {
         showGuildRoster_ = !showGuildRoster_;
         if (showGuildRoster_) {
             // Open friends tab directly if not in guild
@@ -19543,7 +19548,8 @@ void GameScreen::renderZoneText() {
 // ---------------------------------------------------------------------------
 void GameScreen::renderDungeonFinderWindow(game::GameHandler& gameHandler) {
     // Toggle Dungeon Finder (customizable keybind)
-    if (!chatInputActive && KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_DUNGEON_FINDER)) {
+    if (!chatInputActive && !ImGui::GetIO().WantTextInput &&
+        KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_DUNGEON_FINDER)) {
         showDungeonFinder_ = !showDungeonFinder_;
     }
 
