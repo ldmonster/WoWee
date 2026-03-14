@@ -55,6 +55,11 @@ void VkContext::shutdown() {
         vkDeviceWaitIdle(device);
     }
 
+    // With the device idle, it is safe to run any deferred per-frame cleanup.
+    for (uint32_t fi = 0; fi < MAX_FRAMES_IN_FLIGHT; fi++) {
+        runDeferredCleanup(fi);
+    }
+
     LOG_WARNING("VkContext::shutdown - destroyImGuiResources...");
     destroyImGuiResources();
 
@@ -101,6 +106,19 @@ void VkContext::shutdown() {
     if (instance) { vkDestroyInstance(instance, nullptr); instance = VK_NULL_HANDLE; }
 
     LOG_WARNING("Vulkan context shutdown complete");
+}
+
+void VkContext::deferAfterFrameFence(std::function<void()>&& fn) {
+    deferredCleanup_[currentFrame].push_back(std::move(fn));
+}
+
+void VkContext::runDeferredCleanup(uint32_t frameIndex) {
+    auto& q = deferredCleanup_[frameIndex];
+    if (q.empty()) return;
+    for (auto& fn : q) {
+        if (fn) fn();
+    }
+    q.clear();
 }
 
 bool VkContext::createInstance(SDL_Window* window) {
@@ -1348,6 +1366,9 @@ VkCommandBuffer VkContext::beginFrame(uint32_t& imageIndex) {
         }
         return VK_NULL_HANDLE;
     }
+
+    // Any work queued for this frame slot is now guaranteed to be unused by the GPU.
+    runDeferredCleanup(currentFrame);
 
     // Acquire next swapchain image
     VkResult result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX,

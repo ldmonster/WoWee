@@ -990,42 +990,64 @@ void TerrainRenderer::clear() {
     }
     chunks.clear();
     renderedChunks = 0;
-
-    if (materialDescPool) {
-        vkResetDescriptorPool(vkCtx->getDevice(), materialDescPool, 0);
-    }
 }
 
 void TerrainRenderer::destroyChunkGPU(TerrainChunkGPU& chunk) {
+    if (!vkCtx) return;
+
+    VkDevice device = vkCtx->getDevice();
     VmaAllocator allocator = vkCtx->getAllocator();
 
-    if (chunk.vertexBuffer) {
-        AllocatedBuffer ab{}; ab.buffer = chunk.vertexBuffer; ab.allocation = chunk.vertexAlloc;
-        destroyBuffer(allocator, ab);
-        chunk.vertexBuffer = VK_NULL_HANDLE;
-    }
-    if (chunk.indexBuffer) {
-        AllocatedBuffer ab{}; ab.buffer = chunk.indexBuffer; ab.allocation = chunk.indexAlloc;
-        destroyBuffer(allocator, ab);
-        chunk.indexBuffer = VK_NULL_HANDLE;
-    }
-    if (chunk.paramsUBO) {
-        AllocatedBuffer ab{}; ab.buffer = chunk.paramsUBO; ab.allocation = chunk.paramsAlloc;
-        destroyBuffer(allocator, ab);
-        chunk.paramsUBO = VK_NULL_HANDLE;
-    }
-    // Return material descriptor set to the pool so it can be reused by new chunks
-    if (chunk.materialSet && materialDescPool) {
-        vkFreeDescriptorSets(vkCtx->getDevice(), materialDescPool, 1, &chunk.materialSet);
-    }
-    chunk.materialSet = VK_NULL_HANDLE;
+    // These resources may still be referenced by in-flight command buffers from
+    // previous frames. Defer actual destruction until this frame slot is safe.
+    ::VkBuffer vertexBuffer = chunk.vertexBuffer;
+    VmaAllocation vertexAlloc = chunk.vertexAlloc;
+    ::VkBuffer indexBuffer = chunk.indexBuffer;
+    VmaAllocation indexAlloc = chunk.indexAlloc;
+    ::VkBuffer paramsUBO = chunk.paramsUBO;
+    VmaAllocation paramsAlloc = chunk.paramsAlloc;
+    VkDescriptorPool pool = materialDescPool;
+    VkDescriptorSet materialSet = chunk.materialSet;
 
-    // Destroy owned alpha textures (VkTexture::~VkTexture is a no-op, must call destroy() explicitly)
-    VkDevice device = vkCtx->getDevice();
+    std::vector<VkTexture*> alphaTextures;
+    alphaTextures.reserve(chunk.ownedAlphaTextures.size());
     for (auto& tex : chunk.ownedAlphaTextures) {
-        if (tex) tex->destroy(device, allocator);
+        alphaTextures.push_back(tex.release());
     }
+
+    chunk.vertexBuffer = VK_NULL_HANDLE;
+    chunk.vertexAlloc = VK_NULL_HANDLE;
+    chunk.indexBuffer = VK_NULL_HANDLE;
+    chunk.indexAlloc = VK_NULL_HANDLE;
+    chunk.paramsUBO = VK_NULL_HANDLE;
+    chunk.paramsAlloc = VK_NULL_HANDLE;
+    chunk.materialSet = VK_NULL_HANDLE;
     chunk.ownedAlphaTextures.clear();
+
+    vkCtx->deferAfterFrameFence([device, allocator, vertexBuffer, vertexAlloc, indexBuffer, indexAlloc,
+                                 paramsUBO, paramsAlloc, pool, materialSet, alphaTextures]() {
+        if (vertexBuffer) {
+            AllocatedBuffer ab{}; ab.buffer = vertexBuffer; ab.allocation = vertexAlloc;
+            destroyBuffer(allocator, ab);
+        }
+        if (indexBuffer) {
+            AllocatedBuffer ab{}; ab.buffer = indexBuffer; ab.allocation = indexAlloc;
+            destroyBuffer(allocator, ab);
+        }
+        if (paramsUBO) {
+            AllocatedBuffer ab{}; ab.buffer = paramsUBO; ab.allocation = paramsAlloc;
+            destroyBuffer(allocator, ab);
+        }
+        if (materialSet && pool) {
+            VkDescriptorSet set = materialSet;
+            vkFreeDescriptorSets(device, pool, 1, &set);
+        }
+        for (VkTexture* tex : alphaTextures) {
+            if (!tex) continue;
+            tex->destroy(device, allocator);
+            delete tex;
+        }
+    });
 }
 
 int TerrainRenderer::getTriangleCount() const {
