@@ -2066,8 +2066,11 @@ void GameHandler::handlePacket(network::Packet& packet) {
             uint64_t victim = readPrGuid();
             if (packet.getSize() - packet.getReadPos() < 4) break;
             uint32_t spellId = packet.readUInt32();
-            if (victim == playerGuid)
+            if (victim == playerGuid) {
                 addCombatText(CombatTextEntry::RESIST, 0, spellId, false, 0, caster, victim);
+            } else if (caster == playerGuid) {
+                addCombatText(CombatTextEntry::RESIST, 0, spellId, true, 0, caster, victim);
+            }
             packet.setReadPos(packet.getSize());
             break;
         }
