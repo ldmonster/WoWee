@@ -1412,18 +1412,31 @@ void Application::update(float deltaTime) {
                     }
 
                     // Client-side transport boarding detection (for M2 transports like trams
-                    // where the server doesn't send transport attachment data).
-                    // Use a generous AABB around each transport's current position.
+                    // and lifts where the server doesn't send transport attachment data).
+                    // Thunder Bluff elevators use model origins that can be far from the deck
+                    // the player stands on, so they need wider attachment bounds.
                     if (gameHandler->getTransportManager() && !gameHandler->isOnTransport()) {
                         auto* tm = gameHandler->getTransportManager();
                         glm::vec3 playerCanonical = core::coords::renderToCanonical(renderPos);
+                        constexpr float kM2BoardHorizDistSq = 12.0f * 12.0f;
+                        constexpr float kM2BoardVertDist = 15.0f;
+                        constexpr float kTbLiftBoardHorizDistSq = 42.0f * 42.0f;
+                        constexpr float kTbLiftBoardVertDist = 80.0f;
 
                         for (auto& [guid, transport] : tm->getTransports()) {
                             if (!transport.isM2) continue;
+                            const bool isThunderBluffLift =
+                                (transport.entry >= 20649u && transport.entry <= 20657u);
+                            const float maxHorizDistSq = isThunderBluffLift
+                                ? kTbLiftBoardHorizDistSq
+                                : kM2BoardHorizDistSq;
+                            const float maxVertDist = isThunderBluffLift
+                                ? kTbLiftBoardVertDist
+                                : kM2BoardVertDist;
                             glm::vec3 diff = playerCanonical - transport.position;
                             float horizDistSq = diff.x * diff.x + diff.y * diff.y;
                             float vertDist = std::abs(diff.z);
-                            if (horizDistSq < 144.0f && vertDist < 15.0f) {
+                            if (horizDistSq < maxHorizDistSq && vertDist < maxVertDist) {
                                 gameHandler->setPlayerOnTransport(guid, playerCanonical - transport.position);
                                 LOG_DEBUG("M2 transport boarding: guid=0x", std::hex, guid, std::dec);
                                 break;
@@ -1439,7 +1452,14 @@ void Application::update(float deltaTime) {
                             glm::vec3 playerCanonical = core::coords::renderToCanonical(renderPos);
                             glm::vec3 diff = playerCanonical - tr->position;
                             float horizDistSq = diff.x * diff.x + diff.y * diff.y;
-                            if (horizDistSq > 225.0f) {
+                            const bool isThunderBluffLift =
+                                (tr->entry >= 20649u && tr->entry <= 20657u);
+                            constexpr float kM2DisembarkHorizDistSq = 15.0f * 15.0f;
+                            constexpr float kTbLiftDisembarkHorizDistSq = 52.0f * 52.0f;
+                            const float disembarkHorizDistSq = isThunderBluffLift
+                                ? kTbLiftDisembarkHorizDistSq
+                                : kM2DisembarkHorizDistSq;
+                            if (horizDistSq > disembarkHorizDistSq) {
                                 gameHandler->clearPlayerTransport();
                                 LOG_DEBUG("M2 transport disembark");
                             }
