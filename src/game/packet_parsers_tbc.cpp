@@ -1436,25 +1436,37 @@ bool TbcPacketParsers::parseAttackerStateUpdate(network::Packet& packet, Attacke
 // TBC uses full uint64 GUIDs; WotLK uses packed GUIDs.
 // ============================================================================
 bool TbcPacketParsers::parseSpellDamageLog(network::Packet& packet, SpellDamageLogData& data) {
-    if (packet.getSize() - packet.getReadPos() < 29) return false;
+    // Fixed TBC payload size:
+    // targetGuid(8) + attackerGuid(8) + spellId(4) + damage(4) + schoolMask(1)
+    // + absorbed(4) + resisted(4) + periodicLog(1) + unused(1) + blocked(4) + flags(4)
+    // = 43 bytes
+    if (packet.getSize() - packet.getReadPos() < 43) return false;
 
-    data.targetGuid  = packet.readUInt64();   // full GUID in TBC
+    data = SpellDamageLogData{};
+
+    const size_t startPos = packet.getReadPos();
+    data.targetGuid   = packet.readUInt64();  // full GUID in TBC
     data.attackerGuid = packet.readUInt64();  // full GUID in TBC
-    data.spellId     = packet.readUInt32();
-    data.damage      = packet.readUInt32();
-    data.schoolMask  = packet.readUInt8();
-    data.absorbed    = packet.readUInt32();
-    data.resisted    = packet.readUInt32();
+    data.spellId      = packet.readUInt32();
+    data.damage       = packet.readUInt32();
+    data.schoolMask   = packet.readUInt8();
+    data.absorbed     = packet.readUInt32();
+    data.resisted     = packet.readUInt32();
 
     uint8_t periodicLog = packet.readUInt8();
     (void)periodicLog;
-    packet.readUInt8();    // unused
-    packet.readUInt32();   // blocked
+    packet.readUInt8();   // unused
+    packet.readUInt32();  // blocked
     uint32_t flags = packet.readUInt32();
     data.isCrit = (flags & 0x02) != 0;
 
     // TBC does not have an overkill field here
     data.overkill = 0;
+
+    if (packet.getReadPos() - startPos != 43) {
+        packet.setReadPos(startPos);
+        return false;
+    }
 
     LOG_DEBUG("[TBC] Spell damage: spellId=", data.spellId, " dmg=", data.damage,
               data.isCrit ? " CRIT" : "");
@@ -1467,13 +1479,17 @@ bool TbcPacketParsers::parseSpellDamageLog(network::Packet& packet, SpellDamageL
 // TBC uses full uint64 GUIDs; WotLK uses packed GUIDs.
 // ============================================================================
 bool TbcPacketParsers::parseSpellHealLog(network::Packet& packet, SpellHealLogData& data) {
-    if (packet.getSize() - packet.getReadPos() < 25) return false;
+    // Fixed payload is 28 bytes; many cores append crit flag (1 byte).
+    // targetGuid(8) + casterGuid(8) + spellId(4) + heal(4) + overheal(4)
+    if (packet.getSize() - packet.getReadPos() < 28) return false;
 
-    data.targetGuid  = packet.readUInt64();   // full GUID in TBC
-    data.casterGuid  = packet.readUInt64();   // full GUID in TBC
-    data.spellId     = packet.readUInt32();
-    data.heal        = packet.readUInt32();
-    data.overheal    = packet.readUInt32();
+    data = SpellHealLogData{};
+
+    data.targetGuid = packet.readUInt64();  // full GUID in TBC
+    data.casterGuid = packet.readUInt64();  // full GUID in TBC
+    data.spellId    = packet.readUInt32();
+    data.heal       = packet.readUInt32();
+    data.overheal   = packet.readUInt32();
     // TBC has no absorbed field in SMSG_SPELLHEALLOG; skip crit flag
     if (packet.getReadPos() < packet.getSize()) {
         uint8_t critFlag = packet.readUInt8();
