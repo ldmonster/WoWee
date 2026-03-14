@@ -2346,14 +2346,6 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 inventoryScreen.toggle();
             }
 
-            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_BAGS)) {
-                if (inventoryScreen.isSeparateBags()) {
-                    inventoryScreen.openAllBags();
-                } else {
-                    inventoryScreen.toggle();
-                }
-            }
-
             if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_NAMEPLATES)) {
                 showNameplates_ = !showNameplates_;
             }
