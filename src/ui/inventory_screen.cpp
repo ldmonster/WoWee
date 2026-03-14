@@ -1017,7 +1017,11 @@ void InventoryScreen::renderBagWindow(const char* title, bool& isOpen,
 
     int rows = (numSlots + columns - 1) / columns;
     float contentH = rows * (slotSize + 4.0f) + 10.0f;
-    if (bagIndex < 0) contentH += 25.0f; // money display for backpack
+    if (bagIndex < 0) {
+        int keyringRows = (inventory.getKeyringSize() + columns - 1) / columns;
+        contentH += 25.0f; // money display for backpack
+        contentH += 30.0f + keyringRows * (slotSize + 4.0f); // keyring header + slots
+    }
     float gridW = columns * (slotSize + 4.0f) + 30.0f;
     // Ensure window is wide enough for the title + close button
     const char* displayTitle = title;
@@ -1063,6 +1067,23 @@ void InventoryScreen::renderBagWindow(const char* title, bool& isOpen,
                            bagIndex, i);
         }
         ImGui::PopID();
+    }
+
+    if (bagIndex < 0) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.0f, 1.0f), "Keyring");
+        for (int i = 0; i < inventory.getKeyringSize(); ++i) {
+            if (i % columns != 0) ImGui::SameLine();
+            const auto& slot = inventory.getKeyringSlot(i);
+            char id[32];
+            snprintf(id, sizeof(id), "##skr_%d", i);
+            ImGui::PushID(id);
+            // Keyring is display-only for now.
+            renderItemSlot(inventory, slot, slotSize, nullptr,
+                           SlotKind::BACKPACK, -1, game::EquipSlot::NUM_SLOTS);
+            ImGui::PopID();
+        }
     }
 
     // Money display at bottom of backpack
@@ -2017,6 +2038,30 @@ void InventoryScreen::renderBackpackPanel(game::Inventory& inventory, bool colla
             renderItemSlot(inventory, slot, slotSize, nullptr,
                            SlotKind::BACKPACK, -1, game::EquipSlot::NUM_SLOTS,
                            bag, s);
+            ImGui::PopID();
+        }
+    }
+
+    bool keyringHasAnyItems = false;
+    for (int i = 0; i < inventory.getKeyringSize(); ++i) {
+        if (!inventory.getKeyringSlot(i).empty()) {
+            keyringHasAnyItems = true;
+            break;
+        }
+    }
+    if (!collapseEmptySections || keyringHasAnyItems) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.0f, 1.0f), "Keyring");
+        for (int i = 0; i < inventory.getKeyringSize(); ++i) {
+            if (i % columns != 0) ImGui::SameLine();
+            const auto& slot = inventory.getKeyringSlot(i);
+            char sid[32];
+            snprintf(sid, sizeof(sid), "##keyring_%d", i);
+            ImGui::PushID(sid);
+            // Keyring is display-only for now.
+            renderItemSlot(inventory, slot, slotSize, nullptr,
+                           SlotKind::BACKPACK, -1, game::EquipSlot::NUM_SLOTS);
             ImGui::PopID();
         }
     }

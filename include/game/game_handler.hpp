@@ -2534,6 +2534,7 @@ private:
     std::unordered_set<uint32_t> pendingItemQueries_;
     std::array<uint64_t, 23> equipSlotGuids_{};
     std::array<uint64_t, 16> backpackSlotGuids_{};
+    std::array<uint64_t, 32> keyringSlotGuids_{};
     // Container (bag) contents: containerGuid -> array of item GUIDs per slot
     struct ContainerInfo {
         uint32_t numSlots = 0;

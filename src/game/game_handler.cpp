@@ -8447,6 +8447,7 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     pendingItemQueries_.clear();
     equipSlotGuids_ = {};
     backpackSlotGuids_ = {};
+    keyringSlotGuids_ = {};
     invSlotBase_ = -1;
     packSlotBase_ = -1;
     lastPlayerFields_.clear();
@@ -13597,6 +13598,21 @@ bool GameHandler::applyInventoryFields(const std::map<uint16_t, uint32_t>& field
     bool slotsChanged = false;
     int equipBase = (invSlotBase_ >= 0) ? invSlotBase_ : static_cast<int>(fieldIndex(UF::PLAYER_FIELD_INV_SLOT_HEAD));
     int packBase = (packSlotBase_ >= 0) ? packSlotBase_ : static_cast<int>(fieldIndex(UF::PLAYER_FIELD_PACK_SLOT_1));
+    int bankBase = static_cast<int>(fieldIndex(UF::PLAYER_FIELD_BANK_SLOT_1));
+    int bankBagBase = static_cast<int>(fieldIndex(UF::PLAYER_FIELD_BANKBAG_SLOT_1));
+
+    // Derive slot counts from field gap (Classic=24/6, TBC/WotLK=28/7).
+    if (bankBase != 0xFFFF && bankBagBase != 0xFFFF) {
+        effectiveBankSlots_ = std::min((bankBagBase - bankBase) / 2, 28);
+        effectiveBankBagSlots_ = (effectiveBankSlots_ <= 24) ? 6 : 7;
+    }
+
+    int keyringBase = static_cast<int>(fieldIndex(UF::PLAYER_FIELD_KEYRING_SLOT_1));
+    if (keyringBase == 0xFFFF && bankBagBase != 0xFFFF) {
+        // Layout fallback for profiles that don't define PLAYER_FIELD_KEYRING_SLOT_1.
+        // Bank bag slots are followed by 12 vendor buyback slots (24 fields), then keyring.
+        keyringBase = bankBagBase + (effectiveBankBagSlots_ * 2) + 24;
+    }
 
     for (const auto& [key, val] : fields) {
         if (key >= equipBase && key <= equipBase + (game::Inventory::NUM_EQUIP_SLOTS * 2 - 1)) {
@@ -13617,15 +13633,17 @@ bool GameHandler::applyInventoryFields(const std::map<uint16_t, uint32_t>& field
                 else guid = (guid & 0x00000000FFFFFFFFULL) | (uint64_t(val) << 32);
                 slotsChanged = true;
             }
-        }
-
-        // Bank slots starting at PLAYER_FIELD_BANK_SLOT_1
-        int bankBase = static_cast<int>(fieldIndex(UF::PLAYER_FIELD_BANK_SLOT_1));
-        int bankBagBase = static_cast<int>(fieldIndex(UF::PLAYER_FIELD_BANKBAG_SLOT_1));
-        // Derive slot counts from field gap (Classic=24/6, TBC/WotLK=28/7)
-        if (bankBase != 0xFFFF && bankBagBase != 0xFFFF) {
-            effectiveBankSlots_ = std::min((bankBagBase - bankBase) / 2, 28);
-            effectiveBankBagSlots_ = (effectiveBankSlots_ <= 24) ? 6 : 7;
+        } else if (keyringBase != 0xFFFF &&
+                   key >= keyringBase &&
+                   key <= keyringBase + (game::Inventory::KEYRING_SLOTS * 2 - 1)) {
+            int slotIndex = (key - keyringBase) / 2;
+            bool isLow = ((key - keyringBase) % 2 == 0);
+            if (slotIndex < static_cast<int>(keyringSlotGuids_.size())) {
+                uint64_t& guid = keyringSlotGuids_[slotIndex];
+                if (isLow) guid = (guid & 0xFFFFFFFF00000000ULL) | val;
+                else guid = (guid & 0x00000000FFFFFFFFULL) | (uint64_t(val) << 32);
+                slotsChanged = true;
+            }
         }
         if (bankBase != 0xFFFF && key >= static_cast<uint16_t>(bankBase) &&
             key <= static_cast<uint16_t>(bankBase) + (effectiveBankSlots_ * 2 - 1)) {
@@ -13784,6 +13802,55 @@ void GameHandler::rebuildOnlineInventory() {
         }
 
         inventory.setBackpackSlot(i, def);
+    }
+
+    // Keyring slots
+    for (int i = 0; i < game::Inventory::KEYRING_SLOTS; i++) {
+        uint64_t guid = keyringSlotGuids_[i];
+        if (guid == 0) continue;
+
+        auto itemIt = onlineItems_.find(guid);
+        if (itemIt == onlineItems_.end()) continue;
+
+        ItemDef def;
+        def.itemId = itemIt->second.entry;
+        def.stackCount = itemIt->second.stackCount;
+        def.curDurability = itemIt->second.curDurability;
+        def.maxDurability = itemIt->second.maxDurability;
+        def.maxStack = 1;
+
+        auto infoIt = itemInfoCache_.find(itemIt->second.entry);
+        if (infoIt != itemInfoCache_.end()) {
+            def.name = infoIt->second.name;
+            def.quality = static_cast<ItemQuality>(infoIt->second.quality);
+            def.inventoryType = infoIt->second.inventoryType;
+            def.maxStack = std::max(1, infoIt->second.maxStack);
+            def.displayInfoId = infoIt->second.displayInfoId;
+            def.subclassName = infoIt->second.subclassName;
+            def.damageMin = infoIt->second.damageMin;
+            def.damageMax = infoIt->second.damageMax;
+            def.delayMs = infoIt->second.delayMs;
+            def.armor = infoIt->second.armor;
+            def.stamina = infoIt->second.stamina;
+            def.strength = infoIt->second.strength;
+            def.agility = infoIt->second.agility;
+            def.intellect = infoIt->second.intellect;
+            def.spirit = infoIt->second.spirit;
+            def.sellPrice = infoIt->second.sellPrice;
+            def.itemLevel = infoIt->second.itemLevel;
+            def.requiredLevel = infoIt->second.requiredLevel;
+            def.bindType = infoIt->second.bindType;
+            def.description = infoIt->second.description;
+            def.startQuestId = infoIt->second.startQuestId;
+            def.extraStats.clear();
+            for (const auto& es : infoIt->second.extraStats)
+                def.extraStats.push_back({es.statType, es.statValue});
+        } else {
+            def.name = "Item " + std::to_string(def.itemId);
+            queryItemInfo(def.itemId, guid);
+        }
+
+        inventory.setKeyringSlot(i, def);
     }
 
     // Bag contents (BAG1-BAG4 are equip slots 19-22)
@@ -14029,6 +14096,8 @@ void GameHandler::rebuildOnlineInventory() {
         int c = 0; for (auto g : equipSlotGuids_) if (g) c++; return c;
     }(), " backpack=", [&](){
         int c = 0; for (auto g : backpackSlotGuids_) if (g) c++; return c;
+    }(), " keyring=", [&](){
+        int c = 0; for (auto g : keyringSlotGuids_) if (g) c++; return c;
     }());
 }
 
