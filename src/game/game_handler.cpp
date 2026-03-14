@@ -4012,14 +4012,22 @@ void GameHandler::handlePacket(network::Packet& packet) {
             // TBC: full uint64 victim + uint64 caster + uint32 spellId + uint8 powerType + int32 amount
             // Classic/Vanilla: packed_guid (same as WotLK)
             const bool energizeTbc = isActiveExpansion("tbc");
-            size_t rem = packet.getSize() - packet.getReadPos();
-            if (rem < (energizeTbc ? 8u : 2u)) { packet.setReadPos(packet.getSize()); break; }
-            uint64_t victimGuid = energizeTbc
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            uint64_t casterGuid = energizeTbc
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            rem = packet.getSize() - packet.getReadPos();
-            if (rem < 6) { packet.setReadPos(packet.getSize()); break; }
+            auto readEnergizeGuid = [&]() -> uint64_t {
+                if (energizeTbc)
+                    return (packet.getSize() - packet.getReadPos() >= 8) ? packet.readUInt64() : 0;
+                return UpdateObjectParser::readPackedGuid(packet);
+            };
+            if (packet.getSize() - packet.getReadPos() < (energizeTbc ? 8u : 1u)) {
+                packet.setReadPos(packet.getSize()); break;
+            }
+            uint64_t victimGuid = readEnergizeGuid();
+            if (packet.getSize() - packet.getReadPos() < (energizeTbc ? 8u : 1u)) {
+                packet.setReadPos(packet.getSize()); break;
+            }
+            uint64_t casterGuid = readEnergizeGuid();
+            if (packet.getSize() - packet.getReadPos() < 9) {
+                packet.setReadPos(packet.getSize()); break;
+            }
             uint32_t spellId       = packet.readUInt32();
             uint8_t  energizePowerType = packet.readUInt8();
             int32_t  amount        = static_cast<int32_t>(packet.readUInt32());
