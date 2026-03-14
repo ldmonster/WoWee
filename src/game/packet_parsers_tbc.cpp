@@ -1261,6 +1261,7 @@ bool TbcPacketParsers::parseSpellStart(network::Packet& packet, SpellStartData& 
 // WotLK uses packed GUIDs and adds a timestamp (u32) after castFlags.
 // ============================================================================
 bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) {
+    const size_t startPos = packet.getReadPos();
     // Fixed header before hit/miss lists:
     // casterGuid(u64) + casterUnit(u64) + castCount(u8) + spellId(u32) + castFlags(u32)
     if (packet.getSize() - packet.getReadPos() < 25) return false;
@@ -1283,18 +1284,24 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
     }
     const uint8_t storedHitLimit = std::min<uint8_t>(rawHitCount, 128);
     data.hitTargets.reserve(storedHitLimit);
-    for (uint16_t i = 0; i < rawHitCount && packet.getReadPos() + 8 <= packet.getSize(); ++i) {
+    bool truncatedTargets = false;
+    for (uint16_t i = 0; i < rawHitCount; ++i) {
+        if (packet.getReadPos() + 8 > packet.getSize()) {
+            LOG_WARNING("[TBC] Spell go: truncated hit targets at index ", i,
+                        "/", (int)rawHitCount);
+            truncatedTargets = true;
+            break;
+        }
         const uint64_t targetGuid = packet.readUInt64();  // full GUID in TBC
         if (i < storedHitLimit) {
             data.hitTargets.push_back(targetGuid);
         }
     }
-    data.hitCount = static_cast<uint8_t>(data.hitTargets.size());
-    // Check if we read all expected hits
-    if (data.hitTargets.size() < rawHitCount) {
-        LOG_WARNING("[TBC] Spell go: truncated hit targets at index ", (int)data.hitTargets.size(),
-                    "/", (int)rawHitCount);
+    if (truncatedTargets) {
+        packet.setReadPos(startPos);
+        return false;
     }
+    data.hitCount = static_cast<uint8_t>(data.hitTargets.size());
 
     if (packet.getReadPos() < packet.getSize()) {
         const uint8_t rawMissCount = packet.readUInt8();
@@ -1303,12 +1310,21 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
         }
         const uint8_t storedMissLimit = std::min<uint8_t>(rawMissCount, 128);
         data.missTargets.reserve(storedMissLimit);
-        for (uint16_t i = 0; i < rawMissCount && packet.getReadPos() + 9 <= packet.getSize(); ++i) {
+        for (uint16_t i = 0; i < rawMissCount; ++i) {
+            if (packet.getReadPos() + 9 > packet.getSize()) {
+                LOG_WARNING("[TBC] Spell go: truncated miss targets at index ", i,
+                            "/", (int)rawMissCount);
+                truncatedTargets = true;
+                break;
+            }
             SpellGoMissEntry m;
             m.targetGuid = packet.readUInt64();  // full GUID in TBC
             m.missType   = packet.readUInt8();
             if (m.missType == 11) {
                 if (packet.getReadPos() + 5 > packet.getSize()) {
+                    LOG_WARNING("[TBC] Spell go: truncated reflect payload at miss index ", i,
+                                "/", (int)rawMissCount);
+                    truncatedTargets = true;
                     break;
                 }
                 (void)packet.readUInt32();
@@ -1318,12 +1334,11 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
                 data.missTargets.push_back(m);
             }
         }
-        data.missCount = static_cast<uint8_t>(data.missTargets.size());
-        // Check if we read all expected misses
-        if (data.missTargets.size() < rawMissCount) {
-            LOG_WARNING("[TBC] Spell go: truncated miss targets at index ", (int)data.missTargets.size(),
-                        "/", (int)rawMissCount);
+        if (truncatedTargets) {
+            packet.setReadPos(startPos);
+            return false;
         }
+        data.missCount = static_cast<uint8_t>(data.missTargets.size());
     }
 
     LOG_DEBUG("[TBC] Spell go: spell=", data.spellId, " hits=", (int)data.hitCount,
