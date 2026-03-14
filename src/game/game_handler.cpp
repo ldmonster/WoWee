@@ -7105,11 +7105,20 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
             if (rl_rem() < 4) { packet.setReadPos(packet.getSize()); break; }
             uint32_t spellId = packet.readUInt32();
+            int32_t resistedAmount = 0;
+            // Resist payload includes:
+            // float resistFactor + uint32 targetResistance + uint32 resistedValue.
+            // Some servers may truncate optional tail fields, so parse defensively.
+            if (rl_rem() >= 12) {
+                /*float resistFactor =*/ packet.readFloat();
+                /*uint32_t targetRes =*/ packet.readUInt32();
+                resistedAmount = static_cast<int32_t>(packet.readUInt32());
+            }
             // Show RESIST when the player is involved on either side.
             if (victimGuid == playerGuid) {
-                addCombatText(CombatTextEntry::RESIST, 0, spellId, false, 0, attackerGuid, victimGuid);
+                addCombatText(CombatTextEntry::RESIST, resistedAmount, spellId, false, 0, attackerGuid, victimGuid);
             } else if (attackerGuid == playerGuid) {
-                addCombatText(CombatTextEntry::RESIST, 0, spellId, true, 0, attackerGuid, victimGuid);
+                addCombatText(CombatTextEntry::RESIST, resistedAmount, spellId, true, 0, attackerGuid, victimGuid);
             }
             packet.setReadPos(packet.getSize());
             break;
