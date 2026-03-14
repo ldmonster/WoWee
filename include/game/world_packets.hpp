@@ -2441,6 +2441,12 @@ public:
     static network::Packet build();
 };
 
+/** CMSG_RECLAIM_CORPSE packet builder */
+class ReclaimCorpsePacket {
+public:
+    static network::Packet build(uint64_t guid);
+};
+
 /** CMSG_SPIRIT_HEALER_ACTIVATE packet builder */
 class SpiritHealerActivatePacket {
 public:
@@ -2511,7 +2517,7 @@ public:
 /** CMSG_MAIL_TAKE_ITEM packet builder */
 class MailTakeItemPacket {
 public:
-    static network::Packet build(uint64_t mailboxGuid, uint32_t mailId, uint32_t itemIndex);
+    static network::Packet build(uint64_t mailboxGuid, uint32_t mailId, uint32_t itemGuidLow);
 };
 
 /** CMSG_MAIL_DELETE packet builder */

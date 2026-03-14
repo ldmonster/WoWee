@@ -1978,7 +1978,7 @@ public:
     const std::array<MailAttachSlot, 12>& getMailAttachments() const { return mailAttachments_; }
     int getMailAttachmentCount() const;
     void mailTakeMoney(uint32_t mailId);
-    void mailTakeItem(uint32_t mailId, uint32_t itemIndex);
+    void mailTakeItem(uint32_t mailId, uint32_t itemGuidLow);
     void mailDelete(uint32_t mailId);
     void mailMarkAsRead(uint32_t mailId);
     void refreshMailList();
@@ -2534,6 +2534,7 @@ private:
     std::unordered_set<uint32_t> pendingItemQueries_;
     std::array<uint64_t, 23> equipSlotGuids_{};
     std::array<uint64_t, 16> backpackSlotGuids_{};
+    std::array<uint64_t, 32> keyringSlotGuids_{};
     // Container (bag) contents: containerGuid -> array of item GUIDs per slot
     struct ContainerInfo {
         uint32_t numSlots = 0;
@@ -2829,6 +2830,7 @@ private:
     struct LocalLootState {
         LootResponseData data;
         bool moneyTaken = false;
+        bool itemAutoLootSent = false;
     };
     std::unordered_map<uint64_t, LocalLootState> localLootState_;
     struct PendingLootRetry {
@@ -3200,6 +3202,7 @@ private:
     bool releasedSpirit_ = false;
     uint32_t corpseMapId_ = 0;
     float corpseX_ = 0.0f, corpseY_ = 0.0f, corpseZ_ = 0.0f;
+    uint64_t corpseGuid_ = 0;
     // Death Knight runes (class 6): slots 0-1=Blood, 2-3=Unholy, 4-5=Frost initially
     std::array<RuneSlot, 6> playerRunes_ = [] {
         std::array<RuneSlot, 6> r{};

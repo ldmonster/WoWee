@@ -396,9 +396,13 @@ bool TerrainRenderer::loadTerrain(const pipeline::TerrainMesh& mesh,
 
             // Allocate and write material descriptor set
             gpuChunk.materialSet = allocateMaterialSet();
-            if (gpuChunk.materialSet) {
-                writeMaterialDescriptors(gpuChunk.materialSet, gpuChunk);
+            if (!gpuChunk.materialSet) {
+                // Pool exhaustion can happen transiently while tile churn is high.
+                // Drop this chunk instead of retaining non-renderable GPU resources.
+                destroyChunkGPU(gpuChunk);
+                continue;
             }
+            writeMaterialDescriptors(gpuChunk.materialSet, gpuChunk);
 
             chunks.push_back(std::move(gpuChunk));
         }
@@ -487,9 +491,12 @@ bool TerrainRenderer::loadTerrainIncremental(const pipeline::TerrainMesh& mesh,
         }
 
         gpuChunk.materialSet = allocateMaterialSet();
-        if (gpuChunk.materialSet) {
-            writeMaterialDescriptors(gpuChunk.materialSet, gpuChunk);
+        if (!gpuChunk.materialSet) {
+            // Keep memory/work bounded under descriptor pool pressure.
+            destroyChunkGPU(gpuChunk);
+            continue;
         }
+        writeMaterialDescriptors(gpuChunk.materialSet, gpuChunk);
 
         chunks.push_back(std::move(gpuChunk));
         uploaded++;
@@ -653,7 +660,11 @@ VkDescriptorSet TerrainRenderer::allocateMaterialSet() {
 
     VkDescriptorSet set = VK_NULL_HANDLE;
     if (vkAllocateDescriptorSets(vkCtx->getDevice(), &allocInfo, &set) != VK_SUCCESS) {
-        LOG_WARNING("TerrainRenderer: failed to allocate material descriptor set");
+        static uint64_t failCount = 0;
+        ++failCount;
+        if (failCount <= 8 || (failCount % 256) == 0) {
+            LOG_WARNING("TerrainRenderer: failed to allocate material descriptor set (count=", failCount, ")");
+        }
         return VK_NULL_HANDLE;
     }
     return set;

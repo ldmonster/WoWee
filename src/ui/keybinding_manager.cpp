@@ -5,6 +5,11 @@
 
 namespace wowee::ui {
 
+static bool isReservedMovementKey(ImGuiKey key) {
+    return key == ImGuiKey_W || key == ImGuiKey_A || key == ImGuiKey_S ||
+           key == ImGuiKey_D || key == ImGuiKey_Q || key == ImGuiKey_E;
+}
+
 KeybindingManager& KeybindingManager::getInstance() {
     static KeybindingManager instance;
     return instance;
@@ -30,14 +35,25 @@ void KeybindingManager::initializeDefaults() {
     bindings_[static_cast<int>(Action::TOGGLE_WORLD_MAP)] = ImGuiKey_M;  // WoW standard: M opens world map
     bindings_[static_cast<int>(Action::TOGGLE_NAMEPLATES)] = ImGuiKey_V;
     bindings_[static_cast<int>(Action::TOGGLE_RAID_FRAMES)] = ImGuiKey_F;  // Reassigned from R (now camera reset)
-    bindings_[static_cast<int>(Action::TOGGLE_QUEST_LOG)] = ImGuiKey_None;  // Q conflicts with strafe-left; quest log accessible via TOGGLE_QUESTS (L)
     bindings_[static_cast<int>(Action::TOGGLE_ACHIEVEMENTS)] = ImGuiKey_Y;  // WoW standard key (Shift+Y in retail)
 }
 
 bool KeybindingManager::isActionPressed(Action action, bool repeat) {
     auto it = bindings_.find(static_cast<int>(action));
     if (it == bindings_.end()) return false;
-    return ImGui::IsKeyPressed(it->second, repeat);
+    ImGuiKey key = it->second;
+    if (key == ImGuiKey_None) return false;
+
+    // When typing in a text field (e.g. chat input), never treat A-Z or 0-9 as shortcuts.
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.WantTextInput) {
+        if ((key >= ImGuiKey_A && key <= ImGuiKey_Z) ||
+            (key >= ImGuiKey_0 && key <= ImGuiKey_9)) {
+            return false;
+        }
+    }
+
+    return ImGui::IsKeyPressed(key, repeat);
 }
 
 ImGuiKey KeybindingManager::getKeyForAction(Action action) const {
@@ -47,6 +63,11 @@ ImGuiKey KeybindingManager::getKeyForAction(Action action) const {
 }
 
 void KeybindingManager::setKeyForAction(Action action, ImGuiKey key) {
+    // Reserve movement keys so they cannot be used as UI shortcuts.
+    (void)action;
+    if (isReservedMovementKey(key)) {
+        key = ImGuiKey_None;
+    }
     bindings_[static_cast<int>(action)] = key;
 }
 
@@ -71,7 +92,6 @@ const char* KeybindingManager::getActionName(Action action) {
         case Action::TOGGLE_WORLD_MAP: return "World Map";
         case Action::TOGGLE_NAMEPLATES: return "Nameplates";
         case Action::TOGGLE_RAID_FRAMES: return "Raid Frames";
-        case Action::TOGGLE_QUEST_LOG: return "Quest Log";
         case Action::TOGGLE_ACHIEVEMENTS: return "Achievements";
         case Action::ACTION_COUNT: break;
     }
@@ -136,7 +156,7 @@ void KeybindingManager::loadFromConfigFile(const std::string& filePath) {
         else if (action == "toggle_world_map") actionIdx = static_cast<int>(Action::TOGGLE_WORLD_MAP);
         else if (action == "toggle_nameplates") actionIdx = static_cast<int>(Action::TOGGLE_NAMEPLATES);
         else if (action == "toggle_raid_frames") actionIdx = static_cast<int>(Action::TOGGLE_RAID_FRAMES);
-        else if (action == "toggle_quest_log") actionIdx = static_cast<int>(Action::TOGGLE_QUEST_LOG);
+        else if (action == "toggle_quest_log") actionIdx = static_cast<int>(Action::TOGGLE_QUESTS);  // legacy alias
         else if (action == "toggle_achievements") actionIdx = static_cast<int>(Action::TOGGLE_ACHIEVEMENTS);
 
         if (actionIdx < 0) continue;
@@ -175,9 +195,14 @@ void KeybindingManager::loadFromConfigFile(const std::string& filePath) {
             }
         }
 
-        if (key != ImGuiKey_None) {
-            bindings_[actionIdx] = key;
+        if (key == ImGuiKey_None) continue;
+
+        // Reserve movement keys so they cannot be used as UI shortcuts.
+        if (isReservedMovementKey(key)) {
+            continue;
         }
+
+        bindings_[actionIdx] = key;
     }
 
     file.close();
@@ -228,7 +253,6 @@ void KeybindingManager::saveToConfigFile(const std::string& filePath) const {
         {Action::TOGGLE_WORLD_MAP, "toggle_world_map"},
         {Action::TOGGLE_NAMEPLATES, "toggle_nameplates"},
         {Action::TOGGLE_RAID_FRAMES, "toggle_raid_frames"},
-        {Action::TOGGLE_QUEST_LOG, "toggle_quest_log"},
         {Action::TOGGLE_ACHIEVEMENTS, "toggle_achievements"},
     };
 

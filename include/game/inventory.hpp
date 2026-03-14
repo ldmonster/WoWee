@@ -69,6 +69,7 @@ struct ItemSlot {
 class Inventory {
 public:
     static constexpr int BACKPACK_SLOTS = 16;
+    static constexpr int KEYRING_SLOTS = 32;
     static constexpr int NUM_EQUIP_SLOTS = 23;
     static constexpr int NUM_BAG_SLOTS = 4;
     static constexpr int MAX_BAG_SIZE = 36;
@@ -87,6 +88,12 @@ public:
     const ItemSlot& getEquipSlot(EquipSlot slot) const;
     bool setEquipSlot(EquipSlot slot, const ItemDef& item);
     bool clearEquipSlot(EquipSlot slot);
+
+    // Keyring
+    const ItemSlot& getKeyringSlot(int index) const;
+    bool setKeyringSlot(int index, const ItemDef& item);
+    bool clearKeyringSlot(int index);
+    int getKeyringSize() const { return KEYRING_SLOTS; }
 
     // Extra bags
     int getBagSize(int bagIndex) const;
@@ -123,6 +130,7 @@ public:
 
 private:
     std::array<ItemSlot, BACKPACK_SLOTS> backpack{};
+    std::array<ItemSlot, KEYRING_SLOTS> keyring_{};
     std::array<ItemSlot, NUM_EQUIP_SLOTS> equipment{};
 
     struct BagData {

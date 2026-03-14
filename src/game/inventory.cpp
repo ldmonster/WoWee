@@ -45,6 +45,23 @@ bool Inventory::clearEquipSlot(EquipSlot slot) {
     return true;
 }
 
+const ItemSlot& Inventory::getKeyringSlot(int index) const {
+    if (index < 0 || index >= KEYRING_SLOTS) return EMPTY_SLOT;
+    return keyring_[index];
+}
+
+bool Inventory::setKeyringSlot(int index, const ItemDef& item) {
+    if (index < 0 || index >= KEYRING_SLOTS) return false;
+    keyring_[index].item = item;
+    return true;
+}
+
+bool Inventory::clearKeyringSlot(int index) {
+    if (index < 0 || index >= KEYRING_SLOTS) return false;
+    keyring_[index].item = ItemDef{};
+    return true;
+}
+
 int Inventory::getBagSize(int bagIndex) const {
     if (bagIndex < 0 || bagIndex >= NUM_BAG_SLOTS) return 0;
     return bags[bagIndex].size;

@@ -1623,10 +1623,6 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
             if (t >= 1.0f) {
                 inst.position = inst.moveEnd;
                 inst.isMoving = false;
-                // Return to idle when movement completes
-                if (inst.currentAnimationId == 4 || inst.currentAnimationId == 5) {
-                    playAnimation(pair.first, 0, true);
-                }
             } else {
                 inst.position = glm::mix(inst.moveStart, inst.moveEnd, t);
             }

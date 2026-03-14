@@ -845,7 +845,23 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     // Update renderer face-target position and selection circle
     auto* renderer = core::Application::getInstance().getRenderer();
     if (renderer) {
-        renderer->setInCombat(gameHandler.isInCombat());
+        renderer->setInCombat(gameHandler.isInCombat() &&
+                              !gameHandler.isPlayerDead() &&
+                              !gameHandler.isPlayerGhost());
+        if (auto* cr = renderer->getCharacterRenderer()) {
+            uint32_t charInstId = renderer->getCharacterInstanceId();
+            if (charInstId != 0) {
+                const bool isGhost = gameHandler.isPlayerGhost();
+                if (!ghostOpacityStateKnown_ ||
+                    ghostOpacityLastState_ != isGhost ||
+                    ghostOpacityLastInstanceId_ != charInstId) {
+                    cr->setInstanceOpacity(charInstId, isGhost ? 0.5f : 1.0f);
+                    ghostOpacityStateKnown_ = true;
+                    ghostOpacityLastState_ = isGhost;
+                    ghostOpacityLastInstanceId_ = charInstId;
+                }
+            }
+        }
         static glm::vec3 targetGLPos;
         if (gameHandler.hasTarget()) {
             auto target = gameHandler.getTarget();
@@ -2275,9 +2291,25 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
     auto& io = ImGui::GetIO();
     auto& input = core::Input::getInstance();
 
+    // If the user is typing (or about to focus chat this frame), do not allow
+    // A-Z or 1-0 shortcuts to fire.
+    if (!io.WantTextInput && !chatInputActive && input.isKeyJustPressed(SDL_SCANCODE_SLASH)) {
+        refocusChatInput = true;
+        chatInputBuffer[0] = '/';
+        chatInputBuffer[1] = '\0';
+        chatInputMoveCursorToEnd = true;
+    }
+    if (!io.WantTextInput && !chatInputActive &&
+        KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_CHAT, true)) {
+        refocusChatInput = true;
+    }
+
+    const bool textFocus = chatInputActive || refocusChatInput || io.WantTextInput;
+
     // Tab targeting (when keyboard not captured by UI)
     if (!io.WantCaptureKeyboard) {
-        if (input.isKeyJustPressed(SDL_SCANCODE_TAB)) {
+        // When typing in chat (or any text input), never treat keys as gameplay/UI shortcuts.
+        if (!textFocus && input.isKeyJustPressed(SDL_SCANCODE_TAB)) {
             const auto& movement = gameHandler.getMovementInfo();
             gameHandler.tabTarget(movement.x, movement.y, movement.z);
         }
@@ -2300,86 +2332,66 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             }
         }
 
-        // Toggle character screen (C) and inventory/bags (I)
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_CHARACTER_SCREEN)) {
-            inventoryScreen.toggleCharacter();
-        }
+        if (!textFocus) {
+            // Toggle character screen (C) and inventory/bags (I)
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_CHARACTER_SCREEN)) {
+                const bool wasOpen = inventoryScreen.isCharacterOpen();
+                inventoryScreen.toggleCharacter();
+                if (!wasOpen && gameHandler.isConnected()) {
+                    gameHandler.requestPlayedTime();
+                }
+            }
 
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_INVENTORY)) {
-            inventoryScreen.toggle();
-        }
-
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_BAGS)) {
-            if (inventoryScreen.isSeparateBags()) {
-                inventoryScreen.openAllBags();
-            } else {
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_INVENTORY)) {
                 inventoryScreen.toggle();
             }
-        }
 
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_NAMEPLATES)) {
-            showNameplates_ = !showNameplates_;
-        }
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_NAMEPLATES)) {
+                showNameplates_ = !showNameplates_;
+            }
 
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_WORLD_MAP)) {
-            showWorldMap_ = !showWorldMap_;
-        }
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_WORLD_MAP)) {
+                showWorldMap_ = !showWorldMap_;
+            }
 
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_MINIMAP)) {
-            showMinimap_ = !showMinimap_;
-        }
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_MINIMAP)) {
+                showMinimap_ = !showMinimap_;
+            }
 
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_RAID_FRAMES)) {
-            showRaidFrames_ = !showRaidFrames_;
-        }
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_RAID_FRAMES)) {
+                showRaidFrames_ = !showRaidFrames_;
+            }
 
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_QUEST_LOG)) {
-            questLogScreen.toggle();
-        }
+            if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_ACHIEVEMENTS)) {
+                showAchievementWindow_ = !showAchievementWindow_;
+            }
 
-        if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_ACHIEVEMENTS)) {
-            showAchievementWindow_ = !showAchievementWindow_;
-        }
+            // Toggle Titles window with H (hero/title screen — no conflicting keybinding)
+            if (input.isKeyJustPressed(SDL_SCANCODE_H) && !ImGui::GetIO().WantCaptureKeyboard) {
+                showTitlesWindow_ = !showTitlesWindow_;
+            }
 
-        // Toggle Titles window with H (hero/title screen — no conflicting keybinding)
-        if (input.isKeyJustPressed(SDL_SCANCODE_H) && !ImGui::GetIO().WantCaptureKeyboard) {
-            showTitlesWindow_ = !showTitlesWindow_;
-        }
-
-
-        // Action bar keys (1-9, 0, -, =)
-        static const SDL_Scancode actionBarKeys[] = {
-            SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4,
-            SDL_SCANCODE_5, SDL_SCANCODE_6, SDL_SCANCODE_7, SDL_SCANCODE_8,
-            SDL_SCANCODE_9, SDL_SCANCODE_0, SDL_SCANCODE_MINUS, SDL_SCANCODE_EQUALS
-        };
-        const bool shiftDown = input.isKeyPressed(SDL_SCANCODE_LSHIFT) || input.isKeyPressed(SDL_SCANCODE_RSHIFT);
-        const auto& bar = gameHandler.getActionBar();
-        for (int i = 0; i < game::GameHandler::SLOTS_PER_BAR; ++i) {
-            if (input.isKeyJustPressed(actionBarKeys[i])) {
-                int slotIdx = shiftDown ? (game::GameHandler::SLOTS_PER_BAR + i) : i;
-                if (bar[slotIdx].type == game::ActionBarSlot::SPELL && bar[slotIdx].isReady()) {
-                    uint64_t target = gameHandler.hasTarget() ? gameHandler.getTargetGuid() : 0;
-                    gameHandler.castSpell(bar[slotIdx].id, target);
-                } else if (bar[slotIdx].type == game::ActionBarSlot::ITEM && bar[slotIdx].id != 0) {
-                    gameHandler.useItemById(bar[slotIdx].id);
+            // Action bar keys (1-9, 0, -, =)
+            static const SDL_Scancode actionBarKeys[] = {
+                SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4,
+                SDL_SCANCODE_5, SDL_SCANCODE_6, SDL_SCANCODE_7, SDL_SCANCODE_8,
+                SDL_SCANCODE_9, SDL_SCANCODE_0, SDL_SCANCODE_MINUS, SDL_SCANCODE_EQUALS
+            };
+            const bool shiftDown = input.isKeyPressed(SDL_SCANCODE_LSHIFT) || input.isKeyPressed(SDL_SCANCODE_RSHIFT);
+            const auto& bar = gameHandler.getActionBar();
+            for (int i = 0; i < game::GameHandler::SLOTS_PER_BAR; ++i) {
+                if (input.isKeyJustPressed(actionBarKeys[i])) {
+                    int slotIdx = shiftDown ? (game::GameHandler::SLOTS_PER_BAR + i) : i;
+                    if (bar[slotIdx].type == game::ActionBarSlot::SPELL && bar[slotIdx].isReady()) {
+                        uint64_t target = gameHandler.hasTarget() ? gameHandler.getTargetGuid() : 0;
+                        gameHandler.castSpell(bar[slotIdx].id, target);
+                    } else if (bar[slotIdx].type == game::ActionBarSlot::ITEM && bar[slotIdx].id != 0) {
+                        gameHandler.useItemById(bar[slotIdx].id);
+                    }
                 }
             }
         }
 
-    }
-
-    // Slash key: focus chat input — always works unless already typing in chat
-    if (!chatInputActive && input.isKeyJustPressed(SDL_SCANCODE_SLASH)) {
-        refocusChatInput = true;
-        chatInputBuffer[0] = '/';
-        chatInputBuffer[1] = '\0';
-        chatInputMoveCursorToEnd = true;
-    }
-
-    // Enter key: focus chat input (empty) — always works unless already typing
-    if (!chatInputActive && KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_CHAT, true)) {
-        refocusChatInput = true;
     }
 
     // Cursor affordance: show hand cursor over interactable game objects.
@@ -2534,6 +2546,25 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             auto* camera = renderer ? renderer->getCamera() : nullptr;
             auto* window = core::Application::getInstance().getWindow();
             if (camera && window) {
+                // If a quest objective gameobject is under the cursor, prefer it over
+                // hostile units so quest pickups (e.g. "Bundle of Wood") are reliable.
+                std::unordered_set<uint32_t> questObjectiveGoEntries;
+                {
+                    const auto& ql = gameHandler.getQuestLog();
+                    questObjectiveGoEntries.reserve(32);
+                    for (const auto& q : ql) {
+                        if (q.complete) continue;
+                        for (const auto& obj : q.killObjectives) {
+                            if (obj.npcOrGoId >= 0 || obj.required == 0) continue;
+                            uint32_t entry = static_cast<uint32_t>(-obj.npcOrGoId);
+                            uint32_t cur = 0;
+                            auto it = q.killCounts.find(entry);
+                            if (it != q.killCounts.end()) cur = it->second.first;
+                            if (cur < obj.required) questObjectiveGoEntries.insert(entry);
+                        }
+                    }
+                }
+
                 glm::vec2 mousePos = input.getMousePosition();
                 float screenW = static_cast<float>(window->getWidth());
                 float screenH = static_cast<float>(window->getHeight());
@@ -2543,13 +2574,17 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 game::ObjectType closestType = game::ObjectType::OBJECT;
                 float closestHostileUnitT = 1e30f;
                 uint64_t closestHostileUnitGuid = 0;
+                float closestQuestGoT = 1e30f;
+                uint64_t closestQuestGoGuid = 0;
                 const uint64_t myGuid = gameHandler.getPlayerGuid();
                 for (const auto& [guid, entity] : gameHandler.getEntityManager().getEntities()) {
                     auto t = entity->getType();
                     if (t != game::ObjectType::UNIT &&
                         t != game::ObjectType::PLAYER &&
-                        t != game::ObjectType::GAMEOBJECT) continue;
+                        t != game::ObjectType::GAMEOBJECT)
+                        continue;
                     if (guid == myGuid) continue;
+
                     glm::vec3 hitCenter;
                     float hitRadius = 0.0f;
                     bool hasBounds = core::Application::getInstance().getRenderBoundsForGuid(guid, hitCenter, hitRadius);
@@ -2564,10 +2599,15 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                             }
                         } else if (t == game::ObjectType::GAMEOBJECT) {
                             // For GOs with no renderer instance yet, use a tight fallback
-                            // sphere (not 2.5f) so invisible/unloaded GOs (chairs, doodads)
-                            // are not accidentally clicked during camera right-drag.
+                            // sphere so invisible/unloaded doodads aren't accidentally clicked.
                             hitRadius = 1.2f;
                             heightOffset = 1.0f;
+                            // Quest objective GOs should be easier to click.
+                            auto go = std::static_pointer_cast<game::GameObject>(entity);
+                            if (questObjectiveGoEntries.count(go->getEntry())) {
+                                hitRadius = 2.2f;
+                                heightOffset = 1.2f;
+                            }
                         }
                         hitCenter = core::coords::canonicalToRender(
                             glm::vec3(entity->getX(), entity->getY(), entity->getZ()));
@@ -2575,6 +2615,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                     } else {
                         hitRadius = std::max(hitRadius * 1.1f, 0.6f);
                     }
+
                     float hitT;
                     if (raySphereIntersect(ray, hitCenter, hitRadius, hitT)) {
                         if (t == game::ObjectType::UNIT) {
@@ -2585,6 +2626,15 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                                 closestHostileUnitGuid = guid;
                             }
                         }
+                        if (t == game::ObjectType::GAMEOBJECT && !questObjectiveGoEntries.empty()) {
+                            auto go = std::static_pointer_cast<game::GameObject>(entity);
+                            if (questObjectiveGoEntries.count(go->getEntry())) {
+                                if (hitT < closestQuestGoT) {
+                                    closestQuestGoT = hitT;
+                                    closestQuestGoGuid = guid;
+                                }
+                            }
+                        }
                         if (hitT < closestT) {
                             closestT = hitT;
                             closestGuid = guid;
@@ -2592,11 +2642,17 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                         }
                     }
                 }
-                // Prefer hostile monsters over nearby gameobjects/others when right-click picking.
-                if (closestHostileUnitGuid != 0) {
+
+                // Prefer quest objective GOs over hostile monsters when both are hittable.
+                if (closestQuestGoGuid != 0) {
+                    closestGuid = closestQuestGoGuid;
+                    closestType = game::ObjectType::GAMEOBJECT;
+                } else if (closestHostileUnitGuid != 0) {
+                    // Prefer hostile monsters over nearby gameobjects/others when right-click picking.
                     closestGuid = closestHostileUnitGuid;
                     closestType = game::ObjectType::UNIT;
                 }
+
                 if (closestGuid != 0) {
                     if (closestType == game::ObjectType::GAMEOBJECT) {
                         gameHandler.setTarget(closestGuid);
@@ -11224,7 +11280,9 @@ void GameScreen::renderLfgProposalPopup(game::GameHandler& gameHandler) {
 
 void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
     // Guild Roster toggle (customizable keybind)
-    if (!ImGui::GetIO().WantCaptureKeyboard && KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_GUILD_ROSTER)) {
+    if (!chatInputActive && !ImGui::GetIO().WantTextInput &&
+        !ImGui::GetIO().WantCaptureKeyboard &&
+        KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_GUILD_ROSTER)) {
         showGuildRoster_ = !showGuildRoster_;
         if (showGuildRoster_) {
             // Open friends tab directly if not in guild
@@ -13552,6 +13610,13 @@ void GameScreen::renderTrainerWindow(game::GameHandler& gameHandler) {
 
     bool open = true;
     if (ImGui::Begin("Trainer", &open)) {
+        // If user clicked window close, short-circuit before rendering large trainer tables.
+        if (!open) {
+            ImGui::End();
+            gameHandler.closeTrainer();
+            return;
+        }
+
         const auto& trainer = gameHandler.getTrainerSpells();
 
         // NPC name
@@ -15831,27 +15896,6 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
         return true;
     };
 
-    // Player position marker — always drawn at minimap center with a directional arrow.
-    {
-        // The player is always at centerX, centerY on the minimap.
-        // Draw a yellow arrow pointing in the player's facing direction.
-        glm::vec3 fwd = camera->getForward();
-        float facing = std::atan2(fwd.y, -fwd.x); // clockwise bearing from North
-        float cosF = std::cos(facing - bearing);
-        float sinF = std::sin(facing - bearing);
-        float arrowLen = 8.0f;
-        float arrowW = 4.0f;
-        ImVec2 tip(centerX + sinF * arrowLen, centerY - cosF * arrowLen);
-        ImVec2 left(centerX - cosF * arrowW - sinF * arrowLen * 0.3f,
-                    centerY - sinF * arrowW + cosF * arrowLen * 0.3f);
-        ImVec2 right(centerX + cosF * arrowW - sinF * arrowLen * 0.3f,
-                     centerY + sinF * arrowW + cosF * arrowLen * 0.3f);
-        drawList->AddTriangleFilled(tip, left, right, IM_COL32(255, 220, 0, 255));
-        drawList->AddTriangle(tip, left, right, IM_COL32(0, 0, 0, 180), 1.0f);
-        // White dot at player center
-        drawList->AddCircleFilled(ImVec2(centerX, centerY), 2.5f, IM_COL32(255, 255, 255, 220));
-    }
-
     // Build sets of entries that are incomplete objectives for tracked quests.
     // minimapQuestEntries: NPC creature entries (npcOrGoId > 0)
     // minimapQuestGoEntries: game object entries (npcOrGoId < 0, stored as abs value)
@@ -17687,7 +17731,7 @@ void GameScreen::renderMailWindow(game::GameHandler& gameHandler) {
                         }
                         ImGui::SameLine();
                         if (ImGui::SmallButton("Take")) {
-                            gameHandler.mailTakeItem(mail.messageId, att.slot);
+                            gameHandler.mailTakeItem(mail.messageId, att.itemGuidLow);
                         }
 
                         ImGui::PopID();
@@ -17696,7 +17740,7 @@ void GameScreen::renderMailWindow(game::GameHandler& gameHandler) {
                     if (mail.attachments.size() > 1) {
                         if (ImGui::SmallButton("Take All")) {
                             for (const auto& att2 : mail.attachments) {
-                                gameHandler.mailTakeItem(mail.messageId, att2.slot);
+                                gameHandler.mailTakeItem(mail.messageId, att2.itemGuidLow);
                             }
                         }
                     }
@@ -19543,7 +19587,8 @@ void GameScreen::renderZoneText() {
 // ---------------------------------------------------------------------------
 void GameScreen::renderDungeonFinderWindow(game::GameHandler& gameHandler) {
     // Toggle Dungeon Finder (customizable keybind)
-    if (!chatInputActive && KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_DUNGEON_FINDER)) {
+    if (!chatInputActive && !ImGui::GetIO().WantTextInput &&
+        KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_DUNGEON_FINDER)) {
         showDungeonFinder_ = !showDungeonFinder_;
     }
 

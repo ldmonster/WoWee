@@ -44,19 +44,23 @@ void main() {
 
     vec4 mapColor = texture(uComposite, mapUV);
 
-    // Player arrow
-    float acs = cos(push.arrowRotation);
-    float asn = sin(push.arrowRotation);
-    vec2 ac = center;
-    vec2 arrowPos = vec2(-(ac.x * acs - ac.y * asn), ac.x * asn + ac.y * acs);
-
-    vec2 tip = vec2(0.0, -0.04);
-    vec2 left = vec2(-0.02, 0.02);
-    vec2 right = vec2(0.02, 0.02);
-
-    if (pointInTriangle(arrowPos, tip, left, right)) {
-        mapColor = vec4(1.0, 0.8, 0.0, 1.0);
+    // Single player direction indicator (center arrow) rendered in-shader.
+    vec2 local = center; // [-0.5, 0.5] around minimap center
+    float ac = cos(push.arrowRotation);
+    float as = sin(push.arrowRotation);
+    // TexCoord Y grows downward on screen; use negative Y so 0-angle points North (up).
+    vec2 tip   = vec2(0.0, -0.09);
+    vec2 left  = vec2(-0.045, 0.02);
+    vec2 right = vec2( 0.045, 0.02);
+    mat2 rot = mat2(ac, -as, as, ac);
+    tip = rot * tip;
+    left = rot * left;
+    right = rot * right;
+    if (pointInTriangle(local, tip, left, right)) {
+        mapColor.rgb = vec3(1.0, 0.86, 0.05);
     }
+    float centerDot = smoothstep(0.016, 0.0, length(local));
+    mapColor.rgb = mix(mapColor.rgb, vec3(1.0), centerDot * 0.95);
 
     // Dark border ring
     float border = smoothstep(0.48, 0.5, dist);

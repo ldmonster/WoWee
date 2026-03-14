@@ -251,8 +251,10 @@ void TransportManager::updateTransportMovement(ActiveTransport& transport, float
     if (path.durationMs == 0) {
         // Just update transform (position already set)
         updateTransformMatrices(transport);
-        if (wmoRenderer_) {
-            wmoRenderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
+        if (transport.isM2) {
+            if (m2Renderer_) m2Renderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
+        } else {
+            if (wmoRenderer_) wmoRenderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
         }
         return;
     }
@@ -287,8 +289,10 @@ void TransportManager::updateTransportMovement(ActiveTransport& transport, float
     } else {
         // Strict server-authoritative mode: do not guess movement between server snapshots.
         updateTransformMatrices(transport);
-        if (wmoRenderer_) {
-            wmoRenderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
+        if (transport.isM2) {
+            if (m2Renderer_) m2Renderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
+        } else {
+            if (wmoRenderer_) wmoRenderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
         }
         return;
     }
@@ -777,8 +781,10 @@ void TransportManager::updateServerTransport(uint64_t guid, const glm::vec3& pos
     }
 
     updateTransformMatrices(*transport);
-    if (wmoRenderer_) {
-        wmoRenderer_->setInstanceTransform(transport->wmoInstanceId, transport->transform);
+    if (transport->isM2) {
+        if (m2Renderer_) m2Renderer_->setInstanceTransform(transport->wmoInstanceId, transport->transform);
+    } else {
+        if (wmoRenderer_) wmoRenderer_->setInstanceTransform(transport->wmoInstanceId, transport->transform);
     }
     return;
 }

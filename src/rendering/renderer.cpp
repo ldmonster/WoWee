@@ -1031,13 +1031,14 @@ void Renderer::beginFrame() {
 
     // FXAA resource management — FXAA can coexist with FSR1 and FSR3.
     // When both FXAA and FSR3 are enabled, FXAA runs as a post-FSR3 pass.
-    // When both FXAA and FSR1 are enabled, FXAA takes priority (native res render).
-    if (fxaa_.needsRecreate && fxaa_.sceneFramebuffer) {
+    // Do not force this pass for ghost mode; keep AA quality strictly user-controlled.
+    const bool useFXAAPostPass = fxaa_.enabled;
+    if ((fxaa_.needsRecreate || !useFXAAPostPass) && fxaa_.sceneFramebuffer) {
         destroyFXAAResources();
         fxaa_.needsRecreate = false;
-        if (!fxaa_.enabled) LOG_INFO("FXAA: disabled");
+        if (!useFXAAPostPass) LOG_INFO("FXAA: disabled");
     }
-    if (fxaa_.enabled && !fxaa_.sceneFramebuffer) {
+    if (useFXAAPostPass && !fxaa_.sceneFramebuffer) {
         if (!initFXAAResources()) {
             LOG_ERROR("FXAA: initialization failed, disabling");
             fxaa_.enabled = false;
@@ -1060,9 +1061,8 @@ void Renderer::beginFrame() {
             destroyFSR2Resources();
             initFSR2Resources();
         }
-        // Recreate FXAA resources for new swapchain dimensions
-        // FXAA can coexist with FSR1 and FSR3 simultaneously.
-        if (fxaa_.enabled) {
+        // Recreate FXAA resources for new swapchain dimensions.
+        if (useFXAAPostPass) {
             destroyFXAAResources();
             initFXAAResources();
         }
@@ -1152,7 +1152,7 @@ void Renderer::beginFrame() {
     if (fsr2_.enabled && fsr2_.sceneFramebuffer) {
         rpInfo.framebuffer = fsr2_.sceneFramebuffer;
         renderExtent = { fsr2_.internalWidth, fsr2_.internalHeight };
-    } else if (fxaa_.enabled && fxaa_.sceneFramebuffer) {
+    } else if (useFXAAPostPass && fxaa_.sceneFramebuffer) {
         // FXAA takes priority over FSR1: renders at native res with AA post-process.
         // When both FSR1 and FXAA are enabled, FXAA wins (native res, no downscale).
         rpInfo.framebuffer = fxaa_.sceneFramebuffer;
@@ -1856,7 +1856,18 @@ void Renderer::updateCharacterAnimation() {
 
     CharAnimState newState = charAnimState;
 
-    bool moving = cameraController->isMoving();
+    const bool rawMoving = cameraController->isMoving();
+    const bool rawSprinting = cameraController->isSprinting();
+    constexpr float kLocomotionStopGraceSec = 0.12f;
+    if (rawMoving) {
+        locomotionStopGraceTimer_ = kLocomotionStopGraceSec;
+        locomotionWasSprinting_ = rawSprinting;
+    } else {
+        locomotionStopGraceTimer_ = std::max(0.0f, locomotionStopGraceTimer_ - lastDeltaTime_);
+    }
+    // Debounce brief input/state dropouts (notably during both-mouse steering) so
+    // locomotion clips do not restart every few frames.
+    bool moving = rawMoving || locomotionStopGraceTimer_ > 0.0f;
     bool movingForward = cameraController->isMovingForward();
     bool movingBackward = cameraController->isMovingBackward();
     bool autoRunning = cameraController->isAutoRunning();
@@ -1869,7 +1880,7 @@ void Renderer::updateCharacterAnimation() {
     bool anyStrafeRight = strafeRight && !strafeLeft && pureStrafe;
     bool grounded = cameraController->isGrounded();
     bool jumping = cameraController->isJumping();
-    bool sprinting = cameraController->isSprinting();
+    bool sprinting = rawSprinting || (!rawMoving && moving && locomotionWasSprinting_);
     bool sitting = cameraController->isSitting();
     bool swim = cameraController->isSwimming();
     bool forceMelee = meleeSwingTimer > 0.0f && grounded && !swim;
@@ -2529,8 +2540,14 @@ void Renderer::updateCharacterAnimation() {
     float currentAnimTimeMs = 0.0f;
     float currentAnimDurationMs = 0.0f;
     bool haveState = characterRenderer->getAnimationState(characterInstanceId, currentAnimId, currentAnimTimeMs, currentAnimDurationMs);
-    if (!haveState || currentAnimId != animId) {
+    // Some frames may transiently fail getAnimationState() while resources/instance state churn.
+    // Avoid reissuing the same clip on those frames, which restarts locomotion and causes hitches.
+    const bool requestChanged = (lastPlayerAnimRequest_ != animId) || (lastPlayerAnimLoopRequest_ != loop);
+    const bool shouldPlay = (haveState && currentAnimId != animId) || (!haveState && requestChanged);
+    if (shouldPlay) {
         characterRenderer->playAnimation(characterInstanceId, animId, loop);
+        lastPlayerAnimRequest_ = animId;
+        lastPlayerAnimLoopRequest_ = loop;
     }
 }
 
@@ -2699,6 +2716,13 @@ uint32_t Renderer::getEmoteAnimByDbcId(uint32_t dbcId) {
 
 void Renderer::setTargetPosition(const glm::vec3* pos) {
     targetPosition = pos;
+}
+
+void Renderer::resetCombatVisualState() {
+    inCombat_ = false;
+    targetPosition = nullptr;
+    meleeSwingTimer = 0.0f;
+    meleeSwingCooldown = 0.0f;
 }
 
 bool Renderer::isMoving() const {
@@ -5074,7 +5098,7 @@ void Renderer::renderFXAAPass() {
     vkCmdBindDescriptorSets(currentCmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             fxaa_.pipelineLayout, 0, 1, &fxaa_.descSet, 0, nullptr);
 
-    // Pass rcpFrame + sharpness + desaturate (vec4, 16 bytes).
+    // Pass rcpFrame + sharpness + effect flag (vec4, 16 bytes).
     // When FSR2/FSR3 is active alongside FXAA, forward FSR2's sharpness so the
     // post-FXAA unsharp-mask step restores the crispness that FXAA's blur removes.
     float sharpness = fsr2_.enabled ? fsr2_.sharpness : 0.0f;
@@ -5082,7 +5106,7 @@ void Renderer::renderFXAAPass() {
         1.0f / static_cast<float>(ext.width),
         1.0f / static_cast<float>(ext.height),
         sharpness,
-        ghostMode_ ? 1.0f : 0.0f  // desaturate: 1=ghost grayscale, 0=normal
+        0.0f
     };
     vkCmdPushConstants(currentCmd, fxaa_.pipelineLayout,
                        VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16, pc);
@@ -5272,12 +5296,6 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                     renderOverlay(tint, cmd);
                 }
             }
-            // Ghost mode desaturation overlay (non-FXAA path approximation).
-            // When FXAA is active the FXAA shader applies true per-pixel desaturation;
-            // otherwise a high-opacity gray overlay gives a similar washed-out effect.
-            if (ghostMode_ && overlayPipeline && !fxaa_.enabled) {
-                renderOverlay(glm::vec4(0.5f, 0.5f, 0.55f, 0.82f), cmd);
-            }
             if (minimap && minimap->isEnabled() && camera && window) {
                 glm::vec3 minimapCenter = camera->getPosition();
                 if (cameraController && cameraController->isThirdPerson())
@@ -5411,10 +5429,6 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
                     : glm::vec4(0.03f, 0.09f, 0.18f, fogStrength);
                 renderOverlay(tint);
             }
-        }
-        // Ghost mode desaturation overlay (non-FXAA path approximation).
-        if (ghostMode_ && overlayPipeline && !fxaa_.enabled) {
-            renderOverlay(glm::vec4(0.5f, 0.5f, 0.55f, 0.82f));
         }
         if (minimap && minimap->isEnabled() && camera && window) {
             glm::vec3 minimapCenter = camera->getPosition();

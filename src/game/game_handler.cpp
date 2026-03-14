@@ -309,6 +309,16 @@ bool isPlaceholderQuestTitle(const std::string& s) {
     return s.rfind("Quest #", 0) == 0;
 }
 
+float mergeCooldownSeconds(float current, float incoming) {
+    constexpr float kEpsilon = 0.05f;
+    if (incoming <= 0.0f) return 0.0f;
+    if (current <= 0.0f) return incoming;
+    // Cooldowns should normally tick down. If a duplicate/late packet reports a
+    // larger value, keep the local remaining time to avoid visible timer resets.
+    if (incoming > current + kEpsilon) return current;
+    return incoming;
+}
+
 bool looksLikeQuestDescriptionText(const std::string& s) {
     int spaces = 0;
     int commas = 0;
@@ -831,6 +841,13 @@ void GameHandler::update(float deltaTime) {
         it->timer -= deltaTime;
         if (it->timer <= 0.0f) {
             if (state == WorldState::IN_WORLD && socket) {
+                // Avoid sending CMSG_LOOT while a timed cast is active (e.g. gathering).
+                // handleSpellGo will trigger loot after the cast completes.
+                if (casting && currentCastSpellId != 0) {
+                    it->timer = 0.20f;
+                    ++it;
+                    continue;
+                }
                 lootTarget(it->guid);
             }
             it = pendingGameObjectLootOpens_.erase(it);
@@ -3201,7 +3218,14 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 uint32_t cdMs     = packet.readUInt32();
                 float cdSec = cdMs / 1000.0f;
                 if (cdSec > 0.0f) {
-                    if (spellId != 0) spellCooldowns[spellId] = cdSec;
+                    if (spellId != 0) {
+                        auto it = spellCooldowns.find(spellId);
+                        if (it == spellCooldowns.end()) {
+                            spellCooldowns[spellId] = cdSec;
+                        } else {
+                            it->second = mergeCooldownSeconds(it->second, cdSec);
+                        }
+                    }
                     // Resolve itemId from the GUID so item-type slots are also updated
                     uint32_t itemId = 0;
                     auto iit = onlineItems_.find(itemGuid);
@@ -3210,8 +3234,14 @@ void GameHandler::handlePacket(network::Packet& packet) {
                         bool match = (spellId != 0 && slot.type == ActionBarSlot::SPELL && slot.id == spellId)
                                   || (itemId  != 0 && slot.type == ActionBarSlot::ITEM  && slot.id == itemId);
                         if (match) {
-                            slot.cooldownTotal     = cdSec;
-                            slot.cooldownRemaining = cdSec;
+                            float prevRemaining = slot.cooldownRemaining;
+                            float merged = mergeCooldownSeconds(slot.cooldownRemaining, cdSec);
+                            slot.cooldownRemaining = merged;
+                            if (slot.cooldownTotal <= 0.0f || prevRemaining <= 0.0f) {
+                                slot.cooldownTotal = cdSec;
+                            } else {
+                                slot.cooldownTotal = std::max(slot.cooldownTotal, merged);
+                            }
                         }
                     }
                     LOG_DEBUG("SMSG_ITEM_COOLDOWN: itemGuid=0x", std::hex, itemGuid, std::dec,
@@ -8440,6 +8470,7 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     pendingItemQueries_.clear();
     equipSlotGuids_ = {};
     backpackSlotGuids_ = {};
+    keyringSlotGuids_ = {};
     invSlotBase_ = -1;
     packSlotBase_ = -1;
     lastPlayerFields_.clear();
@@ -8499,6 +8530,7 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     castTimeTotal = 0.0f;
     playerDead_ = false;
     releasedSpirit_ = false;
+    corpseGuid_ = 0;
     targetGuid = 0;
     focusGuid = 0;
     lastTargetGuid = 0;
@@ -9840,8 +9872,17 @@ void GameHandler::sendMovement(Opcode opcode) {
         sanitizeMovementForTaxi();
     }
 
-    // Add transport data if player is on a transport
-    if (isOnTransport()) {
+    bool includeTransportInWire = isOnTransport();
+    if (includeTransportInWire && transportManager_) {
+        if (auto* tr = transportManager_->getTransport(playerTransportGuid_); tr && tr->isM2) {
+            // Client-detected M2 elevators/trams are not always server-recognized transports.
+            // Sending ONTRANSPORT for these can trigger bad fall-state corrections server-side.
+            includeTransportInWire = false;
+        }
+    }
+
+    // Add transport data if player is on a server-recognized transport
+    if (includeTransportInWire) {
         // Keep authoritative world position synchronized to parent transport transform
         // so heartbeats/corrections don't drag the passenger through geometry.
         if (transportManager_) {
@@ -9883,7 +9924,7 @@ void GameHandler::sendMovement(Opcode opcode) {
 
     LOG_DEBUG("Sending movement packet: opcode=0x", std::hex,
               wireOpcode(opcode), std::dec,
-              (isOnTransport() ? " ONTRANSPORT" : ""));
+              (includeTransportInWire ? " ONTRANSPORT" : ""));
 
     // Convert canonical → server coordinates for the wire
     MovementInfo wireInfo = movementInfo;
@@ -9896,7 +9937,7 @@ void GameHandler::sendMovement(Opcode opcode) {
     wireInfo.orientation = core::coords::canonicalToServerYaw(wireInfo.orientation);
 
     // Also convert transport local position to server coordinates if on transport
-    if (isOnTransport()) {
+    if (includeTransportInWire) {
         glm::vec3 serverTransportPos = core::coords::canonicalToServer(
             glm::vec3(wireInfo.transportX, wireInfo.transportY, wireInfo.transportZ));
         wireInfo.transportX = serverTransportPos.x;
@@ -9956,6 +9997,7 @@ void GameHandler::forceClearTaxiAndMovementState() {
     resurrectRequestPending_ = false;
     playerDead_ = false;
     releasedSpirit_ = false;
+    corpseGuid_ = 0;
     repopPending_ = false;
     pendingSpiritHealerGuid_ = 0;
     resurrectCasterGuid_ = 0;
@@ -10573,11 +10615,13 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                     uint64_t ownerGuid = (static_cast<uint64_t>(ownerHigh) << 32) | ownerLow;
                     if (ownerGuid == playerGuid || ownerLow == static_cast<uint32_t>(playerGuid)) {
                         // Server coords from movement block
+                        corpseGuid_  = block.guid;
                         corpseX_     = block.x;
                         corpseY_     = block.y;
                         corpseZ_     = block.z;
                         corpseMapId_ = currentMapId_;
-                        LOG_INFO("Corpse object detected: server=(", block.x, ", ", block.y, ", ", block.z,
+                        LOG_INFO("Corpse object detected: guid=0x", std::hex, corpseGuid_, std::dec,
+                                 " server=(", block.x, ", ", block.y, ", ", block.z,
                                  ") map=", corpseMapId_);
                     }
                 }
@@ -11129,6 +11173,7 @@ void GameHandler::handleUpdateObject(network::Packet& packet) {
                                     repopPending_ = false;
                                     resurrectPending_ = false;
                                     corpseMapId_ = 0;  // corpse reclaimed
+                                    corpseGuid_ = 0;
                                     LOG_INFO("Player resurrected (PLAYER_FLAGS ghost cleared)");
                                     if (ghostStateCallback_) ghostStateCallback_(false);
                                 }
@@ -12901,9 +12946,12 @@ bool GameHandler::canReclaimCorpse() const {
 
 void GameHandler::reclaimCorpse() {
     if (!canReclaimCorpse() || !socket) return;
-    network::Packet packet(wireOpcode(Opcode::CMSG_RECLAIM_CORPSE));
+    // Reclaim expects the corpse object guid when known; fallback to player guid.
+    uint64_t reclaimGuid = (corpseGuid_ != 0) ? corpseGuid_ : playerGuid;
+    auto packet = ReclaimCorpsePacket::build(reclaimGuid);
     socket->send(packet);
-    LOG_INFO("Sent CMSG_RECLAIM_CORPSE");
+    LOG_INFO("Sent CMSG_RECLAIM_CORPSE for guid=0x", std::hex, reclaimGuid, std::dec,
+             (corpseGuid_ == 0 ? " (fallback player guid)" : ""));
 }
 
 void GameHandler::activateSpiritHealer(uint64_t npcGuid) {
@@ -13582,6 +13630,21 @@ bool GameHandler::applyInventoryFields(const std::map<uint16_t, uint32_t>& field
     bool slotsChanged = false;
     int equipBase = (invSlotBase_ >= 0) ? invSlotBase_ : static_cast<int>(fieldIndex(UF::PLAYER_FIELD_INV_SLOT_HEAD));
     int packBase = (packSlotBase_ >= 0) ? packSlotBase_ : static_cast<int>(fieldIndex(UF::PLAYER_FIELD_PACK_SLOT_1));
+    int bankBase = static_cast<int>(fieldIndex(UF::PLAYER_FIELD_BANK_SLOT_1));
+    int bankBagBase = static_cast<int>(fieldIndex(UF::PLAYER_FIELD_BANKBAG_SLOT_1));
+
+    // Derive slot counts from field gap (Classic=24/6, TBC/WotLK=28/7).
+    if (bankBase != 0xFFFF && bankBagBase != 0xFFFF) {
+        effectiveBankSlots_ = std::min((bankBagBase - bankBase) / 2, 28);
+        effectiveBankBagSlots_ = (effectiveBankSlots_ <= 24) ? 6 : 7;
+    }
+
+    int keyringBase = static_cast<int>(fieldIndex(UF::PLAYER_FIELD_KEYRING_SLOT_1));
+    if (keyringBase == 0xFFFF && bankBagBase != 0xFFFF) {
+        // Layout fallback for profiles that don't define PLAYER_FIELD_KEYRING_SLOT_1.
+        // Bank bag slots are followed by 12 vendor buyback slots (24 fields), then keyring.
+        keyringBase = bankBagBase + (effectiveBankBagSlots_ * 2) + 24;
+    }
 
     for (const auto& [key, val] : fields) {
         if (key >= equipBase && key <= equipBase + (game::Inventory::NUM_EQUIP_SLOTS * 2 - 1)) {
@@ -13602,15 +13665,17 @@ bool GameHandler::applyInventoryFields(const std::map<uint16_t, uint32_t>& field
                 else guid = (guid & 0x00000000FFFFFFFFULL) | (uint64_t(val) << 32);
                 slotsChanged = true;
             }
-        }
-
-        // Bank slots starting at PLAYER_FIELD_BANK_SLOT_1
-        int bankBase = static_cast<int>(fieldIndex(UF::PLAYER_FIELD_BANK_SLOT_1));
-        int bankBagBase = static_cast<int>(fieldIndex(UF::PLAYER_FIELD_BANKBAG_SLOT_1));
-        // Derive slot counts from field gap (Classic=24/6, TBC/WotLK=28/7)
-        if (bankBase != 0xFFFF && bankBagBase != 0xFFFF) {
-            effectiveBankSlots_ = std::min((bankBagBase - bankBase) / 2, 28);
-            effectiveBankBagSlots_ = (effectiveBankSlots_ <= 24) ? 6 : 7;
+        } else if (keyringBase != 0xFFFF &&
+                   key >= keyringBase &&
+                   key <= keyringBase + (game::Inventory::KEYRING_SLOTS * 2 - 1)) {
+            int slotIndex = (key - keyringBase) / 2;
+            bool isLow = ((key - keyringBase) % 2 == 0);
+            if (slotIndex < static_cast<int>(keyringSlotGuids_.size())) {
+                uint64_t& guid = keyringSlotGuids_[slotIndex];
+                if (isLow) guid = (guid & 0xFFFFFFFF00000000ULL) | val;
+                else guid = (guid & 0x00000000FFFFFFFFULL) | (uint64_t(val) << 32);
+                slotsChanged = true;
+            }
         }
         if (bankBase != 0xFFFF && key >= static_cast<uint16_t>(bankBase) &&
             key <= static_cast<uint16_t>(bankBase) + (effectiveBankSlots_ * 2 - 1)) {
@@ -13769,6 +13834,55 @@ void GameHandler::rebuildOnlineInventory() {
         }
 
         inventory.setBackpackSlot(i, def);
+    }
+
+    // Keyring slots
+    for (int i = 0; i < game::Inventory::KEYRING_SLOTS; i++) {
+        uint64_t guid = keyringSlotGuids_[i];
+        if (guid == 0) continue;
+
+        auto itemIt = onlineItems_.find(guid);
+        if (itemIt == onlineItems_.end()) continue;
+
+        ItemDef def;
+        def.itemId = itemIt->second.entry;
+        def.stackCount = itemIt->second.stackCount;
+        def.curDurability = itemIt->second.curDurability;
+        def.maxDurability = itemIt->second.maxDurability;
+        def.maxStack = 1;
+
+        auto infoIt = itemInfoCache_.find(itemIt->second.entry);
+        if (infoIt != itemInfoCache_.end()) {
+            def.name = infoIt->second.name;
+            def.quality = static_cast<ItemQuality>(infoIt->second.quality);
+            def.inventoryType = infoIt->second.inventoryType;
+            def.maxStack = std::max(1, infoIt->second.maxStack);
+            def.displayInfoId = infoIt->second.displayInfoId;
+            def.subclassName = infoIt->second.subclassName;
+            def.damageMin = infoIt->second.damageMin;
+            def.damageMax = infoIt->second.damageMax;
+            def.delayMs = infoIt->second.delayMs;
+            def.armor = infoIt->second.armor;
+            def.stamina = infoIt->second.stamina;
+            def.strength = infoIt->second.strength;
+            def.agility = infoIt->second.agility;
+            def.intellect = infoIt->second.intellect;
+            def.spirit = infoIt->second.spirit;
+            def.sellPrice = infoIt->second.sellPrice;
+            def.itemLevel = infoIt->second.itemLevel;
+            def.requiredLevel = infoIt->second.requiredLevel;
+            def.bindType = infoIt->second.bindType;
+            def.description = infoIt->second.description;
+            def.startQuestId = infoIt->second.startQuestId;
+            def.extraStats.clear();
+            for (const auto& es : infoIt->second.extraStats)
+                def.extraStats.push_back({es.statType, es.statValue});
+        } else {
+            def.name = "Item " + std::to_string(def.itemId);
+            queryItemInfo(def.itemId, guid);
+        }
+
+        inventory.setKeyringSlot(i, def);
     }
 
     // Bag contents (BAG1-BAG4 are equip slots 19-22)
@@ -14014,6 +14128,8 @@ void GameHandler::rebuildOnlineInventory() {
         int c = 0; for (auto g : equipSlotGuids_) if (g) c++; return c;
     }(), " backpack=", [&](){
         int c = 0; for (auto g : backpackSlotGuids_) if (g) c++; return c;
+    }(), " keyring=", [&](){
+        int c = 0; for (auto g : keyringSlotGuids_) if (g) c++; return c;
     }());
 }
 
@@ -16660,9 +16776,12 @@ void GameHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     socket->send(packet);
     LOG_INFO("Casting spell: ", spellId, " on 0x", std::hex, target, std::dec);
 
-    // Optimistically start GCD immediately on cast — server will confirm or override
-    gcdTotal_ = 1.5f;
-    gcdStartedAt_ = std::chrono::steady_clock::now();
+    // Optimistically start GCD immediately on cast, but do not restart it while
+    // already active (prevents timeout animation reset on repeated key presses).
+    if (!isGCDActive()) {
+        gcdTotal_ = 1.5f;
+        gcdStartedAt_ = std::chrono::steady_clock::now();
+    }
 }
 
 void GameHandler::cancelCast() {
@@ -17177,13 +17296,24 @@ void GameHandler::handleSpellCooldown(network::Packet& packet) {
             continue;
         }
 
-        spellCooldowns[spellId] = seconds;
+        auto it = spellCooldowns.find(spellId);
+        if (it == spellCooldowns.end()) {
+            spellCooldowns[spellId] = seconds;
+        } else {
+            it->second = mergeCooldownSeconds(it->second, seconds);
+        }
         for (auto& slot : actionBar) {
             bool match = (slot.type == ActionBarSlot::SPELL && slot.id == spellId)
                       || (cdItemId != 0 && slot.type == ActionBarSlot::ITEM && slot.id == cdItemId);
             if (match) {
-                slot.cooldownTotal     = seconds;
-                slot.cooldownRemaining = seconds;
+                float prevRemaining = slot.cooldownRemaining;
+                float merged = mergeCooldownSeconds(slot.cooldownRemaining, seconds);
+                slot.cooldownRemaining = merged;
+                if (slot.cooldownTotal <= 0.0f || prevRemaining <= 0.0f) {
+                    slot.cooldownTotal = seconds;
+                } else {
+                    slot.cooldownTotal = std::max(slot.cooldownTotal, merged);
+                }
             }
         }
     }
@@ -18365,14 +18495,25 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
                      lower.find("coffer") != std::string::npos ||
                      lower.find("cache") != std::string::npos);
     }
-    // For WotLK, CMSG_GAMEOBJ_REPORT_USE is required for chests (and is harmless for others).
-    if (!isMailbox && isActiveExpansion("wotlk")) {
-        network::Packet reportUse(wireOpcode(Opcode::CMSG_GAMEOBJ_REPORT_USE));
-        reportUse.writeUInt64(guid);
-        socket->send(reportUse);
+    // Some servers require CMSG_GAMEOBJ_REPORT_USE for lootable gameobjects.
+    // Only send it when the active opcode table actually supports it.
+    if (!isMailbox) {
+        const auto* table = getActiveOpcodeTable();
+        if (table && table->hasOpcode(Opcode::CMSG_GAMEOBJ_REPORT_USE)) {
+            network::Packet reportUse(wireOpcode(Opcode::CMSG_GAMEOBJ_REPORT_USE));
+            reportUse.writeUInt64(guid);
+            socket->send(reportUse);
+        }
     }
     if (shouldSendLoot) {
         lootTarget(guid);
+        // Some servers/scripts only make certain quest/chest GOs lootable after a short delay
+        // (use animation, state change). Queue one delayed loot attempt to catch that case.
+        pendingGameObjectLootOpens_.erase(
+            std::remove_if(pendingGameObjectLootOpens_.begin(), pendingGameObjectLootOpens_.end(),
+                           [&](const PendingLootOpen& p) { return p.guid == guid; }),
+            pendingGameObjectLootOpens_.end());
+        pendingGameObjectLootOpens_.push_back(PendingLootOpen{guid, 0.75f});
     } else {
         // Non-lootable interaction (mailbox, door, button, etc.) — no CMSG_LOOT will be
         // sent, and no SMSG_LOOT_RESPONSE will arrive to clear it.  Clear the gather-loot
@@ -18425,6 +18566,21 @@ void GameHandler::selectGossipOption(uint32_t optionId) {
             auto pkt = BankerActivatePacket::build(currentGossip.npcGuid);
             socket->send(pkt);
             LOG_INFO("Sent CMSG_BANKER_ACTIVATE for npc=0x", std::hex, currentGossip.npcGuid, std::dec);
+        }
+
+        // Vendor / repair: some servers require an explicit CMSG_LIST_INVENTORY after gossip select.
+        const bool isVendor = (text == "GOSSIP_OPTION_VENDOR" ||
+                               (textLower.find("browse") != std::string::npos &&
+                                (textLower.find("goods") != std::string::npos || textLower.find("wares") != std::string::npos)));
+        const bool isArmorer = (text == "GOSSIP_OPTION_ARMORER" || textLower.find("repair") != std::string::npos);
+        if (isVendor || isArmorer) {
+            if (isArmorer) {
+                setVendorCanRepair(true);
+            }
+            auto pkt = ListInventoryPacket::build(currentGossip.npcGuid);
+            socket->send(pkt);
+            LOG_INFO("Sent CMSG_LIST_INVENTORY (gossip) to npc=0x", std::hex, currentGossip.npcGuid, std::dec,
+                     " vendor=", (int)isVendor, " repair=", (int)isArmorer);
         }
 
         if (textLower.find("make this inn your home") != std::string::npos ||
@@ -19545,7 +19701,12 @@ void GameHandler::handleLootResponse(network::Packet& packet) {
     if (!LootResponseParser::parse(packet, currentLoot, wotlkLoot)) return;
     lootWindowOpen = true;
     lastInteractedGoGuid_ = 0; // loot opened — no need to re-send in handleSpellGo
-    localLootState_[currentLoot.lootGuid] = LocalLootState{currentLoot, false};
+    pendingGameObjectLootOpens_.erase(
+        std::remove_if(pendingGameObjectLootOpens_.begin(), pendingGameObjectLootOpens_.end(),
+                       [&](const PendingLootOpen& p) { return p.guid == currentLoot.lootGuid; }),
+        pendingGameObjectLootOpens_.end());
+    auto& localLoot = localLootState_[currentLoot.lootGuid];
+    localLoot.data = currentLoot;
 
     // Query item info so loot window can show names instead of IDs
     for (const auto& item : currentLoot.items) {
@@ -19570,11 +19731,12 @@ void GameHandler::handleLootResponse(network::Packet& packet) {
     }
 
     // Auto-loot items when enabled
-    if (autoLoot_ && state == WorldState::IN_WORLD && socket) {
+    if (autoLoot_ && state == WorldState::IN_WORLD && socket && !localLoot.itemAutoLootSent) {
         for (const auto& item : currentLoot.items) {
             auto pkt = AutostoreLootItemPacket::build(item.slotIndex);
             socket->send(pkt);
         }
+        localLoot.itemAutoLootSent = true;
     }
 }
 
@@ -19783,13 +19945,14 @@ void GameHandler::handleListInventory(network::Packet& packet) {
     bool savedCanRepair = currentVendorItems.canRepair;  // preserve armorer flag set via gossip path
     if (!ListInventoryParser::parse(packet, currentVendorItems)) return;
 
-    // Check NPC_FLAG_REPAIR (0x40) on the vendor entity — this handles vendors that open
+    // Check NPC_FLAG_REPAIR (0x1000) on the vendor entity — this handles vendors that open
     // directly without going through the gossip armorer option.
     if (!savedCanRepair && currentVendorItems.vendorGuid != 0) {
         auto entity = entityManager.getEntity(currentVendorItems.vendorGuid);
         if (entity && entity->getType() == ObjectType::UNIT) {
             auto unit = std::static_pointer_cast<Unit>(entity);
-            if (unit->getNpcFlags() & 0x40) {  // NPC_FLAG_REPAIR
+            // MaNGOS/Trinity: UNIT_NPC_FLAG_REPAIR = 0x00001000.
+            if (unit->getNpcFlags() & 0x1000) {
                 savedCanRepair = true;
             }
         }
@@ -20380,6 +20543,7 @@ void GameHandler::handleNewWorld(network::Packet& packet) {
         pendingSpiritHealerGuid_ = 0;
         resurrectCasterGuid_    = 0;
         corpseMapId_            = 0;
+        corpseGuid_             = 0;
         hostileAttackers_.clear();
         stopAutoAttack();
         tabCycleStale = true;
@@ -22098,9 +22262,9 @@ void GameHandler::mailTakeMoney(uint32_t mailId) {
     socket->send(packet);
 }
 
-void GameHandler::mailTakeItem(uint32_t mailId, uint32_t itemIndex) {
+void GameHandler::mailTakeItem(uint32_t mailId, uint32_t itemGuidLow) {
     if (state != WorldState::IN_WORLD || !socket || mailboxGuid_ == 0) return;
-    auto packet = packetParsers_->buildMailTakeItem(mailboxGuid_, mailId, itemIndex);
+    auto packet = packetParsers_->buildMailTakeItem(mailboxGuid_, mailId, itemGuidLow);
     socket->send(packet);
 }
 
@@ -22851,7 +23015,7 @@ void GameHandler::declineTradeRequest() {
 }
 
 void GameHandler::acceptTrade() {
-    if (tradeStatus_ != TradeStatus::Open || !socket) return;
+    if (!isTradeOpen() || !socket) return;
     tradeStatus_ = TradeStatus::Accepted;
     socket->send(AcceptTradePacket::build());
 }

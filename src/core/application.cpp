@@ -391,143 +391,183 @@ void Application::run() {
     }
 
     auto lastTime = std::chrono::high_resolution_clock::now();
+    std::atomic<bool> watchdogRunning{true};
+    std::atomic<int64_t> watchdogHeartbeatMs{
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count()
+    };
+    std::thread watchdogThread([this, &watchdogRunning, &watchdogHeartbeatMs]() {
+        bool releasedForCurrentStall = false;
+        while (watchdogRunning.load(std::memory_order_acquire)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            const int64_t lastBeatMs = watchdogHeartbeatMs.load(std::memory_order_acquire);
+            const int64_t stallMs = nowMs - lastBeatMs;
 
-    while (running && !window->shouldClose()) {
-        // Calculate delta time
-        auto currentTime = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<float> deltaTimeDuration = currentTime - lastTime;
-        float deltaTime = deltaTimeDuration.count();
-        lastTime = currentTime;
-
-        // Cap delta time to prevent large jumps
-        if (deltaTime > 0.1f) {
-            deltaTime = 0.1f;
+            // Failsafe: if the main loop stalls while relative mouse mode is active,
+            // forcibly release grab so the user can move the cursor and close the app.
+            if (stallMs > 1500) {
+                if (!releasedForCurrentStall) {
+                    SDL_SetRelativeMouseMode(SDL_FALSE);
+                    SDL_ShowCursor(SDL_ENABLE);
+                    if (window && window->getSDLWindow()) {
+                        SDL_SetWindowGrab(window->getSDLWindow(), SDL_FALSE);
+                    }
+                    LOG_WARNING("Main-loop stall detected (", stallMs,
+                                "ms) — force-released mouse capture failsafe");
+                    releasedForCurrentStall = true;
+                }
+            } else {
+                releasedForCurrentStall = false;
+            }
         }
+    });
 
-        // Poll events
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            // Pass event to UI manager first
-            if (uiManager) {
-                uiManager->processEvent(event);
+    try {
+        while (running && !window->shouldClose()) {
+            watchdogHeartbeatMs.store(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count(),
+                std::memory_order_release);
+
+            // Calculate delta time
+            auto currentTime = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<float> deltaTimeDuration = currentTime - lastTime;
+            float deltaTime = deltaTimeDuration.count();
+            lastTime = currentTime;
+
+            // Cap delta time to prevent large jumps
+            if (deltaTime > 0.1f) {
+                deltaTime = 0.1f;
             }
 
-            // Pass mouse events to camera controller (skip when UI has mouse focus)
-            if (renderer && renderer->getCameraController() && !ImGui::GetIO().WantCaptureMouse) {
-                if (event.type == SDL_MOUSEMOTION) {
-                    renderer->getCameraController()->processMouseMotion(event.motion);
+            // Poll events
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                // Pass event to UI manager first
+                if (uiManager) {
+                    uiManager->processEvent(event);
                 }
-                else if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) {
-                    renderer->getCameraController()->processMouseButton(event.button);
+
+                // Pass mouse events to camera controller (skip when UI has mouse focus)
+                if (renderer && renderer->getCameraController() && !ImGui::GetIO().WantCaptureMouse) {
+                    if (event.type == SDL_MOUSEMOTION) {
+                        renderer->getCameraController()->processMouseMotion(event.motion);
+                    }
+                    else if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) {
+                        renderer->getCameraController()->processMouseButton(event.button);
+                    }
+                    else if (event.type == SDL_MOUSEWHEEL) {
+                        renderer->getCameraController()->processMouseWheel(static_cast<float>(event.wheel.y));
+                    }
                 }
-                else if (event.type == SDL_MOUSEWHEEL) {
-                    renderer->getCameraController()->processMouseWheel(static_cast<float>(event.wheel.y));
+
+                // Handle window events
+                if (event.type == SDL_QUIT) {
+                    window->setShouldClose(true);
+                }
+                else if (event.type == SDL_WINDOWEVENT) {
+                    if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
+                        int newWidth = event.window.data1;
+                        int newHeight = event.window.data2;
+                        window->setSize(newWidth, newHeight);
+                        // Vulkan viewport set in command buffer, not globally
+                        if (renderer && renderer->getCamera()) {
+                            renderer->getCamera()->setAspectRatio(static_cast<float>(newWidth) / newHeight);
+                        }
+                    }
+                }
+                // Debug controls
+                else if (event.type == SDL_KEYDOWN) {
+                    // Skip non-function-key input when UI (chat) has keyboard focus
+                    bool uiHasKeyboard = ImGui::GetIO().WantCaptureKeyboard;
+                    auto sc = event.key.keysym.scancode;
+                    bool isFKey = (sc >= SDL_SCANCODE_F1 && sc <= SDL_SCANCODE_F12);
+                    if (uiHasKeyboard && !isFKey) {
+                        continue;  // Let ImGui handle the keystroke
+                    }
+
+                    // F1: Toggle performance HUD
+                    if (event.key.keysym.scancode == SDL_SCANCODE_F1) {
+                        if (renderer && renderer->getPerformanceHUD()) {
+                            renderer->getPerformanceHUD()->toggle();
+                            bool enabled = renderer->getPerformanceHUD()->isEnabled();
+                            LOG_INFO("Performance HUD: ", enabled ? "ON" : "OFF");
+                        }
+                    }
+                    // F4: Toggle shadows
+                    else if (event.key.keysym.scancode == SDL_SCANCODE_F4) {
+                        if (renderer) {
+                            bool enabled = !renderer->areShadowsEnabled();
+                            renderer->setShadowsEnabled(enabled);
+                            LOG_INFO("Shadows: ", enabled ? "ON" : "OFF");
+                        }
+                    }
+                    // F8: Debug WMO floor at current position
+                    else if (event.key.keysym.scancode == SDL_SCANCODE_F8 && event.key.repeat == 0) {
+                        if (renderer && renderer->getWMORenderer()) {
+                            glm::vec3 pos = renderer->getCharacterPosition();
+                            LOG_WARNING("F8: WMO floor debug at render pos (", pos.x, ", ", pos.y, ", ", pos.z, ")");
+                            renderer->getWMORenderer()->debugDumpGroupsAtPosition(pos.x, pos.y, pos.z);
+                        }
+                    }
                 }
             }
 
-            // Handle window events
-            if (event.type == SDL_QUIT) {
+            // Update input
+            Input::getInstance().update();
+
+            // Update application state
+            try {
+                update(deltaTime);
+            } catch (const std::bad_alloc& e) {
+                LOG_ERROR("OOM during Application::update (state=", static_cast<int>(state),
+                          ", dt=", deltaTime, "): ", e.what());
+                throw;
+            } catch (const std::exception& e) {
+                LOG_ERROR("Exception during Application::update (state=", static_cast<int>(state),
+                          ", dt=", deltaTime, "): ", e.what());
+                throw;
+            }
+            // Render
+            try {
+                render();
+            } catch (const std::bad_alloc& e) {
+                LOG_ERROR("OOM during Application::render (state=", static_cast<int>(state), "): ", e.what());
+                throw;
+            } catch (const std::exception& e) {
+                LOG_ERROR("Exception during Application::render (state=", static_cast<int>(state), "): ", e.what());
+                throw;
+            }
+            // Swap buffers
+            try {
+                window->swapBuffers();
+            } catch (const std::bad_alloc& e) {
+                LOG_ERROR("OOM during swapBuffers: ", e.what());
+                throw;
+            } catch (const std::exception& e) {
+                LOG_ERROR("Exception during swapBuffers: ", e.what());
+                throw;
+            }
+
+            // Exit gracefully on GPU device lost (unrecoverable)
+            if (renderer && renderer->getVkContext() && renderer->getVkContext()->isDeviceLost()) {
+                LOG_ERROR("GPU device lost — exiting application");
                 window->setShouldClose(true);
             }
-            else if (event.type == SDL_WINDOWEVENT) {
-                if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
-                    int newWidth = event.window.data1;
-                    int newHeight = event.window.data2;
-                    window->setSize(newWidth, newHeight);
-                    // Vulkan viewport set in command buffer, not globally
-                    if (renderer && renderer->getCamera()) {
-                        renderer->getCamera()->setAspectRatio(static_cast<float>(newWidth) / newHeight);
-                    }
-                }
-            }
-            // Debug controls
-            else if (event.type == SDL_KEYDOWN) {
-                // Skip non-function-key input when UI (chat) has keyboard focus
-                bool uiHasKeyboard = ImGui::GetIO().WantCaptureKeyboard;
-                auto sc = event.key.keysym.scancode;
-                bool isFKey = (sc >= SDL_SCANCODE_F1 && sc <= SDL_SCANCODE_F12);
-                if (uiHasKeyboard && !isFKey) {
-                    continue;  // Let ImGui handle the keystroke
-                }
+        }
+    } catch (...) {
+        watchdogRunning.store(false, std::memory_order_release);
+        if (watchdogThread.joinable()) {
+            watchdogThread.join();
+        }
+        throw;
+    }
 
-                // F1: Toggle performance HUD
-                if (event.key.keysym.scancode == SDL_SCANCODE_F1) {
-                    if (renderer && renderer->getPerformanceHUD()) {
-                        renderer->getPerformanceHUD()->toggle();
-                        bool enabled = renderer->getPerformanceHUD()->isEnabled();
-                        LOG_INFO("Performance HUD: ", enabled ? "ON" : "OFF");
-                    }
-                }
-                // F4: Toggle shadows
-                else if (event.key.keysym.scancode == SDL_SCANCODE_F4) {
-                    if (renderer) {
-                        bool enabled = !renderer->areShadowsEnabled();
-                        renderer->setShadowsEnabled(enabled);
-                        LOG_INFO("Shadows: ", enabled ? "ON" : "OFF");
-                    }
-                }
-                // F7: Test level-up effect (ignore key repeat)
-                else if (event.key.keysym.scancode == SDL_SCANCODE_F7 && event.key.repeat == 0) {
-                    if (renderer) {
-                        renderer->triggerLevelUpEffect(renderer->getCharacterPosition());
-                        LOG_INFO("Triggered test level-up effect");
-                    }
-                    if (uiManager) {
-                        uiManager->getGameScreen().triggerDing(99);
-                    }
-                }
-                // F8: Debug WMO floor at current position
-                else if (event.key.keysym.scancode == SDL_SCANCODE_F8 && event.key.repeat == 0) {
-                    if (renderer && renderer->getWMORenderer()) {
-                        glm::vec3 pos = renderer->getCharacterPosition();
-                        LOG_WARNING("F8: WMO floor debug at render pos (", pos.x, ", ", pos.y, ", ", pos.z, ")");
-                        renderer->getWMORenderer()->debugDumpGroupsAtPosition(pos.x, pos.y, pos.z);
-                    }
-                }
-            }
-        }
-
-        // Update input
-        Input::getInstance().update();
-
-        // Update application state
-        try {
-            update(deltaTime);
-        } catch (const std::bad_alloc& e) {
-            LOG_ERROR("OOM during Application::update (state=", static_cast<int>(state),
-                      ", dt=", deltaTime, "): ", e.what());
-            throw;
-        } catch (const std::exception& e) {
-            LOG_ERROR("Exception during Application::update (state=", static_cast<int>(state),
-                      ", dt=", deltaTime, "): ", e.what());
-            throw;
-        }
-        // Render
-        try {
-            render();
-        } catch (const std::bad_alloc& e) {
-            LOG_ERROR("OOM during Application::render (state=", static_cast<int>(state), "): ", e.what());
-            throw;
-        } catch (const std::exception& e) {
-            LOG_ERROR("Exception during Application::render (state=", static_cast<int>(state), "): ", e.what());
-            throw;
-        }
-        // Swap buffers
-        try {
-            window->swapBuffers();
-        } catch (const std::bad_alloc& e) {
-            LOG_ERROR("OOM during swapBuffers: ", e.what());
-            throw;
-        } catch (const std::exception& e) {
-            LOG_ERROR("Exception during swapBuffers: ", e.what());
-            throw;
-        }
-
-        // Exit gracefully on GPU device lost (unrecoverable)
-        if (renderer && renderer->getVkContext() && renderer->getVkContext()->isDeviceLost()) {
-            LOG_ERROR("GPU device lost — exiting application");
-            window->setShouldClose(true);
-        }
+    watchdogRunning.store(false, std::memory_order_release);
+    if (watchdogThread.joinable()) {
+        watchdogThread.join();
     }
 
     LOG_INFO("Main loop ended");
@@ -807,6 +847,7 @@ void Application::logoutToLogin() {
     world.reset();
 
     if (renderer) {
+        renderer->resetCombatVisualState();
         // Remove old player model so it doesn't persist into next session
         if (auto* charRenderer = renderer->getCharacterRenderer()) {
             charRenderer->removeInstance(1);
@@ -1074,6 +1115,15 @@ void Application::update(float deltaTime) {
                                gameHandler->isTaxiMountActive() ||
                                gameHandler->isTaxiActivationPending());
                 bool onTransportNow = gameHandler && gameHandler->isOnTransport();
+                // Clear stale client-side transport state when the tracked transport no longer exists.
+                if (onTransportNow && gameHandler->getTransportManager()) {
+                    auto* currentTracked = gameHandler->getTransportManager()->getTransport(
+                        gameHandler->getPlayerTransportGuid());
+                    if (!currentTracked) {
+                        gameHandler->clearPlayerTransport();
+                        onTransportNow = false;
+                    }
+                }
                 // M2 transports (trams) use position-delta approach: player keeps normal
                 // movement and the transport's frame-to-frame delta is applied on top.
                 // Only WMO transports (ships) use full external-driven mode.
@@ -1309,23 +1359,29 @@ void Application::update(float deltaTime) {
                 } else {
                     glm::vec3 renderPos = renderer->getCharacterPosition();
 
-                    // M2 transport riding: apply transport's frame-to-frame position delta
-                    // so the player moves with the tram while retaining normal movement input.
+                    // M2 transport riding: resolve in canonical space and lock once per frame.
+                    // This avoids visible jitter from mixed render/canonical delta application.
                     if (isM2Transport && gameHandler->getTransportManager()) {
                         auto* tr = gameHandler->getTransportManager()->getTransport(
                             gameHandler->getPlayerTransportGuid());
                         if (tr) {
-                            static glm::vec3 lastTransportCanonical(0);
-                            static uint64_t lastTransportGuid = 0;
-                            if (lastTransportGuid == gameHandler->getPlayerTransportGuid()) {
-                                glm::vec3 deltaCanonical = tr->position - lastTransportCanonical;
-                                glm::vec3 deltaRender = core::coords::canonicalToRender(deltaCanonical)
-                                                      - core::coords::canonicalToRender(glm::vec3(0));
-                                renderPos += deltaRender;
-                                renderer->getCharacterPosition() = renderPos;
+                            // Keep passenger locked to elevator vertical motion while grounded.
+                            // Without this, floor clamping can hold world-Z static unless the
+                            // player is jumping, which makes lifts appear to not move vertically.
+                            glm::vec3 tentativeCanonical = core::coords::renderToCanonical(renderPos);
+                            glm::vec3 localOffset = gameHandler->getPlayerTransportOffset();
+                            localOffset.x = tentativeCanonical.x - tr->position.x;
+                            localOffset.y = tentativeCanonical.y - tr->position.y;
+                            if (renderer->getCameraController() &&
+                                !renderer->getCameraController()->isGrounded()) {
+                                // While airborne (jump/fall), allow local Z offset to change.
+                                localOffset.z = tentativeCanonical.z - tr->position.z;
                             }
-                            lastTransportCanonical = tr->position;
-                            lastTransportGuid = gameHandler->getPlayerTransportGuid();
+                            gameHandler->setPlayerTransportOffset(localOffset);
+
+                            glm::vec3 lockedCanonical = tr->position + localOffset;
+                            renderPos = core::coords::canonicalToRender(lockedCanonical);
+                            renderer->getCharacterPosition() = renderPos;
                         }
                     }
 
@@ -1362,21 +1418,45 @@ void Application::update(float deltaTime) {
                     }
 
                     // Client-side transport boarding detection (for M2 transports like trams
-                    // where the server doesn't send transport attachment data).
-                    // Use a generous AABB around each transport's current position.
+                    // and lifts where the server doesn't send transport attachment data).
+                    // Thunder Bluff elevators use model origins that can be far from the deck
+                    // the player stands on, so they need wider attachment bounds.
                     if (gameHandler->getTransportManager() && !gameHandler->isOnTransport()) {
                         auto* tm = gameHandler->getTransportManager();
                         glm::vec3 playerCanonical = core::coords::renderToCanonical(renderPos);
+                        constexpr float kM2BoardHorizDistSq = 12.0f * 12.0f;
+                        constexpr float kM2BoardVertDist = 15.0f;
+                        constexpr float kTbLiftBoardHorizDistSq = 22.0f * 22.0f;
+                        constexpr float kTbLiftBoardVertDist = 14.0f;
 
+                        uint64_t bestGuid = 0;
+                        float bestScore = 1e30f;
                         for (auto& [guid, transport] : tm->getTransports()) {
                             if (!transport.isM2) continue;
+                            const bool isThunderBluffLift =
+                                (transport.entry >= 20649u && transport.entry <= 20657u);
+                            const float maxHorizDistSq = isThunderBluffLift
+                                ? kTbLiftBoardHorizDistSq
+                                : kM2BoardHorizDistSq;
+                            const float maxVertDist = isThunderBluffLift
+                                ? kTbLiftBoardVertDist
+                                : kM2BoardVertDist;
                             glm::vec3 diff = playerCanonical - transport.position;
                             float horizDistSq = diff.x * diff.x + diff.y * diff.y;
                             float vertDist = std::abs(diff.z);
-                            if (horizDistSq < 144.0f && vertDist < 15.0f) {
-                                gameHandler->setPlayerOnTransport(guid, playerCanonical - transport.position);
-                                LOG_DEBUG("M2 transport boarding: guid=0x", std::hex, guid, std::dec);
-                                break;
+                            if (horizDistSq < maxHorizDistSq && vertDist < maxVertDist) {
+                                float score = horizDistSq + vertDist * vertDist;
+                                if (score < bestScore) {
+                                    bestScore = score;
+                                    bestGuid = guid;
+                                }
+                            }
+                        }
+                        if (bestGuid != 0) {
+                            auto* tr = tm->getTransport(bestGuid);
+                            if (tr) {
+                                gameHandler->setPlayerOnTransport(bestGuid, playerCanonical - tr->position);
+                                LOG_DEBUG("M2 transport boarding: guid=0x", std::hex, bestGuid, std::dec);
                             }
                         }
                     }
@@ -1389,7 +1469,19 @@ void Application::update(float deltaTime) {
                             glm::vec3 playerCanonical = core::coords::renderToCanonical(renderPos);
                             glm::vec3 diff = playerCanonical - tr->position;
                             float horizDistSq = diff.x * diff.x + diff.y * diff.y;
-                            if (horizDistSq > 225.0f) {
+                            const bool isThunderBluffLift =
+                                (tr->entry >= 20649u && tr->entry <= 20657u);
+                            constexpr float kM2DisembarkHorizDistSq = 15.0f * 15.0f;
+                            constexpr float kTbLiftDisembarkHorizDistSq = 28.0f * 28.0f;
+                            constexpr float kM2DisembarkVertDist = 18.0f;
+                            constexpr float kTbLiftDisembarkVertDist = 16.0f;
+                            const float disembarkHorizDistSq = isThunderBluffLift
+                                ? kTbLiftDisembarkHorizDistSq
+                                : kM2DisembarkHorizDistSq;
+                            const float disembarkVertDist = isThunderBluffLift
+                                ? kTbLiftDisembarkVertDist
+                                : kM2DisembarkVertDist;
+                            if (horizDistSq > disembarkHorizDistSq || std::abs(diff.z) > disembarkVertDist) {
                                 gameHandler->clearPlayerTransport();
                                 LOG_DEBUG("M2 transport disembark");
                             }
@@ -1822,6 +1914,9 @@ void Application::setupUICallbacks() {
     gameHandler->setWorldEntryCallback([this](uint32_t mapId, float x, float y, float z, bool isInitialEntry) {
         LOG_INFO("Online world entry: mapId=", mapId, " pos=(", x, ", ", y, ", ", z, ")"
                  " initial=", isInitialEntry);
+        if (renderer) {
+            renderer->resetCombatVisualState();
+        }
 
         // Reconnect to the same map: terrain stays loaded but all online entities are stale.
         // Despawn them properly so the server's fresh CREATE_OBJECTs will re-populate the world.
@@ -2832,6 +2927,12 @@ void Application::setupUICallbacks() {
                     }
 
                     transportManager->registerTransport(guid, wmoInstanceId, pathId, canonicalSpawnPos, entry);
+                    // Keep type in sync with the spawned instance; needed for M2 lift boarding/motion.
+                    if (!it->second.isWmo) {
+                        if (auto* tr = transportManager->getTransport(guid)) {
+                            tr->isM2 = true;
+                        }
+                    }
                 } else {
                     pendingTransportMoves_[guid] = PendingTransportMove{x, y, z, orientation};
                     LOG_DEBUG("Cannot auto-spawn transport 0x", std::hex, guid, std::dec,
@@ -3011,9 +3112,11 @@ void Application::setupUICallbacks() {
         if (charInstId == 0) return;
         // WoW stand state → M2 animation ID mapping
         // 0=Stand→0, 1-6=Sit variants→27 (SitGround), 7=Dead→1, 8=Kneel→72
+        // Do not force Stand(0) here: locomotion state machine already owns standing/running.
+        // Forcing Stand on packet timing causes visible run-cycle hitching while steering.
         uint32_t animId = 0;
         if (standState == 0) {
-            animId = 0;   // Stand
+            return;
         } else if (standState >= 1 && standState <= 6) {
             animId = 27;  // SitGround (covers sit-chair too; correct visual differs by chair height)
         } else if (standState == 7) {

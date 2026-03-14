@@ -161,6 +161,7 @@ public:
     // Targeting support
     void setTargetPosition(const glm::vec3* pos);
     void setInCombat(bool combat) { inCombat_ = combat; }
+    void resetCombatVisualState();
     bool isMoving() const;
     void triggerMeleeSwing();
     void setEquippedWeaponType(uint32_t inventoryType) { equippedWeaponInvType_ = inventoryType; meleeAnimId = 0; }
@@ -340,6 +341,10 @@ private:
     // Character animation state
     enum class CharAnimState { IDLE, WALK, RUN, JUMP_START, JUMP_MID, JUMP_END, SIT_DOWN, SITTING, EMOTE, SWIM_IDLE, SWIM, MELEE_SWING, MOUNT, CHARGE, COMBAT_IDLE };
     CharAnimState charAnimState = CharAnimState::IDLE;
+    float locomotionStopGraceTimer_ = 0.0f;
+    bool locomotionWasSprinting_ = false;
+    uint32_t lastPlayerAnimRequest_ = UINT32_MAX;
+    bool lastPlayerAnimLoopRequest_ = true;
     void updateCharacterAnimation();
     bool isFootstepAnimationState() const;
     bool shouldTriggerFootstepEvent(uint32_t animationId, float animationTimeMs, float animationDurationMs);
