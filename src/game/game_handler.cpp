@@ -6432,9 +6432,12 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 if (effectType == 10) {
                     // SPELL_EFFECT_POWER_DRAIN: packed_guid target + uint32 amount + uint32 powerType + float multiplier
                     for (uint32_t li = 0; li < effectLogCount; ++li) {
-                        if (packet.getSize() - packet.getReadPos() < 1) break;
+                        const size_t guidBytes = exeTbcLike ? 8u : 1u;
+                        if (packet.getSize() - packet.getReadPos() < guidBytes) {
+                            packet.setReadPos(packet.getSize()); break;
+                        }
                         uint64_t drainTarget = exeTbcLike
-                            ? (packet.getSize() - packet.getReadPos() >= 8 ? packet.readUInt64() : 0)
+                            ? packet.readUInt64()
                             : UpdateObjectParser::readPackedGuid(packet);
                         if (packet.getSize() - packet.getReadPos() < 12) { packet.setReadPos(packet.getSize()); break; }
                         uint32_t drainAmount = packet.readUInt32();
@@ -6454,9 +6457,12 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 } else if (effectType == 11) {
                     // SPELL_EFFECT_HEALTH_LEECH: packed_guid target + uint32 amount + float multiplier
                     for (uint32_t li = 0; li < effectLogCount; ++li) {
-                        if (packet.getSize() - packet.getReadPos() < 1) break;
+                        const size_t guidBytes = exeTbcLike ? 8u : 1u;
+                        if (packet.getSize() - packet.getReadPos() < guidBytes) {
+                            packet.setReadPos(packet.getSize()); break;
+                        }
                         uint64_t leechTarget = exeTbcLike
-                            ? (packet.getSize() - packet.getReadPos() >= 8 ? packet.readUInt64() : 0)
+                            ? packet.readUInt64()
                             : UpdateObjectParser::readPackedGuid(packet);
                         if (packet.getSize() - packet.getReadPos() < 8) { packet.setReadPos(packet.getSize()); break; }
                         uint32_t leechAmount = packet.readUInt32();
@@ -6496,9 +6502,12 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 } else if (effectType == 26) {
                     // SPELL_EFFECT_INTERRUPT_CAST: packed_guid target + uint32 interrupted_spell_id
                     for (uint32_t li = 0; li < effectLogCount; ++li) {
-                        if (packet.getSize() - packet.getReadPos() < 1) break;
+                        const size_t guidBytes = exeTbcLike ? 8u : 1u;
+                        if (packet.getSize() - packet.getReadPos() < guidBytes) {
+                            packet.setReadPos(packet.getSize()); break;
+                        }
                         uint64_t icTarget = exeTbcLike
-                            ? (packet.getSize() - packet.getReadPos() >= 8 ? packet.readUInt64() : 0)
+                            ? packet.readUInt64()
                             : UpdateObjectParser::readPackedGuid(packet);
                         if (packet.getSize() - packet.getReadPos() < 4) { packet.setReadPos(packet.getSize()); break; }
                         uint32_t icSpellId = packet.readUInt32();
