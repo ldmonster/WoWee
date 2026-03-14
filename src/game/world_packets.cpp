@@ -3701,8 +3701,8 @@ bool SpellStartParser::parse(network::Packet& packet, SpellStartData& data) {
     }
     data.casterUnit = UpdateObjectParser::readPackedGuid(packet);
 
-    // Validate remaining fixed fields (castCount + spellId + castFlags + castTime = 9 bytes)
-    if (packet.getSize() - packet.getReadPos() < 9) {
+    // Validate remaining fixed fields (castCount + spellId + castFlags + castTime = 13 bytes)
+    if (packet.getSize() - packet.getReadPos() < 13) {
         packet.setReadPos(startPos);
         return false;
     }
