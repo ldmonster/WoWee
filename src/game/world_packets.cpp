@@ -3423,8 +3423,11 @@ bool AttackerStateUpdateParser::parse(network::Packet& packet, AttackerStateUpda
 }
 
 bool SpellDamageLogParser::parse(network::Packet& packet, SpellDamageLogData& data) {
-    // Upfront validation: packed GUIDs(1-8 each) + spellId(4) + damage(4) + overkill(4) + schoolMask(1) + absorbed(4) + resisted(4) = 30 bytes minimum
-    if (packet.getSize() - packet.getReadPos() < 30) return false;
+    // Upfront validation:
+    // packed GUIDs(1-8 each) + spellId(4) + damage(4) + overkill(4) + schoolMask(1)
+    // + absorbed(4) + resisted(4) + periodicLog(1) + unused(1) + blocked(4) + flags(4)
+    // = 33 bytes minimum.
+    if (packet.getSize() - packet.getReadPos() < 33) return false;
 
     size_t startPos = packet.getReadPos();
     if (!hasFullPackedGuid(packet)) {
@@ -3451,11 +3454,11 @@ bool SpellDamageLogParser::parse(network::Packet& packet, SpellDamageLogData& da
     data.absorbed = packet.readUInt32();
     data.resisted = packet.readUInt32();
 
-    // Skip remaining fields (periodicLog + unused + blocked + flags = 10 bytes)
+    // Remaining fields are required for a complete event.
+    // Reject truncated packets so we do not emit partial/incorrect combat entries.
     if (packet.getSize() - packet.getReadPos() < 10) {
-        LOG_WARNING("SpellDamageLog: truncated trailing fields");
-        data.isCrit = false;
-        return true;
+        packet.setReadPos(startPos);
+        return false;
     }
 
     uint8_t periodicLog = packet.readUInt8();
