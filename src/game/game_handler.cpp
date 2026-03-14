@@ -2717,14 +2717,20 @@ void GameHandler::handlePacket(network::Packet& packet) {
             // spellId prefix present in all expansions
             if (packet.getSize() - packet.getReadPos() < 4) break;
             uint32_t spellId = packet.readUInt32();
-            if (packet.getSize() - packet.getReadPos() < (spellMissUsesFullGuid ? 8u : 1u)) break;
+            if (packet.getSize() - packet.getReadPos() < (spellMissUsesFullGuid ? 8u : 1u)
+                || (!spellMissUsesFullGuid && !hasFullPackedGuid(packet))) {
+                packet.setReadPos(packet.getSize()); break;
+            }
             uint64_t casterGuid = readSpellMissGuid();
             if (packet.getSize() - packet.getReadPos() < 5) break;
             /*uint8_t unk =*/ packet.readUInt8();
             uint32_t count = packet.readUInt32();
             count = std::min(count, 32u);
             for (uint32_t i = 0; i < count; ++i) {
-                if (packet.getSize() - packet.getReadPos() < (spellMissUsesFullGuid ? 9u : 2u)) break;
+                if (packet.getSize() - packet.getReadPos() < (spellMissUsesFullGuid ? 9u : 2u)
+                    || (!spellMissUsesFullGuid && !hasFullPackedGuid(packet))) {
+                    packet.setReadPos(packet.getSize()); break;
+                }
                 uint64_t victimGuid = readSpellMissGuid();
                 if (packet.getSize() - packet.getReadPos() < 1) break;
                 uint8_t missInfo = packet.readUInt8();
