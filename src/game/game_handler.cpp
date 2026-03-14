@@ -123,6 +123,40 @@ std::string formatCopperAmount(uint32_t amount) {
     return oss.str();
 }
 
+std::string displaySpellName(GameHandler& handler, uint32_t spellId) {
+    if (spellId == 0) return {};
+    const std::string& name = handler.getSpellName(spellId);
+    if (!name.empty()) return name;
+    return "spell " + std::to_string(spellId);
+}
+
+std::string formatSpellNameList(GameHandler& handler,
+                                const std::vector<uint32_t>& spellIds,
+                                size_t maxShown = 3) {
+    if (spellIds.empty()) return {};
+
+    const size_t shownCount = std::min(spellIds.size(), maxShown);
+    std::ostringstream oss;
+    for (size_t i = 0; i < shownCount; ++i) {
+        if (i > 0) {
+            if (shownCount == 2) {
+                oss << " and ";
+            } else if (i == shownCount - 1) {
+                oss << ", and ";
+            } else {
+                oss << ", ";
+            }
+        }
+        oss << displaySpellName(handler, spellIds[i]);
+    }
+
+    if (spellIds.size() > shownCount) {
+        oss << ", and " << (spellIds.size() - shownCount) << " more";
+    }
+
+    return oss.str();
+}
+
 bool readCStringAt(const std::vector<uint8_t>& data, size_t start, std::string& out, size_t& nextPos) {
     out.clear();
     if (start >= data.size()) return false;
@@ -6192,29 +6226,28 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     loggedIds = dispelledIds;
                 }
 
-                const uint32_t displaySpellId = !loggedIds.empty() ? loggedIds.front() : 0;
-                const std::string displaySpellName = displaySpellId != 0
-                    ? [&]() {
-                        const std::string& nm = getSpellName(displaySpellId);
-                        return nm.empty() ? ("spell " + std::to_string(displaySpellId)) : nm;
-                    }()
-                    : std::string{};
-                if (!displaySpellName.empty()) {
+                const std::string displaySpellNames = formatSpellNameList(*this, loggedIds);
+                if (!displaySpellNames.empty()) {
                     char buf[256];
+                    const char* passiveVerb = loggedIds.size() == 1 ? "was" : "were";
                     if (isStolen) {
                         if (victimGuid == playerGuid && casterGuid != playerGuid)
-                            std::snprintf(buf, sizeof(buf), "%s was stolen.", displaySpellName.c_str());
+                            std::snprintf(buf, sizeof(buf), "%s %s stolen.",
+                                          displaySpellNames.c_str(), passiveVerb);
                         else if (casterGuid == playerGuid)
-                            std::snprintf(buf, sizeof(buf), "You steal %s.", displaySpellName.c_str());
+                            std::snprintf(buf, sizeof(buf), "You steal %s.", displaySpellNames.c_str());
                         else
-                            std::snprintf(buf, sizeof(buf), "%s was stolen.", displaySpellName.c_str());
+                            std::snprintf(buf, sizeof(buf), "%s %s stolen.",
+                                          displaySpellNames.c_str(), passiveVerb);
                     } else {
                         if (victimGuid == playerGuid && casterGuid != playerGuid)
-                            std::snprintf(buf, sizeof(buf), "%s was dispelled.", displaySpellName.c_str());
+                            std::snprintf(buf, sizeof(buf), "%s %s dispelled.",
+                                          displaySpellNames.c_str(), passiveVerb);
                         else if (casterGuid == playerGuid)
-                            std::snprintf(buf, sizeof(buf), "You dispel %s.", displaySpellName.c_str());
+                            std::snprintf(buf, sizeof(buf), "You dispel %s.", displaySpellNames.c_str());
                         else
-                            std::snprintf(buf, sizeof(buf), "%s was dispelled.", displaySpellName.c_str());
+                            std::snprintf(buf, sizeof(buf), "%s %s dispelled.",
+                                          displaySpellNames.c_str(), passiveVerb);
                     }
                     addSystemChatMessage(buf);
                 }
@@ -6277,19 +6310,14 @@ void GameHandler::handlePacket(network::Packet& packet) {
                         loggedIds.push_back(stolenId);
                 }
 
-                const uint32_t displaySpellId = !loggedIds.empty() ? loggedIds.front() : 0;
-                const std::string displaySpellName = displaySpellId != 0
-                    ? [&]() {
-                        const std::string& nm = getSpellName(displaySpellId);
-                        return nm.empty() ? ("spell " + std::to_string(displaySpellId)) : nm;
-                    }()
-                    : std::string{};
-                if (!displaySpellName.empty()) {
+                const std::string displaySpellNames = formatSpellNameList(*this, loggedIds);
+                if (!displaySpellNames.empty()) {
                     char buf[256];
                     if (stealCaster == playerGuid)
-                        std::snprintf(buf, sizeof(buf), "You stole %s.", displaySpellName.c_str());
+                        std::snprintf(buf, sizeof(buf), "You stole %s.", displaySpellNames.c_str());
                     else
-                        std::snprintf(buf, sizeof(buf), "%s was stolen.", displaySpellName.c_str());
+                        std::snprintf(buf, sizeof(buf), "%s %s stolen.", displaySpellNames.c_str(),
+                                      loggedIds.size() == 1 ? "was" : "were");
                     addSystemChatMessage(buf);
                 }
                 // Some servers emit both SPELLDISPELLOG(isStolen=1) and SPELLSTEALLOG
