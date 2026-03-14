@@ -25,6 +25,9 @@ void main() {
         if (lum < 0.05) discard;
     }
 
-    float edge = smoothstep(0.5, 0.4, length(p - 0.5));
-    outColor = texColor * vColor * vec4(vec3(1.0), edge);
+    // Soft circular falloff for point-sprite edges.
+    float edge = 1.0 - smoothstep(0.4, 0.5, length(p - 0.5));
+    float alpha = texColor.a * vColor.a * edge;
+    vec3 rgb = texColor.rgb * vColor.rgb * alpha;
+    outColor = vec4(rgb, alpha);
 }
