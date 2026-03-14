@@ -5141,10 +5141,9 @@ bool PacketParsers::parseMailList(network::Packet& packet, std::vector<MailMessa
         msg.expirationTime = packet.readFloat();
         msg.mailTemplateId = packet.readUInt32();
         msg.subject = packet.readString();
-
-        if (msg.mailTemplateId == 0) {
-            msg.body = packet.readString();
-        }
+        // WotLK 3.3.5a always includes body text in SMSG_MAIL_LIST_RESULT.
+        // mailTemplateId != 0 still carries a (possibly empty) body string.
+        msg.body = packet.readString();
 
         uint8_t attachCount = packet.readUInt8();
         msg.attachments.reserve(attachCount);
@@ -5164,6 +5163,8 @@ bool PacketParsers::parseMailList(network::Packet& packet, std::vector<MailMessa
             att.stackCount = packet.readUInt32();
             att.chargesOrDurability = packet.readUInt32();
             att.maxDurability = packet.readUInt32();
+            packet.readUInt32(); // durability/current durability
+            packet.readUInt8();  // unknown WotLK trailing byte per attachment
             msg.attachments.push_back(att);
         }
 
