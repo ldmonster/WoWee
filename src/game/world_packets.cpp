@@ -3703,8 +3703,9 @@ bool CastFailedParser::parse(network::Packet& packet, CastFailedData& data) {
 }
 
 bool SpellStartParser::parse(network::Packet& packet, SpellStartData& data) {
-    // Upfront validation: packed GUID(1-8) + packed GUID(1-8) + castCount(1) + spellId(4) + castFlags(4) + castTime(4) = 22 bytes minimum
-    if (packet.getSize() - packet.getReadPos() < 22) return false;
+    // Packed GUIDs are variable-length; only require minimal packet shape up front:
+    // two GUID masks + castCount(1) + spellId(4) + castFlags(4) + castTime(4).
+    if (packet.getSize() - packet.getReadPos() < 15) return false;
 
     size_t startPos = packet.getReadPos();
     if (!hasFullPackedGuid(packet)) {
@@ -3750,8 +3751,8 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
     data = SpellGoData{};
 
     // Packed GUIDs are variable-length, so only require the smallest possible
-    // shape up front: 2 GUID masks + fixed fields through missCount.
-    if (packet.getSize() - packet.getReadPos() < 17) return false;
+    // shape up front: 2 GUID masks + fixed fields through hitCount.
+    if (packet.getSize() - packet.getReadPos() < 16) return false;
 
     size_t startPos = packet.getReadPos();
     if (!hasFullPackedGuid(packet)) {
