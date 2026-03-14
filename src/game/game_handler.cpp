@@ -7044,10 +7044,16 @@ void GameHandler::handlePacket(network::Packet& packet) {
             auto rl_rem = [&]() { return packet.getSize() - packet.getReadPos(); };
             if (rl_rem() < 4) { packet.setReadPos(packet.getSize()); break; }
             /*uint32_t hitInfo =*/ packet.readUInt32();
-            if (rl_rem() < (rlUsesFullGuid ? 8u : 1u)) { packet.setReadPos(packet.getSize()); break; }
+            if (rl_rem() < (rlUsesFullGuid ? 8u : 1u)
+                || (!rlUsesFullGuid && !hasFullPackedGuid(packet))) {
+                packet.setReadPos(packet.getSize()); break;
+            }
             uint64_t attackerGuid = rlUsesFullGuid
                 ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (rl_rem() < (rlUsesFullGuid ? 8u : 1u)) { packet.setReadPos(packet.getSize()); break; }
+            if (rl_rem() < (rlUsesFullGuid ? 8u : 1u)
+                || (!rlUsesFullGuid && !hasFullPackedGuid(packet))) {
+                packet.setReadPos(packet.getSize()); break;
+            }
             uint64_t victimGuid = rlUsesFullGuid
                 ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
             if (rl_rem() < 4) { packet.setReadPos(packet.getSize()); break; }
