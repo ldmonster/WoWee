@@ -1029,10 +1029,6 @@ void WaterRenderer::clear() {
         destroyWaterMesh(surface);
     }
     surfaces.clear();
-
-    if (vkCtx && materialDescPool) {
-        vkResetDescriptorPool(vkCtx->getDevice(), materialDescPool, 0);
-    }
 }
 
 // ==============================================================
@@ -1358,27 +1354,45 @@ void WaterRenderer::createWaterMesh(WaterSurface& surface) {
 
 void WaterRenderer::destroyWaterMesh(WaterSurface& surface) {
     if (!vkCtx) return;
+    VkDevice device = vkCtx->getDevice();
     VmaAllocator allocator = vkCtx->getAllocator();
 
-    if (surface.vertexBuffer) {
-        AllocatedBuffer ab{}; ab.buffer = surface.vertexBuffer; ab.allocation = surface.vertexAlloc;
-        destroyBuffer(allocator, ab);
-        surface.vertexBuffer = VK_NULL_HANDLE;
-    }
-    if (surface.indexBuffer) {
-        AllocatedBuffer ab{}; ab.buffer = surface.indexBuffer; ab.allocation = surface.indexAlloc;
-        destroyBuffer(allocator, ab);
-        surface.indexBuffer = VK_NULL_HANDLE;
-    }
-    if (surface.materialUBO) {
-        AllocatedBuffer ab{}; ab.buffer = surface.materialUBO; ab.allocation = surface.materialAlloc;
-        destroyBuffer(allocator, ab);
-        surface.materialUBO = VK_NULL_HANDLE;
-    }
-    if (surface.materialSet && materialDescPool) {
-        vkFreeDescriptorSets(vkCtx->getDevice(), materialDescPool, 1, &surface.materialSet);
-    }
+    ::VkBuffer vertexBuffer = surface.vertexBuffer;
+    VmaAllocation vertexAlloc = surface.vertexAlloc;
+    ::VkBuffer indexBuffer = surface.indexBuffer;
+    VmaAllocation indexAlloc = surface.indexAlloc;
+    ::VkBuffer materialUBO = surface.materialUBO;
+    VmaAllocation materialAlloc = surface.materialAlloc;
+    VkDescriptorPool pool = materialDescPool;
+    VkDescriptorSet materialSet = surface.materialSet;
+
+    surface.vertexBuffer = VK_NULL_HANDLE;
+    surface.vertexAlloc = VK_NULL_HANDLE;
+    surface.indexBuffer = VK_NULL_HANDLE;
+    surface.indexAlloc = VK_NULL_HANDLE;
+    surface.materialUBO = VK_NULL_HANDLE;
+    surface.materialAlloc = VK_NULL_HANDLE;
     surface.materialSet = VK_NULL_HANDLE;
+
+    vkCtx->deferAfterFrameFence([device, allocator, vertexBuffer, vertexAlloc, indexBuffer, indexAlloc,
+                                 materialUBO, materialAlloc, pool, materialSet]() {
+        if (vertexBuffer) {
+            AllocatedBuffer ab{}; ab.buffer = vertexBuffer; ab.allocation = vertexAlloc;
+            destroyBuffer(allocator, ab);
+        }
+        if (indexBuffer) {
+            AllocatedBuffer ab{}; ab.buffer = indexBuffer; ab.allocation = indexAlloc;
+            destroyBuffer(allocator, ab);
+        }
+        if (materialUBO) {
+            AllocatedBuffer ab{}; ab.buffer = materialUBO; ab.allocation = materialAlloc;
+            destroyBuffer(allocator, ab);
+        }
+        if (materialSet && pool) {
+            VkDescriptorSet set = materialSet;
+            vkFreeDescriptorSets(device, pool, 1, &set);
+        }
+    });
 }
 
 // ==============================================================

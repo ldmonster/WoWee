@@ -57,6 +57,15 @@ public:
     void pollUploadBatches();    // Check completed async uploads, free staging buffers
     void waitAllUploads();       // Block until all in-flight uploads complete
 
+    // Defer resource destruction until it is safe with multiple frames in flight.
+    //
+    // This queues work to run after the fence for the *current frame slot* has
+    // signaled the next time we enter beginFrame() for that slot (i.e. after
+    // MAX_FRAMES_IN_FLIGHT submissions). Use this for resources that may still
+    // be referenced by command buffers submitted in the previous frame(s),
+    // such as descriptor sets and buffers freed during streaming/unload.
+    void deferAfterFrameFence(std::function<void()>&& fn);
+
     // Accessors
     VkInstance getInstance() const { return instance; }
     VkPhysicalDevice getPhysicalDevice() const { return physicalDevice; }
@@ -172,6 +181,9 @@ private:
         std::vector<AllocatedBuffer> stagingBuffers;
     };
     std::vector<InFlightBatch> inFlightBatches_;
+
+    void runDeferredCleanup(uint32_t frameIndex);
+    std::vector<std::function<void()>> deferredCleanup_[MAX_FRAMES_IN_FLIGHT];
 
     // Depth buffer (shared across all framebuffers)
     VkImage depthImage = VK_NULL_HANDLE;
