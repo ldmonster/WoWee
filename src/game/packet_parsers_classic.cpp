@@ -355,12 +355,21 @@ network::Packet ClassicPacketParsers::buildUseItem(uint8_t bagIndex, uint8_t slo
 //       + uint16(targetFlags) [+ PackedGuid(unitTarget) if TARGET_FLAG_UNIT]
 // ============================================================================
 bool ClassicPacketParsers::parseSpellStart(network::Packet& packet, SpellStartData& data) {
+    data = SpellStartData{};
+
     auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
+    const size_t startPos = packet.getReadPos();
     if (rem() < 2) return false;
 
-    if (!hasFullPackedGuid(packet)) return false;
+    if (!hasFullPackedGuid(packet)) {
+        packet.setReadPos(startPos);
+        return false;
+    }
     data.casterGuid = UpdateObjectParser::readPackedGuid(packet);
-    if (!hasFullPackedGuid(packet)) return false;
+    if (!hasFullPackedGuid(packet)) {
+        packet.setReadPos(startPos);
+        return false;
+    }
     data.casterUnit = UpdateObjectParser::readPackedGuid(packet);
 
     // uint8 castCount + uint32 spellId + uint16 castFlags + uint32 castTime = 11 bytes
@@ -371,11 +380,18 @@ bool ClassicPacketParsers::parseSpellStart(network::Packet& packet, SpellStartDa
     data.castTime  = packet.readUInt32();
 
     // SpellCastTargets: uint16 targetFlags in Vanilla (uint32 in TBC/WotLK)
-    if (rem() < 2) return true;
+    if (rem() < 2) {
+        LOG_WARNING("[Classic] Spell start: missing targetFlags");
+        packet.setReadPos(startPos);
+        return false;
+    }
     uint16_t targetFlags = packet.readUInt16();
     // TARGET_FLAG_UNIT (0x02) or TARGET_FLAG_OBJECT (0x800) carry a packed GUID
     if ((targetFlags & 0x02) || (targetFlags & 0x800)) {
-        if (!hasFullPackedGuid(packet)) return false;
+        if (!hasFullPackedGuid(packet)) {
+            packet.setReadPos(startPos);
+            return false;
+        }
         data.targetGuid = UpdateObjectParser::readPackedGuid(packet);
     }
 

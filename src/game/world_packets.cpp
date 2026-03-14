@@ -3703,6 +3703,8 @@ bool CastFailedParser::parse(network::Packet& packet, CastFailedData& data) {
 }
 
 bool SpellStartParser::parse(network::Packet& packet, SpellStartData& data) {
+    data = SpellStartData{};
+
     // Packed GUIDs are variable-length; only require minimal packet shape up front:
     // two GUID masks + castCount(1) + spellId(4) + castFlags(4) + castTime(4).
     if (packet.getSize() - packet.getReadPos() < 15) return false;
@@ -3729,17 +3731,21 @@ bool SpellStartParser::parse(network::Packet& packet, SpellStartData& data) {
     data.castFlags = packet.readUInt32();
     data.castTime = packet.readUInt32();
 
-    // Read target flags and target (simplified)
-    if (packet.getSize() - packet.getReadPos() >= 4) {
-        uint32_t targetFlags = packet.readUInt32();
-        const bool needsTargetGuid = (targetFlags & 0x02) || (targetFlags & 0x800); // UNIT/OBJECT
-        if (needsTargetGuid) {
-            if (!hasFullPackedGuid(packet)) {
-                packet.setReadPos(startPos);
-                return false;
-            }
-            data.targetGuid = UpdateObjectParser::readPackedGuid(packet);
+    // SpellCastTargets starts with target flags and is mandatory.
+    if (packet.getSize() - packet.getReadPos() < 4) {
+        LOG_WARNING("Spell start: missing targetFlags");
+        packet.setReadPos(startPos);
+        return false;
+    }
+
+    uint32_t targetFlags = packet.readUInt32();
+    const bool needsTargetGuid = (targetFlags & 0x02) || (targetFlags & 0x800); // UNIT/OBJECT
+    if (needsTargetGuid) {
+        if (!hasFullPackedGuid(packet)) {
+            packet.setReadPos(startPos);
+            return false;
         }
+        data.targetGuid = UpdateObjectParser::readPackedGuid(packet);
     }
 
     LOG_DEBUG("Spell start: spell=", data.spellId, " castTime=", data.castTime, "ms");

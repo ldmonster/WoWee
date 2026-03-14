@@ -1234,6 +1234,8 @@ bool TbcPacketParsers::parseMailList(network::Packet& packet, std::vector<MailMe
 // Correct TBC format (cmangos-tbc): objectGuid(u64) + casterGuid(u64) + castCount(u8) + spellId(u32) + castFlags(u32) + castTime(u32)
 // ============================================================================
 bool TbcPacketParsers::parseSpellStart(network::Packet& packet, SpellStartData& data) {
+    data = SpellStartData{};
+    const size_t startPos = packet.getReadPos();
     if (packet.getSize() - packet.getReadPos() < 22) return false;
 
     data.casterGuid = packet.readUInt64();   // full GUID (object)
@@ -1243,15 +1245,20 @@ bool TbcPacketParsers::parseSpellStart(network::Packet& packet, SpellStartData& 
     data.castFlags  = packet.readUInt32();
     data.castTime   = packet.readUInt32();
 
-    if (packet.getReadPos() + 4 <= packet.getSize()) {
-        uint32_t targetFlags = packet.readUInt32();
-        const bool needsTargetGuid = (targetFlags & 0x02) || (targetFlags & 0x800); // UNIT/OBJECT
-        if (needsTargetGuid) {
-            if (packet.getReadPos() + 8 > packet.getSize()) {
-                return false;
-            }
-            data.targetGuid = packet.readUInt64();  // full GUID in TBC
+    if (packet.getReadPos() + 4 > packet.getSize()) {
+        LOG_WARNING("[TBC] Spell start: missing targetFlags");
+        packet.setReadPos(startPos);
+        return false;
+    }
+
+    uint32_t targetFlags = packet.readUInt32();
+    const bool needsTargetGuid = (targetFlags & 0x02) || (targetFlags & 0x800); // UNIT/OBJECT
+    if (needsTargetGuid) {
+        if (packet.getReadPos() + 8 > packet.getSize()) {
+            packet.setReadPos(startPos);
+            return false;
         }
+        data.targetGuid = packet.readUInt64();  // full GUID in TBC
     }
 
     LOG_DEBUG("[TBC] Spell start: spell=", data.spellId, " castTime=", data.castTime, "ms");
