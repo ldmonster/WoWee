@@ -6160,15 +6160,18 @@ void GameHandler::handlePacket(network::Packet& packet) {
             /*uint32_t dispelSpell =*/ packet.readUInt32();
             uint8_t isStolen = packet.readUInt8();
             uint32_t count   = packet.readUInt32();
-            // Collect first dispelled spell id/name; process all entries for combat log
-            // Each entry: uint32 spellId + uint8 isPositive (5 bytes in WotLK/TBC/Classic)
-            uint32_t firstDispelledId = 0;
+            // Preserve every dispelled aura in the combat log instead of collapsing
+            // multi-aura packets down to the first entry only.
+            std::vector<uint32_t> dispelledIds;
+            dispelledIds.reserve(count);
             std::string firstSpellName;
             for (uint32_t i = 0; i < count && packet.getSize() - packet.getReadPos() >= 5; ++i) {
                 uint32_t dispelledId = packet.readUInt32();
                 /*uint8_t isPositive =*/ packet.readUInt8();
+                if (dispelledId != 0) {
+                    dispelledIds.push_back(dispelledId);
+                }
                 if (i == 0) {
-                    firstDispelledId = dispelledId;
                     const std::string& nm = getSpellName(dispelledId);
                     firstSpellName = nm.empty() ? ("spell " + std::to_string(dispelledId)) : nm;
                 }
@@ -6195,11 +6198,13 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     addSystemChatMessage(buf);
                 }
                 // Preserve stolen auras as spellsteal events so the log wording stays accurate.
-                if (firstDispelledId != 0) {
+                if (!dispelledIds.empty()) {
                     bool isPlayerCaster = (casterGuid == playerGuid);
-                    addCombatText(isStolen ? CombatTextEntry::STEAL : CombatTextEntry::DISPEL,
-                                  0, firstDispelledId, isPlayerCaster, 0,
-                                  casterGuid, victimGuid);
+                    for (uint32_t dispelledId : dispelledIds) {
+                        addCombatText(isStolen ? CombatTextEntry::STEAL : CombatTextEntry::DISPEL,
+                                      0, dispelledId, isPlayerCaster, 0,
+                                      casterGuid, victimGuid);
+                    }
                 }
             }
             packet.setReadPos(packet.getSize());
@@ -6228,14 +6233,17 @@ void GameHandler::handlePacket(network::Packet& packet) {
             /*uint32_t stealSpellId =*/ packet.readUInt32();
             /*uint8_t  isStolen    =*/ packet.readUInt8();
             uint32_t stealCount   = packet.readUInt32();
-            // Collect stolen spell info; show feedback when we are caster or victim
-            uint32_t firstStolenId = 0;
+            // Preserve every stolen aura in the combat log instead of only the first.
+            std::vector<uint32_t> stolenIds;
+            stolenIds.reserve(stealCount);
             std::string stolenName;
             for (uint32_t i = 0; i < stealCount && packet.getSize() - packet.getReadPos() >= 5; ++i) {
                 uint32_t stolenId = packet.readUInt32();
                 /*uint8_t isPos  =*/ packet.readUInt8();
+                if (stolenId != 0) {
+                    stolenIds.push_back(stolenId);
+                }
                 if (i == 0) {
-                    firstStolenId = stolenId;
                     const std::string& nm = getSpellName(stolenId);
                     stolenName = nm.empty() ? ("spell " + std::to_string(stolenId)) : nm;
                 }
@@ -6250,10 +6258,12 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     addSystemChatMessage(buf);
                 }
                 // Preserve spellsteal as a distinct event so the UI wording stays accurate.
-                if (firstStolenId != 0) {
+                if (!stolenIds.empty()) {
                     bool isPlayerCaster = (stealCaster == playerGuid);
-                    addCombatText(CombatTextEntry::STEAL, 0, firstStolenId, isPlayerCaster, 0,
-                                  stealCaster, stealVictim);
+                    for (uint32_t stolenId : stolenIds) {
+                        addCombatText(CombatTextEntry::STEAL, 0, stolenId, isPlayerCaster, 0,
+                                      stealCaster, stealVictim);
+                    }
                 }
             }
             packet.setReadPos(packet.getSize());
