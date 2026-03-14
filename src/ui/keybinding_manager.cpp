@@ -47,6 +47,10 @@ ImGuiKey KeybindingManager::getKeyForAction(Action action) const {
 }
 
 void KeybindingManager::setKeyForAction(Action action, ImGuiKey key) {
+    // Q is reserved for movement (strafe-left) and must never open quest log.
+    if (action == Action::TOGGLE_QUEST_LOG && key == ImGuiKey_Q) {
+        key = ImGuiKey_None;
+    }
     bindings_[static_cast<int>(action)] = key;
 }
 
@@ -175,9 +179,14 @@ void KeybindingManager::loadFromConfigFile(const std::string& filePath) {
             }
         }
 
-        if (key != ImGuiKey_None) {
-            bindings_[actionIdx] = key;
+        if (key == ImGuiKey_None) continue;
+
+        // Q is reserved for movement (strafe-left) and must never open quest log.
+        if (actionIdx == static_cast<int>(Action::TOGGLE_QUEST_LOG) && key == ImGuiKey_Q) {
+            continue;
         }
+
+        bindings_[actionIdx] = key;
     }
 
     file.close();
