@@ -2538,6 +2538,25 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             auto* camera = renderer ? renderer->getCamera() : nullptr;
             auto* window = core::Application::getInstance().getWindow();
             if (camera && window) {
+                // If a quest objective gameobject is under the cursor, prefer it over
+                // hostile units so quest pickups (e.g. "Bundle of Wood") are reliable.
+                std::unordered_set<uint32_t> questObjectiveGoEntries;
+                {
+                    const auto& ql = gameHandler.getQuestLog();
+                    questObjectiveGoEntries.reserve(32);
+                    for (const auto& q : ql) {
+                        if (q.complete) continue;
+                        for (const auto& obj : q.killObjectives) {
+                            if (obj.npcOrGoId >= 0 || obj.required == 0) continue;
+                            uint32_t entry = static_cast<uint32_t>(-obj.npcOrGoId);
+                            uint32_t cur = 0;
+                            auto it = q.killCounts.find(entry);
+                            if (it != q.killCounts.end()) cur = it->second.first;
+                            if (cur < obj.required) questObjectiveGoEntries.insert(entry);
+                        }
+                    }
+                }
+
                 glm::vec2 mousePos = input.getMousePosition();
                 float screenW = static_cast<float>(window->getWidth());
                 float screenH = static_cast<float>(window->getHeight());
@@ -2547,13 +2566,17 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 game::ObjectType closestType = game::ObjectType::OBJECT;
                 float closestHostileUnitT = 1e30f;
                 uint64_t closestHostileUnitGuid = 0;
+                float closestQuestGoT = 1e30f;
+                uint64_t closestQuestGoGuid = 0;
                 const uint64_t myGuid = gameHandler.getPlayerGuid();
                 for (const auto& [guid, entity] : gameHandler.getEntityManager().getEntities()) {
                     auto t = entity->getType();
                     if (t != game::ObjectType::UNIT &&
                         t != game::ObjectType::PLAYER &&
-                        t != game::ObjectType::GAMEOBJECT) continue;
+                        t != game::ObjectType::GAMEOBJECT)
+                        continue;
                     if (guid == myGuid) continue;
+
                     glm::vec3 hitCenter;
                     float hitRadius = 0.0f;
                     bool hasBounds = core::Application::getInstance().getRenderBoundsForGuid(guid, hitCenter, hitRadius);
@@ -2568,10 +2591,15 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                             }
                         } else if (t == game::ObjectType::GAMEOBJECT) {
                             // For GOs with no renderer instance yet, use a tight fallback
-                            // sphere (not 2.5f) so invisible/unloaded GOs (chairs, doodads)
-                            // are not accidentally clicked during camera right-drag.
+                            // sphere so invisible/unloaded doodads aren't accidentally clicked.
                             hitRadius = 1.2f;
                             heightOffset = 1.0f;
+                            // Quest objective GOs should be easier to click.
+                            auto go = std::static_pointer_cast<game::GameObject>(entity);
+                            if (questObjectiveGoEntries.count(go->getEntry())) {
+                                hitRadius = 2.2f;
+                                heightOffset = 1.2f;
+                            }
                         }
                         hitCenter = core::coords::canonicalToRender(
                             glm::vec3(entity->getX(), entity->getY(), entity->getZ()));
@@ -2579,6 +2607,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                     } else {
                         hitRadius = std::max(hitRadius * 1.1f, 0.6f);
                     }
+
                     float hitT;
                     if (raySphereIntersect(ray, hitCenter, hitRadius, hitT)) {
                         if (t == game::ObjectType::UNIT) {
@@ -2589,6 +2618,15 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                                 closestHostileUnitGuid = guid;
                             }
                         }
+                        if (t == game::ObjectType::GAMEOBJECT && !questObjectiveGoEntries.empty()) {
+                            auto go = std::static_pointer_cast<game::GameObject>(entity);
+                            if (questObjectiveGoEntries.count(go->getEntry())) {
+                                if (hitT < closestQuestGoT) {
+                                    closestQuestGoT = hitT;
+                                    closestQuestGoGuid = guid;
+                                }
+                            }
+                        }
                         if (hitT < closestT) {
                             closestT = hitT;
                             closestGuid = guid;
@@ -2596,11 +2634,17 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                         }
                     }
                 }
-                // Prefer hostile monsters over nearby gameobjects/others when right-click picking.
-                if (closestHostileUnitGuid != 0) {
+
+                // Prefer quest objective GOs over hostile monsters when both are hittable.
+                if (closestQuestGoGuid != 0) {
+                    closestGuid = closestQuestGoGuid;
+                    closestType = game::ObjectType::GAMEOBJECT;
+                } else if (closestHostileUnitGuid != 0) {
+                    // Prefer hostile monsters over nearby gameobjects/others when right-click picking.
                     closestGuid = closestHostileUnitGuid;
                     closestType = game::ObjectType::UNIT;
                 }
+
                 if (closestGuid != 0) {
                     if (closestType == game::ObjectType::GAMEOBJECT) {
                         gameHandler.setTarget(closestGuid);
