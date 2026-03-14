@@ -8394,7 +8394,7 @@ void GameScreen::renderCombatText(game::GameHandler& gameHandler) {
                                      : ImVec4(0.5f, 0.9f, 1.0f, alpha);
                     break;
                 case game::CombatTextEntry::REFLECT:
-                    snprintf(text, sizeof(text), outgoing ? "Reflect" : "Reflected");
+                    snprintf(text, sizeof(text), outgoing ? "Reflected" : "You Reflect");
                     color = outgoing ? ImVec4(0.85f, 0.75f, 1.0f, alpha)
                                      : ImVec4(0.75f, 0.85f, 1.0f, alpha);
                     break;
