@@ -3343,7 +3343,15 @@ bool AttackerStateUpdateParser::parse(network::Packet& packet, AttackerStateUpda
 
     size_t startPos = packet.getReadPos();
     data.hitInfo = packet.readUInt32();
+    if (!hasFullPackedGuid(packet)) {
+        packet.setReadPos(startPos);
+        return false;
+    }
     data.attackerGuid = UpdateObjectParser::readPackedGuid(packet);
+    if (!hasFullPackedGuid(packet)) {
+        packet.setReadPos(startPos);
+        return false;
+    }
     data.targetGuid = UpdateObjectParser::readPackedGuid(packet);
 
     // Validate totalDamage + subDamageCount can be read (5 bytes)

@@ -489,9 +489,17 @@ bool ClassicPacketParsers::parseAttackerStateUpdate(network::Packet& packet, Att
     auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
     if (rem() < 5) return false;  // hitInfo(4) + at least GUID mask byte(1)
 
+    const size_t startPos = packet.getReadPos();
     data.hitInfo      = packet.readUInt32();
+    if (!hasFullPackedGuid(packet)) {
+        packet.setReadPos(startPos);
+        return false;
+    }
     data.attackerGuid = UpdateObjectParser::readPackedGuid(packet); // PackedGuid in Vanilla
-    if (rem() < 1) return false;
+    if (!hasFullPackedGuid(packet)) {
+        packet.setReadPos(startPos);
+        return false;
+    }
     data.targetGuid   = UpdateObjectParser::readPackedGuid(packet); // PackedGuid in Vanilla
 
     if (rem() < 5) return false;  // int32 totalDamage + uint8 subDamageCount
