@@ -2721,7 +2721,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     CombatTextEntry::DODGE,   // 1=DODGE
                     CombatTextEntry::PARRY,   // 2=PARRY
                     CombatTextEntry::BLOCK,   // 3=BLOCK
-                    CombatTextEntry::MISS,    // 4=EVADE
+                    CombatTextEntry::EVADE,   // 4=EVADE
                     CombatTextEntry::IMMUNE,  // 5=IMMUNE
                     CombatTextEntry::DEFLECT, // 6=DEFLECT
                     CombatTextEntry::ABSORB,  // 7=ABSORB
@@ -16380,8 +16380,8 @@ void GameHandler::handleAttackerStateUpdate(network::Packet& packet) {
             addCombatText(CombatTextEntry::MELEE_DAMAGE, data.totalDamage, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
         addCombatText(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked), 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
     } else if (data.victimState == 5) {
-        // VICTIMSTATE_EVADE: NPC evaded (out of combat zone). Show as miss.
-        addCombatText(CombatTextEntry::MISS, 0, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
+        // VICTIMSTATE_EVADE: NPC evaded (out of combat zone).
+        addCombatText(CombatTextEntry::EVADE, 0, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
     } else if (data.victimState == 6) {
         // VICTIMSTATE_IS_IMMUNE: Target is immune to this attack.
         addCombatText(CombatTextEntry::IMMUNE, 0, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
@@ -16997,7 +16997,7 @@ void GameHandler::handleSpellGo(network::Packet& packet) {
             CombatTextEntry::DODGE,   // 1=DODGE
             CombatTextEntry::PARRY,   // 2=PARRY
             CombatTextEntry::BLOCK,   // 3=BLOCK
-            CombatTextEntry::MISS,    // 4=EVADE
+            CombatTextEntry::EVADE,   // 4=EVADE
             CombatTextEntry::IMMUNE,  // 5=IMMUNE
             CombatTextEntry::DEFLECT, // 6=DEFLECT
             CombatTextEntry::ABSORB,  // 7=ABSORB

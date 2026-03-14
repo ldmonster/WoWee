@@ -8342,6 +8342,11 @@ void GameScreen::renderCombatText(game::GameHandler& gameHandler) {
                     color = outgoing ? ImVec4(0.6f, 0.6f, 0.6f, alpha)
                                      : ImVec4(0.4f, 0.9f, 1.0f, alpha);
                     break;
+                case game::CombatTextEntry::EVADE:
+                    snprintf(text, sizeof(text), outgoing ? "Evade" : "You Evade");
+                    color = outgoing ? ImVec4(0.6f, 0.6f, 0.6f, alpha)
+                                     : ImVec4(0.4f, 0.9f, 1.0f, alpha);
+                    break;
                 case game::CombatTextEntry::PERIODIC_DAMAGE:
                     snprintf(text, sizeof(text), "-%d", entry.amount);
                     color = outgoing ?
@@ -20261,6 +20266,13 @@ void GameScreen::renderCombatLog(game::GameHandler& gameHandler) {
                     else
                         snprintf(desc, sizeof(desc), "%s blocks %s's attack (%d blocked)", tgt, src, e.amount);
                     color = ImVec4(0.65f, 0.75f, 0.65f, 1.0f);
+                    break;
+                case T::EVADE:
+                    if (spell)
+                        snprintf(desc, sizeof(desc), "%s evades %s's %s", tgt, src, spell);
+                    else
+                        snprintf(desc, sizeof(desc), "%s evades %s's attack", tgt, src);
+                    color = ImVec4(0.65f, 0.65f, 0.65f, 1.0f);
                     break;
                 case T::IMMUNE:
                     if (spell)
