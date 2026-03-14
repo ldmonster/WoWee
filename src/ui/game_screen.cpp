@@ -17716,7 +17716,7 @@ void GameScreen::renderMailWindow(game::GameHandler& gameHandler) {
                         }
                         ImGui::SameLine();
                         if (ImGui::SmallButton("Take")) {
-                            gameHandler.mailTakeItem(mail.messageId, att.slot);
+                            gameHandler.mailTakeItem(mail.messageId, att.itemGuidLow);
                         }
 
                         ImGui::PopID();
@@ -17725,7 +17725,7 @@ void GameScreen::renderMailWindow(game::GameHandler& gameHandler) {
                     if (mail.attachments.size() > 1) {
                         if (ImGui::SmallButton("Take All")) {
                             for (const auto& att2 : mail.attachments) {
-                                gameHandler.mailTakeItem(mail.messageId, att2.slot);
+                                gameHandler.mailTakeItem(mail.messageId, att2.itemGuidLow);
                             }
                         }
                     }

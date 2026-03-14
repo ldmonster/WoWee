@@ -266,8 +266,8 @@ public:
     virtual bool parseMailList(network::Packet& packet, std::vector<MailMessage>& inbox);
 
     /** Build CMSG_MAIL_TAKE_ITEM */
-    virtual network::Packet buildMailTakeItem(uint64_t mailboxGuid, uint32_t mailId, uint32_t itemSlot) {
-        return MailTakeItemPacket::build(mailboxGuid, mailId, itemSlot);
+    virtual network::Packet buildMailTakeItem(uint64_t mailboxGuid, uint32_t mailId, uint32_t itemGuidLow) {
+        return MailTakeItemPacket::build(mailboxGuid, mailId, itemGuidLow);
     }
 
     /** Build CMSG_MAIL_DELETE */
@@ -404,7 +404,7 @@ public:
                                    uint32_t money, uint32_t cod,
                                    const std::vector<uint64_t>& itemGuids = {}) override;
     bool parseMailList(network::Packet& packet, std::vector<MailMessage>& inbox) override;
-    network::Packet buildMailTakeItem(uint64_t mailboxGuid, uint32_t mailId, uint32_t itemSlot) override;
+    network::Packet buildMailTakeItem(uint64_t mailboxGuid, uint32_t mailId, uint32_t itemGuidLow) override;
     network::Packet buildMailDelete(uint64_t mailboxGuid, uint32_t mailId, uint32_t mailTemplateId) override;
     network::Packet buildItemQuery(uint32_t entry, uint64_t guid) override;
     bool parseItemQueryResponse(network::Packet& packet, ItemQueryResponseData& data) override;

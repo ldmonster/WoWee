@@ -1978,7 +1978,7 @@ public:
     const std::array<MailAttachSlot, 12>& getMailAttachments() const { return mailAttachments_; }
     int getMailAttachmentCount() const;
     void mailTakeMoney(uint32_t mailId);
-    void mailTakeItem(uint32_t mailId, uint32_t itemIndex);
+    void mailTakeItem(uint32_t mailId, uint32_t itemGuidLow);
     void mailDelete(uint32_t mailId);
     void mailMarkAsRead(uint32_t mailId);
     void refreshMailList();

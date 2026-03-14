@@ -5069,11 +5069,12 @@ network::Packet MailTakeMoneyPacket::build(uint64_t mailboxGuid, uint32_t mailId
     return packet;
 }
 
-network::Packet MailTakeItemPacket::build(uint64_t mailboxGuid, uint32_t mailId, uint32_t itemIndex) {
+network::Packet MailTakeItemPacket::build(uint64_t mailboxGuid, uint32_t mailId, uint32_t itemGuidLow) {
     network::Packet packet(wireOpcode(Opcode::CMSG_MAIL_TAKE_ITEM));
     packet.writeUInt64(mailboxGuid);
     packet.writeUInt32(mailId);
-    packet.writeUInt32(itemIndex);
+    // WotLK expects attachment item GUID low, not attachment slot index.
+    packet.writeUInt32(itemGuidLow);
     return packet;
 }
 

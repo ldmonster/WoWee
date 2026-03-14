@@ -22136,9 +22136,9 @@ void GameHandler::mailTakeMoney(uint32_t mailId) {
     socket->send(packet);
 }
 
-void GameHandler::mailTakeItem(uint32_t mailId, uint32_t itemIndex) {
+void GameHandler::mailTakeItem(uint32_t mailId, uint32_t itemGuidLow) {
     if (state != WorldState::IN_WORLD || !socket || mailboxGuid_ == 0) return;
-    auto packet = packetParsers_->buildMailTakeItem(mailboxGuid_, mailId, itemIndex);
+    auto packet = packetParsers_->buildMailTakeItem(mailboxGuid_, mailId, itemGuidLow);
     socket->send(packet);
 }
 
