@@ -6344,7 +6344,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                                               exeCaster, drainTarget);
                             else if (isPlayerCaster)
                                 addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(drainAmount), exeSpellId, true,
-                                              static_cast<uint8_t>(drainPower), exeCaster, drainTarget);
+                                              static_cast<uint8_t>(drainPower), exeCaster, exeCaster);
                         }
                         LOG_DEBUG("SMSG_SPELLLOGEXECUTE POWER_DRAIN: spell=", exeSpellId,
                                   " power=", drainPower, " amount=", drainAmount);
@@ -6365,7 +6365,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                                               exeCaster, leechTarget);
                             else if (isPlayerCaster)
                                 addCombatText(CombatTextEntry::HEAL, static_cast<int32_t>(leechAmount), exeSpellId, true, 0,
-                                              exeCaster, leechTarget);
+                                              exeCaster, exeCaster);
                         }
                         LOG_DEBUG("SMSG_SPELLLOGEXECUTE HEALTH_LEECH: spell=", exeSpellId, " amount=", leechAmount);
                     }
