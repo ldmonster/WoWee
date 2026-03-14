@@ -3239,12 +3239,14 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_DISPEL_FAILED: {
             // WotLK:       uint32 dispelSpellId + packed_guid caster + packed_guid victim
             //              [+ count × uint32 failedSpellId]
-            // TBC/Classic: uint64 caster + uint64 victim + uint32 spellId
+            // Classic:     uint32 dispelSpellId + packed_guid caster + packed_guid victim
             //              [+ count × uint32 failedSpellId]
-            const bool dispelTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+            // TBC:         uint64 caster + uint64 victim + uint32 spellId
+            //              [+ count × uint32 failedSpellId]
+            const bool dispelUsesFullGuid = isActiveExpansion("tbc");
             uint32_t dispelSpellId = 0;
             uint64_t dispelCasterGuid = 0;
-            if (dispelTbcLike) {
+            if (dispelUsesFullGuid) {
                 if (packet.getSize() - packet.getReadPos() < 20) break;
                 dispelCasterGuid = packet.readUInt64();
                 /*uint64_t victim =*/ packet.readUInt64();
