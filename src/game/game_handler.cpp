@@ -4126,11 +4126,13 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     return (packet.getSize() - packet.getReadPos() >= 8) ? packet.readUInt64() : 0;
                 return UpdateObjectParser::readPackedGuid(packet);
             };
-            if (packet.getSize() - packet.getReadPos() < (energizeTbc ? 8u : 1u)) {
+            if (packet.getSize() - packet.getReadPos() < (energizeTbc ? 8u : 1u)
+                || (!energizeTbc && !hasFullPackedGuid(packet))) {
                 packet.setReadPos(packet.getSize()); break;
             }
             uint64_t victimGuid = readEnergizeGuid();
-            if (packet.getSize() - packet.getReadPos() < (energizeTbc ? 8u : 1u)) {
+            if (packet.getSize() - packet.getReadPos() < (energizeTbc ? 8u : 1u)
+                || (!energizeTbc && !hasFullPackedGuid(packet))) {
                 packet.setReadPos(packet.getSize()); break;
             }
             uint64_t casterGuid = readEnergizeGuid();
