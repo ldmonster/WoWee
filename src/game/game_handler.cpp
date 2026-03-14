@@ -6860,11 +6860,11 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
             if (rl_rem() < 4) { packet.setReadPos(packet.getSize()); break; }
             uint32_t spellId = packet.readUInt32();
-            // Show RESIST when player is the victim; show as caster-side MISS when player is attacker
+            // Show RESIST when the player is involved on either side.
             if (victimGuid == playerGuid) {
-                addCombatText(CombatTextEntry::MISS, 0, spellId, false, 0, attackerGuid, victimGuid);
+                addCombatText(CombatTextEntry::RESIST, 0, spellId, false, 0, attackerGuid, victimGuid);
             } else if (attackerGuid == playerGuid) {
-                addCombatText(CombatTextEntry::MISS, 0, spellId, true, 0, attackerGuid, victimGuid);
+                addCombatText(CombatTextEntry::RESIST, 0, spellId, true, 0, attackerGuid, victimGuid);
             }
             packet.setReadPos(packet.getSize());
             break;
