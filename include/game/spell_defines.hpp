@@ -52,7 +52,7 @@ struct CombatTextEntry {
     enum Type : uint8_t {
         MELEE_DAMAGE, SPELL_DAMAGE, HEAL, MISS, DODGE, PARRY, BLOCK,
         EVADE, CRIT_DAMAGE, CRIT_HEAL, PERIODIC_DAMAGE, PERIODIC_HEAL, ENVIRONMENTAL,
-        ENERGIZE, XP_GAIN, IMMUNE, ABSORB, RESIST, DEFLECT, REFLECT, PROC_TRIGGER,
+        ENERGIZE, POWER_DRAIN, XP_GAIN, IMMUNE, ABSORB, RESIST, DEFLECT, REFLECT, PROC_TRIGGER,
         DISPEL, STEAL, INTERRUPT, INSTAKILL
     };
     Type type;
@@ -60,7 +60,7 @@ struct CombatTextEntry {
     uint32_t spellId = 0;
     float age = 0.0f;           // Seconds since creation (for fadeout)
     bool isPlayerSource = false; // True if player dealt this
-    uint8_t powerType = 0;      // For ENERGIZE: 0=mana,1=rage,2=focus,3=energy,6=runicpower
+    uint8_t powerType = 0;      // For ENERGIZE/POWER_DRAIN: 0=mana,1=rage,2=focus,3=energy,6=runicpower
 
     static constexpr float LIFETIME = 2.5f;
     bool isExpired() const { return age >= LIFETIME; }

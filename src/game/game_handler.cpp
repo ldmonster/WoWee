@@ -3993,13 +3993,12 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 } else if (auraType == 98) {
                     // PERIODIC_MANA_LEECH: miscValue(powerType) + amount + float multiplier
                     if (packet.getSize() - packet.getReadPos() < 12) break;
-                    /*uint32_t powerType =*/ packet.readUInt32();
+                    uint8_t powerType = static_cast<uint8_t>(packet.readUInt32());
                     uint32_t amount = packet.readUInt32();
                     /*float multiplier =*/ packet.readUInt32();  // read as raw uint32 (float bits)
-                    // Show as periodic damage from victim's perspective (mana drained)
                     if (isPlayerVictim && amount > 0)
-                        addCombatText(CombatTextEntry::PERIODIC_DAMAGE, static_cast<int32_t>(amount),
-                                      spellId, false, 0, casterGuid, victimGuid);
+                        addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(amount),
+                                      spellId, false, powerType, casterGuid, victimGuid);
                 } else {
                     // Unknown/untracked aura type — stop parsing this event safely
                     packet.setReadPos(packet.getSize());
@@ -6462,7 +6461,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
                         /*float    drainMult =*/ packet.readFloat();
                         if (drainAmount > 0) {
                             if (drainTarget == playerGuid)
-                                addCombatText(CombatTextEntry::PERIODIC_DAMAGE, static_cast<int32_t>(drainAmount), exeSpellId, false, 0,
+                                addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(drainAmount), exeSpellId, false,
+                                              static_cast<uint8_t>(drainPower),
                                               exeCaster, drainTarget);
                             else if (isPlayerCaster)
                                 addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(drainAmount), exeSpellId, true,

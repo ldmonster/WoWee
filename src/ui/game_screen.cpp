@@ -8371,6 +8371,16 @@ void GameScreen::renderCombatText(game::GameHandler& gameHandler) {
                         default: color = ImVec4(0.3f, 0.6f, 1.0f, alpha); break; // Mana (0): blue
                     }
                     break;
+                case game::CombatTextEntry::POWER_DRAIN:
+                    snprintf(text, sizeof(text), "-%d", entry.amount);
+                    switch (entry.powerType) {
+                        case 1:  color = ImVec4(1.0f, 0.35f, 0.35f, alpha); break;
+                        case 2:  color = ImVec4(1.0f, 0.7f, 0.2f, alpha); break;
+                        case 3:  color = ImVec4(1.0f, 0.95f, 0.35f, alpha); break;
+                        case 6:  color = ImVec4(0.45f, 0.95f, 0.85f, alpha); break;
+                        default: color = ImVec4(0.45f, 0.75f, 1.0f, alpha); break;
+                    }
+                    break;
                 case game::CombatTextEntry::XP_GAIN:
                     snprintf(text, sizeof(text), "+%d XP", entry.amount);
                     color = ImVec4(0.7f, 0.3f, 1.0f, alpha);  // Purple for XP
@@ -20327,6 +20337,13 @@ void GameScreen::renderCombatLog(game::GameHandler& gameHandler) {
                     else
                         snprintf(desc, sizeof(desc), "%s gains %d power", tgt, e.amount);
                     color = ImVec4(0.4f, 0.6f, 1.0f, 1.0f);
+                    break;
+                case T::POWER_DRAIN:
+                    if (spell)
+                        snprintf(desc, sizeof(desc), "%s loses %d power to %s's %s", tgt, e.amount, src, spell);
+                    else
+                        snprintf(desc, sizeof(desc), "%s loses %d power", tgt, e.amount);
+                    color = ImVec4(0.45f, 0.75f, 1.0f, 1.0f);
                     break;
                 case T::XP_GAIN:
                     snprintf(desc, sizeof(desc), "You gain %d experience", e.amount);
