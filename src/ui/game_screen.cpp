@@ -2274,7 +2274,21 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
 void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
     auto& io = ImGui::GetIO();
     auto& input = core::Input::getInstance();
-    const bool textFocus = chatInputActive || io.WantTextInput;
+
+    // If the user is typing (or about to focus chat this frame), do not allow
+    // A-Z or 1-0 shortcuts to fire.
+    if (!io.WantTextInput && !chatInputActive && input.isKeyJustPressed(SDL_SCANCODE_SLASH)) {
+        refocusChatInput = true;
+        chatInputBuffer[0] = '/';
+        chatInputBuffer[1] = '\0';
+        chatInputMoveCursorToEnd = true;
+    }
+    if (!io.WantTextInput && !chatInputActive &&
+        KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_CHAT, true)) {
+        refocusChatInput = true;
+    }
+
+    const bool textFocus = chatInputActive || refocusChatInput || io.WantTextInput;
 
     // Tab targeting (when keyboard not captured by UI)
     if (!io.WantCaptureKeyboard) {
@@ -2370,19 +2384,6 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             }
         }
 
-    }
-
-    // Slash key: focus chat input — always works unless already typing in chat
-    if (!chatInputActive && input.isKeyJustPressed(SDL_SCANCODE_SLASH)) {
-        refocusChatInput = true;
-        chatInputBuffer[0] = '/';
-        chatInputBuffer[1] = '\0';
-        chatInputMoveCursorToEnd = true;
-    }
-
-    // Enter key: focus chat input (empty) — always works unless already typing
-    if (!chatInputActive && KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_CHAT, true)) {
-        refocusChatInput = true;
     }
 
     // Cursor affordance: show hand cursor over interactable game objects.

@@ -42,7 +42,19 @@ void KeybindingManager::initializeDefaults() {
 bool KeybindingManager::isActionPressed(Action action, bool repeat) {
     auto it = bindings_.find(static_cast<int>(action));
     if (it == bindings_.end()) return false;
-    return ImGui::IsKeyPressed(it->second, repeat);
+    ImGuiKey key = it->second;
+    if (key == ImGuiKey_None) return false;
+
+    // When typing in a text field (e.g. chat input), never treat A-Z or 0-9 as shortcuts.
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.WantTextInput) {
+        if ((key >= ImGuiKey_A && key <= ImGuiKey_Z) ||
+            (key >= ImGuiKey_0 && key <= ImGuiKey_9)) {
+            return false;
+        }
+    }
+
+    return ImGui::IsKeyPressed(key, repeat);
 }
 
 ImGuiKey KeybindingManager::getKeyForAction(Action action) const {
