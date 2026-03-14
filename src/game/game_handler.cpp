@@ -18372,11 +18372,15 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
                      lower.find("coffer") != std::string::npos ||
                      lower.find("cache") != std::string::npos);
     }
-    // For WotLK, CMSG_GAMEOBJ_REPORT_USE is required for chests (and is harmless for others).
-    if (!isMailbox && isActiveExpansion("wotlk")) {
-        network::Packet reportUse(wireOpcode(Opcode::CMSG_GAMEOBJ_REPORT_USE));
-        reportUse.writeUInt64(guid);
-        socket->send(reportUse);
+    // Some servers require CMSG_GAMEOBJ_REPORT_USE for lootable gameobjects.
+    // Only send it when the active opcode table actually supports it.
+    if (!isMailbox) {
+        const auto* table = getActiveOpcodeTable();
+        if (table && table->hasOpcode(Opcode::CMSG_GAMEOBJ_REPORT_USE)) {
+            network::Packet reportUse(wireOpcode(Opcode::CMSG_GAMEOBJ_REPORT_USE));
+            reportUse.writeUInt64(guid);
+            socket->send(reportUse);
+        }
     }
     if (shouldSendLoot) {
         lootTarget(guid);
