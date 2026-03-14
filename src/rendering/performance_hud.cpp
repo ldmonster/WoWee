@@ -460,8 +460,7 @@ void PerformanceHUD::render(const Renderer* renderer, const Camera* camera) {
         ImGui::Separator();
 
         ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.5f, 1.0f), "Movement");
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "WASD: Move/Strafe");
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Q/E: Strafe left/right");
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "WASD/QE: Blocked");
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Space: Jump");
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "X: Sit/Stand");
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "~: Auto-run");
