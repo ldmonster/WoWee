@@ -6527,7 +6527,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
             }
             uint64_t ikVictim = ikUsesFullGuid
                 ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            uint32_t ikSpell = (ik_rem() >= 4) ? packet.readUInt32() : 0;
+            if (ik_rem() < 4) {
+                packet.setReadPos(packet.getSize()); break;
+            }
+            uint32_t ikSpell = packet.readUInt32();
             // Show kill/death feedback for the local player
             if (ikCaster == playerGuid) {
                 addCombatText(CombatTextEntry::INSTAKILL, 0, ikSpell, true, 0, ikCaster, ikVictim);
