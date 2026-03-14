@@ -2829,6 +2829,7 @@ private:
     struct LocalLootState {
         LootResponseData data;
         bool moneyTaken = false;
+        bool itemAutoLootSent = false;
     };
     std::unordered_map<uint64_t, LocalLootState> localLootState_;
     struct PendingLootRetry {

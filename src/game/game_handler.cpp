@@ -19582,7 +19582,8 @@ void GameHandler::handleLootResponse(network::Packet& packet) {
         std::remove_if(pendingGameObjectLootOpens_.begin(), pendingGameObjectLootOpens_.end(),
                        [&](const PendingLootOpen& p) { return p.guid == currentLoot.lootGuid; }),
         pendingGameObjectLootOpens_.end());
-    localLootState_[currentLoot.lootGuid] = LocalLootState{currentLoot, false};
+    auto& localLoot = localLootState_[currentLoot.lootGuid];
+    localLoot.data = currentLoot;
 
     // Query item info so loot window can show names instead of IDs
     for (const auto& item : currentLoot.items) {
@@ -19607,11 +19608,12 @@ void GameHandler::handleLootResponse(network::Packet& packet) {
     }
 
     // Auto-loot items when enabled
-    if (autoLoot_ && state == WorldState::IN_WORLD && socket) {
+    if (autoLoot_ && state == WorldState::IN_WORLD && socket && !localLoot.itemAutoLootSent) {
         for (const auto& item : currentLoot.items) {
             auto pkt = AutostoreLootItemPacket::build(item.slotIndex);
             socket->send(pkt);
         }
+        localLoot.itemAutoLootSent = true;
     }
 }
 
