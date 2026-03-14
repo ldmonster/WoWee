@@ -127,7 +127,9 @@ CombatTextEntry::Type combatTextTypeFromSpellMissInfo(uint8_t missInfo) {
         case 6: return CombatTextEntry::DEFLECT;
         case 7: return CombatTextEntry::ABSORB;
         case 8: return CombatTextEntry::RESIST;
-        case 10: return CombatTextEntry::IMMUNE;  // Seen on some cores as a secondary immune result.
+        case 9:  // Some cores encode SPELL_MISS_IMMUNE2 as 9.
+        case 10: // Others encode SPELL_MISS_IMMUNE2 as 10.
+            return CombatTextEntry::IMMUNE;
         case 11: return CombatTextEntry::REFLECT;
         default: return CombatTextEntry::MISS;
     }
