@@ -225,17 +225,13 @@ void CameraController::update(float deltaTime) {
     bool keyD = !uiWantsKeyboard && !sitting && !movementSuppressed && input.isKeyPressed(SDL_SCANCODE_D);
     bool keyQ = !uiWantsKeyboard && !sitting && !movementSuppressed && input.isKeyPressed(SDL_SCANCODE_Q);
     bool keyE = !uiWantsKeyboard && !sitting && !movementSuppressed && input.isKeyPressed(SDL_SCANCODE_E);
-
-    // Keyboard movement keys are blocked (movement only).
-    // Mouse autorun (L+R) and other non-movement keys remain functional.
-    keyW = keyS = keyA = keyD = keyQ = keyE = false;
     bool shiftDown = !uiWantsKeyboard && (input.isKeyPressed(SDL_SCANCODE_LSHIFT) || input.isKeyPressed(SDL_SCANCODE_RSHIFT));
     bool ctrlDown = !uiWantsKeyboard && (input.isKeyPressed(SDL_SCANCODE_LCTRL) || input.isKeyPressed(SDL_SCANCODE_RCTRL));
     bool nowJump = !uiWantsKeyboard && !sitting && !movementSuppressed && input.isKeyJustPressed(SDL_SCANCODE_SPACE);
     bool spaceDown = !uiWantsKeyboard && !sitting && !movementSuppressed && input.isKeyPressed(SDL_SCANCODE_SPACE);
 
     // Idle camera: any input resets the timer; timeout triggers a slow orbit pan
-    bool anyInput = leftMouseDown || rightMouseDown || nowJump;
+    bool anyInput = leftMouseDown || rightMouseDown || keyW || keyS || keyA || keyD || keyQ || keyE || nowJump;
     if (anyInput) {
         idleTimer_ = 0.0f;
     } else if (!introActive) {
@@ -401,7 +397,11 @@ void CameraController::update(float deltaTime) {
 
     // Stand up on any movement key or jump while sitting (WoW behaviour)
     if (!uiWantsKeyboard && sitting && !movementSuppressed) {
-        bool anyMoveKey = input.isKeyPressed(SDL_SCANCODE_SPACE);
+        bool anyMoveKey =
+            input.isKeyPressed(SDL_SCANCODE_W) || input.isKeyPressed(SDL_SCANCODE_S) ||
+            input.isKeyPressed(SDL_SCANCODE_A) || input.isKeyPressed(SDL_SCANCODE_D) ||
+            input.isKeyPressed(SDL_SCANCODE_Q) || input.isKeyPressed(SDL_SCANCODE_E) ||
+            input.isKeyPressed(SDL_SCANCODE_SPACE);
         if (anyMoveKey) sitting = false;
     }
 
