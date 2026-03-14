@@ -19,6 +19,22 @@ namespace {
     inline uint16_t bswap16(uint16_t v) {
         return static_cast<uint16_t>(((v & 0xFF00u) >> 8) | ((v & 0x00FFu) << 8));
     }
+
+    bool hasFullPackedGuid(const wowee::network::Packet& packet) {
+        if (packet.getReadPos() >= packet.getSize()) {
+            return false;
+        }
+
+        const auto& rawData = packet.getData();
+        const uint8_t mask = rawData[packet.getReadPos()];
+        size_t guidBytes = 1;
+        for (int bit = 0; bit < 8; ++bit) {
+            if ((mask & (1u << bit)) != 0) {
+                ++guidBytes;
+            }
+        }
+        return packet.getSize() - packet.getReadPos() >= guidBytes;
+    }
 }
 
 namespace wowee {
@@ -3684,7 +3700,7 @@ bool SpellStartParser::parse(network::Packet& packet, SpellStartData& data) {
     // Read target flags and target (simplified)
     if (packet.getSize() - packet.getReadPos() >= 4) {
         uint32_t targetFlags = packet.readUInt32();
-        if ((targetFlags & 0x02) && packet.getSize() - packet.getReadPos() >= 1) { // TARGET_FLAG_UNIT, validate packed GUID read
+        if ((targetFlags & 0x02) && hasFullPackedGuid(packet)) { // TARGET_FLAG_UNIT
             data.targetGuid = UpdateObjectParser::readPackedGuid(packet);
         }
     }
@@ -3723,7 +3739,7 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
     data.hitTargets.reserve(storedHitLimit);
     for (uint16_t i = 0; i < rawHitCount; ++i) {
         // WotLK hit targets are packed GUIDs, like the caster and miss targets.
-        if (packet.getSize() - packet.getReadPos() < 1) {
+        if (!hasFullPackedGuid(packet)) {
             LOG_WARNING("Spell go: truncated hit targets at index ", i, "/", (int)rawHitCount);
             break;
         }
@@ -3749,13 +3765,17 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
     for (uint16_t i = 0; i < rawMissCount; ++i) {
         // Each miss entry: packed GUID(1-8 bytes) + missType(1 byte).
         // REFLECT additionally appends uint32 reflectSpellId + uint8 reflectResult.
-        if (packet.getSize() - packet.getReadPos() < 2) {
+        if (!hasFullPackedGuid(packet)) {
             LOG_WARNING("Spell go: truncated miss targets at index ", i, "/", (int)rawMissCount);
             break;
         }
         SpellGoMissEntry m;
         m.targetGuid = UpdateObjectParser::readPackedGuid(packet);  // packed GUID in WotLK
-        m.missType   = (packet.getSize() - packet.getReadPos() >= 1) ? packet.readUInt8() : 0;
+        if (packet.getSize() - packet.getReadPos() < 1) {
+            LOG_WARNING("Spell go: missing missType at miss index ", i, "/", (int)rawMissCount);
+            break;
+        }
+        m.missType = packet.readUInt8();
         if (m.missType == 11) {
             if (packet.getSize() - packet.getReadPos() < 5) {
                 LOG_WARNING("Spell go: truncated reflect payload at miss index ", i, "/", (int)rawMissCount);
