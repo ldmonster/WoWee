@@ -8398,11 +8398,27 @@ void GameScreen::renderCombatText(game::GameHandler& gameHandler) {
                     break;
                 }
                 case game::CombatTextEntry::DISPEL:
-                    snprintf(text, sizeof(text), "Dispel");
+                    if (entry.spellId != 0) {
+                        const std::string& dispelledName = gameHandler.getSpellName(entry.spellId);
+                        if (!dispelledName.empty())
+                            snprintf(text, sizeof(text), "Dispel %s", dispelledName.c_str());
+                        else
+                            snprintf(text, sizeof(text), "Dispel");
+                    } else {
+                        snprintf(text, sizeof(text), "Dispel");
+                    }
                     color = ImVec4(0.6f, 0.9f, 1.0f, alpha);
                     break;
                 case game::CombatTextEntry::STEAL:
-                    snprintf(text, sizeof(text), "Spellsteal");
+                    if (entry.spellId != 0) {
+                        const std::string& stolenName = gameHandler.getSpellName(entry.spellId);
+                        if (!stolenName.empty())
+                            snprintf(text, sizeof(text), "Spellsteal %s", stolenName.c_str());
+                        else
+                            snprintf(text, sizeof(text), "Spellsteal");
+                    } else {
+                        snprintf(text, sizeof(text), "Spellsteal");
+                    }
                     color = ImVec4(0.8f, 0.7f, 1.0f, alpha);
                     break;
                 case game::CombatTextEntry::INTERRUPT: {
