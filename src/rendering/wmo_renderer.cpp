@@ -2054,6 +2054,9 @@ void WMORenderer::getVisibleGroupsViaPortals(const ModelData& model,
                                               const Frustum& frustum,
                                               const glm::mat4& modelMatrix,
                                               std::unordered_set<uint32_t>& outVisibleGroups) const {
+    constexpr uint32_t WMO_GROUP_FLAG_OUTDOOR = 0x8;
+    constexpr uint32_t WMO_GROUP_FLAG_INDOOR = 0x2000;
+
     // Find camera's containing group
     int cameraGroup = findContainingGroup(model, cameraLocalPos);
 
@@ -2065,6 +2068,21 @@ void WMORenderer::getVisibleGroupsViaPortals(const ModelData& model,
             outVisibleGroups.insert(static_cast<uint32_t>(gi));
         }
         return;
+    }
+
+    // Outdoor city WMOs (e.g. Stormwind) often have portal graphs that are valid for
+    // indoor visibility but too aggressive outdoors, causing direction-dependent popout.
+    // Only trust portal traversal when the camera is in an interior-only group.
+    if (cameraGroup < static_cast<int>(model.groups.size())) {
+        const uint32_t gFlags = model.groups[cameraGroup].groupFlags;
+        const bool isIndoor = (gFlags & WMO_GROUP_FLAG_INDOOR) != 0;
+        const bool isOutdoor = (gFlags & WMO_GROUP_FLAG_OUTDOOR) != 0;
+        if (!isIndoor || isOutdoor) {
+            for (size_t gi = 0; gi < model.groups.size(); gi++) {
+                outVisibleGroups.insert(static_cast<uint32_t>(gi));
+            }
+            return;
+        }
     }
 
     // If the camera group has no portal refs, it's a dead-end group (utility/transition group).
