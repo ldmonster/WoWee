@@ -2434,6 +2434,8 @@ private:
     std::chrono::steady_clock::time_point movementClockStart_ = std::chrono::steady_clock::now();
     uint32_t lastMovementTimestampMs_ = 0;
     bool serverMovementAllowed_ = true;
+    uint32_t monsterMovePacketsThisTick_ = 0;
+    uint32_t monsterMovePacketsDroppedThisTick_ = 0;
 
     // Fall/jump tracking for movement packet correctness.
     // fallTime must be the elapsed ms since the FALLING flag was set; the server

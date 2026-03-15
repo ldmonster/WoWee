@@ -1818,6 +1818,39 @@ bool TurtlePacketParsers::parseMonsterMove(network::Packet& packet, MonsterMoveD
         return true;
     }
 
+    auto looksLikeWotlkMonsterMove = [&](network::Packet& probe) -> bool {
+        const size_t probeStart = probe.getReadPos();
+        uint64_t guid = UpdateObjectParser::readPackedGuid(probe);
+        if (guid == 0) {
+            probe.setReadPos(probeStart);
+            return false;
+        }
+        if (probe.getReadPos() >= probe.getSize()) {
+            probe.setReadPos(probeStart);
+            return false;
+        }
+        uint8_t unk = probe.readUInt8();
+        if (unk > 1) {
+            probe.setReadPos(probeStart);
+            return false;
+        }
+        if (probe.getReadPos() + 12 + 4 + 1 > probe.getSize()) {
+            probe.setReadPos(probeStart);
+            return false;
+        }
+        probe.readFloat(); probe.readFloat(); probe.readFloat(); // xyz
+        probe.readUInt32(); // splineId
+        uint8_t moveType = probe.readUInt8();
+        probe.setReadPos(probeStart);
+        return moveType >= 1 && moveType <= 4;
+    };
+
+    packet.setReadPos(start);
+    if (!looksLikeWotlkMonsterMove(packet)) {
+        packet.setReadPos(start);
+        return false;
+    }
+
     packet.setReadPos(start);
     if (MonsterMoveParser::parse(packet, data)) {
         LOG_DEBUG("[Turtle] SMSG_MONSTER_MOVE parsed via WotLK fallback layout");

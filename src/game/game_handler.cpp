@@ -757,6 +757,10 @@ void GameHandler::update(float deltaTime) {
         return;
     }
 
+    // Reset per-tick monster-move budget tracking (Classic/Turtle flood protection).
+    monsterMovePacketsThisTick_ = 0;
+    monsterMovePacketsDroppedThisTick_ = 0;
+
     // Update socket (processes incoming data and triggers callbacks)
     if (socket) {
         auto socketStart = std::chrono::steady_clock::now();
@@ -7960,7 +7964,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
             uint64_t kickerGuid   = packet.readUInt64();
             uint32_t reasonType   = packet.readUInt32();
             std::string reason;
-            if (packet.getSize() - packet.getReadPos() > 0)
+            if (packet.getReadPos() < packet.getSize())
                 reason = packet.readString();
             (void)kickerGuid;
             (void)reasonType;
@@ -8006,14 +8010,14 @@ void GameHandler::handlePacket(network::Packet& packet) {
             uint32_t ticketId = packet.readUInt32();
             std::string subject;
             std::string body;
-            if (packet.getSize() - packet.getReadPos() > 0) subject = packet.readString();
-            if (packet.getSize() - packet.getReadPos() > 0) body    = packet.readString();
+            if (packet.getReadPos() < packet.getSize()) subject = packet.readString();
+            if (packet.getReadPos() < packet.getSize()) body    = packet.readString();
             uint32_t responseCount = 0;
             if (packet.getSize() - packet.getReadPos() >= 4)
                 responseCount = packet.readUInt32();
             std::string responseText;
             for (uint32_t i = 0; i < responseCount && i < 10; ++i) {
-                if (packet.getSize() - packet.getReadPos() > 0) {
+                if (packet.getReadPos() < packet.getSize()) {
                     std::string t = packet.readString();
                     if (i == 0) responseText = t;
                 }
@@ -9034,6 +9038,18 @@ void GameHandler::handleWardenData(network::Packet& packet) {
             }
 
             std::vector<uint8_t> seed(decrypted.begin() + 1, decrypted.begin() + 17);
+            auto applyWardenSeedRekey = [&](const std::vector<uint8_t>& rekeySeed) {
+                // Derive new RC4 keys from the seed using SHA1Randx.
+                uint8_t newEncryptKey[16], newDecryptKey[16];
+                WardenCrypto::sha1RandxGenerate(rekeySeed, newEncryptKey, newDecryptKey);
+
+                std::vector<uint8_t> ek(newEncryptKey, newEncryptKey + 16);
+                std::vector<uint8_t> dk(newDecryptKey, newDecryptKey + 16);
+                wardenCrypto_->replaceKeys(ek, dk);
+                for (auto& b : newEncryptKey) b = 0;
+                for (auto& b : newDecryptKey) b = 0;
+                LOG_DEBUG("Warden: Derived and applied key update from seed");
+            };
 
             // --- Try CR lookup (pre-computed challenge/response entries) ---
             if (!wardenCREntries_.empty()) {
@@ -9082,7 +9098,24 @@ void GameHandler::handleWardenData(network::Packet& packet) {
             LOG_WARNING("Warden: No CR match, computing hash from loaded module");
 
             if (!wardenLoadedModule_ || !wardenLoadedModule_->isLoaded()) {
-                LOG_ERROR("Warden: No loaded module and no CR match — cannot compute hash");
+                LOG_WARNING("Warden: No loaded module and no CR match — using raw module fallback hash");
+
+                // Never skip HASH_RESULT: some realms disconnect quickly if this response is missing.
+                std::vector<uint8_t> fallbackReply;
+                if (!wardenModuleData_.empty()) {
+                    fallbackReply = auth::Crypto::sha1(wardenModuleData_);
+                } else if (!wardenModuleHash_.empty()) {
+                    fallbackReply = auth::Crypto::sha1(wardenModuleHash_);
+                } else {
+                    fallbackReply.assign(20, 0);
+                }
+
+                std::vector<uint8_t> resp;
+                resp.push_back(0x04); // WARDEN_CMSG_HASH_RESULT
+                resp.insert(resp.end(), fallbackReply.begin(), fallbackReply.end());
+                sendWardenResponse(resp);
+
+                applyWardenSeedRekey(seed);
                 wardenState_ = WardenState::WAIT_CHECKS;
                 break;
             }
@@ -9171,19 +9204,7 @@ void GameHandler::handleWardenData(network::Packet& packet) {
                 resp.insert(resp.end(), reply.begin(), reply.end());
                 sendWardenResponse(resp);
 
-                // Derive new RC4 keys from the seed using SHA1Randx
-                std::vector<uint8_t> seedVec(seed.begin(), seed.end());
-                // Pad seed to at least 2 bytes for SHA1Randx split
-                // SHA1Randx splits input in half: first_half and second_half
-                uint8_t newEncryptKey[16], newDecryptKey[16];
-                WardenCrypto::sha1RandxGenerate(seedVec, newEncryptKey, newDecryptKey);
-
-                std::vector<uint8_t> ek(newEncryptKey, newEncryptKey + 16);
-                std::vector<uint8_t> dk(newDecryptKey, newDecryptKey + 16);
-                wardenCrypto_->replaceKeys(ek, dk);
-                for (auto& b : newEncryptKey) b = 0;
-                for (auto& b : newDecryptKey) b = 0;
-                LOG_DEBUG("Warden: Derived and applied key update from seed");
+                applyWardenSeedRekey(seed);
             }
 
             wardenState_ = WardenState::WAIT_CHECKS;
@@ -15560,9 +15581,9 @@ void GameHandler::handleLfgBootProposalUpdate(network::Packet& packet) {
     lfgBootNeeded_   = votesNeeded;
 
     // Optional: reason string and target name (null-terminated) follow the fixed fields
-    if (packet.getSize() - packet.getReadPos() > 0)
+    if (packet.getReadPos() < packet.getSize())
         lfgBootReason_ = packet.readString();
-    if (packet.getSize() - packet.getReadPos() > 0)
+    if (packet.getReadPos() < packet.getSize())
         lfgBootTargetName_ = packet.readString();
 
     if (inProgress) {
@@ -16282,20 +16303,27 @@ void GameHandler::handleCompressedMoves(network::Packet& packet) {
 }
 
 void GameHandler::handleMonsterMove(network::Packet& packet) {
+    if (isActiveExpansion("classic") || isActiveExpansion("turtle")) {
+        constexpr uint32_t kMaxMonsterMovesPerTick = 256;
+        ++monsterMovePacketsThisTick_;
+        if (monsterMovePacketsThisTick_ > kMaxMonsterMovesPerTick) {
+            ++monsterMovePacketsDroppedThisTick_;
+            if (monsterMovePacketsDroppedThisTick_ <= 3 ||
+                (monsterMovePacketsDroppedThisTick_ % 100) == 0) {
+                LOG_WARNING("SMSG_MONSTER_MOVE: per-tick cap exceeded, dropping packet",
+                            " (processed=", monsterMovePacketsThisTick_,
+                            " dropped=", monsterMovePacketsDroppedThisTick_, ")");
+            }
+            return;
+        }
+    }
+
     MonsterMoveData data;
     auto logMonsterMoveParseFailure = [&](const std::string& msg) {
         static uint32_t failCount = 0;
         ++failCount;
         if (failCount <= 10 || (failCount % 100) == 0) {
             LOG_WARNING(msg, " (occurrence=", failCount, ")");
-        }
-    };
-    auto logWrappedFallbackUsed = [&]() {
-        static uint32_t wrappedFallbackCount = 0;
-        ++wrappedFallbackCount;
-        if (wrappedFallbackCount <= 10 || (wrappedFallbackCount % 100) == 0) {
-            LOG_WARNING("SMSG_MONSTER_MOVE parsed via wrapped-subpacket fallback",
-                        " (occurrence=", wrappedFallbackCount, ")");
         }
     };
     auto logWrappedUncompressedFallbackUsed = [&]() {
@@ -16352,7 +16380,6 @@ void GameHandler::handleMonsterMove(network::Packet& packet) {
             network::Packet wrappedPacket(packet.getOpcode(), stripped);
             if (packetParsers_->parseMonsterMove(wrappedPacket, data)) {
                 parsed = true;
-                logWrappedFallbackUsed();
             }
         }
         if (!parsed) {
