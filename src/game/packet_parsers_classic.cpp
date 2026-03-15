@@ -1947,6 +1947,12 @@ bool TurtlePacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjec
                                 return this->TbcPacketParsers::parseMovementBlock(p, b);
                             }, "tbc");
                     }
+                    if (!ok) {
+                        ok = parseMovementVariant(
+                            [](network::Packet& p, UpdateBlock& b) {
+                                return UpdateObjectParser::parseMovementBlock(p, b);
+                            }, "wotlk");
+                    }
                     break;
                 case UpdateType::OUT_OF_RANGE_OBJECTS:
                 case UpdateType::NEAR_OBJECTS:
