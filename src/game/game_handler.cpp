@@ -16506,12 +16506,48 @@ void GameHandler::handleOtherPlayerMovement(network::Packet& packet) {
 }
 
 void GameHandler::handleCompressedMoves(network::Packet& packet) {
-    // Vanilla/Classic SMSG_COMPRESSED_MOVES: raw concatenated sub-packets, NOT zlib.
-    // Evidence: observed 1-byte "00" packets which are not valid zlib streams.
-    // Each sub-packet: uint8 size (of opcode[2]+payload), uint16 opcode, uint8[] payload.
-    // size=0 → invalid/empty, signals end of batch.
-    const auto& data = packet.getData();
-    size_t dataLen = data.size();
+    // Vanilla-family SMSG_COMPRESSED_MOVES carries concatenated movement sub-packets.
+    // Turtle can additionally wrap the batch in the same uint32 decompressedSize + zlib
+    // envelope used by other compressed world packets.
+    //
+    // Within the decompressed stream, some realms encode the leading uint8 size as:
+    // - opcode(2) + payload bytes
+    // - payload bytes only
+    // Try both framing modes and use the one that cleanly consumes the batch.
+    std::vector<uint8_t> decompressedStorage;
+    const std::vector<uint8_t>* dataPtr = &packet.getData();
+
+    const auto& rawData = packet.getData();
+    const bool hasCompressedWrapper =
+        rawData.size() >= 6 &&
+        rawData[4] == 0x78 &&
+        (rawData[5] == 0x01 || rawData[5] == 0x9C ||
+         rawData[5] == 0xDA || rawData[5] == 0x5E);
+    if (hasCompressedWrapper) {
+        uint32_t decompressedSize = static_cast<uint32_t>(rawData[0]) |
+                                    (static_cast<uint32_t>(rawData[1]) << 8) |
+                                    (static_cast<uint32_t>(rawData[2]) << 16) |
+                                    (static_cast<uint32_t>(rawData[3]) << 24);
+        if (decompressedSize == 0 || decompressedSize > 65536) {
+            LOG_WARNING("SMSG_COMPRESSED_MOVES: bad decompressedSize=", decompressedSize);
+            return;
+        }
+
+        decompressedStorage.resize(decompressedSize);
+        uLongf destLen = decompressedSize;
+        int ret = uncompress(decompressedStorage.data(), &destLen,
+                             rawData.data() + 4, rawData.size() - 4);
+        if (ret != Z_OK) {
+            LOG_WARNING("SMSG_COMPRESSED_MOVES: zlib error ", ret);
+            return;
+        }
+
+        decompressedStorage.resize(destLen);
+        dataPtr = &decompressedStorage;
+    }
+
+    const auto& data = *dataPtr;
+    const size_t dataLen = data.size();
 
     // Wire opcodes for sub-packet routing
     uint16_t monsterMoveWire          = wireOpcode(Opcode::SMSG_MONSTER_MOVE);
@@ -16551,43 +16587,117 @@ void GameHandler::handleCompressedMoves(network::Packet& packet) {
         wireOpcode(Opcode::MSG_MOVE_UNROOT),
     };
 
+    struct CompressedMoveSubPacket {
+        uint16_t opcode = 0;
+        std::vector<uint8_t> payload;
+    };
+    struct DecodeResult {
+        bool ok = false;
+        bool overrun = false;
+        bool usedPayloadOnlySize = false;
+        size_t endPos = 0;
+        size_t recognizedCount = 0;
+        size_t subPacketCount = 0;
+        std::vector<CompressedMoveSubPacket> packets;
+    };
+
+    auto isRecognizedSubOpcode = [&](uint16_t subOpcode) {
+        return subOpcode == monsterMoveWire ||
+               subOpcode == monsterMoveTransportWire ||
+               std::find(kMoveOpcodes.begin(), kMoveOpcodes.end(), subOpcode) != kMoveOpcodes.end();
+    };
+
+    auto decodeSubPackets = [&](bool payloadOnlySize) -> DecodeResult {
+        DecodeResult result;
+        result.usedPayloadOnlySize = payloadOnlySize;
+        size_t pos = 0;
+        while (pos < dataLen) {
+            if (pos + 1 > dataLen) break;
+            uint8_t subSize = data[pos];
+            if (subSize == 0) {
+                result.ok = true;
+                result.endPos = pos + 1;
+                return result;
+            }
+
+            const size_t payloadLen = payloadOnlySize
+                ? static_cast<size_t>(subSize)
+                : (subSize >= 2 ? static_cast<size_t>(subSize) - 2 : 0);
+            if (!payloadOnlySize && subSize < 2) {
+                result.endPos = pos;
+                return result;
+            }
+
+            const size_t packetLen = 1 + 2 + payloadLen;
+            if (pos + packetLen > dataLen) {
+                result.overrun = true;
+                result.endPos = pos;
+                return result;
+            }
+
+            uint16_t subOpcode = static_cast<uint16_t>(data[pos + 1]) |
+                                 (static_cast<uint16_t>(data[pos + 2]) << 8);
+            size_t payloadStart = pos + 3;
+
+            CompressedMoveSubPacket subPacket;
+            subPacket.opcode = subOpcode;
+            subPacket.payload.assign(data.begin() + payloadStart,
+                                     data.begin() + payloadStart + payloadLen);
+            result.packets.push_back(std::move(subPacket));
+            ++result.subPacketCount;
+            if (isRecognizedSubOpcode(subOpcode)) {
+                ++result.recognizedCount;
+            }
+
+            pos += packetLen;
+        }
+        result.ok = (result.endPos == 0 || result.endPos == dataLen);
+        result.endPos = dataLen;
+        return result;
+    };
+
+    DecodeResult decoded = decodeSubPackets(false);
+    if (!decoded.ok || decoded.overrun) {
+        DecodeResult payloadOnlyDecoded = decodeSubPackets(true);
+        const bool preferPayloadOnly =
+            payloadOnlyDecoded.ok &&
+            (!decoded.ok || decoded.overrun || payloadOnlyDecoded.recognizedCount > decoded.recognizedCount);
+        if (preferPayloadOnly) {
+            decoded = std::move(payloadOnlyDecoded);
+            static uint32_t payloadOnlyFallbackCount = 0;
+            ++payloadOnlyFallbackCount;
+            if (payloadOnlyFallbackCount <= 10 || (payloadOnlyFallbackCount % 100) == 0) {
+                LOG_WARNING("SMSG_COMPRESSED_MOVES decoded via payload-only size fallback",
+                            " (occurrence=", payloadOnlyFallbackCount, ")");
+            }
+        }
+    }
+
+    if (!decoded.ok || decoded.overrun) {
+        LOG_WARNING("SMSG_COMPRESSED_MOVES: sub-packet overruns buffer at pos=", decoded.endPos);
+        return;
+    }
+
     // Track unhandled sub-opcodes once per compressed packet (avoid log spam)
     std::unordered_set<uint16_t> unhandledSeen;
 
-    size_t pos = 0;
-    while (pos < dataLen) {
-        if (pos + 1 > dataLen) break;
-        uint8_t subSize = data[pos];
-        if (subSize < 2) break;  // size=0 or 1 → empty/end-of-batch sentinel
-        if (pos + 1 + subSize > dataLen) {
-            LOG_WARNING("SMSG_COMPRESSED_MOVES: sub-packet overruns buffer at pos=", pos);
-            break;
-        }
-        uint16_t subOpcode = static_cast<uint16_t>(data[pos + 1]) |
-                             (static_cast<uint16_t>(data[pos + 2]) << 8);
-        size_t payloadLen = subSize - 2;
-        size_t payloadStart = pos + 3;
+    for (const auto& entry : decoded.packets) {
+        network::Packet subPacket(entry.opcode, entry.payload);
 
-        std::vector<uint8_t> subPayload(data.begin() + payloadStart,
-                                        data.begin() + payloadStart + payloadLen);
-        network::Packet subPacket(subOpcode, subPayload);
-
-        if (subOpcode == monsterMoveWire) {
+        if (entry.opcode == monsterMoveWire) {
             handleMonsterMove(subPacket);
-        } else if (subOpcode == monsterMoveTransportWire) {
+        } else if (entry.opcode == monsterMoveTransportWire) {
             handleMonsterMoveTransport(subPacket);
         } else if (state == WorldState::IN_WORLD &&
-                   std::find(kMoveOpcodes.begin(), kMoveOpcodes.end(), subOpcode) != kMoveOpcodes.end()) {
+                   std::find(kMoveOpcodes.begin(), kMoveOpcodes.end(), entry.opcode) != kMoveOpcodes.end()) {
             // Player/NPC movement update packed in SMSG_MULTIPLE_MOVES
             handleOtherPlayerMovement(subPacket);
         } else {
-            if (unhandledSeen.insert(subOpcode).second) {
+            if (unhandledSeen.insert(entry.opcode).second) {
                 LOG_INFO("SMSG_COMPRESSED_MOVES: unhandled sub-opcode 0x",
-                         std::hex, subOpcode, std::dec, " payloadLen=", payloadLen);
+                         std::hex, entry.opcode, std::dec, " payloadLen=", entry.payload.size());
             }
         }
-
-        pos = payloadStart + payloadLen;
     }
 }
 

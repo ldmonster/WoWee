@@ -22,6 +22,18 @@ bool hasFullPackedGuid(const network::Packet& packet) {
     return packet.getSize() - packet.getReadPos() >= guidBytes;
 }
 
+const char* updateTypeName(UpdateType type) {
+    switch (type) {
+        case UpdateType::VALUES: return "VALUES";
+        case UpdateType::MOVEMENT: return "MOVEMENT";
+        case UpdateType::CREATE_OBJECT: return "CREATE_OBJECT";
+        case UpdateType::CREATE_OBJECT2: return "CREATE_OBJECT2";
+        case UpdateType::OUT_OF_RANGE_OBJECTS: return "OUT_OF_RANGE_OBJECTS";
+        case UpdateType::NEAR_OBJECTS: return "NEAR_OBJECTS";
+        default: return "UNKNOWN";
+    }
+}
+
 } // namespace
 
 // ============================================================================
@@ -63,12 +75,12 @@ bool ClassicPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlo
 
     LOG_DEBUG("  [Classic] UpdateFlags: 0x", std::hex, (int)updateFlags, std::dec);
 
-    const uint8_t UPDATEFLAG_LIVING       = 0x20;
-    const uint8_t UPDATEFLAG_HAS_POSITION = 0x40;
-    const uint8_t UPDATEFLAG_HAS_TARGET   = 0x04;
-    const uint8_t UPDATEFLAG_TRANSPORT    = 0x02;
-    const uint8_t UPDATEFLAG_LOWGUID      = 0x08;
-    const uint8_t UPDATEFLAG_HIGHGUID     = 0x10;
+    const uint8_t UPDATEFLAG_TRANSPORT       = 0x02;
+    const uint8_t UPDATEFLAG_MELEE_ATTACKING = 0x04;
+    const uint8_t UPDATEFLAG_HIGHGUID        = 0x08;
+    const uint8_t UPDATEFLAG_ALL             = 0x10;
+    const uint8_t UPDATEFLAG_LIVING          = 0x20;
+    const uint8_t UPDATEFLAG_HAS_POSITION    = 0x40;
 
     if (updateFlags & UPDATEFLAG_LIVING) {
         // Movement flags (u32 only — NO extra flags byte in Classic)
@@ -183,24 +195,24 @@ bool ClassicPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlo
         LOG_DEBUG("  [Classic] STATIONARY: (", block.x, ", ", block.y, ", ", block.z, ")");
     }
 
-    // Target GUID
-    if (updateFlags & UPDATEFLAG_HAS_TARGET) {
-        /*uint64_t targetGuid =*/ UpdateObjectParser::readPackedGuid(packet);
-    }
-
-    // Transport time
-    if (updateFlags & UPDATEFLAG_TRANSPORT) {
-        /*uint32_t transportTime =*/ packet.readUInt32();
-    }
-
-    // Low GUID
-    if (updateFlags & UPDATEFLAG_LOWGUID) {
-        /*uint32_t lowGuid =*/ packet.readUInt32();
-    }
-
     // High GUID
     if (updateFlags & UPDATEFLAG_HIGHGUID) {
         /*uint32_t highGuid =*/ packet.readUInt32();
+    }
+
+    // ALL/SELF extra uint32
+    if (updateFlags & UPDATEFLAG_ALL) {
+        /*uint32_t unkAll =*/ packet.readUInt32();
+    }
+
+    // Current melee target as packed guid
+    if (updateFlags & UPDATEFLAG_MELEE_ATTACKING) {
+        /*uint64_t meleeTargetGuid =*/ UpdateObjectParser::readPackedGuid(packet);
+    }
+
+    // Transport progress / world time
+    if (updateFlags & UPDATEFLAG_TRANSPORT) {
+        /*uint32_t transportTime =*/ packet.readUInt32();
     }
 
     return true;
@@ -1690,12 +1702,12 @@ bool TurtlePacketParsers::parseMovementBlock(network::Packet& packet, UpdateBloc
 
     LOG_DEBUG("  [Turtle] UpdateFlags: 0x", std::hex, (int)updateFlags, std::dec);
 
-    const uint8_t UPDATEFLAG_LIVING       = 0x20;
-    const uint8_t UPDATEFLAG_HAS_POSITION = 0x40;
-    const uint8_t UPDATEFLAG_HAS_TARGET   = 0x04;
-    const uint8_t UPDATEFLAG_TRANSPORT    = 0x02;
-    const uint8_t UPDATEFLAG_LOWGUID      = 0x08;
-    const uint8_t UPDATEFLAG_HIGHGUID     = 0x10;
+    const uint8_t UPDATEFLAG_TRANSPORT       = 0x02;
+    const uint8_t UPDATEFLAG_MELEE_ATTACKING = 0x04;
+    const uint8_t UPDATEFLAG_HIGHGUID        = 0x08;
+    const uint8_t UPDATEFLAG_ALL             = 0x10;
+    const uint8_t UPDATEFLAG_LIVING          = 0x20;
+    const uint8_t UPDATEFLAG_HAS_POSITION    = 0x40;
 
     if (updateFlags & UPDATEFLAG_LIVING) {
         size_t livingStart = packet.getReadPos();
@@ -1810,24 +1822,21 @@ bool TurtlePacketParsers::parseMovementBlock(network::Packet& packet, UpdateBloc
         LOG_DEBUG("  [Turtle] STATIONARY: (", block.x, ", ", block.y, ", ", block.z, ")");
     }
 
-    // Target GUID
-    if (updateFlags & UPDATEFLAG_HAS_TARGET) {
-        /*uint64_t targetGuid =*/ UpdateObjectParser::readPackedGuid(packet);
-    }
-
-    // Transport time
-    if (updateFlags & UPDATEFLAG_TRANSPORT) {
-        /*uint32_t transportTime =*/ packet.readUInt32();
-    }
-
-    // Low GUID — Classic-style: 1×u32 (NOT TBC's 2×u32)
-    if (updateFlags & UPDATEFLAG_LOWGUID) {
-        /*uint32_t lowGuid =*/ packet.readUInt32();
-    }
-
     // High GUID — 1×u32
     if (updateFlags & UPDATEFLAG_HIGHGUID) {
         /*uint32_t highGuid =*/ packet.readUInt32();
+    }
+
+    if (updateFlags & UPDATEFLAG_ALL) {
+        /*uint32_t unkAll =*/ packet.readUInt32();
+    }
+
+    if (updateFlags & UPDATEFLAG_MELEE_ATTACKING) {
+        /*uint64_t meleeTargetGuid =*/ UpdateObjectParser::readPackedGuid(packet);
+    }
+
+    if (updateFlags & UPDATEFLAG_TRANSPORT) {
+        /*uint32_t transportTime =*/ packet.readUInt32();
     }
 
     return true;
@@ -1855,9 +1864,16 @@ bool TurtlePacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjec
             /*uint8_t hasTransport =*/ packet.readUInt8();
         }
 
+        uint32_t remainingBlockCount = out.blockCount;
+
         if (packet.getReadPos() + 1 <= packet.getSize()) {
             uint8_t firstByte = packet.readUInt8();
             if (firstByte == static_cast<uint8_t>(UpdateType::OUT_OF_RANGE_OBJECTS)) {
+                if (remainingBlockCount == 0) {
+                    packet.setReadPos(start);
+                    return false;
+                }
+                --remainingBlockCount;
                 if (packet.getReadPos() + 4 > packet.getSize()) {
                     packet.setReadPos(start);
                     return false;
@@ -1879,6 +1895,7 @@ bool TurtlePacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjec
             }
         }
 
+        out.blockCount = remainingBlockCount;
         out.blocks.reserve(out.blockCount);
         for (uint32_t i = 0; i < out.blockCount; ++i) {
             if (packet.getReadPos() >= packet.getSize()) {
@@ -1905,7 +1922,7 @@ bool TurtlePacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjec
 
                 switch (updateType) {
                     case UpdateType::MOVEMENT:
-                        block.guid = UpdateObjectParser::readPackedGuid(packet);
+                        block.guid = packet.readUInt64();
                         if (!movementParser(packet, block)) return false;
                         LOG_DEBUG("[Turtle] Parsed MOVEMENT block via ", layoutName, " layout");
                         return true;
@@ -1964,6 +1981,12 @@ bool TurtlePacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjec
             }
 
             if (!ok) {
+                LOG_WARNING("[Turtle] SMSG_UPDATE_OBJECT block parse failed",
+                            " blockIndex=", i,
+                            " updateType=", updateTypeName(updateType),
+                            " readPos=", packet.getReadPos(),
+                            " blockStart=", blockStart,
+                            " packetSize=", packet.getSize());
                 packet.setReadPos(start);
                 return false;
             }

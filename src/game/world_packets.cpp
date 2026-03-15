@@ -35,6 +35,19 @@ namespace {
         }
         return packet.getSize() - packet.getReadPos() >= guidBytes;
     }
+
+    const char* updateTypeName(wowee::game::UpdateType type) {
+        using wowee::game::UpdateType;
+        switch (type) {
+            case UpdateType::VALUES: return "VALUES";
+            case UpdateType::MOVEMENT: return "MOVEMENT";
+            case UpdateType::CREATE_OBJECT: return "CREATE_OBJECT";
+            case UpdateType::CREATE_OBJECT2: return "CREATE_OBJECT2";
+            case UpdateType::OUT_OF_RANGE_OBJECTS: return "OUT_OF_RANGE_OBJECTS";
+            case UpdateType::NEAR_OBJECTS: return "NEAR_OBJECTS";
+            default: return "UNKNOWN";
+        }
+    }
 }
 
 namespace wowee {
@@ -1225,7 +1238,13 @@ bool UpdateObjectParser::parseUpdateFields(network::Packet& packet, UpdateBlock&
     for (int i = 0; i < blockCount; ++i) {
         // Validate 4 bytes available before each block read
         if (packet.getReadPos() + 4 > packet.getSize()) {
-            LOG_WARNING("UpdateObjectParser: truncated update mask at block ", i);
+            LOG_WARNING("UpdateObjectParser: truncated update mask at block ", i,
+                        " type=", updateTypeName(block.updateType),
+                        " objectType=", static_cast<int>(block.objectType),
+                        " guid=0x", std::hex, block.guid, std::dec,
+                        " readPos=", packet.getReadPos(),
+                        " size=", packet.getSize(),
+                        " maskBlockCount=", static_cast<int>(blockCount));
             return false;
         }
         updateMask[i] = packet.readUInt32();
@@ -1254,7 +1273,14 @@ bool UpdateObjectParser::parseUpdateFields(network::Packet& packet, UpdateBlock&
             }
             // Validate 4 bytes available before reading field value
             if (packet.getReadPos() + 4 > packet.getSize()) {
-                LOG_WARNING("UpdateObjectParser: truncated field value at field ", fieldIndex);
+                LOG_WARNING("UpdateObjectParser: truncated field value at field ", fieldIndex,
+                            " type=", updateTypeName(block.updateType),
+                            " objectType=", static_cast<int>(block.objectType),
+                            " guid=0x", std::hex, block.guid, std::dec,
+                            " readPos=", packet.getReadPos(),
+                            " size=", packet.getSize(),
+                            " maskBlockIndex=", blockIdx,
+                            " maskBlock=0x", std::hex, updateMask[blockIdx], std::dec);
                 return false;
             }
             uint32_t value = packet.readUInt32();
@@ -1298,7 +1324,7 @@ bool UpdateObjectParser::parseUpdateBlock(network::Packet& packet, UpdateBlock& 
 
         case UpdateType::MOVEMENT: {
             // Movement update
-            block.guid = readPackedGuid(packet);
+            block.guid = packet.readUInt64();
             LOG_DEBUG("  MOVEMENT update for GUID: 0x", std::hex, block.guid, std::dec);
 
             return parseMovementBlock(packet, block);
@@ -1361,11 +1387,18 @@ bool UpdateObjectParser::parse(network::Packet& packet, UpdateObjectData& data) 
     LOG_DEBUG("  objectCount = ", data.blockCount);
     LOG_DEBUG("  packetSize = ", packet.getSize());
 
+    uint32_t remainingBlockCount = data.blockCount;
+
     // Check for out-of-range objects first
     if (packet.getReadPos() + 1 <= packet.getSize()) {
         uint8_t firstByte = packet.readUInt8();
 
         if (firstByte == static_cast<uint8_t>(UpdateType::OUT_OF_RANGE_OBJECTS)) {
+            if (remainingBlockCount == 0) {
+                LOG_ERROR("SMSG_UPDATE_OBJECT rejected: OUT_OF_RANGE_OBJECTS with zero blockCount");
+                return false;
+            }
+            --remainingBlockCount;
             // Read out-of-range GUID count
             uint32_t count = packet.readUInt32();
             if (count > kMaxReasonableOutOfRangeGuids) {
@@ -1389,6 +1422,7 @@ bool UpdateObjectParser::parse(network::Packet& packet, UpdateObjectData& data) 
     }
 
     // Parse update blocks
+    data.blockCount = remainingBlockCount;
     data.blocks.reserve(data.blockCount);
 
     for (uint32_t i = 0; i < data.blockCount; ++i) {

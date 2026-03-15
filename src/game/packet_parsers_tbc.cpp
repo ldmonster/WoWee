@@ -425,9 +425,16 @@ bool TbcPacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjectDa
             /*uint8_t hasTransport =*/ packet.readUInt8();
         }
 
+        uint32_t remainingBlockCount = out.blockCount;
+
         if (packet.getReadPos() + 1 <= packet.getSize()) {
             uint8_t firstByte = packet.readUInt8();
             if (firstByte == static_cast<uint8_t>(UpdateType::OUT_OF_RANGE_OBJECTS)) {
+                if (remainingBlockCount == 0) {
+                    packet.setReadPos(start);
+                    return false;
+                }
+                --remainingBlockCount;
                 if (packet.getReadPos() + 4 > packet.getSize()) {
                     packet.setReadPos(start);
                     return false;
@@ -450,6 +457,7 @@ bool TbcPacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjectDa
             }
         }
 
+        out.blockCount = remainingBlockCount;
         out.blocks.reserve(out.blockCount);
         for (uint32_t i = 0; i < out.blockCount; ++i) {
             if (packet.getReadPos() >= packet.getSize()) {
@@ -473,7 +481,7 @@ bool TbcPacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjectDa
                     break;
                 }
                 case UpdateType::MOVEMENT: {
-                    block.guid = UpdateObjectParser::readPackedGuid(packet);
+                    block.guid = packet.readUInt64();
                     ok = this->parseMovementBlock(packet, block);
                     break;
                 }
