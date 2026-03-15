@@ -3172,12 +3172,10 @@ bool MonsterMoveParser::parse(network::Packet& packet, MonsterMoveData& data) {
 
     if (pointCount == 0) return true;
 
-    // Cap pointCount to prevent excessive iteration from malformed packets
+    // Reject extreme point counts from malformed packets.
     constexpr uint32_t kMaxSplinePoints = 1000;
     if (pointCount > kMaxSplinePoints) {
-        LOG_WARNING("SMSG_MONSTER_MOVE: pointCount=", pointCount, " exceeds max ", kMaxSplinePoints,
-                    " (guid=0x", std::hex, data.guid, std::dec, "), capping");
-        pointCount = kMaxSplinePoints;
+        return false;
     }
 
     // Catmullrom or Flying → all waypoints stored as absolute float3 (uncompressed).
@@ -3185,20 +3183,27 @@ bool MonsterMoveParser::parse(network::Packet& packet, MonsterMoveData& data) {
     bool uncompressed = (data.splineFlags & (0x00080000 | 0x00002000)) != 0;
 
     if (uncompressed) {
+        const size_t requiredBytes = static_cast<size_t>(pointCount) * 12ull;
+        if (packet.getReadPos() + requiredBytes > packet.getSize()) return false;
+
         // Read last point as destination
         // Skip to last point: each point is 12 bytes
         for (uint32_t i = 0; i < pointCount - 1; i++) {
-            if (packet.getReadPos() + 12 > packet.getSize()) return true;
+            if (packet.getReadPos() + 12 > packet.getSize()) return false;
             packet.readFloat(); packet.readFloat(); packet.readFloat();
         }
-        if (packet.getReadPos() + 12 > packet.getSize()) return true;
+        if (packet.getReadPos() + 12 > packet.getSize()) return false;
         data.destX = packet.readFloat();
         data.destY = packet.readFloat();
         data.destZ = packet.readFloat();
         data.hasDest = true;
     } else {
         // Compressed: first 3 floats are the destination (final point)
-        if (packet.getReadPos() + 12 > packet.getSize()) return true;
+        size_t requiredBytes = 12;
+        if (pointCount > 1) {
+            requiredBytes += static_cast<size_t>(pointCount - 1) * 4ull;
+        }
+        if (packet.getReadPos() + requiredBytes > packet.getSize()) return false;
         data.destX = packet.readFloat();
         data.destY = packet.readFloat();
         data.destZ = packet.readFloat();
@@ -3282,16 +3287,19 @@ bool MonsterMoveParser::parseVanilla(network::Packet& packet, MonsterMoveData& d
 
     if (pointCount == 0) return true;
 
-    // Cap pointCount to prevent excessive iteration from malformed packets
+    // Reject extreme point counts from malformed packets.
     constexpr uint32_t kMaxSplinePoints = 1000;
     if (pointCount > kMaxSplinePoints) {
-        LOG_WARNING("SMSG_MONSTER_MOVE(Vanilla): pointCount=", pointCount, " exceeds max ", kMaxSplinePoints,
-                    " (guid=0x", std::hex, data.guid, std::dec, "), capping");
-        pointCount = kMaxSplinePoints;
+        return false;
     }
 
+    size_t requiredBytes = 12;
+    if (pointCount > 1) {
+        requiredBytes += static_cast<size_t>(pointCount - 1) * 4ull;
+    }
+    if (packet.getReadPos() + requiredBytes > packet.getSize()) return false;
+
     // First float[3] is destination.
-    if (packet.getReadPos() + 12 > packet.getSize()) return true;
     data.destX = packet.readFloat();
     data.destY = packet.readFloat();
     data.destZ = packet.readFloat();
@@ -3301,9 +3309,8 @@ bool MonsterMoveParser::parseVanilla(network::Packet& packet, MonsterMoveData& d
     if (pointCount > 1) {
         size_t skipBytes = static_cast<size_t>(pointCount - 1) * 4;
         size_t newPos = packet.getReadPos() + skipBytes;
-        if (newPos <= packet.getSize()) {
-            packet.setReadPos(newPos);
-        }
+        if (newPos > packet.getSize()) return false;
+        packet.setReadPos(newPos);
     }
 
     LOG_DEBUG("MonsterMove(turtle): guid=0x", std::hex, data.guid, std::dec,
