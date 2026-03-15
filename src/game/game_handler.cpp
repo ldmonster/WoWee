@@ -116,6 +116,12 @@ bool hasFullPackedGuid(const network::Packet& packet) {
     return packet.getSize() - packet.getReadPos() >= guidBytes;
 }
 
+bool packetHasRemaining(const network::Packet& packet, size_t need) {
+    const size_t size = packet.getSize();
+    const size_t pos = packet.getReadPos();
+    return pos <= size && need <= (size - pos);
+}
+
 CombatTextEntry::Type combatTextTypeFromSpellMissInfo(uint8_t missInfo) {
     switch (missInfo) {
         case 0: return CombatTextEntry::MISS;
@@ -7957,7 +7963,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_KICK_REASON: {
             // uint64 kickerGuid + uint32 kickReasonType + null-terminated reason string
             // kickReasonType: 0=other, 1=afk, 2=vote kick
-            if (packet.getSize() - packet.getReadPos() < 12) {
+            if (!packetHasRemaining(packet, 12)) {
                 packet.setReadPos(packet.getSize());
                 break;
             }
@@ -7984,7 +7990,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
 
         case Opcode::SMSG_GROUPACTION_THROTTLED: {
             // uint32 throttleMs — rate-limited group action; notify the player
-            if (packet.getSize() - packet.getReadPos() >= 4) {
+            if (packetHasRemaining(packet, 4)) {
                 uint32_t throttleMs = packet.readUInt32();
                 char buf[128];
                 if (throttleMs > 0) {
@@ -8003,7 +8009,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_GMRESPONSE_RECEIVED: {
             // WotLK 3.3.5a: uint32 ticketId + string subject + string body + uint32 count
             //   per count: string responseText
-            if (packet.getSize() - packet.getReadPos() < 4) {
+            if (!packetHasRemaining(packet, 4)) {
                 packet.setReadPos(packet.getSize());
                 break;
             }
@@ -8013,7 +8019,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
             if (packet.getReadPos() < packet.getSize()) subject = packet.readString();
             if (packet.getReadPos() < packet.getSize()) body    = packet.readString();
             uint32_t responseCount = 0;
-            if (packet.getSize() - packet.getReadPos() >= 4)
+            if (packetHasRemaining(packet, 4))
                 responseCount = packet.readUInt32();
             std::string responseText;
             for (uint32_t i = 0; i < responseCount && i < 10; ++i) {
@@ -15518,8 +15524,7 @@ void GameHandler::handleLfgUpdatePlayer(network::Packet& packet) {
 }
 
 void GameHandler::handleLfgPlayerReward(network::Packet& packet) {
-    size_t remaining = packet.getSize() - packet.getReadPos();
-    if (remaining < 4 + 4 + 1 + 4 + 4 + 4) return;
+    if (!packetHasRemaining(packet, 4 + 4 + 1 + 4 + 4 + 4)) return;
 
     /*uint32_t randomDungeonEntry =*/ packet.readUInt32();
     /*uint32_t dungeonEntry       =*/ packet.readUInt32();
@@ -15542,9 +15547,9 @@ void GameHandler::handleLfgPlayerReward(network::Packet& packet) {
     std::string rewardMsg = std::string("Dungeon Finder reward: ") + moneyBuf +
                             ", " + std::to_string(xp) + " XP";
 
-    if (packet.getSize() - packet.getReadPos() >= 4) {
+    if (packetHasRemaining(packet, 4)) {
         uint32_t rewardCount = packet.readUInt32();
-        for (uint32_t i = 0; i < rewardCount && packet.getSize() - packet.getReadPos() >= 9; ++i) {
+        for (uint32_t i = 0; i < rewardCount && packetHasRemaining(packet, 9); ++i) {
             uint32_t itemId    = packet.readUInt32();
             uint32_t itemCount = packet.readUInt32();
             packet.readUInt8();  // unk
@@ -15564,8 +15569,7 @@ void GameHandler::handleLfgPlayerReward(network::Packet& packet) {
 }
 
 void GameHandler::handleLfgBootProposalUpdate(network::Packet& packet) {
-    size_t remaining = packet.getSize() - packet.getReadPos();
-    if (remaining < 7 + 4 + 4 + 4 + 4) return;
+    if (!packetHasRemaining(packet, 7 + 4 + 4 + 4 + 4)) return;
 
     bool inProgress = packet.readUInt8() != 0;
     /*bool myVote   =*/ packet.readUInt8();   // whether local player has voted
