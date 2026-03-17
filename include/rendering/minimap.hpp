@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <deque>
 #include <algorithm>
 
 namespace wowee {
@@ -73,7 +74,10 @@ private:
     bool trsParsed = false;
 
     // Tile texture cache: hash → VkTexture
+    // Evicted (FIFO) when the count of successfully-loaded tiles exceeds MAX_TILE_CACHE.
+    static constexpr size_t MAX_TILE_CACHE = 128;
     std::unordered_map<std::string, std::unique_ptr<VkTexture>> tileTextureCache;
+    std::deque<std::string> tileInsertionOrder;  // hashes of successfully loaded tiles, oldest first
     std::unique_ptr<VkTexture> noDataTexture;
 
     // Composite render target (3x3 tiles = 768x768)

@@ -228,6 +228,7 @@ void Minimap::shutdown() {
         if (tex) tex->destroy(device, alloc);
     }
     tileTextureCache.clear();
+    tileInsertionOrder.clear();
 
     if (noDataTexture) { noDataTexture->destroy(device, alloc); noDataTexture.reset(); }
     if (compositeTarget) { compositeTarget->destroy(device, alloc); compositeTarget.reset(); }
@@ -362,6 +363,15 @@ VkTexture* Minimap::getOrLoadTileTexture(int tileX, int tileY) {
 
     VkTexture* ptr = tex.get();
     tileTextureCache[hash] = std::move(tex);
+    tileInsertionOrder.push_back(hash);
+
+    // Evict oldest tiles when cache grows too large to bound GPU memory usage.
+    while (tileInsertionOrder.size() > MAX_TILE_CACHE) {
+        const std::string& oldest = tileInsertionOrder.front();
+        tileTextureCache.erase(oldest);
+        tileInsertionOrder.pop_front();
+    }
+
     return ptr;
 }
 
