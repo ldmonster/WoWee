@@ -1529,6 +1529,13 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
         // Required level
         if (info->requiredLevel > 1)
             ImGui::TextDisabled("Requires Level %u", info->requiredLevel);
+        // Flavor / lore text (shown in gold italic in WoW, use a yellow-ish dim color here)
+        if (!info->description.empty()) {
+            ImGui::Spacing();
+            ImGui::PushTextWrapPos(300.0f);
+            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 0.85f), "\"%s\"", info->description.c_str());
+            ImGui::PopTextWrapPos();
+        }
         if (info->sellPrice > 0) {
             uint32_t g = info->sellPrice / 10000;
             uint32_t s = (info->sellPrice / 100) % 100;
