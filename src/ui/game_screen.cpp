@@ -657,6 +657,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
 
     // ---- New UI elements ----
     renderActionBar(gameHandler);
+    renderStanceBar(gameHandler);
     renderBagBar(gameHandler);
     renderXpBar(gameHandler);
     renderRepBar(gameHandler);
@@ -7445,6 +7446,142 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
             actionBarDragIcon_ = 0;
         }
     }
+}
+
+// ============================================================
+// Stance / Form / Presence Bar
+// Shown for Warriors (stances), Death Knights (presences),
+// Druids (shapeshift forms), Rogues (stealth), Priests (Shadowform).
+// Buttons display the player's known stance/form spells.
+// Active form is detected by checking permanent player auras.
+// ============================================================
+
+void GameScreen::renderStanceBar(game::GameHandler& gameHandler) {
+    uint8_t playerClass = gameHandler.getPlayerClass();
+
+    // Stance/form spell IDs per class (ordered by display priority)
+    // Class IDs: 1=Warrior, 4=Rogue, 5=Priest, 6=DeathKnight, 11=Druid
+    static const uint32_t warriorStances[]  = { 2457, 71, 2458 };        // Battle, Defensive, Berserker
+    static const uint32_t dkPresences[]     = { 48266, 48263, 48265 };   // Blood, Frost, Unholy
+    static const uint32_t druidForms[]      = { 5487, 9634, 768, 783, 1066, 24858, 33891, 33943, 40120 };
+    //                                           Bear, DireBear, Cat, Travel, Aquatic, Moonkin, Tree, Flight, SwiftFlight
+    static const uint32_t rogueForms[]      = { 1784 };  // Stealth
+    static const uint32_t priestForms[]     = { 15473 }; // Shadowform
+
+    const uint32_t* stanceArr = nullptr;
+    int stanceCount = 0;
+    switch (playerClass) {
+        case 1:  stanceArr = warriorStances; stanceCount = 3; break;
+        case 6:  stanceArr = dkPresences;    stanceCount = 3; break;
+        case 11: stanceArr = druidForms;     stanceCount = 9; break;
+        case 4:  stanceArr = rogueForms;     stanceCount = 1; break;
+        case 5:  stanceArr = priestForms;    stanceCount = 1; break;
+        default: return;
+    }
+
+    // Filter to spells the player actually knows
+    const auto& known = gameHandler.getKnownSpells();
+    std::vector<uint32_t> available;
+    available.reserve(stanceCount);
+    for (int i = 0; i < stanceCount; ++i)
+        if (known.count(stanceArr[i])) available.push_back(stanceArr[i]);
+
+    if (available.empty()) return;
+
+    // Detect active stance from permanent player auras (maxDurationMs == -1)
+    uint32_t activeStance = 0;
+    for (const auto& aura : gameHandler.getPlayerAuras()) {
+        if (aura.isEmpty() || aura.maxDurationMs != -1) continue;
+        for (uint32_t sid : available) {
+            if (aura.spellId == sid) { activeStance = sid; break; }
+        }
+        if (activeStance) break;
+    }
+
+    ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+    float screenW = displaySize.x > 0.0f ? displaySize.x : 1280.0f;
+    float screenH = displaySize.y > 0.0f ? displaySize.y : 720.0f;
+    auto* assetMgr = core::Application::getInstance().getAssetManager();
+
+    // Match the action bar slot size so they align neatly
+    float slotSize = 38.0f;
+    float spacing  = 4.0f;
+    float padding  = 6.0f;
+    int   count    = static_cast<int>(available.size());
+
+    float barW = count * slotSize + (count - 1) * spacing + padding * 2.0f;
+    float barH = slotSize + padding * 2.0f;
+
+    // Position the stance bar immediately to the left of the action bar
+    float actionSlot = 48.0f * pendingActionBarScale;
+    float actionBarW = 12.0f * actionSlot + 11.0f * 4.0f + 8.0f * 2.0f;
+    float actionBarX = (screenW - actionBarW) / 2.0f;
+    float actionBarH = actionSlot + 24.0f;
+    float actionBarY = screenH - actionBarH;
+
+    float barX = actionBarX - barW - 8.0f;
+    float barY = actionBarY + (actionBarH - barH) / 2.0f;
+
+    ImGui::SetNextWindowPos(ImVec2(barX, barY), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(barW, barH), ImGuiCond_Always);
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
+                             ImGuiWindowFlags_NoScrollbar;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padding, padding));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.05f, 0.05f, 0.9f));
+
+    if (ImGui::Begin("##StanceBar", nullptr, flags)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+
+        for (int i = 0; i < count; ++i) {
+            if (i > 0) ImGui::SameLine(0.0f, spacing);
+            ImGui::PushID(i);
+
+            uint32_t spellId = available[i];
+            bool isActive = (spellId == activeStance);
+
+            VkDescriptorSet iconTex = assetMgr ? getSpellIcon(spellId, assetMgr) : VK_NULL_HANDLE;
+
+            ImVec2 pos = ImGui::GetCursorScreenPos();
+            ImVec2 posEnd = ImVec2(pos.x + slotSize, pos.y + slotSize);
+
+            // Background — green tint when active
+            ImU32 bgCol     = isActive ? IM_COL32(30, 70, 30, 230) : IM_COL32(20, 20, 20, 220);
+            ImU32 borderCol = isActive ? IM_COL32(80, 220, 80, 255) : IM_COL32(80, 80, 80, 200);
+            dl->AddRectFilled(pos, posEnd, bgCol, 4.0f);
+
+            if (iconTex) {
+                dl->AddImage((ImTextureID)(uintptr_t)iconTex, pos, posEnd);
+                // Darken inactive buttons slightly
+                if (!isActive)
+                    dl->AddRectFilled(pos, posEnd, IM_COL32(0, 0, 0, 70), 4.0f);
+            }
+            dl->AddRect(pos, posEnd, borderCol, 4.0f, 0, 2.0f);
+
+            ImGui::InvisibleButton("##btn", ImVec2(slotSize, slotSize));
+
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+                gameHandler.castSpell(spellId);
+
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                std::string name = spellbookScreen.lookupSpellName(spellId, assetMgr);
+                if (!name.empty()) ImGui::TextUnformatted(name.c_str());
+                else               ImGui::Text("Spell #%u", spellId);
+                ImGui::EndTooltip();
+            }
+
+            ImGui::PopID();
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(4);
 }
 
 // ============================================================

@@ -317,6 +317,7 @@ private:
 
     // ---- New UI renders ----
     void renderActionBar(game::GameHandler& gameHandler);
+    void renderStanceBar(game::GameHandler& gameHandler);
     void renderBagBar(game::GameHandler& gameHandler);
     void renderXpBar(game::GameHandler& gameHandler);
     void renderRepBar(game::GameHandler& gameHandler);
