@@ -3925,6 +3925,11 @@ void GameHandler::handlePacket(network::Packet& packet) {
             else if (errorCode != 0) msg += " (error " + std::to_string(errorCode) + ")";
 
             addSystemChatMessage(msg);
+            // Play error sound so the player notices the failure
+            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* sfx = renderer->getUiSoundManager())
+                    sfx->playError();
+            }
             break;
         }
 
@@ -4535,6 +4540,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     };
                     const char* msg = (result < 7) ? sellErrors[result] : "Unknown sell error";
                     addSystemChatMessage(std::string("Sell failed: ") + msg);
+                    if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                        if (auto* sfx = renderer->getUiSoundManager())
+                            sfx->playError();
+                    }
                     LOG_WARNING("SMSG_SELL_ITEM error: ", (int)result, " (", msg, ")");
                 }
             }
@@ -4688,6 +4697,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     default: break;
                 }
                 addSystemChatMessage(msg);
+                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                    if (auto* sfx = renderer->getUiSoundManager())
+                        sfx->playError();
+                }
             }
             break;
         }
@@ -5014,6 +5027,11 @@ void GameHandler::handlePacket(network::Packet& packet) {
                         // Fire toast callback before erasing
                         if (questCompleteCallback_) {
                             questCompleteCallback_(questId, it->title);
+                        }
+                        // Play quest-complete sound
+                        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                            if (auto* sfx = renderer->getUiSoundManager())
+                                sfx->playQuestComplete();
                         }
                         questLog_.erase(it);
                         LOG_INFO("  Removed quest ", questId, " from quest log");
@@ -20069,6 +20087,12 @@ void GameHandler::acceptQuest() {
     socket->send(packet);
     pendingQuestAcceptTimeouts_[questId] = 5.0f;
     pendingQuestAcceptNpcGuids_[questId] = npcGuid;
+
+    // Play quest-accept sound
+    if (auto* renderer = core::Application::getInstance().getRenderer()) {
+        if (auto* sfx = renderer->getUiSoundManager())
+            sfx->playQuestActivate();
+    }
 
     questDetailsOpen = false;
     questDetailsOpenTime = std::chrono::steady_clock::time_point{};
