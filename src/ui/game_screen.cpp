@@ -1382,6 +1382,12 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
         }
         ImGui::TextColored(qColor, "%s", info->name.c_str());
 
+        // Heroic indicator (green, matches WoW tooltip style)
+        constexpr uint32_t kFlagHeroic         = 0x8;
+        constexpr uint32_t kFlagUniqueEquipped = 0x1000000;
+        if (info->itemFlags & kFlagHeroic)
+            ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "Heroic");
+
         // Bind type (appears right under name in WoW)
         switch (info->bindType) {
             case 1: ImGui::TextDisabled("Binds when picked up");   break;
@@ -1389,9 +1395,11 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
             case 3: ImGui::TextDisabled("Binds when used");        break;
             case 4: ImGui::TextDisabled("Quest Item");             break;
         }
-        // Unique
+        // Unique / Unique-Equipped
         if (info->maxCount == 1)
-            ImGui::TextDisabled("Unique");
+            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Unique");
+        else if (info->itemFlags & kFlagUniqueEquipped)
+            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Unique-Equipped");
 
         // Slot type
         if (info->inventoryType > 0) {
