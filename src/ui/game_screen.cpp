@@ -6551,17 +6551,23 @@ VkDescriptorSet GameScreen::getSpellIcon(uint32_t spellId, pipeline::AssetManage
                 }
             };
 
-            // Always use expansion-aware layout if available
-            // Field indices vary by expansion: Classic=117, TBC=124, WotLK=133
+            // Use expansion-aware layout if available AND the DBC field count
+            // matches the expansion's expected format.  Classic=173, TBC=216,
+            // WotLK=234 fields.  When Classic is active but the base WotLK DBC
+            // is loaded (234 fields), field 117 is NOT IconID — we must use
+            // the WotLK field 133 instead.
+            uint32_t iconField = 133; // WotLK default
+            uint32_t idField = 0;
             if (spellL) {
-                tryLoadIcons((*spellL)["ID"], (*spellL)["IconID"]);
+                uint32_t layoutIcon = (*spellL)["IconID"];
+                // Only trust the expansion layout if the DBC has a compatible
+                // field count (within ~20 of the layout's icon field).
+                if (layoutIcon < fieldCount && fieldCount <= layoutIcon + 20) {
+                    iconField = layoutIcon;
+                    idField = (*spellL)["ID"];
+                }
             }
-
-            // Fallback if expansion layout missing or yielded nothing
-            // Only use WotLK field 133 as last resort if we have no layout
-            if (spellIconIds_.empty() && !spellL && fieldCount > 133) {
-                tryLoadIcons(0, 133);
-            }
+            tryLoadIcons(idField, iconField);
         }
     }
 

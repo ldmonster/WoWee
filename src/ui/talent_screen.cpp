@@ -593,15 +593,27 @@ void TalentScreen::loadSpellDBC(pipeline::AssetManager* assetManager) {
     if (!dbc || !dbc->isLoaded()) return;
 
     const auto* spellL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("Spell") : nullptr;
+    uint32_t fieldCount = dbc->getFieldCount();
+    // Detect DBC/layout mismatch: Classic layout expects ~173 fields but we may
+    // load the WotLK base DBC (234 fields).  Use WotLK field indices in that case.
+    uint32_t idField = 0, iconField = 133, tooltipField = 139;
+    if (spellL) {
+        uint32_t layoutIcon = (*spellL)["IconID"];
+        if (layoutIcon < fieldCount && fieldCount <= layoutIcon + 20) {
+            idField = (*spellL)["ID"];
+            iconField = layoutIcon;
+            try { tooltipField = (*spellL)["Tooltip"]; } catch (...) {}
+        }
+    }
     uint32_t count = dbc->getRecordCount();
     for (uint32_t i = 0; i < count; ++i) {
-        uint32_t spellId = dbc->getUInt32(i, spellL ? (*spellL)["ID"] : 0);
+        uint32_t spellId = dbc->getUInt32(i, idField);
         if (spellId == 0) continue;
 
-        uint32_t iconId = dbc->getUInt32(i, spellL ? (*spellL)["IconID"] : 133);
+        uint32_t iconId = dbc->getUInt32(i, iconField);
         spellIconIds[spellId] = iconId;
 
-        std::string tooltip = dbc->getString(i, spellL ? (*spellL)["Tooltip"] : 139);
+        std::string tooltip = dbc->getString(i, tooltipField);
         if (!tooltip.empty()) {
             spellTooltips[spellId] = tooltip;
         }
