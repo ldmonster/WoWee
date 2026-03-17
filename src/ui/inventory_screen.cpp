@@ -903,10 +903,10 @@ void InventoryScreen::renderAggregateBags(game::Inventory& inventory, uint64_t m
     float posX = screenW - windowW - 10.0f;
     float posY = screenH - windowH - 60.0f;
 
-    ImGui::SetNextWindowPos(ImVec2(posX, posY), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(posX, posY), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(windowW, windowH), ImGuiCond_Always);
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize;
     if (!ImGui::Begin("Bags", &open, flags)) {
         ImGui::End();
         return;
@@ -1030,8 +1030,7 @@ void InventoryScreen::renderBagWindow(const char* title, bool& isOpen,
     float windowW = std::max(gridW, titleW);
     float windowH = contentH + 40.0f; // title bar + padding
 
-    // Keep separate bag windows anchored to the bag-bar stack.
-    ImGui::SetNextWindowPos(ImVec2(defaultX, defaultY), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(defaultX, defaultY), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(windowW, windowH), ImGuiCond_Always);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize;
