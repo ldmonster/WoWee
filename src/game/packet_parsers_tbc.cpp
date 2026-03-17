@@ -1538,6 +1538,49 @@ bool TbcPacketParsers::parseSpellHealLog(network::Packet& packet, SpellHealLogDa
 }
 
 // ============================================================================
+// TBC 2.4.3 quest giver status
+// TBC sends uint32 (like Classic), WotLK changed to uint8.
+// TBC 2.4.3 enum: 0=NONE,1=UNAVAILABLE,2=CHAT,3=INCOMPLETE,4=REWARD_REP,
+//   5=AVAILABLE_REP,6=AVAILABLE,7=REWARD2,8=REWARD
+// ============================================================================
+
+uint8_t TbcPacketParsers::readQuestGiverStatus(network::Packet& packet) {
+    uint32_t tbcStatus = packet.readUInt32();
+    switch (tbcStatus) {
+        case 0: return 0;   // NONE
+        case 1: return 1;   // UNAVAILABLE
+        case 2: return 0;   // CHAT → NONE (no marker)
+        case 3: return 5;   // INCOMPLETE → WotLK INCOMPLETE
+        case 4: return 6;   // REWARD_REP → WotLK REWARD_REP
+        case 5: return 7;   // AVAILABLE_REP → WotLK AVAILABLE_LOW_LEVEL
+        case 6: return 8;   // AVAILABLE → WotLK AVAILABLE
+        case 7: return 10;  // REWARD2 → WotLK REWARD
+        case 8: return 10;  // REWARD → WotLK REWARD
+        default: return 0;
+    }
+}
+
+// ============================================================================
+// TBC 2.4.3 channel join/leave
+// Classic/TBC: just name+password (no channelId/hasVoice/joinedByZone prefix)
+// ============================================================================
+
+network::Packet TbcPacketParsers::buildJoinChannel(const std::string& channelName, const std::string& password) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_JOIN_CHANNEL));
+    packet.writeString(channelName);
+    packet.writeString(password);
+    LOG_DEBUG("[TBC] Built CMSG_JOIN_CHANNEL: channel=", channelName);
+    return packet;
+}
+
+network::Packet TbcPacketParsers::buildLeaveChannel(const std::string& channelName) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_LEAVE_CHANNEL));
+    packet.writeString(channelName);
+    LOG_DEBUG("[TBC] Built CMSG_LEAVE_CHANNEL: channel=", channelName);
+    return packet;
+}
+
+// ============================================================================
 // TBC 2.4.3 guild roster parser
 // Same rank structure as WotLK (variable rankCount + goldLimit + bank tabs),
 // but NO gender byte per member (WotLK added it).

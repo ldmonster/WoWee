@@ -368,6 +368,12 @@ public:
     // TBC 2.4.3 SMSG_GUILD_ROSTER: same rank structure as WotLK (variable rankCount +
     // goldLimit + bank tabs), but NO gender byte per member (WotLK added it)
     bool parseGuildRoster(network::Packet& packet, GuildRosterData& data) override;
+    // TBC 2.4.3 SMSG_QUESTGIVER_STATUS: uint32 status (WotLK uses uint8)
+    uint8_t readQuestGiverStatus(network::Packet& packet) override;
+    // TBC 2.4.3 CMSG_JOIN_CHANNEL: name+password only (WotLK prepends channelId+hasVoice+joinedByZone)
+    network::Packet buildJoinChannel(const std::string& channelName, const std::string& password) override;
+    // TBC 2.4.3 CMSG_LEAVE_CHANNEL: name only (WotLK prepends channelId)
+    network::Packet buildLeaveChannel(const std::string& channelName) override;
 };
 
 /**
