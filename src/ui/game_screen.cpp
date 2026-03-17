@@ -1510,6 +1510,22 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                     ImGui::TextColored(green, "+%d %s", es.statValue, nm);
             }
         }
+        // Item spell effects (Use / Equip / Chance on Hit / Teaches)
+        for (const auto& sp : info->spells) {
+            if (sp.spellId == 0) continue;
+            const char* triggerLabel = nullptr;
+            switch (sp.spellTrigger) {
+                case 0: triggerLabel = "Use";          break;
+                case 1: triggerLabel = "Equip";        break;
+                case 2: triggerLabel = "Chance on Hit"; break;
+                case 5: triggerLabel = "Teaches";      break;
+            }
+            if (!triggerLabel) continue;
+            std::string spName = spellbookScreen.lookupSpellName(sp.spellId, assetMgr);
+            if (!spName.empty())
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f),
+                                   "%s: %s", triggerLabel, spName.c_str());
+        }
         // Required level
         if (info->requiredLevel > 1)
             ImGui::TextDisabled("Requires Level %u", info->requiredLevel);
