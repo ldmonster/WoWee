@@ -9351,6 +9351,15 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                     else if (m.roles & 0x08)
                         draw->AddText(ImVec2(cellMax.x - 11.0f, cellMax.y - 11.0f), IM_COL32(220, 80, 80, 230), "D");
 
+                    // Tactical role badge in bottom-left corner (flags from SMSG_GROUP_LIST / SMSG_REAL_GROUP_UPDATE)
+                    // 0x01=Assistant, 0x02=Main Tank, 0x04=Main Assist
+                    if (m.flags & 0x02)
+                        draw->AddText(ImVec2(cellMin.x + 2.0f, cellMax.y - 11.0f), IM_COL32(255, 140, 0, 230), "MT");
+                    else if (m.flags & 0x04)
+                        draw->AddText(ImVec2(cellMin.x + 2.0f, cellMax.y - 11.0f), IM_COL32(100, 180, 255, 230), "MA");
+                    else if (m.flags & 0x01)
+                        draw->AddText(ImVec2(cellMin.x + 2.0f, cellMax.y - 11.0f), IM_COL32(180, 215, 255, 180), "A");
+
                     // Health bar
                     uint32_t hp = m.hasPartyStats ? m.curHealth : 0;
                     uint32_t maxHp = m.hasPartyStats ? m.maxHealth : 0;
