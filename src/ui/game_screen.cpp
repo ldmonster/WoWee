@@ -745,6 +745,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderItemLootToasts();
     renderResurrectFlash();
     renderZoneText();
+    renderWeatherOverlay(gameHandler);
 
     // World map (M key toggle handled inside)
     renderWorldMap(gameHandler);
@@ -20170,6 +20171,129 @@ void GameScreen::renderZoneText() {
                   IM_COL32(0, 0, 0, (int)(alpha * 160)), zoneTextName_.c_str());
     draw->AddText(font, nameSize, ImVec2(nameX, nameY),
                   IM_COL32(255, 255, 255, (int)(alpha * 255)), zoneTextName_.c_str());
+}
+
+// ---------------------------------------------------------------------------
+// Screen-space weather overlay (rain / snow / storm)
+// ---------------------------------------------------------------------------
+void GameScreen::renderWeatherOverlay(game::GameHandler& gameHandler) {
+    uint32_t wType     = gameHandler.getWeatherType();
+    float    intensity = gameHandler.getWeatherIntensity();
+    if (wType == 0 || intensity < 0.05f) return;
+
+    const ImGuiIO& io = ImGui::GetIO();
+    float sw = io.DisplaySize.x;
+    float sh = io.DisplaySize.y;
+    if (sw <= 0.0f || sh <= 0.0f) return;
+
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    const float dt = std::min(io.DeltaTime, 0.05f);   // cap delta at 50ms to avoid teleporting particles
+
+    if (wType == 1 || wType == 3) {
+        // ── Rain / Storm ─────────────────────────────────────────────────────
+        constexpr int MAX_DROPS = 300;
+        struct RainState {
+            float x[MAX_DROPS], y[MAX_DROPS];
+            bool  initialized = false;
+            uint32_t lastType = 0;
+            float lastW = 0.0f, lastH = 0.0f;
+        };
+        static RainState rs;
+
+        // Re-seed if weather type or screen size changed
+        if (!rs.initialized || rs.lastType != wType ||
+            rs.lastW != sw   || rs.lastH != sh) {
+            for (int i = 0; i < MAX_DROPS; ++i) {
+                rs.x[i] = static_cast<float>(std::rand() % (static_cast<int>(sw) + 200)) - 100.0f;
+                rs.y[i] = static_cast<float>(std::rand() % static_cast<int>(sh));
+            }
+            rs.initialized = true;
+            rs.lastType = wType;
+            rs.lastW = sw;
+            rs.lastH = sh;
+        }
+
+        const float fallSpeed = (wType == 3) ? 680.0f : 440.0f;
+        const float windSpeed = (wType == 3) ? 110.0f :  65.0f;
+        const int   numDrops  = static_cast<int>(MAX_DROPS * std::min(1.0f, intensity));
+        const float alpha     = std::min(1.0f, 0.28f + intensity * 0.38f);
+        const uint8_t alphaU8 = static_cast<uint8_t>(alpha * 255.0f);
+        const ImU32  dropCol  = IM_COL32(175, 195, 225, alphaU8);
+        const float  dropLen  = 7.0f + intensity * 7.0f;
+        // Normalised wind direction for the trail endpoint
+        const float invSpeed  = 1.0f / std::sqrt(fallSpeed * fallSpeed + windSpeed * windSpeed);
+        const float trailDx   = -windSpeed * invSpeed * dropLen;
+        const float trailDy   = -fallSpeed * invSpeed * dropLen;
+
+        for (int i = 0; i < numDrops; ++i) {
+            rs.x[i] += windSpeed * dt;
+            rs.y[i] += fallSpeed * dt;
+            if (rs.y[i] > sh + 10.0f) {
+                rs.y[i] = -10.0f;
+                rs.x[i] = static_cast<float>(std::rand() % (static_cast<int>(sw) + 200)) - 100.0f;
+            }
+            if (rs.x[i] > sw + 100.0f) rs.x[i] -= sw + 200.0f;
+            dl->AddLine(ImVec2(rs.x[i], rs.y[i]),
+                        ImVec2(rs.x[i] + trailDx, rs.y[i] + trailDy),
+                        dropCol, 1.0f);
+        }
+
+        // Storm: dark fog-vignette at screen edges
+        if (wType == 3) {
+            const float vigAlpha = std::min(1.0f, 0.12f + intensity * 0.18f);
+            const ImU32 vigCol   = IM_COL32(60, 65, 80, static_cast<uint8_t>(vigAlpha * 255.0f));
+            const float vigW = sw * 0.22f;
+            const float vigH = sh * 0.22f;
+            dl->AddRectFilledMultiColor(ImVec2(0,       0),      ImVec2(vigW, sh),     vigCol, IM_COL32_BLACK_TRANS, IM_COL32_BLACK_TRANS, vigCol);
+            dl->AddRectFilledMultiColor(ImVec2(sw-vigW, 0),      ImVec2(sw,   sh),     IM_COL32_BLACK_TRANS, vigCol, vigCol, IM_COL32_BLACK_TRANS);
+            dl->AddRectFilledMultiColor(ImVec2(0,       0),      ImVec2(sw,   vigH),   vigCol, vigCol, IM_COL32_BLACK_TRANS, IM_COL32_BLACK_TRANS);
+            dl->AddRectFilledMultiColor(ImVec2(0,       sh-vigH),ImVec2(sw,   sh),     IM_COL32_BLACK_TRANS, IM_COL32_BLACK_TRANS, vigCol, vigCol);
+        }
+
+    } else if (wType == 2) {
+        // ── Snow ─────────────────────────────────────────────────────────────
+        constexpr int MAX_FLAKES = 120;
+        struct SnowState {
+            float x[MAX_FLAKES], y[MAX_FLAKES], phase[MAX_FLAKES];
+            bool  initialized = false;
+            float lastW = 0.0f, lastH = 0.0f;
+        };
+        static SnowState ss;
+
+        if (!ss.initialized || ss.lastW != sw || ss.lastH != sh) {
+            for (int i = 0; i < MAX_FLAKES; ++i) {
+                ss.x[i]     = static_cast<float>(std::rand() % static_cast<int>(sw));
+                ss.y[i]     = static_cast<float>(std::rand() % static_cast<int>(sh));
+                ss.phase[i] = static_cast<float>(std::rand() % 628) * 0.01f;
+            }
+            ss.initialized = true;
+            ss.lastW = sw;
+            ss.lastH = sh;
+        }
+
+        const float fallSpeed = 45.0f + intensity * 45.0f;
+        const int   numFlakes = static_cast<int>(MAX_FLAKES * std::min(1.0f, intensity));
+        const float alpha     = std::min(1.0f, 0.5f + intensity * 0.3f);
+        const uint8_t alphaU8 = static_cast<uint8_t>(alpha * 255.0f);
+        const float   radius  = 1.5f + intensity * 1.5f;
+        const float   time    = static_cast<float>(ImGui::GetTime());
+
+        for (int i = 0; i < numFlakes; ++i) {
+            float sway = std::sin(time * 0.7f + ss.phase[i]) * 18.0f;
+            ss.x[i] += sway * dt;
+            ss.y[i] += fallSpeed * dt;
+            ss.phase[i] += dt * 0.25f;
+            if (ss.y[i] > sh + 5.0f) {
+                ss.y[i] = -5.0f;
+                ss.x[i] = static_cast<float>(std::rand() % static_cast<int>(sw));
+            }
+            if (ss.x[i] < -5.0f) ss.x[i] += sw + 10.0f;
+            if (ss.x[i] > sw + 5.0f) ss.x[i] -= sw + 10.0f;
+            // Two-tone: bright centre dot + transparent outer ring for depth
+            dl->AddCircleFilled(ImVec2(ss.x[i], ss.y[i]), radius, IM_COL32(220, 235, 255, alphaU8));
+            dl->AddCircleFilled(ImVec2(ss.x[i], ss.y[i]), radius * 0.45f, IM_COL32(245, 250, 255, std::min(255, alphaU8 + 30)));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

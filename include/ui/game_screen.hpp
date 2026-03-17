@@ -635,6 +635,7 @@ private:
     std::string zoneTextName_;
     std::string lastKnownZoneName_;
     void renderZoneText();
+    void renderWeatherOverlay(game::GameHandler& gameHandler);
 
     // Cooldown tracker
     bool showCooldownTracker_ = false;
