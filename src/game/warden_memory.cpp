@@ -538,7 +538,7 @@ uint32_t WardenMemory::expectedImageSizeForBuild(uint16_t build, bool isTurtle) 
         case 5875:
             // Turtle WoW uses a custom WoW.exe with different code bytes.
             // Their warden_scans DB expects bytes from this custom exe.
-            return isTurtle ? 0x00906000 : 0x009FD000;
+            return isTurtle ? 0x009FD000 : 0x009FD000;
         default:   return 0;          // Unknown — accept any
     }
 }
@@ -645,8 +645,13 @@ bool WardenMemory::loadFromFile(const std::string& exePath) {
 
     initKuserSharedData();
     patchRuntimeGlobals();
-    if (isTurtle_) {
+    if (isTurtle_ && imageSize_ != 0x00C93000) {
+        // Only apply TurtlePatcher patches if we loaded the vanilla exe.
+        // The real Turtle Wow.exe (imageSize=0xC93000) already has these bytes.
         patchTurtleWowBinary();
+        LOG_WARNING("WardenMemory: Applied Turtle patches to vanilla PE (imageSize=0x", std::hex, imageSize_, std::dec, ")");
+    } else if (isTurtle_) {
+        LOG_WARNING("WardenMemory: Loaded native Turtle PE — skipping patches");
     }
     loaded_ = true;
     LOG_INFO("WardenMemory: Loaded PE image (", fileData.size(), " bytes on disk, ",

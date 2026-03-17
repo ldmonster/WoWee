@@ -3149,6 +3149,10 @@ private:
     std::future<std::vector<uint8_t>> wardenPendingEncrypted_;  // encrypted response bytes
     bool wardenResponsePending_ = false;
 
+    // ---- RX silence detection ----
+    std::chrono::steady_clock::time_point lastRxTime_{};
+    bool rxSilenceLogged_ = false;
+
     // ---- XP tracking ----
     uint32_t playerXp_ = 0;
     uint32_t playerNextLevelXp_ = 0;

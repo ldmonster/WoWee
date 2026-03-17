@@ -856,6 +856,20 @@ void GameHandler::update(float deltaTime) {
         }
     }
 
+    // Detect RX silence (server stopped sending packets but TCP still open)
+    if (state == WorldState::IN_WORLD && socket && socket->isConnected() &&
+        lastRxTime_.time_since_epoch().count() > 0) {
+        auto silenceMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - lastRxTime_).count();
+        if (silenceMs > 10000 && !rxSilenceLogged_) {
+            rxSilenceLogged_ = true;
+            LOG_WARNING("RX SILENCE: No packets from server for ", silenceMs, "ms — possible soft disconnect");
+        }
+        if (silenceMs > 15000 && silenceMs < 15500) {
+            LOG_WARNING("RX SILENCE: 15s — server appears to have stopped sending");
+        }
+    }
+
     // Detect server-side disconnect (socket closed during update)
     if (socket && !socket->isConnected() && state != WorldState::DISCONNECTED) {
         if (pendingIncomingPackets_.empty() && pendingUpdateObjectWork_.empty()) {
@@ -8262,6 +8276,8 @@ void GameHandler::enqueueIncomingPacket(const network::Packet& packet) {
         pendingIncomingPackets_.pop_front();
     }
     pendingIncomingPackets_.push_back(packet);
+    lastRxTime_ = std::chrono::steady_clock::now();
+    rxSilenceLogged_ = false;
 }
 
 void GameHandler::enqueueIncomingPacketFront(network::Packet&& packet) {
@@ -9374,129 +9390,51 @@ void GameHandler::handleWardenData(network::Packet& packet) {
                 }
             }
 
-            // --- Fallback: compute hash from loaded module ---
-            LOG_WARNING("Warden: No CR match, computing hash from loaded module");
+            // --- No CR match: decide strategy based on server strictness ---
+            {
+                std::string seedHex;
+                for (auto b : seed) { char s[4]; snprintf(s, 4, "%02x", b); seedHex += s; }
 
-            if (!wardenLoadedModule_ || !wardenLoadedModule_->isLoaded()) {
-                LOG_WARNING("Warden: No loaded module and no CR match — using raw module fallback hash");
+                bool isTurtle = isActiveExpansion("turtle");
+                bool isClassic = (build <= 6005) && !isTurtle;
 
-                // Never skip HASH_RESULT: some realms disconnect quickly if this response is missing.
+                if (!isTurtle && !isClassic) {
+                    // WotLK/TBC (AzerothCore, etc.): strict servers BAN for wrong HASH_RESULT.
+                    // Without a matching CR entry we cannot compute the correct hash
+                    // (requires executing the module's native init function).
+                    // Safest action: don't respond. Server will time-out and kick (not ban).
+                    LOG_WARNING("Warden: HASH_REQUEST seed=", seedHex,
+                                " — no CR match, SKIPPING response to avoid account ban");
+                    LOG_WARNING("Warden: To fix, provide a .cr file with the correct seed→reply entry for this module");
+                    // Stay in WAIT_HASH_REQUEST — server will eventually kick.
+                    break;
+                }
+
+                // Turtle/Classic: lenient servers (log-only penalties, no bans).
+                // Send a best-effort fallback hash so we can continue the handshake.
+                LOG_WARNING("Warden: No CR match (seed=", seedHex,
+                            "), sending fallback hash (lenient server)");
+
                 std::vector<uint8_t> fallbackReply;
-                if (!wardenModuleData_.empty()) {
-                    fallbackReply = auth::Crypto::sha1(wardenModuleData_);
-                } else if (!wardenModuleHash_.empty()) {
-                    fallbackReply = auth::Crypto::sha1(wardenModuleHash_);
-                } else {
-                    fallbackReply.assign(20, 0);
+                if (wardenLoadedModule_ && wardenLoadedModule_->isLoaded()) {
+                    const uint8_t* moduleImage = static_cast<const uint8_t*>(wardenLoadedModule_->getModuleMemory());
+                    size_t moduleImageSize = wardenLoadedModule_->getModuleSize();
+                    if (moduleImage && moduleImageSize > 0) {
+                        std::vector<uint8_t> imageData(moduleImage, moduleImage + moduleImageSize);
+                        fallbackReply = auth::Crypto::sha1(imageData);
+                    }
+                }
+                if (fallbackReply.empty()) {
+                    if (!wardenModuleData_.empty())
+                        fallbackReply = auth::Crypto::sha1(wardenModuleData_);
+                    else
+                        fallbackReply.assign(20, 0);
                 }
 
                 std::vector<uint8_t> resp;
                 resp.push_back(0x04); // WARDEN_CMSG_HASH_RESULT
                 resp.insert(resp.end(), fallbackReply.begin(), fallbackReply.end());
                 sendWardenResponse(resp);
-
-                applyWardenSeedRekey(seed);
-                wardenState_ = WardenState::WAIT_CHECKS;
-                break;
-            }
-
-            {
-                const uint8_t* moduleImage = static_cast<const uint8_t*>(wardenLoadedModule_->getModuleMemory());
-                size_t moduleImageSize = wardenLoadedModule_->getModuleSize();
-                const auto& decompressedData = wardenLoadedModule_->getDecompressedData();
-
-                if (!moduleImage || moduleImageSize == 0) {
-                    LOG_WARNING("Warden: Loaded module has no executable image — using raw module hash fallback");
-                    std::vector<uint8_t> fallbackReply =
-                        !wardenModuleData_.empty() ? auth::Crypto::sha1(wardenModuleData_) : std::vector<uint8_t>(20, 0);
-                    std::vector<uint8_t> resp;
-                    resp.push_back(0x04); // WARDEN_CMSG_HASH_RESULT
-                    resp.insert(resp.end(), fallbackReply.begin(), fallbackReply.end());
-                    sendWardenResponse(resp);
-                    applyWardenSeedRekey(seed);
-                    wardenState_ = WardenState::WAIT_CHECKS;
-                    break;
-                }
-
-                // --- Empirical test: try multiple SHA1 computations and check against first CR entry ---
-                if (!wardenCREntries_.empty()) {
-                    const auto& firstCR = wardenCREntries_[0];
-                    std::string expectedHex;
-                    for (int i = 0; i < 20; i++) { char s[4]; snprintf(s, 4, "%02x", firstCR.reply[i]); expectedHex += s; }
-                    LOG_DEBUG("Warden: Empirical test — expected reply from CR[0]=", expectedHex);
-
-                    // Test 1: SHA1(moduleImage)
-                    {
-                        std::vector<uint8_t> data(moduleImage, moduleImage + moduleImageSize);
-                        auto h = auth::Crypto::sha1(data);
-                        bool match = (std::memcmp(h.data(), firstCR.reply, 20) == 0);
-                        std::string hex; for (auto b : h) { char s[4]; snprintf(s, 4, "%02x", b); hex += s; }
-                        LOG_DEBUG("Warden:   SHA1(moduleImage)=", hex, match ? " MATCH!" : "");
-                    }
-                    // Test 2: SHA1(seed || moduleImage)
-                    {
-                        std::vector<uint8_t> data;
-                        data.insert(data.end(), seed.begin(), seed.end());
-                        data.insert(data.end(), moduleImage, moduleImage + moduleImageSize);
-                        auto h = auth::Crypto::sha1(data);
-                        bool match = (std::memcmp(h.data(), firstCR.reply, 20) == 0);
-                        std::string hex; for (auto b : h) { char s[4]; snprintf(s, 4, "%02x", b); hex += s; }
-                        LOG_DEBUG("Warden:   SHA1(seed||image)=", hex, match ? " MATCH!" : "");
-                    }
-                    // Test 3: SHA1(moduleImage || seed)
-                    {
-                        std::vector<uint8_t> data(moduleImage, moduleImage + moduleImageSize);
-                        data.insert(data.end(), seed.begin(), seed.end());
-                        auto h = auth::Crypto::sha1(data);
-                        bool match = (std::memcmp(h.data(), firstCR.reply, 20) == 0);
-                        std::string hex; for (auto b : h) { char s[4]; snprintf(s, 4, "%02x", b); hex += s; }
-                        LOG_DEBUG("Warden:   SHA1(image||seed)=", hex, match ? " MATCH!" : "");
-                    }
-                    // Test 4: SHA1(decompressedData)
-                    {
-                        auto h = auth::Crypto::sha1(decompressedData);
-                        bool match = (std::memcmp(h.data(), firstCR.reply, 20) == 0);
-                        std::string hex; for (auto b : h) { char s[4]; snprintf(s, 4, "%02x", b); hex += s; }
-                        LOG_DEBUG("Warden:   SHA1(decompressed)=", hex, match ? " MATCH!" : "");
-                    }
-                    // Test 5: SHA1(rawModuleData)
-                    {
-                        auto h = auth::Crypto::sha1(wardenModuleData_);
-                        bool match = (std::memcmp(h.data(), firstCR.reply, 20) == 0);
-                        std::string hex; for (auto b : h) { char s[4]; snprintf(s, 4, "%02x", b); hex += s; }
-                        LOG_DEBUG("Warden:   SHA1(rawModule)=", hex, match ? " MATCH!" : "");
-                    }
-                    // Test 6: Check if all CR replies are the same (constant hash)
-                    {
-                        bool allSame = true;
-                        for (size_t i = 1; i < wardenCREntries_.size(); i++) {
-                            if (std::memcmp(wardenCREntries_[i].reply, firstCR.reply, 20) != 0) {
-                                allSame = false;
-                                break;
-                            }
-                        }
-                        LOG_DEBUG("Warden:   All ", wardenCREntries_.size(), " CR replies identical? ", allSame ? "YES" : "NO");
-                    }
-                }
-
-                // --- Compute the hash: SHA1(moduleImage) is the most likely candidate ---
-                // The module's hash response is typically SHA1 of the loaded module image.
-                // This is a constant per module (seed is not used in the hash, only for key derivation).
-                std::vector<uint8_t> imageData(moduleImage, moduleImage + moduleImageSize);
-                auto reply = auth::Crypto::sha1(imageData);
-
-                {
-                    std::string hex;
-                    for (auto b : reply) { char s[4]; snprintf(s, 4, "%02x", b); hex += s; }
-                    LOG_DEBUG("Warden: Sending SHA1(moduleImage)=", hex);
-                }
-
-                // Send HASH_RESULT (opcode 0x04 + 20-byte hash)
-                std::vector<uint8_t> resp;
-                resp.push_back(0x04);
-                resp.insert(resp.end(), reply.begin(), reply.end());
-                sendWardenResponse(resp);
-
                 applyWardenSeedRekey(seed);
             }
 
@@ -9958,7 +9896,7 @@ void GameHandler::handleWardenData(network::Packet& packet) {
                         // Lazy-load WoW.exe PE image on first MEM_CHECK
                         if (!wardenMemory_) {
                             wardenMemory_ = std::make_unique<WardenMemory>();
-                            if (!wardenMemory_->load(static_cast<uint16_t>(build))) {
+                            if (!wardenMemory_->load(static_cast<uint16_t>(build), isActiveExpansion("turtle"))) {
                                 LOG_WARNING("Warden: Could not load WoW.exe for MEM_CHECK");
                             }
                         }
