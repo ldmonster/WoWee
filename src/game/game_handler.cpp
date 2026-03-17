@@ -18473,6 +18473,12 @@ void GameHandler::handleRemovedSpell(network::Packet& packet) {
     knownSpells.erase(spellId);
     LOG_INFO("Removed spell: ", spellId);
 
+    const std::string& name = getSpellName(spellId);
+    if (!name.empty())
+        addSystemChatMessage("You have unlearned: " + name + ".");
+    else
+        addSystemChatMessage("A spell has been removed.");
+
     // Clear any action bar slots referencing this spell
     bool barChanged = false;
     for (auto& slot : actionBar) {
