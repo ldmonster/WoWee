@@ -80,6 +80,28 @@ bool isAuthCharPipelineOpcode(LogicalOpcode op) {
     }
 }
 
+// Build a WoW-format item link for use in system chat messages.
+// The chat renderer in game_screen.cpp parses this format and draws the
+// item name in its quality colour with a small icon and tooltip.
+// Format: |cff<rrggbb>|Hitem:<id>:0:0:0:0:0:0:0:0|h[<name>]|h|r
+std::string buildItemLink(uint32_t itemId, uint32_t quality, const std::string& name) {
+    static const char* kQualHex[] = {
+        "9d9d9d",  // 0 Poor
+        "ffffff",  // 1 Common
+        "1eff00",  // 2 Uncommon
+        "0070dd",  // 3 Rare
+        "a335ee",  // 4 Epic
+        "ff8000",  // 5 Legendary
+        "e6cc80",  // 6 Artifact
+        "e6cc80",  // 7 Heirloom
+    };
+    uint32_t qi = quality < 8 ? quality : 1u;
+    char buf[512];
+    snprintf(buf, sizeof(buf), "|cff%s|Hitem:%u:0:0:0:0:0:0:0:0|h[%s]|h|r",
+             kQualHex[qi], itemId, name.c_str());
+    return buf;
+}
+
 bool isActiveExpansion(const char* expansionId) {
     auto& app = core::Application::getInstance();
     auto* registry = app.getExpansionRegistry();
@@ -1937,7 +1959,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
                         if (!info->name.empty()) itemName = info->name;
                         quality = info->quality;
                     }
-                    std::string msg = "Received: " + itemName;
+                    std::string link = buildItemLink(itemId, quality, itemName);
+                    std::string msg = "Received: " + link;
                     if (count > 1) msg += " x" + std::to_string(count);
                     addSystemChatMessage(msg);
                     if (auto* renderer = core::Application::getInstance().getRenderer()) {
@@ -5159,8 +5182,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 queryItemInfo(itemId, 0);
 
                 std::string itemLabel = "item #" + std::to_string(itemId);
+                uint32_t questItemQuality = 1;
                 if (const ItemQueryResponseData* info = getItemInfo(itemId)) {
                     if (!info->name.empty()) itemLabel = info->name;
+                    questItemQuality = info->quality;
                 }
 
                 bool updatedAny = false;
@@ -5184,7 +5209,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     quest.itemCounts[itemId] = count;
                     updatedAny = true;
                 }
-                addSystemChatMessage("Quest item: " + itemLabel + " (" + std::to_string(count) + ")");
+                addSystemChatMessage("Quest item: " + buildItemLink(itemId, questItemQuality, itemLabel) + " (" + std::to_string(count) + ")");
 
                 if (questProgressCallback_ && updatedAny) {
                     // Find the quest that tracks this item to get title and required count
@@ -5904,13 +5929,15 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 uint32_t itemEntry = packet.readUInt32();
                 ensureItemInfo(itemEntry);
                 auto* info = getItemInfo(itemEntry);
-                std::string itemName = info ? info->name : ("Item #" + std::to_string(itemEntry));
+                std::string rawName = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
+                uint32_t aucQuality = info ? info->quality : 1u;
+                std::string itemLink = buildItemLink(itemEntry, aucQuality, rawName);
                 if (action == 1)
-                    addSystemChatMessage("Your auction of " + itemName + " has expired.");
+                    addSystemChatMessage("Your auction of " + itemLink + " has expired.");
                 else if (action == 2)
-                    addSystemChatMessage("A bid has been placed on your auction of " + itemName + ".");
+                    addSystemChatMessage("A bid has been placed on your auction of " + itemLink + ".");
                 else
-                    addSystemChatMessage("Your auction of " + itemName + " has sold!");
+                    addSystemChatMessage("Your auction of " + itemLink + " has sold!");
             }
             packet.setReadPos(packet.getSize());
             break;
@@ -5923,8 +5950,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 (void)auctionId;
                 ensureItemInfo(itemEntry);
                 auto* info = getItemInfo(itemEntry);
-                std::string itemName = info ? info->name : ("Item #" + std::to_string(itemEntry));
-                addSystemChatMessage("You have been outbid on " + itemName + ".");
+                std::string rawName2 = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
+                uint32_t bidQuality = info ? info->quality : 1u;
+                std::string bidLink = buildItemLink(itemEntry, bidQuality, rawName2);
+                addSystemChatMessage("You have been outbid on " + bidLink + ".");
             }
             packet.setReadPos(packet.getSize());
             break;
@@ -5937,8 +5966,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 /*uint32_t itemRandom =*/ packet.readUInt32();
                 ensureItemInfo(itemEntry);
                 auto* info = getItemInfo(itemEntry);
-                std::string itemName = info ? info->name : ("Item #" + std::to_string(itemEntry));
-                addSystemChatMessage("Your auction of " + itemName + " has expired.");
+                std::string rawName3 = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
+                uint32_t remQuality = info ? info->quality : 1u;
+                std::string remLink = buildItemLink(itemEntry, remQuality, rawName3);
+                addSystemChatMessage("Your auction of " + remLink + " has expired.");
             }
             packet.setReadPos(packet.getSize());
             break;
@@ -20827,17 +20858,15 @@ void GameHandler::handleLootRemoved(network::Packet& packet) {
     for (auto it = currentLoot.items.begin(); it != currentLoot.items.end(); ++it) {
         if (it->slotIndex == slotIndex) {
             std::string itemName = "item #" + std::to_string(it->itemId);
+            uint32_t quality = 1;
             if (const ItemQueryResponseData* info = getItemInfo(it->itemId)) {
-                if (!info->name.empty()) {
-                    itemName = info->name;
-                }
+                if (!info->name.empty()) itemName = info->name;
+                quality = info->quality;
             }
-            std::ostringstream msg;
-            msg << "Looted: " << itemName;
-            if (it->count > 1) {
-                msg << " x" << it->count;
-            }
-            addSystemChatMessage(msg.str());
+            std::string link = buildItemLink(it->itemId, quality, itemName);
+            std::string msgStr = "Looted: " + link;
+            if (it->count > 1) msgStr += " x" + std::to_string(it->count);
+            addSystemChatMessage(msgStr);
             if (auto* renderer = core::Application::getInstance().getRenderer()) {
                 if (auto* sfx = renderer->getUiSoundManager())
                     sfx->playLootItem();
