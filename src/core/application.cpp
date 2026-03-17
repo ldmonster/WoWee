@@ -576,6 +576,12 @@ void Application::run() {
 void Application::shutdown() {
     LOG_WARNING("Shutting down application...");
 
+    // Hide the window immediately so the OS doesn't think the app is frozen
+    // during the (potentially slow) resource cleanup below.
+    if (window && window->getSDLWindow()) {
+        SDL_HideWindow(window->getSDLWindow());
+    }
+
     // Stop background world preloader before destroying AssetManager
     cancelWorldPreload();
 
