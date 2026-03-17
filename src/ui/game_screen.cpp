@@ -1482,6 +1482,19 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
         if (info->armor > 0) {
             ImGui::Text("%d Armor", info->armor);
         }
+        // Elemental resistances (fire resist gear, nature resist gear, etc.)
+        {
+            const int32_t resVals[6] = {
+                info->holyRes, info->fireRes, info->natureRes,
+                info->frostRes, info->shadowRes, info->arcaneRes
+            };
+            static const char* resLabels[6] = {
+                "Holy Resistance", "Fire Resistance", "Nature Resistance",
+                "Frost Resistance", "Shadow Resistance", "Arcane Resistance"
+            };
+            for (int ri = 0; ri < 6; ++ri)
+                if (resVals[ri] > 0) ImGui::Text("+%d %s", resVals[ri], resLabels[ri]);
+        }
         // Extra stats (hit/crit/haste/sp/ap/expertise/resilience/etc.)
         if (!info->extraStats.empty()) {
             auto statName = [](uint32_t t) -> const char* {
@@ -1641,10 +1654,16 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                 case 5: triggerLabel = "Teaches";      break;
             }
             if (!triggerLabel) continue;
-            std::string spName = spellbookScreen.lookupSpellName(sp.spellId, assetMgr);
-            if (!spName.empty())
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f),
-                                   "%s: %s", triggerLabel, spName.c_str());
+            // Use full spell description if available (matches inventory tooltip style)
+            const std::string& spDesc = gameHandler.getSpellDescription(sp.spellId);
+            const std::string& spText = !spDesc.empty() ? spDesc
+                                        : gameHandler.getSpellName(sp.spellId);
+            if (!spText.empty()) {
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 300.0f);
+                ImGui::TextColored(ImVec4(0.0f, 0.8f, 1.0f, 1.0f),
+                                   "%s: %s", triggerLabel, spText.c_str());
+                ImGui::PopTextWrapPos();
+            }
         }
         // Required level
         if (info->requiredLevel > 1)
