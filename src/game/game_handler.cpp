@@ -2002,6 +2002,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
                         msg = buf;
                     }
                     addSystemChatMessage(msg);
+                    addCombatText(CombatTextEntry::XP_GAIN,
+                                  static_cast<int32_t>(xpGained), 0, true);
                     // XP is updated via PLAYER_XP update fields from the server.
                     if (areaDiscoveryCallback_)
                         areaDiscoveryCallback_(areaName, xpGained);
