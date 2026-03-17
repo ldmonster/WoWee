@@ -2842,10 +2842,9 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 /*uint32_t randProp   =*/ packet.readUInt32();
             }
             auto* info = getItemInfo(itemId);
-            char buf[256];
-            std::snprintf(buf, sizeof(buf), "Everyone passed on [%s].",
-                          info ? info->name.c_str() : std::to_string(itemId).c_str());
-            addSystemChatMessage(buf);
+            std::string allPassName = info && !info->name.empty() ? info->name : std::to_string(itemId);
+            uint32_t allPassQuality = info ? info->quality : 1u;
+            addSystemChatMessage("Everyone passed on " + buildItemLink(itemId, allPassQuality, allPassName) + ".");
             pendingLootRollActive_ = false;
             break;
         }
@@ -2865,15 +2864,16 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 if (!looterName.empty()) {
                     queryItemInfo(itemId, 0);
                     std::string itemName = "item #" + std::to_string(itemId);
+                    uint32_t notifyQuality = 1;
                     if (const ItemQueryResponseData* info = getItemInfo(itemId)) {
                         if (!info->name.empty()) itemName = info->name;
+                        notifyQuality = info->quality;
                     }
-                    char buf[256];
-                    if (count > 1)
-                        std::snprintf(buf, sizeof(buf), "%s loots %s x%u.", looterName.c_str(), itemName.c_str(), count);
-                    else
-                        std::snprintf(buf, sizeof(buf), "%s loots %s.", looterName.c_str(), itemName.c_str());
-                    addSystemChatMessage(buf);
+                    std::string itemLink2 = buildItemLink(itemId, notifyQuality, itemName);
+                    std::string lootMsg = looterName + " loots " + itemLink2;
+                    if (count > 1) lootMsg += " x" + std::to_string(count);
+                    lootMsg += ".";
+                    addSystemChatMessage(lootMsg);
                 }
             }
             break;
@@ -24338,12 +24338,11 @@ void GameHandler::handleLootRoll(network::Packet& packet) {
     }
 
     auto* info = getItemInfo(itemId);
-    std::string iName = info ? info->name : std::to_string(itemId);
+    std::string iName = info && !info->name.empty() ? info->name : std::to_string(itemId);
+    uint32_t rollItemQuality = info ? info->quality : 1u;
+    std::string rollItemLink = buildItemLink(itemId, rollItemQuality, iName);
 
-    char buf[256];
-    std::snprintf(buf, sizeof(buf), "%s rolls %s (%d) on [%s]",
-                  rollerName.c_str(), rollName, static_cast<int>(rollNum), iName.c_str());
-    addSystemChatMessage(buf);
+    addSystemChatMessage(rollerName + " rolls " + rollName + " (" + std::to_string(rollNum) + ") on " + rollItemLink);
 
     LOG_DEBUG("SMSG_LOOT_ROLL: ", rollerName, " rolled ", rollName,
               " (", rollNum, ") on item ", itemId);
@@ -24384,12 +24383,11 @@ void GameHandler::handleLootRollWon(network::Packet& packet) {
     }
 
     auto* info = getItemInfo(itemId);
-    std::string iName = info ? info->name : std::to_string(itemId);
+    std::string iName = info && !info->name.empty() ? info->name : std::to_string(itemId);
+    uint32_t wonItemQuality = info ? info->quality : 1u;
+    std::string wonItemLink = buildItemLink(itemId, wonItemQuality, iName);
 
-    char buf[256];
-    std::snprintf(buf, sizeof(buf), "%s wins [%s] (%s %d)!",
-                  winnerName.c_str(), iName.c_str(), rollName, static_cast<int>(rollNum));
-    addSystemChatMessage(buf);
+    addSystemChatMessage(winnerName + " wins " + wonItemLink + " (" + rollName + " " + std::to_string(rollNum) + ")!");
 
     // Dismiss roll popup — roll contest is over regardless of who won
     pendingLootRollActive_ = false;
