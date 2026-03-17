@@ -26,6 +26,10 @@ public:
     // Classic: none, TBC: u8, WotLK: u16.
     virtual uint8_t movementFlags2Size() const { return 2; }
 
+    // Wire-format movement flag that gates transport data in MSG_MOVE_* payloads.
+    // WotLK/TBC: 0x200, Classic/Turtle: 0x02000000.
+    virtual uint32_t wireOnTransportFlag() const { return 0x00000200; }
+
     // --- Movement ---
 
     /** Parse movement block from SMSG_UPDATE_OBJECT */
@@ -380,6 +384,7 @@ public:
 class ClassicPacketParsers : public TbcPacketParsers {
 public:
     uint8_t movementFlags2Size() const override { return 0; }
+    uint32_t wireOnTransportFlag() const override { return 0x02000000; }
     bool parseCharEnum(network::Packet& packet, CharEnumResponse& response) override;
     bool parseMovementBlock(network::Packet& packet, UpdateBlock& block) override;
     void writeMovementPayload(network::Packet& packet, const MovementInfo& info) override;

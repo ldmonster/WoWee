@@ -16855,6 +16855,32 @@ void GameHandler::handleOtherPlayerMovement(network::Packet& packet) {
     info.z = packet.readFloat();
     info.orientation = packet.readFloat();
 
+    // Read transport data if the on-transport flag is set in wire-format move flags.
+    // The flag bit position differs between expansions (0x200 for WotLK/TBC, 0x02000000 for Classic/Turtle).
+    const uint32_t wireTransportFlag = packetParsers_ ? packetParsers_->wireOnTransportFlag() : 0x00000200;
+    const bool onTransport = (info.flags & wireTransportFlag) != 0;
+    uint64_t transportGuid = 0;
+    float tLocalX = 0, tLocalY = 0, tLocalZ = 0, tLocalO = 0;
+    if (onTransport) {
+        transportGuid = UpdateObjectParser::readPackedGuid(packet);
+        tLocalX = packet.readFloat();
+        tLocalY = packet.readFloat();
+        tLocalZ = packet.readFloat();
+        tLocalO = packet.readFloat();
+        // TBC and WotLK include a transport timestamp; Classic does not.
+        if (flags2Size >= 1) {
+            /*uint32_t transportTime =*/ packet.readUInt32();
+        }
+        // WotLK adds a transport seat byte.
+        if (flags2Size >= 2) {
+            /*int8_t transportSeat =*/ packet.readUInt8();
+            // Optional second transport time for interpolated movement.
+            if (info.flags2 & 0x0200) {
+                /*uint32_t transportTime2 =*/ packet.readUInt32();
+            }
+        }
+    }
+
     // Update entity position in entity manager
     auto entity = entityManager.getEntity(moverGuid);
     if (!entity) {
@@ -16864,6 +16890,20 @@ void GameHandler::handleOtherPlayerMovement(network::Packet& packet) {
     // Convert server coords to canonical
     glm::vec3 canonical = core::coords::serverToCanonical(glm::vec3(info.x, info.y, info.z));
     float canYaw = core::coords::serverToCanonicalYaw(info.orientation);
+
+    // Handle transport attachment: attach/detach the entity so it follows the transport
+    // smoothly between movement updates via updateAttachedTransportChildren().
+    if (onTransport && transportGuid != 0 && transportManager_) {
+        glm::vec3 localCanonical = core::coords::serverToCanonical(glm::vec3(tLocalX, tLocalY, tLocalZ));
+        setTransportAttachment(moverGuid, entity->getType(), transportGuid, localCanonical, true,
+                               core::coords::serverToCanonicalYaw(tLocalO));
+        // Derive world position from transport system for best accuracy.
+        glm::vec3 worldPos = transportManager_->getPlayerWorldPosition(transportGuid, localCanonical);
+        canonical = worldPos;
+    } else if (!onTransport) {
+        // Player left transport — clear any stale attachment.
+        clearTransportAttachment(moverGuid);
+    }
     // Compute a smoothed interpolation window for this player.
     // Using a raw packet delta causes jitter when timing spikes (e.g. 50ms then 300ms).
     // An exponential moving average of intervals gives a stable playback speed that
