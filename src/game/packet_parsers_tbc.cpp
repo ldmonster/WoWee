@@ -1538,6 +1538,106 @@ bool TbcPacketParsers::parseSpellHealLog(network::Packet& packet, SpellHealLogDa
 }
 
 // ============================================================================
+// TBC 2.4.3 SMSG_MESSAGECHAT
+// TBC format: type(u8) + language(u32) + [type-specific data] + msgLen(u32) + msg + tag(u8)
+// WotLK adds senderGuid(u64) + unknown(u32) before type-specific data.
+// ============================================================================
+
+bool TbcPacketParsers::parseMessageChat(network::Packet& packet, MessageChatData& data) {
+    if (packet.getSize() < 10) {
+        LOG_ERROR("[TBC] SMSG_MESSAGECHAT packet too small: ", packet.getSize(), " bytes");
+        return false;
+    }
+
+    uint8_t typeVal = packet.readUInt8();
+    data.type = static_cast<ChatType>(typeVal);
+
+    uint32_t langVal = packet.readUInt32();
+    data.language = static_cast<ChatLanguage>(langVal);
+
+    // TBC: NO senderGuid or unknown field here (WotLK has senderGuid(u64) + unk(u32))
+
+    switch (data.type) {
+        case ChatType::MONSTER_SAY:
+        case ChatType::MONSTER_YELL:
+        case ChatType::MONSTER_EMOTE:
+        case ChatType::MONSTER_WHISPER:
+        case ChatType::MONSTER_PARTY:
+        case ChatType::RAID_BOSS_EMOTE: {
+            // senderGuid(u64) + nameLen(u32) + name + targetGuid(u64)
+            data.senderGuid = packet.readUInt64();
+            uint32_t nameLen = packet.readUInt32();
+            if (nameLen > 0 && nameLen < 256) {
+                data.senderName.resize(nameLen);
+                for (uint32_t i = 0; i < nameLen; ++i) {
+                    data.senderName[i] = static_cast<char>(packet.readUInt8());
+                }
+                if (!data.senderName.empty() && data.senderName.back() == '\0') {
+                    data.senderName.pop_back();
+                }
+            }
+            data.receiverGuid = packet.readUInt64();
+            break;
+        }
+
+        case ChatType::SAY:
+        case ChatType::PARTY:
+        case ChatType::YELL:
+        case ChatType::WHISPER:
+        case ChatType::WHISPER_INFORM:
+        case ChatType::GUILD:
+        case ChatType::OFFICER:
+        case ChatType::RAID:
+        case ChatType::RAID_LEADER:
+        case ChatType::RAID_WARNING:
+        case ChatType::EMOTE:
+        case ChatType::TEXT_EMOTE: {
+            // senderGuid(u64) + senderGuid(u64) — written twice by server
+            data.senderGuid = packet.readUInt64();
+            /*duplicateGuid*/ packet.readUInt64();
+            break;
+        }
+
+        case ChatType::CHANNEL: {
+            // channelName(string) + rank(u32) + senderGuid(u64)
+            data.channelName = packet.readString();
+            /*uint32_t rank =*/ packet.readUInt32();
+            data.senderGuid = packet.readUInt64();
+            break;
+        }
+
+        default: {
+            // All other types: senderGuid(u64) + senderGuid(u64) — written twice
+            data.senderGuid = packet.readUInt64();
+            /*duplicateGuid*/ packet.readUInt64();
+            break;
+        }
+    }
+
+    // Read message length + message
+    uint32_t messageLen = packet.readUInt32();
+    if (messageLen > 0 && messageLen < 8192) {
+        data.message.resize(messageLen);
+        for (uint32_t i = 0; i < messageLen; ++i) {
+            data.message[i] = static_cast<char>(packet.readUInt8());
+        }
+        if (!data.message.empty() && data.message.back() == '\0') {
+            data.message.pop_back();
+        }
+    }
+
+    // Read chat tag
+    if (packet.getReadPos() < packet.getSize()) {
+        data.chatTag = packet.readUInt8();
+    }
+
+    LOG_DEBUG("[TBC] SMSG_MESSAGECHAT: type=", getChatTypeString(data.type),
+             " sender=", data.senderName.empty() ? std::to_string(data.senderGuid) : data.senderName);
+
+    return true;
+}
+
+// ============================================================================
 // TBC 2.4.3 quest giver status
 // TBC sends uint32 (like Classic), WotLK changed to uint8.
 // TBC 2.4.3 enum: 0=NONE,1=UNAVAILABLE,2=CHAT,3=INCOMPLETE,4=REWARD_REP,
