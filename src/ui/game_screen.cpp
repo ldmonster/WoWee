@@ -20563,20 +20563,40 @@ void GameScreen::renderCombatLog(game::GameHandler& gameHandler) {
                     color = ImVec4(1.0f, 0.5f, 0.2f, 1.0f);
                     break;
                 }
-                case T::ENERGIZE:
+                case T::ENERGIZE: {
+                    const char* pwrName = "power";
+                    switch (e.powerType) {
+                        case 0: pwrName = "Mana"; break;
+                        case 1: pwrName = "Rage"; break;
+                        case 2: pwrName = "Focus"; break;
+                        case 3: pwrName = "Energy"; break;
+                        case 4: pwrName = "Happiness"; break;
+                        case 6: pwrName = "Runic Power"; break;
+                    }
                     if (spell)
-                        snprintf(desc, sizeof(desc), "%s gains %d power (%s)", tgt, e.amount, spell);
+                        snprintf(desc, sizeof(desc), "%s gains %d %s (%s)", tgt, e.amount, pwrName, spell);
                     else
-                        snprintf(desc, sizeof(desc), "%s gains %d power", tgt, e.amount);
+                        snprintf(desc, sizeof(desc), "%s gains %d %s", tgt, e.amount, pwrName);
                     color = ImVec4(0.4f, 0.6f, 1.0f, 1.0f);
                     break;
-                case T::POWER_DRAIN:
+                }
+                case T::POWER_DRAIN: {
+                    const char* drainName = "power";
+                    switch (e.powerType) {
+                        case 0: drainName = "Mana"; break;
+                        case 1: drainName = "Rage"; break;
+                        case 2: drainName = "Focus"; break;
+                        case 3: drainName = "Energy"; break;
+                        case 4: drainName = "Happiness"; break;
+                        case 6: drainName = "Runic Power"; break;
+                    }
                     if (spell)
-                        snprintf(desc, sizeof(desc), "%s loses %d power to %s's %s", tgt, e.amount, src, spell);
+                        snprintf(desc, sizeof(desc), "%s loses %d %s to %s's %s", tgt, e.amount, drainName, src, spell);
                     else
-                        snprintf(desc, sizeof(desc), "%s loses %d power", tgt, e.amount);
+                        snprintf(desc, sizeof(desc), "%s loses %d %s", tgt, e.amount, drainName);
                     color = ImVec4(0.45f, 0.75f, 1.0f, 1.0f);
                     break;
+                }
                 case T::XP_GAIN:
                     snprintf(desc, sizeof(desc), "You gain %d experience", e.amount);
                     color = ImVec4(0.8f, 0.6f, 1.0f, 1.0f);
