@@ -51,7 +51,8 @@ public:
     void compositePass(VkCommandBuffer cmd);
 
     /// ImGui overlay — call INSIDE the main render pass (during ImGui frame).
-    void render(const glm::vec3& playerRenderPos, int screenWidth, int screenHeight);
+    void render(const glm::vec3& playerRenderPos, int screenWidth, int screenHeight,
+                float playerYawDeg = 0.0f);
 
     void setMapName(const std::string& name);
     void setServerExplorationMask(const std::vector<uint32_t>& masks, bool hasData);
@@ -71,7 +72,8 @@ private:
                                       float& top, float& bottom) const;
     void loadZoneTextures(int zoneIdx);
     void requestComposite(int zoneIdx);
-    void renderImGuiOverlay(const glm::vec3& playerRenderPos, int screenWidth, int screenHeight);
+    void renderImGuiOverlay(const glm::vec3& playerRenderPos, int screenWidth, int screenHeight,
+                            float playerYawDeg);
     void updateExploration(const glm::vec3& playerRenderPos);
     void zoomIn(const glm::vec3& playerRenderPos);
     void zoomOut();

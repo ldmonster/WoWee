@@ -835,7 +835,8 @@ void WorldMap::zoomOut() {
 // Main render (input + ImGui overlay)
 // --------------------------------------------------------
 
-void WorldMap::render(const glm::vec3& playerRenderPos, int screenWidth, int screenHeight) {
+void WorldMap::render(const glm::vec3& playerRenderPos, int screenWidth, int screenHeight,
+                      float playerYawDeg) {
     if (!initialized || !assetManager) return;
 
     auto& input = core::Input::getInstance();
@@ -886,14 +887,14 @@ void WorldMap::render(const glm::vec3& playerRenderPos, int screenWidth, int scr
     }
 
     if (!open) return;
-    renderImGuiOverlay(playerRenderPos, screenWidth, screenHeight);
+    renderImGuiOverlay(playerRenderPos, screenWidth, screenHeight, playerYawDeg);
 }
 
 // --------------------------------------------------------
 // ImGui overlay
 // --------------------------------------------------------
 
-void WorldMap::renderImGuiOverlay(const glm::vec3& playerRenderPos, int screenWidth, int screenHeight) {
+void WorldMap::renderImGuiOverlay(const glm::vec3& playerRenderPos, int screenWidth, int screenHeight, float playerYawDeg) {
     float sw = static_cast<float>(screenWidth);
     float sh = static_cast<float>(screenHeight);
 
@@ -1014,8 +1015,20 @@ void WorldMap::renderImGuiOverlay(const glm::vec3& playerRenderPos, int screenWi
                 playerUV.y >= 0.0f && playerUV.y <= 1.0f) {
                 float px = imgMin.x + playerUV.x * displayW;
                 float py = imgMin.y + playerUV.y * displayH;
-                drawList->AddCircleFilled(ImVec2(px, py), 6.0f, IM_COL32(255, 40, 40, 255));
-                drawList->AddCircle(ImVec2(px, py), 6.0f, IM_COL32(0, 0, 0, 200), 0, 2.0f);
+                // Directional arrow: render-space (cos,sin) maps to screen (-dx,-dy)
+                // because render+X=west=left and render+Y=north=up (screen Y is down).
+                float yawRad = glm::radians(playerYawDeg);
+                float adx = -std::cos(yawRad);   // screen-space arrow X
+                float ady = -std::sin(yawRad);   // screen-space arrow Y
+                float apx = -ady, apy = adx;     // perpendicular (left/right of arrow)
+                constexpr float TIP  = 9.0f;     // tip distance from center
+                constexpr float TAIL = 4.0f;     // tail distance from center
+                constexpr float HALF = 5.0f;     // half base width
+                ImVec2 tip(px + adx * TIP,  py + ady * TIP);
+                ImVec2 bl (px - adx * TAIL + apx * HALF,  py - ady * TAIL + apy * HALF);
+                ImVec2 br (px - adx * TAIL - apx * HALF,  py - ady * TAIL - apy * HALF);
+                drawList->AddTriangleFilled(tip, bl, br, IM_COL32(255, 40, 40, 255));
+                drawList->AddTriangle(tip, bl, br, IM_COL32(0, 0, 0, 200), 1.5f);
             }
         }
 

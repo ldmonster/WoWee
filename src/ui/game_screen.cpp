@@ -6539,10 +6539,11 @@ void GameScreen::renderWorldMap(game::GameHandler& gameHandler) {
     }
 
     glm::vec3 playerPos = renderer->getCharacterPosition();
+    float playerYaw = renderer->getCharacterYaw();
     auto* window = app.getWindow();
     int screenW = window ? window->getWidth() : 1280;
     int screenH = window ? window->getHeight() : 720;
-    wm->render(playerPos, screenW, screenH);
+    wm->render(playerPos, screenW, screenH, playerYaw);
 
     // Sync showWorldMap_ if the map closed itself (e.g. ESC key inside the overlay).
     if (!wm->isOpen()) showWorldMap_ = false;
