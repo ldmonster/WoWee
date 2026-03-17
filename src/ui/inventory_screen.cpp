@@ -2988,6 +2988,10 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
                 showDiff(lbl, static_cast<float>(nv), static_cast<float>(ev));
             }
         }
+    } else if (inventory && !ImGui::GetIO().KeyShift && item.inventoryType > 0) {
+        if (findComparableEquipped(*inventory, item.inventoryType)) {
+            ImGui::TextDisabled("Hold Shift to compare");
+        }
     }
 
     // Destroy hint (not shown for quest items)
