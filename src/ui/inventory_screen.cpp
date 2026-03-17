@@ -2961,17 +2961,26 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
                 // Find a label for this stat type
                 const char* lbl = nullptr;
                 switch (t) {
-                    case 31: lbl = "Hit"; break;
-                    case 32: lbl = "Crit"; break;
+                    case 0:  lbl = "Mana"; break;
+                    case 1:  lbl = "Health"; break;
+                    case 12: lbl = "Defense"; break;
+                    case 13: lbl = "Dodge"; break;
+                    case 14: lbl = "Parry"; break;
+                    case 15: lbl = "Block Rating"; break;
+                    case 16: case 17: case 18: case 31: lbl = "Hit"; break;
+                    case 19: case 20: case 21: case 32: lbl = "Crit"; break;
+                    case 28: case 29: case 30: case 36: lbl = "Haste"; break;
                     case 35: lbl = "Resilience"; break;
-                    case 36: lbl = "Haste"; break;
                     case 37: lbl = "Expertise"; break;
                     case 38: lbl = "Attack Power"; break;
                     case 39: lbl = "Ranged AP"; break;
+                    case 41: lbl = "Healing"; break;
+                    case 42: lbl = "Spell Damage"; break;
                     case 43: lbl = "MP5"; break;
                     case 44: lbl = "Armor Pen"; break;
                     case 45: lbl = "Spell Power"; break;
                     case 46: lbl = "HP5"; break;
+                    case 47: lbl = "Spell Pen"; break;
                     case 48: lbl = "Block Value"; break;
                     default: lbl = nullptr; break;
                 }
@@ -3511,6 +3520,16 @@ void InventoryScreen::renderItemTooltip(const game::ItemQueryResponseData& info,
                 ImGui::TextColored(ic, "%s", ilvlBuf);
             }
 
+            // DPS comparison for weapons
+            if (isWeaponInvType(info.inventoryType) && isWeaponInvType(eq->item.inventoryType)) {
+                float newDps = 0.0f, eqDps = 0.0f;
+                if (info.damageMax > 0.0f && info.delayMs > 0)
+                    newDps = ((info.damageMin + info.damageMax) * 0.5f) / (info.delayMs / 1000.0f);
+                if (eq->item.damageMax > 0.0f && eq->item.delayMs > 0)
+                    eqDps = ((eq->item.damageMin + eq->item.damageMax) * 0.5f) / (eq->item.delayMs / 1000.0f);
+                showDiff("DPS", newDps, eqDps);
+            }
+
             showDiff("Armor", static_cast<float>(info.armor),     static_cast<float>(eq->item.armor));
             showDiff("Str",   static_cast<float>(info.strength),  static_cast<float>(eq->item.strength));
             showDiff("Agi",   static_cast<float>(info.agility),   static_cast<float>(eq->item.agility));
@@ -3518,8 +3537,50 @@ void InventoryScreen::renderItemTooltip(const game::ItemQueryResponseData& info,
             showDiff("Int",   static_cast<float>(info.intellect), static_cast<float>(eq->item.intellect));
             showDiff("Spi",   static_cast<float>(info.spirit),    static_cast<float>(eq->item.spirit));
 
-            // Hint text
-            ImGui::TextDisabled("Hold Shift to compare");
+            // Extra stats diff — union of stat types from both items
+            auto findExtraStat = [](const auto& it, uint32_t type) -> int32_t {
+                for (const auto& es : it.extraStats)
+                    if (es.statType == type) return es.statValue;
+                return 0;
+            };
+            std::vector<uint32_t> allTypes;
+            for (const auto& es : info.extraStats) allTypes.push_back(es.statType);
+            for (const auto& es : eq->item.extraStats) {
+                bool found = false;
+                for (uint32_t t : allTypes) if (t == es.statType) { found = true; break; }
+                if (!found) allTypes.push_back(es.statType);
+            }
+            for (uint32_t t : allTypes) {
+                int32_t nv = findExtraStat(info, t);
+                int32_t ev = findExtraStat(eq->item, t);
+                const char* lbl = nullptr;
+                switch (t) {
+                    case 0:  lbl = "Mana"; break;
+                    case 1:  lbl = "Health"; break;
+                    case 12: lbl = "Defense"; break;
+                    case 13: lbl = "Dodge"; break;
+                    case 14: lbl = "Parry"; break;
+                    case 15: lbl = "Block Rating"; break;
+                    case 16: case 17: case 18: case 31: lbl = "Hit"; break;
+                    case 19: case 20: case 21: case 32: lbl = "Crit"; break;
+                    case 28: case 29: case 30: case 36: lbl = "Haste"; break;
+                    case 35: lbl = "Resilience"; break;
+                    case 37: lbl = "Expertise"; break;
+                    case 38: lbl = "Attack Power"; break;
+                    case 39: lbl = "Ranged AP"; break;
+                    case 41: lbl = "Healing"; break;
+                    case 42: lbl = "Spell Damage"; break;
+                    case 43: lbl = "MP5"; break;
+                    case 44: lbl = "Armor Pen"; break;
+                    case 45: lbl = "Spell Power"; break;
+                    case 46: lbl = "HP5"; break;
+                    case 47: lbl = "Spell Pen"; break;
+                    case 48: lbl = "Block Value"; break;
+                    default: lbl = nullptr; break;
+                }
+                if (!lbl) continue;
+                showDiff(lbl, static_cast<float>(nv), static_cast<float>(ev));
+            }
         }
     } else if (info.inventoryType > 0) {
         ImGui::TextDisabled("Hold Shift to compare");
