@@ -2873,7 +2873,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
 
     }
 
-    // Cursor affordance: show hand cursor over interactable game objects.
+    // Cursor affordance: show hand cursor over interactable entities.
     if (!io.WantCaptureMouse) {
         auto* renderer = core::Application::getInstance().getRenderer();
         auto* camera = renderer ? renderer->getCamera() : nullptr;
@@ -2884,17 +2884,21 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             float screenH = static_cast<float>(window->getHeight());
             rendering::Ray ray = camera->screenToWorldRay(mousePos.x, mousePos.y, screenW, screenH);
             float closestT = 1e30f;
-            bool hoverInteractableGo = false;
+            bool hoverInteractable = false;
             for (const auto& [guid, entity] : gameHandler.getEntityManager().getEntities()) {
-                if (entity->getType() != game::ObjectType::GAMEOBJECT) continue;
+                bool isGo   = (entity->getType() == game::ObjectType::GAMEOBJECT);
+                bool isUnit = (entity->getType() == game::ObjectType::UNIT);
+                bool isPlayer = (entity->getType() == game::ObjectType::PLAYER);
+                if (!isGo && !isUnit && !isPlayer) continue;
+                if (guid == gameHandler.getPlayerGuid()) continue; // skip self
 
                 glm::vec3 hitCenter;
                 float hitRadius = 0.0f;
                 bool hasBounds = core::Application::getInstance().getRenderBoundsForGuid(guid, hitCenter, hitRadius);
                 if (!hasBounds) {
-                    hitRadius = 2.5f;
+                    hitRadius = isGo ? 2.5f : 1.8f;
                     hitCenter = core::coords::canonicalToRender(glm::vec3(entity->getX(), entity->getY(), entity->getZ()));
-                    hitCenter.z += 1.2f;
+                    hitCenter.z += isGo ? 1.2f : 1.0f;
                 } else {
                     hitRadius = std::max(hitRadius * 1.1f, 0.8f);
                 }
@@ -2902,10 +2906,10 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 float hitT;
                 if (raySphereIntersect(ray, hitCenter, hitRadius, hitT) && hitT < closestT) {
                     closestT = hitT;
-                    hoverInteractableGo = true;
+                    hoverInteractable = true;
                 }
             }
-            if (hoverInteractableGo) {
+            if (hoverInteractable) {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             }
         }
