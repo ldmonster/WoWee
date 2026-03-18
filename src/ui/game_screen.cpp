@@ -17504,6 +17504,37 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
         drawList->AddText(font, fontSize, ImVec2(tx, ty), IM_COL32(230, 220, 140, 255), coordBuf);
     }
 
+    // Local time clock — displayed just below the coordinate label
+    {
+        auto now = std::chrono::system_clock::now();
+        std::time_t tt = std::chrono::system_clock::to_time_t(now);
+        std::tm tmLocal{};
+#if defined(_WIN32)
+        localtime_s(&tmLocal, &tt);
+#else
+        localtime_r(&tt, &tmLocal);
+#endif
+        char clockBuf[16];
+        std::snprintf(clockBuf, sizeof(clockBuf), "%02d:%02d",
+                      tmLocal.tm_hour, tmLocal.tm_min);
+
+        ImFont* font = ImGui::GetFont();
+        float fontSize = ImGui::GetFontSize() * 0.9f;  // slightly smaller than coords
+        ImVec2 clockSz = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, clockBuf);
+
+        float tx = centerX - clockSz.x * 0.5f;
+        // Position below the coordinate line (+fontSize of coord + 2px gap)
+        float coordLineH = ImGui::GetFontSize();
+        float ty = centerY + mapRadius + 3.0f + coordLineH + 2.0f;
+
+        float pad = 2.0f;
+        drawList->AddRectFilled(
+            ImVec2(tx - pad, ty - pad),
+            ImVec2(tx + clockSz.x + pad, ty + clockSz.y + pad),
+            IM_COL32(0, 0, 0, 120), 3.0f);
+        drawList->AddText(font, fontSize, ImVec2(tx, ty), IM_COL32(200, 200, 220, 220), clockBuf);
+    }
+
     // Zone name display — drawn inside the top edge of the minimap circle
     {
         auto* zmRenderer = renderer ? renderer->getZoneManager() : nullptr;
