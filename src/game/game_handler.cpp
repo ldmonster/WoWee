@@ -18291,6 +18291,24 @@ void GameHandler::dismissPet() {
     socket->send(packet);
 }
 
+void GameHandler::togglePetSpellAutocast(uint32_t spellId) {
+    if (petGuid_ == 0 || spellId == 0 || state != WorldState::IN_WORLD || !socket) return;
+    bool currentlyOn = petAutocastSpells_.count(spellId) != 0;
+    uint8_t newState = currentlyOn ? 0 : 1;
+    // CMSG_PET_SPELL_AUTOCAST: petGuid(8) + spellId(4) + state(1)
+    network::Packet pkt(wireOpcode(Opcode::CMSG_PET_SPELL_AUTOCAST));
+    pkt.writeUInt64(petGuid_);
+    pkt.writeUInt32(spellId);
+    pkt.writeUInt8(newState);
+    socket->send(pkt);
+    // Optimistically update local state; server will confirm via SMSG_PET_SPELLS
+    if (newState)
+        petAutocastSpells_.insert(spellId);
+    else
+        petAutocastSpells_.erase(spellId);
+    LOG_DEBUG("togglePetSpellAutocast: spellId=", spellId, " autocast=", (int)newState);
+}
+
 void GameHandler::renamePet(const std::string& newName) {
     if (petGuid_ == 0 || state != WorldState::IN_WORLD || !socket) return;
     if (newName.empty() || newName.size() > 12) return;  // Server enforces max 12 chars

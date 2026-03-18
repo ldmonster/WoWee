@@ -746,6 +746,8 @@ public:
     }
     // Send CMSG_PET_ACTION to issue a pet command
     void sendPetAction(uint32_t action, uint64_t targetGuid = 0);
+    // Toggle autocast for a pet spell via CMSG_PET_SPELL_AUTOCAST
+    void togglePetSpellAutocast(uint32_t spellId);
     const std::unordered_set<uint32_t>& getKnownSpells() const { return knownSpells; }
 
     // ---- Pet Stable ----

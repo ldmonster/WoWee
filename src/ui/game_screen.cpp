@@ -3899,6 +3899,10 @@ void GameScreen::renderPetFrame(game::GameHandler& gameHandler) {
                     uint64_t targetGuid = (actionId > 5) ? gameHandler.getTargetGuid() : 0u;
                     gameHandler.sendPetAction(slotVal, targetGuid);
                 }
+                // Right-click toggles autocast for castable pet spells (actionId > 6)
+                if (actionId > 6 && ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                    gameHandler.togglePetSpellAutocast(actionId);
+                }
 
                 // Tooltip: rich spell info for pet spells, simple label for built-in commands
                 if (ImGui::IsItemHovered()) {
@@ -3920,8 +3924,10 @@ void GameScreen::renderPetFrame(game::GameHandler& gameHandler) {
                             if (nm.empty()) nm = "Spell #" + std::to_string(actionId);
                             ImGui::Text("%s", nm.c_str());
                         }
-                        if (autocastOn)
-                            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Autocast: On");
+                        ImGui::TextColored(autocastOn
+                            ? ImVec4(0.4f, 1.0f, 0.4f, 1.0f)
+                            : ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                            "Autocast: %s (right-click to toggle)", autocastOn ? "On" : "Off");
                         if (petOnCd) {
                             if (petCd >= 60.0f)
                                 ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
