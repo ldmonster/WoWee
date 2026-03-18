@@ -1255,6 +1255,8 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
 bool UpdateObjectParser::parseUpdateFields(network::Packet& packet, UpdateBlock& block) {
     size_t startPos = packet.getReadPos();
 
+    if (packet.getReadPos() >= packet.getSize()) return false;
+
     // Read number of blocks (each block is 32 fields = 32 bits)
     uint8_t blockCount = packet.readUInt8();
 
@@ -1342,6 +1344,8 @@ bool UpdateObjectParser::parseUpdateFields(network::Packet& packet, UpdateBlock&
 }
 
 bool UpdateObjectParser::parseUpdateBlock(network::Packet& packet, UpdateBlock& block) {
+    if (packet.getReadPos() >= packet.getSize()) return false;
+
     // Read update type
     uint8_t updateTypeVal = packet.readUInt8();
     block.updateType = static_cast<UpdateType>(updateTypeVal);
@@ -1351,6 +1355,7 @@ bool UpdateObjectParser::parseUpdateBlock(network::Packet& packet, UpdateBlock& 
     switch (block.updateType) {
         case UpdateType::VALUES: {
             // Partial update - changed fields only
+            if (packet.getReadPos() >= packet.getSize()) return false;
             block.guid = readPackedGuid(packet);
             LOG_DEBUG("  VALUES update for GUID: 0x", std::hex, block.guid, std::dec);
 
@@ -1359,6 +1364,7 @@ bool UpdateObjectParser::parseUpdateBlock(network::Packet& packet, UpdateBlock& 
 
         case UpdateType::MOVEMENT: {
             // Movement update
+            if (packet.getReadPos() + 8 > packet.getSize()) return false;
             block.guid = packet.readUInt64();
             LOG_DEBUG("  MOVEMENT update for GUID: 0x", std::hex, block.guid, std::dec);
 
@@ -1368,10 +1374,12 @@ bool UpdateObjectParser::parseUpdateBlock(network::Packet& packet, UpdateBlock& 
         case UpdateType::CREATE_OBJECT:
         case UpdateType::CREATE_OBJECT2: {
             // Create new object with full data
+            if (packet.getReadPos() >= packet.getSize()) return false;
             block.guid = readPackedGuid(packet);
             LOG_DEBUG("  CREATE_OBJECT for GUID: 0x", std::hex, block.guid, std::dec);
 
             // Read object type
+            if (packet.getReadPos() >= packet.getSize()) return false;
             uint8_t objectTypeVal = packet.readUInt8();
             block.objectType = static_cast<ObjectType>(objectTypeVal);
             LOG_DEBUG("  Object type: ", (int)objectTypeVal);
