@@ -7399,12 +7399,11 @@ void GameHandler::handlePacket(network::Packet& packet) {
 
         // ---- Play object/spell sounds ----
         case Opcode::SMSG_PLAY_OBJECT_SOUND:
-        case Opcode::SMSG_PLAY_SPELL_IMPACT:
             if (packet.getSize() - packet.getReadPos() >= 12) {
                 // uint32 soundId + uint64 sourceGuid
-                uint32_t soundId   = packet.readUInt32();
-                uint64_t srcGuid   = packet.readUInt64();
-                LOG_DEBUG("SMSG_PLAY_OBJECT_SOUND/SPELL_IMPACT id=", soundId, " src=0x", std::hex, srcGuid, std::dec);
+                uint32_t soundId = packet.readUInt32();
+                uint64_t srcGuid = packet.readUInt64();
+                LOG_DEBUG("SMSG_PLAY_OBJECT_SOUND: id=", soundId, " src=0x", std::hex, srcGuid, std::dec);
                 if (playPositionalSoundCallback_) playPositionalSoundCallback_(soundId, srcGuid);
                 else if (playSoundCallback_) playSoundCallback_(soundId);
             } else if (packet.getSize() - packet.getReadPos() >= 4) {
@@ -7413,6 +7412,28 @@ void GameHandler::handlePacket(network::Packet& packet) {
             }
             packet.setReadPos(packet.getSize());
             break;
+        case Opcode::SMSG_PLAY_SPELL_IMPACT: {
+            // uint64 targetGuid + uint32 visualId (same structure as SMSG_PLAY_SPELL_VISUAL)
+            if (packet.getSize() - packet.getReadPos() < 12) {
+                packet.setReadPos(packet.getSize()); break;
+            }
+            uint64_t impTargetGuid = packet.readUInt64();
+            uint32_t impVisualId   = packet.readUInt32();
+            if (impVisualId == 0) break;
+            auto* renderer = core::Application::getInstance().getRenderer();
+            if (!renderer) break;
+            glm::vec3 spawnPos;
+            if (impTargetGuid == playerGuid) {
+                spawnPos = renderer->getCharacterPosition();
+            } else {
+                auto entity = entityManager.getEntity(impTargetGuid);
+                if (!entity) break;
+                glm::vec3 canonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());
+                spawnPos = core::coords::canonicalToRender(canonical);
+            }
+            renderer->playSpellVisual(impVisualId, spawnPos);
+            break;
+        }
 
         // ---- Resistance/combat log ----
         case Opcode::SMSG_RESISTLOG: {
