@@ -284,18 +284,14 @@ protected:
 
 /**
  * Player entity
+ * Name is inherited from Unit — do NOT redeclare it here or the
+ * shadowed field will diverge from Unit::name, causing nameplates
+ * and other Unit*-based lookups to read an empty string.
  */
 class Player : public Unit {
 public:
     Player() { type = ObjectType::PLAYER; }
     explicit Player(uint64_t guid) : Unit(guid) { type = ObjectType::PLAYER; }
-
-    // Name
-    const std::string& getName() const { return name; }
-    void setName(const std::string& n) { name = n; }
-
-protected:
-    std::string name;
 };
 
 /**
