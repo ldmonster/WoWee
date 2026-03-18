@@ -262,6 +262,9 @@ static std::vector<std::string> allMacroCommands(const std::string& macroText);
 static std::string evaluateMacroConditionals(const std::string& rawArg,
                                               game::GameHandler& gameHandler,
                                               uint64_t& targetOverride);
+// Returns the spell/item name from #showtooltip [Name], or "__auto__" for bare
+// #showtooltip (use first /cast target), or "" if no directive is present.
+static std::string getMacroShowtooltipArg(const std::string& macroText);
 
 void GameScreen::render(game::GameHandler& gameHandler) {
     // Set up chat bubble callback (once)
@@ -5280,6 +5283,36 @@ static std::vector<std::string> allMacroCommands(const std::string& macroText) {
     return cmds;
 }
 
+// Returns the #showtooltip argument from a macro body:
+//   "#showtooltip Spell"  → "Spell"
+//   "#showtooltip"        → "__auto__" (derive from first /cast)
+//   (none)                → ""
+static std::string getMacroShowtooltipArg(const std::string& macroText) {
+    size_t pos = 0;
+    while (pos <= macroText.size()) {
+        size_t nl = macroText.find('\n', pos);
+        std::string line = (nl != std::string::npos) ? macroText.substr(pos, nl - pos) : macroText.substr(pos);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t fs = line.find_first_not_of(" \t");
+        if (fs != std::string::npos) line = line.substr(fs);
+        if (line.rfind("#showtooltip", 0) == 0 || line.rfind("#show", 0) == 0) {
+            size_t sp = line.find(' ');
+            if (sp != std::string::npos) {
+                std::string arg = line.substr(sp + 1);
+                size_t as = arg.find_first_not_of(" \t");
+                if (as != std::string::npos) arg = arg.substr(as);
+                size_t ae = arg.find_last_not_of(" \t");
+                if (ae != std::string::npos) arg.resize(ae + 1);
+                if (!arg.empty()) return arg;
+            }
+            return "__auto__";
+        }
+        if (nl == std::string::npos) break;
+        pos = nl + 1;
+    }
+    return {};
+}
+
 // ---------------------------------------------------------------------------
 // WoW macro conditional evaluator
 // Parses:  [cond1,cond2] Spell1; [cond3] Spell2; DefaultSpell
@@ -7799,6 +7832,59 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
             }
             if (itemDisplayInfoId != 0)
                 iconTex = inventoryScreen.getItemIcon(itemDisplayInfoId);
+        }
+
+        // Macro icon: #showtooltip [SpellName] → show that spell's icon on the button
+        if (slot.type == game::ActionBarSlot::MACRO && slot.id != 0 && !iconTex) {
+            const std::string& macroText = gameHandler.getMacroText(slot.id);
+            if (!macroText.empty()) {
+                std::string showArg = getMacroShowtooltipArg(macroText);
+                if (showArg.empty() || showArg == "__auto__") {
+                    // No explicit #showtooltip arg — derive spell from first /cast line
+                    for (const auto& cmdLine : allMacroCommands(macroText)) {
+                        if (cmdLine.size() < 6) continue;
+                        std::string cl = cmdLine;
+                        for (char& c : cl) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        if (cl.rfind("/cast ", 0) != 0 && cl != "/cast") continue;
+                        size_t sp2 = cmdLine.find(' ');
+                        if (sp2 == std::string::npos) continue;
+                        showArg = cmdLine.substr(sp2 + 1);
+                        // Strip conditionals [...]
+                        if (!showArg.empty() && showArg.front() == '[') {
+                            size_t ce = showArg.find(']');
+                            if (ce != std::string::npos) showArg = showArg.substr(ce + 1);
+                        }
+                        // Take first alternative before ';'
+                        size_t semi = showArg.find(';');
+                        if (semi != std::string::npos) showArg = showArg.substr(0, semi);
+                        // Trim and strip '!'
+                        size_t ss = showArg.find_first_not_of(" \t!");
+                        if (ss != std::string::npos) showArg = showArg.substr(ss);
+                        size_t se = showArg.find_last_not_of(" \t");
+                        if (se != std::string::npos) showArg.resize(se + 1);
+                        break;
+                    }
+                }
+                // Look up the spell icon by name
+                if (!showArg.empty() && showArg != "__auto__") {
+                    std::string showLower = showArg;
+                    for (char& c : showLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    // Also strip "(Rank N)" suffix for matching
+                    size_t rankParen = showLower.find('(');
+                    if (rankParen != std::string::npos) showLower.resize(rankParen);
+                    while (!showLower.empty() && showLower.back() == ' ') showLower.pop_back();
+                    for (uint32_t sid : gameHandler.getKnownSpells()) {
+                        const std::string& sn = gameHandler.getSpellName(sid);
+                        if (sn.empty()) continue;
+                        std::string snl = sn;
+                        for (char& c : snl) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        if (snl == showLower) {
+                            iconTex = assetMgr ? getSpellIcon(sid, assetMgr) : VK_NULL_HANDLE;
+                            if (iconTex) break;
+                        }
+                    }
+                }
+            }
         }
 
         // Item-missing check: grey out item slots whose item is not in the player's inventory.
