@@ -3355,6 +3355,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 castIsChannel = false;
                 currentCastSpellId = 0;
                 lastInteractedGoGuid_ = 0;
+                craftQueueSpellId_ = 0;
+                craftQueueRemaining_ = 0;
                 queuedSpellId_ = 0;
                 queuedSpellTarget_ = 0;
                 if (auto* renderer = core::Application::getInstance().getRenderer()) {
@@ -9097,6 +9099,8 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     lastInteractedGoGuid_ = 0;
     castTimeRemaining = 0.0f;
     castTimeTotal = 0.0f;
+    craftQueueSpellId_ = 0;
+    craftQueueRemaining_ = 0;
     queuedSpellId_ = 0;
     queuedSpellTarget_ = 0;
     playerDead_ = false;
@@ -18351,6 +18355,8 @@ void GameHandler::handleCastFailed(network::Packet& packet) {
     currentCastSpellId = 0;
     castTimeRemaining = 0.0f;
     lastInteractedGoGuid_ = 0;
+    craftQueueSpellId_ = 0;
+    craftQueueRemaining_ = 0;
     queuedSpellId_ = 0;
     queuedSpellTarget_ = 0;
 
@@ -22061,6 +22067,8 @@ void GameHandler::handleNewWorld(network::Packet& packet) {
         castIsChannel = false;
         currentCastSpellId = 0;
         castTimeRemaining = 0.0f;
+        craftQueueSpellId_ = 0;
+        craftQueueRemaining_ = 0;
         queuedSpellId_ = 0;
         queuedSpellTarget_ = 0;
 
@@ -22121,6 +22129,8 @@ void GameHandler::handleNewWorld(network::Packet& packet) {
     pendingGameObjectInteractGuid_ = 0;
     lastInteractedGoGuid_ = 0;
     castTimeRemaining = 0.0f;
+    craftQueueSpellId_ = 0;
+    craftQueueRemaining_ = 0;
     queuedSpellId_ = 0;
     queuedSpellTarget_ = 0;
 
