@@ -1058,50 +1058,60 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
                 /*float finalAngle =*/ packet.readFloat();
             }
 
-            // Legacy UPDATE_OBJECT spline layout used by many servers:
-            // timePassed, duration, splineId, durationMod, durationModNext,
-            // [ANIMATION: animType(1)+animTime(4) if SPLINEFLAG_ANIMATION(0x00400000)],
-            // [PARABOLIC: verticalAccel(4)+effectStartTime(4) if SPLINEFLAG_PARABOLIC(0x00000800)],
-            // pointCount, points, splineMode, endPoint.
+            // Spline data layout varies by expansion:
+            //   Classic/Vanilla: timePassed(4)+duration(4)+splineId(4)+pointCount(4)+points+mode(1)+endPoint(12)
+            //   WotLK: timePassed(4)+duration(4)+splineId(4)+durationMod(4)+durationModNext(4)
+            //          +[ANIMATION(5)]+[PARABOLIC(8)]+pointCount(4)+points+mode(1)+endPoint(12)
+            // Since the parser has no expansion context, auto-detect by trying Classic first.
             const size_t legacyStart = packet.getReadPos();
-            if (!bytesAvailable(12 + 8 + 4)) return false;
+            if (!bytesAvailable(16)) return false; // minimum: 12 common + 4 pointCount
             /*uint32_t timePassed =*/ packet.readUInt32();
             /*uint32_t duration =*/ packet.readUInt32();
             /*uint32_t splineId =*/ packet.readUInt32();
-            /*float durationMod =*/ packet.readFloat();
-            /*float durationModNext =*/ packet.readFloat();
-            if (splineFlags & 0x00400000) { // SPLINEFLAG_ANIMATION
-                if (!bytesAvailable(5)) return false;
-                packet.readUInt8();   // animationType
-                packet.readUInt32();  // animTime
-            }
-            if (splineFlags & 0x00000800) { // SPLINEFLAG_PARABOLIC
-                if (!bytesAvailable(8)) return false;
-                /*float verticalAccel =*/ packet.readFloat();
-                /*uint32_t effectStartTime =*/ packet.readUInt32();
-            }
-            if (!bytesAvailable(4)) return false;
-            uint32_t pointCount = packet.readUInt32();
+            const size_t afterSplineId = packet.getReadPos();
 
-            const size_t remainingAfterCount = packet.getSize() - packet.getReadPos();
-            const bool legacyCountLooksValid = (pointCount <= 256);
-            const size_t legacyPointsBytes = static_cast<size_t>(pointCount) * 12ull;
-            const bool legacyPayloadFits = (legacyPointsBytes + 13ull) <= remainingAfterCount;
-
-            if (legacyCountLooksValid && legacyPayloadFits) {
-                for (uint32_t i = 0; i < pointCount; i++) {
-                    /*float px =*/ packet.readFloat();
-                    /*float py =*/ packet.readFloat();
-                    /*float pz =*/ packet.readFloat();
+            // Helper: try to parse uncompressed spline points from current read position.
+            auto tryParseUncompressedSpline = [&](const char* tag) -> bool {
+                if (!bytesAvailable(4)) return false;
+                uint32_t pc = packet.readUInt32();
+                if (pc > 256) return false;
+                size_t needed = static_cast<size_t>(pc) * 12ull + 13ull;
+                if (!bytesAvailable(needed)) return false;
+                for (uint32_t i = 0; i < pc; i++) {
+                    packet.readFloat(); packet.readFloat(); packet.readFloat();
                 }
-                /*uint8_t splineMode =*/ packet.readUInt8();
-                /*float endPointX =*/ packet.readFloat();
-                /*float endPointY =*/ packet.readFloat();
-                /*float endPointZ =*/ packet.readFloat();
-                LOG_DEBUG("  Spline pointCount=", pointCount, " (legacy)");
-            } else {
-            // Legacy pointCount looks invalid; try compact WotLK layout as recovery.
-            // This keeps malformed/variant packets from desyncing the whole update block.
+                packet.readUInt8(); // splineMode
+                packet.readFloat(); packet.readFloat(); packet.readFloat(); // endPoint
+                LOG_DEBUG("  Spline pointCount=", pc, " (", tag, ")");
+                return true;
+            };
+
+            // --- Try 1: Classic format (pointCount immediately after splineId) ---
+            bool splineParsed = tryParseUncompressedSpline("classic");
+
+            // --- Try 2: WotLK format (durationMod+durationModNext+conditional+pointCount) ---
+            if (!splineParsed) {
+                packet.setReadPos(afterSplineId);
+                bool wotlkOk = bytesAvailable(8); // durationMod + durationModNext
+                if (wotlkOk) {
+                    /*float durationMod =*/ packet.readFloat();
+                    /*float durationModNext =*/ packet.readFloat();
+                    if (splineFlags & 0x00400000) { // SPLINEFLAG_ANIMATION
+                        if (!bytesAvailable(5)) { wotlkOk = false; }
+                        else { packet.readUInt8(); packet.readUInt32(); }
+                    }
+                }
+                if (wotlkOk && (splineFlags & 0x00000800)) { // SPLINEFLAG_PARABOLIC
+                    if (!bytesAvailable(8)) { wotlkOk = false; }
+                    else { packet.readFloat(); packet.readUInt32(); }
+                }
+                if (wotlkOk) {
+                    splineParsed = tryParseUncompressedSpline("wotlk");
+                }
+            }
+
+            // --- Try 3: Compact layout (compressed points) as final recovery ---
+            if (!splineParsed) {
             packet.setReadPos(legacyStart);
             const size_t afterFinalFacingPos = packet.getReadPos();
             if (splineFlags & 0x00400000) { // Animation
@@ -1122,8 +1132,7 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
                 static uint32_t badSplineCount = 0;
                 ++badSplineCount;
                 if (badSplineCount <= 5 || (badSplineCount % 100) == 0) {
-                    LOG_WARNING("  Spline pointCount=", pointCount,
-                                " invalid (legacy+compact) at readPos=",
+                    LOG_WARNING("  Spline invalid (classic+wotlk+compact) at readPos=",
                                 afterFinalFacingPos, "/", packet.getSize(),
                                 ", occurrence=", badSplineCount);
                 }
@@ -1143,7 +1152,7 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
                 if (!bytesAvailable(compactPayloadBytes)) return false;
                 packet.setReadPos(packet.getReadPos() + compactPayloadBytes);
             }
-            } // end else (compact fallback)
+            } // end compact fallback
         }
     }
     else if (updateFlags & UPDATEFLAG_POSITION) {
@@ -3869,13 +3878,13 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
 
     data.hitTargets.reserve(storedHitLimit);
     for (uint16_t i = 0; i < rawHitCount; ++i) {
-        // WotLK hit targets are packed GUIDs, like the caster and miss targets.
-        if (!hasFullPackedGuid(packet)) {
+        // WotLK 3.3.5a hit targets are full uint64 GUIDs (not PackedGuid).
+        if (packet.getSize() - packet.getReadPos() < 8) {
             LOG_WARNING("Spell go: truncated hit targets at index ", i, "/", (int)rawHitCount);
             truncatedTargets = true;
             break;
         }
-        const uint64_t targetGuid = UpdateObjectParser::readPackedGuid(packet);
+        const uint64_t targetGuid = packet.readUInt64();
         if (i < storedHitLimit) {
             data.hitTargets.push_back(targetGuid);
         }
@@ -3923,22 +3932,16 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
 
     data.missTargets.reserve(storedMissLimit);
     for (uint16_t i = 0; i < rawMissCount; ++i) {
-        // Each miss entry: packed GUID(1-8 bytes) + missType(1 byte).
+        // WotLK 3.3.5a miss targets are full uint64 GUIDs + uint8 missType.
         // REFLECT additionally appends uint8 reflectResult.
-        if (!hasFullPackedGuid(packet)) {
+        if (packet.getSize() - packet.getReadPos() < 9) { // 8 GUID + 1 missType
             LOG_WARNING("Spell go: truncated miss targets at index ", i, "/", (int)rawMissCount,
                         " spell=", data.spellId, " hits=", (int)data.hitCount);
             truncatedTargets = true;
             break;
         }
         SpellGoMissEntry m;
-        m.targetGuid = UpdateObjectParser::readPackedGuid(packet);  // packed GUID in WotLK
-        if (packet.getSize() - packet.getReadPos() < 1) {
-            LOG_WARNING("Spell go: missing missType at miss index ", i, "/", (int)rawMissCount,
-                        " spell=", data.spellId);
-            truncatedTargets = true;
-            break;
-        }
+        m.targetGuid = packet.readUInt64();
         m.missType = packet.readUInt8();
         if (m.missType == 11) { // SPELL_MISS_REFLECT
             if (packet.getSize() - packet.getReadPos() < 1) {
