@@ -13,6 +13,7 @@
 #include <string>
 #include <optional>
 #include <random>
+#include <chrono>
 #include <future>
 
 namespace wowee {
@@ -434,6 +435,9 @@ private:
     void* glowVBMapped_ = nullptr;
 
     std::unordered_map<uint32_t, M2ModelGPU> models;
+    // Grace period for model cleanup: track when a model first became instanceless.
+    // Models are only evicted after 60 seconds with no instances.
+    std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> modelUnusedSince_;
     std::vector<M2Instance> instances;
 
     // O(1) dedup: key = (modelId, quantized x, quantized y, quantized z) → instanceId

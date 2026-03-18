@@ -1753,6 +1753,7 @@ uint32_t M2Renderer::createInstance(uint32_t modelId, const glm::vec3& position,
         return 0;
     }
     const auto& mdlRef = modelIt->second;
+    modelUnusedSince_.erase(modelId);
 
     // Deduplicate: skip if same model already at nearly the same position.
     // Uses hash map for O(1) lookup instead of O(N) scan.
@@ -1864,6 +1865,7 @@ uint32_t M2Renderer::createInstanceWithMatrix(uint32_t modelId, const glm::mat4&
         LOG_WARNING("Cannot create instance: model ", modelId, " not loaded");
         return 0;
     }
+    modelUnusedSince_.erase(modelId);
 
     // Deduplicate: O(1) hash lookup
     {
@@ -4276,11 +4278,28 @@ void M2Renderer::cleanupUnusedModels() {
         usedModelIds.insert(instance.modelId);
     }
 
-    // Find and remove models with no instances
+    const auto now = std::chrono::steady_clock::now();
+    constexpr auto kGracePeriod = std::chrono::seconds(60);
+
+    // Find models with no instances that have exceeded the grace period.
+    // Models that just lost their last instance get tracked but not evicted
+    // immediately — this prevents thrashing when GO models are briefly
+    // instance-free between despawn and respawn cycles.
     std::vector<uint32_t> toRemove;
     for (const auto& [id, model] : models) {
-        if (usedModelIds.find(id) == usedModelIds.end()) {
+        if (usedModelIds.find(id) != usedModelIds.end()) {
+            // Model still in use — clear any pending unused timestamp
+            modelUnusedSince_.erase(id);
+            continue;
+        }
+        auto unusedIt = modelUnusedSince_.find(id);
+        if (unusedIt == modelUnusedSince_.end()) {
+            // First cycle with no instances — start the grace timer
+            modelUnusedSince_[id] = now;
+        } else if (now - unusedIt->second >= kGracePeriod) {
+            // Grace period expired — mark for removal
             toRemove.push_back(id);
+            modelUnusedSince_.erase(unusedIt);
         }
     }
 
