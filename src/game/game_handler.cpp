@@ -7661,8 +7661,12 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_PET_DISMISS_SOUND:
         case Opcode::SMSG_PET_ACTION_SOUND:
         case Opcode::SMSG_PET_UNLEARN_CONFIRM:
-        case Opcode::SMSG_PET_RENAMEABLE:
         case Opcode::SMSG_PET_UPDATE_COMBO_POINTS:
+            packet.setReadPos(packet.getSize());
+            break;
+        case Opcode::SMSG_PET_RENAMEABLE:
+            // Server signals that the pet can now be named (first tame)
+            petRenameablePending_ = true;
             packet.setReadPos(packet.getSize());
             break;
         case Opcode::SMSG_PET_NAME_INVALID:

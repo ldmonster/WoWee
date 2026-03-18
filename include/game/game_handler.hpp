@@ -718,6 +718,8 @@ public:
     void dismissPet();
     void renamePet(const std::string& newName);
     bool hasPet() const { return petGuid_ != 0; }
+    // Returns true once after SMSG_PET_RENAMEABLE; consuming the flag clears it.
+    bool consumePetRenameablePending() { bool v = petRenameablePending_; petRenameablePending_ = false; return v; }
     uint64_t getPetGuid() const { return petGuid_; }
 
     // ---- Pet state (populated by SMSG_PET_SPELLS / SMSG_PET_MODE) ----
@@ -2747,6 +2749,7 @@ private:
     uint32_t petActionSlots_[10] = {};   // SMSG_PET_SPELLS action bar (10 slots)
     uint8_t  petCommand_ = 1;            // 0=stay,1=follow,2=attack,3=dismiss
     uint8_t  petReact_   = 1;            // 0=passive,1=defensive,2=aggressive
+    bool     petRenameablePending_ = false;  // set by SMSG_PET_RENAMEABLE, consumed by UI
     std::vector<uint32_t> petSpellList_; // known pet spells
     std::unordered_set<uint32_t> petAutocastSpells_;  // spells with autocast on
 

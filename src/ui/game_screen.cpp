@@ -629,6 +629,12 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         renderPetFrame(gameHandler);
     }
 
+    // Auto-open pet rename modal when server signals the pet is renameable (first tame)
+    if (gameHandler.consumePetRenameablePending()) {
+        petRenameOpen_ = true;
+        petRenameBuf_[0] = '\0';
+    }
+
     // Totem frame (Shaman only, when any totem is active)
     if (gameHandler.getPlayerClass() == 7) {
         renderTotemFrame(gameHandler);
