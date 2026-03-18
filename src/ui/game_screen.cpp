@@ -6682,6 +6682,28 @@ ImVec4 GameScreen::getChatTypeColor(game::ChatType type) const {
             return ImVec4(1.0f, 0.7f, 0.7f, 1.0f);  // Light pink
         case game::ChatType::ACHIEVEMENT:
             return ImVec4(1.0f, 1.0f, 0.0f, 1.0f);  // Bright yellow
+        case game::ChatType::GUILD_ACHIEVEMENT:
+            return ImVec4(1.0f, 0.84f, 0.0f, 1.0f); // Gold
+        case game::ChatType::SKILL:
+            return ImVec4(0.0f, 0.8f, 1.0f, 1.0f);  // Cyan
+        case game::ChatType::LOOT:
+            return ImVec4(0.8f, 0.5f, 1.0f, 1.0f);  // Light purple
+        case game::ChatType::MONSTER_WHISPER:
+        case game::ChatType::RAID_BOSS_WHISPER:
+            return ImVec4(1.0f, 0.5f, 1.0f, 1.0f);  // Pink (same as WHISPER)
+        case game::ChatType::RAID_BOSS_EMOTE:
+            return ImVec4(1.0f, 0.7f, 0.3f, 1.0f);  // Orange (same as EMOTE)
+        case game::ChatType::MONSTER_PARTY:
+            return ImVec4(0.5f, 0.5f, 1.0f, 1.0f);  // Light blue (same as PARTY)
+        case game::ChatType::BG_SYSTEM_NEUTRAL:
+            return ImVec4(1.0f, 0.84f, 0.0f, 1.0f); // Gold
+        case game::ChatType::BG_SYSTEM_ALLIANCE:
+            return ImVec4(0.3f, 0.6f, 1.0f, 1.0f);  // Blue
+        case game::ChatType::BG_SYSTEM_HORDE:
+            return ImVec4(1.0f, 0.3f, 0.3f, 1.0f);  // Red
+        case game::ChatType::AFK:
+        case game::ChatType::DND:
+            return ImVec4(0.85f, 0.85f, 0.85f, 0.8f); // Light gray
         default:
             return ImVec4(0.7f, 0.7f, 0.7f, 1.0f);  // Gray
     }
