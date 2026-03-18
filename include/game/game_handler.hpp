@@ -375,6 +375,10 @@ public:
     std::shared_ptr<Entity> getFocus() const;
     bool hasFocus() const { return focusGuid != 0; }
 
+    // Mouseover targeting — set each frame by the nameplate renderer
+    void setMouseoverGuid(uint64_t guid) { mouseoverGuid_ = guid; }
+    uint64_t getMouseoverGuid() const { return mouseoverGuid_; }
+
     // Advanced targeting
     void targetLastTarget();
     void targetEnemy(bool reverse = false);
@@ -2537,6 +2541,7 @@ private:
     uint64_t targetGuid = 0;
     uint64_t focusGuid = 0;              // Focus target
     uint64_t lastTargetGuid = 0;         // Previous target
+    uint64_t mouseoverGuid_ = 0;         // Set each frame by nameplate renderer
     std::vector<uint64_t> tabCycleList;
     int tabCycleIndex = -1;
     bool tabCycleStale = true;

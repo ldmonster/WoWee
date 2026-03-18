@@ -5322,21 +5322,30 @@ static std::string evaluateMacroConditionals(const std::string& rawArg,
         size_t e = c.find_last_not_of(" \t");  if (e != std::string::npos) c.resize(e + 1);
         if (c.empty()) return true;
 
-        // @target specifiers: @player, @focus, @mouseover (mouseover → skip, no tracking)
+        // @target specifiers: @player, @focus, @mouseover, @target
         if (!c.empty() && c[0] == '@') {
             std::string spec = c.substr(1);
-            if (spec == "player")  tgt = gameHandler.getPlayerGuid();
-            else if (spec == "focus")   tgt = gameHandler.getFocusGuid();
-            else if (spec == "target")  tgt = gameHandler.getTargetGuid();
-            // mouseover: no tracking yet — treat as "use current target"
+            if (spec == "player")       tgt = gameHandler.getPlayerGuid();
+            else if (spec == "focus")      tgt = gameHandler.getFocusGuid();
+            else if (spec == "target")     tgt = gameHandler.getTargetGuid();
+            else if (spec == "mouseover") {
+                uint64_t mo = gameHandler.getMouseoverGuid();
+                if (mo != 0) tgt = mo;
+                else return false;  // no mouseover — skip this alternative
+            }
             return true;
         }
         // target=X specifiers
         if (c.rfind("target=", 0) == 0) {
             std::string spec = c.substr(7);
-            if (spec == "player")  tgt = gameHandler.getPlayerGuid();
-            else if (spec == "focus")  tgt = gameHandler.getFocusGuid();
-            else if (spec == "target") tgt = gameHandler.getTargetGuid();
+            if (spec == "player")    tgt = gameHandler.getPlayerGuid();
+            else if (spec == "focus")      tgt = gameHandler.getFocusGuid();
+            else if (spec == "target")     tgt = gameHandler.getTargetGuid();
+            else if (spec == "mouseover") {
+                uint64_t mo = gameHandler.getMouseoverGuid();
+                if (mo != 0) tgt = mo;
+                else return false;  // no mouseover — skip this alternative
+            }
             return true;
         }
 
@@ -10042,6 +10051,9 @@ void GameScreen::renderDPSMeter(game::GameHandler& gameHandler) {
 void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     if (gameHandler.getState() != game::WorldState::IN_WORLD) return;
 
+    // Reset mouseover each frame; we'll set it below when the cursor is over a nameplate
+    gameHandler.setMouseoverGuid(0);
+
     auto* appRenderer = core::Application::getInstance().getRenderer();
     if (!appRenderer) return;
     rendering::Camera* camera = appRenderer->getCamera();
@@ -10416,6 +10428,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             float nx1 = nameX + textSize.x + 2.0f;
             float ny1 = sy + barH + 2.0f;
             if (mouse.x >= nx0 && mouse.x <= nx1 && mouse.y >= ny0 && mouse.y <= ny1) {
+                // Track mouseover for [target=mouseover] macro conditionals
+                gameHandler.setMouseoverGuid(guid);
                 if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     gameHandler.setTarget(guid);
                 } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
@@ -10748,6 +10762,9 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                     ImGui::PushID(static_cast<int>(m.guid));
                     if (ImGui::InvisibleButton("raidCell", ImVec2(CELL_W, CELL_H))) {
                         gameHandler.setTarget(m.guid);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        gameHandler.setMouseoverGuid(m.guid);
                     }
                     if (ImGui::BeginPopupContextItem("RaidMemberCtx")) {
                         ImGui::TextDisabled("%s", m.name.c_str());
