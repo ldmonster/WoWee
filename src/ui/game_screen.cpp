@@ -414,6 +414,16 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         uiErrorCallbackSet_ = true;
     }
 
+    // Flash the action bar button whose spell just failed (0.5 s red overlay).
+    if (!castFailedCallbackSet_) {
+        gameHandler.setSpellCastFailedCallback([this](uint32_t spellId) {
+            if (spellId == 0) return;
+            float now = static_cast<float>(ImGui::GetTime());
+            actionFlashEndTimes_[spellId] = now + kActionFlashDuration;
+        });
+        castFailedCallbackSet_ = true;
+    }
+
     // Set up reputation change toast callback (once)
     if (!repChangeCallbackSet_) {
         gameHandler.setRepChangeCallback([this](const std::string& name, int32_t delta, int32_t standing) {
@@ -8433,6 +8443,25 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
             }
             clicked = ImGui::Button(label, ImVec2(slotSize, slotSize));
             ImGui::PopStyleColor();
+        }
+
+        // Error-flash overlay: red fade on spell cast failure (~0.5 s).
+        if (slot.type == game::ActionBarSlot::SPELL && slot.id != 0) {
+            auto flashIt = actionFlashEndTimes_.find(slot.id);
+            if (flashIt != actionFlashEndTimes_.end()) {
+                float now = static_cast<float>(ImGui::GetTime());
+                float remaining = flashIt->second - now;
+                if (remaining > 0.0f) {
+                    float alpha = remaining / kActionFlashDuration;  // 1→0
+                    ImVec2 rMin = ImGui::GetItemRectMin();
+                    ImVec2 rMax = ImGui::GetItemRectMax();
+                    ImGui::GetWindowDrawList()->AddRectFilled(
+                        rMin, rMax,
+                        ImGui::ColorConvertFloat4ToU32(ImVec4(1.0f, 0.1f, 0.1f, 0.55f * alpha)));
+                } else {
+                    actionFlashEndTimes_.erase(flashIt);
+                }
+            }
         }
 
         bool hoveredOnRelease = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&

@@ -939,6 +939,10 @@ public:
     using SpellCastAnimCallback = std::function<void(uint64_t guid, bool start, bool isChannel)>;
     void setSpellCastAnimCallback(SpellCastAnimCallback cb) { spellCastAnimCallback_ = std::move(cb); }
 
+    // Fired when the player's own spell cast fails (spellId of the failed spell).
+    using SpellCastFailedCallback = std::function<void(uint32_t spellId)>;
+    void setSpellCastFailedCallback(SpellCastFailedCallback cb) { spellCastFailedCallback_ = std::move(cb); }
+
     // Unit animation hint: signal jump (animId=38) for other players/NPCs
     using UnitAnimHintCallback = std::function<void(uint64_t guid, uint32_t animId)>;
     void setUnitAnimHintCallback(UnitAnimHintCallback cb) { unitAnimHintCallback_ = std::move(cb); }
@@ -3309,6 +3313,7 @@ private:
     MeleeSwingCallback meleeSwingCallback_;
     uint64_t lastMeleeSwingMs_ = 0;   // system_clock ms at last player auto-attack swing
     SpellCastAnimCallback spellCastAnimCallback_;
+    SpellCastFailedCallback spellCastFailedCallback_;
     UnitAnimHintCallback unitAnimHintCallback_;
     UnitMoveFlagsCallback unitMoveFlagsCallback_;
     NpcSwingCallback npcSwingCallback_;

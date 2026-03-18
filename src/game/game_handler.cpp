@@ -2267,6 +2267,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     std::string errMsg = reason ? reason
                                                 : ("Spell cast failed (error " + std::to_string(castResult) + ")");
                     addUIError(errMsg);
+                    if (spellCastFailedCallback_) spellCastFailedCallback_(castResultSpellId);
                     MessageChatData msg;
                     msg.type     = ChatType::SYSTEM;
                     msg.language = ChatLanguage::UNIVERSAL;

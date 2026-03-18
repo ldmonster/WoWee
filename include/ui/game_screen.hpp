@@ -58,6 +58,10 @@ private:
     // Set to true by /stopmacro; checked in executeMacroText to halt remaining commands.
     bool macroStopped_ = false;
 
+    // Action bar error-flash: spellId → wall-clock time (seconds) when the flash ends.
+    // Populated by the SpellCastFailedCallback; queried during action bar button rendering.
+    std::unordered_map<uint32_t, float> actionFlashEndTimes_;
+
     // Tab-completion state for slash commands
     std::string chatTabPrefix_;            // prefix captured on first Tab press
     std::vector<std::string> chatTabMatches_;  // matching command list
@@ -109,6 +113,8 @@ private:
     std::vector<UIErrorEntry> uiErrors_;
     bool uiErrorCallbackSet_ = false;
     static constexpr float kUIErrorLifetime = 2.5f;
+    bool castFailedCallbackSet_ = false;
+    static constexpr float kActionFlashDuration = 0.5f;  // seconds for error-red overlay to fade
 
     // Reputation change toast: brief colored slide-in below minimap
     struct RepToastEntry { std::string factionName; int32_t delta = 0; int32_t standing = 0; float age = 0.0f; };
