@@ -18279,10 +18279,11 @@ void GameHandler::handleSpellStart(network::Packet& packet) {
     // Track cast bar for any non-player caster (target frame + boss frames)
     if (data.casterUnit != playerGuid && data.castTime > 0) {
         auto& s = unitCastStates_[data.casterUnit];
-        s.casting       = true;
-        s.spellId       = data.spellId;
-        s.timeTotal     = data.castTime / 1000.0f;
-        s.timeRemaining = s.timeTotal;
+        s.casting        = true;
+        s.spellId        = data.spellId;
+        s.timeTotal      = data.castTime / 1000.0f;
+        s.timeRemaining  = s.timeTotal;
+        s.interruptible  = isSpellInterruptible(data.spellId);
         // Trigger cast animation on the casting unit
         if (spellCastAnimCallback_) {
             spellCastAnimCallback_(data.casterUnit, true, false);
@@ -21320,6 +21321,14 @@ void GameHandler::loadSpellNameCache() {
         if (f != 0xFFFFFFFF && f < dbc->getFieldCount()) { dispelField = f; hasDispelField = true; }
     }
 
+    // AttributesEx field (bit 4 = SPELL_ATTR_EX_NOT_INTERRUPTIBLE)
+    uint32_t attrExField = 0xFFFFFFFF;
+    bool hasAttrExField = false;
+    if (spellL) {
+        uint32_t f = spellL->field("AttributesEx");
+        if (f != 0xFFFFFFFF && f < dbc->getFieldCount()) { attrExField = f; hasAttrExField = true; }
+    }
+
     // Tooltip/description field
     uint32_t tooltipField = 0xFFFFFFFF;
     if (spellL) {
@@ -21334,7 +21343,7 @@ void GameHandler::loadSpellNameCache() {
         std::string name = dbc->getString(i, spellL ? (*spellL)["Name"] : 136);
         std::string rank = dbc->getString(i, spellL ? (*spellL)["Rank"] : 153);
         if (!name.empty()) {
-            SpellNameEntry entry{std::move(name), std::move(rank), {}, 0, 0};
+            SpellNameEntry entry{std::move(name), std::move(rank), {}, 0, 0, 0};
             if (tooltipField != 0xFFFFFFFF) {
                 entry.description = dbc->getString(i, tooltipField);
             }
@@ -21348,6 +21357,9 @@ void GameHandler::loadSpellNameCache() {
             }
             if (hasDispelField) {
                 entry.dispelType = static_cast<uint8_t>(dbc->getUInt32(i, dispelField));
+            }
+            if (hasAttrExField) {
+                entry.attrEx = dbc->getUInt32(i, attrExField);
             }
             spellNameCache_[id] = std::move(entry);
         }
@@ -21552,6 +21564,15 @@ uint8_t GameHandler::getSpellDispelType(uint32_t spellId) const {
     const_cast<GameHandler*>(this)->loadSpellNameCache();
     auto it = spellNameCache_.find(spellId);
     return (it != spellNameCache_.end()) ? it->second.dispelType : 0;
+}
+
+bool GameHandler::isSpellInterruptible(uint32_t spellId) const {
+    if (spellId == 0) return true;
+    const_cast<GameHandler*>(this)->loadSpellNameCache();
+    auto it = spellNameCache_.find(spellId);
+    if (it == spellNameCache_.end()) return true;  // assume interruptible if unknown
+    // SPELL_ATTR_EX_NOT_INTERRUPTIBLE = bit 4 of AttributesEx (0x00000010)
+    return (it->second.attrEx & 0x00000010u) == 0;
 }
 
 const std::string& GameHandler::getSkillLineName(uint32_t spellId) const {

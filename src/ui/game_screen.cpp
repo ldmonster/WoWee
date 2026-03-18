@@ -4288,14 +4288,19 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
             float castPct   = gameHandler.getTargetCastProgress();
             float castLeft  = gameHandler.getTargetCastTimeRemaining();
             uint32_t tspell = gameHandler.getTargetCastSpellId();
+            bool interruptible = gameHandler.isTargetCastInterruptible();
             const std::string& castName = (tspell != 0) ? gameHandler.getSpellName(tspell) : "";
-            // Pulse bright orange when cast is > 80% complete — interrupt window closing
+            // Color: interruptible = green (can Kick/CS), not interruptible = red, both pulse when >80%
             ImVec4 castBarColor;
             if (castPct > 0.8f) {
                 float pulse = 0.7f + 0.3f * std::sin(static_cast<float>(ImGui::GetTime()) * 8.0f);
-                castBarColor = ImVec4(1.0f * pulse, 0.5f * pulse, 0.0f, 1.0f);
+                if (interruptible)
+                    castBarColor = ImVec4(0.2f * pulse, 0.9f * pulse, 0.2f * pulse, 1.0f);  // green pulse
+                else
+                    castBarColor = ImVec4(1.0f * pulse, 0.1f * pulse, 0.1f * pulse, 1.0f);  // red pulse
             } else {
-                castBarColor = ImVec4(0.9f, 0.3f, 0.2f, 1.0f);
+                castBarColor = interruptible ? ImVec4(0.2f, 0.75f, 0.2f, 1.0f)   // green = can interrupt
+                                             : ImVec4(0.85f, 0.15f, 0.15f, 1.0f); // red = uninterruptible
             }
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, castBarColor);
             char castLabel[72];
@@ -9702,14 +9707,18 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                     castBarBaseY += snSz.y + 2.0f;
                 }
 
-                // Cast bar background + fill (pulse orange when >80% = interrupt window closing)
-                ImU32 cbBg = IM_COL32(40, 30, 60, A(180));
+                // Cast bar: green = interruptible, red = uninterruptible; both pulse when >80% complete
+                ImU32 cbBg = IM_COL32(30, 25, 40, A(180));
                 ImU32 cbFill;
                 if (castPct > 0.8f && unit->isHostile()) {
                     float pulse = 0.7f + 0.3f * std::sin(static_cast<float>(ImGui::GetTime()) * 8.0f);
-                    cbFill = IM_COL32(static_cast<int>(255 * pulse), static_cast<int>(130 * pulse), 0, A(220));
+                    cbFill = cs->interruptible
+                        ? IM_COL32(static_cast<int>(40  * pulse), static_cast<int>(220 * pulse), static_cast<int>(40  * pulse), A(220))  // green pulse
+                        : IM_COL32(static_cast<int>(255 * pulse), static_cast<int>(30  * pulse), static_cast<int>(30  * pulse), A(220)); // red pulse
                 } else {
-                    cbFill = IM_COL32(140, 80, 220, A(200));  // purple cast bar
+                    cbFill = cs->interruptible
+                        ? IM_COL32(50,  190, 50,  A(200))   // green = interruptible
+                        : IM_COL32(190, 40,  40,  A(200));  // red = uninterruptible
                 }
                 drawList->AddRectFilled(ImVec2(barX,                   castBarBaseY),
                                         ImVec2(barX + barW,             castBarBaseY + cbH), cbBg,    2.0f);

@@ -798,6 +798,7 @@ public:
         uint32_t spellId         = 0;
         float    timeRemaining   = 0.0f;
         float    timeTotal       = 0.0f;
+        bool     interruptible   = true;  ///< false when SPELL_ATTR_EX_NOT_INTERRUPTIBLE is set
     };
     // Returns cast state for any unit by GUID (empty/non-casting if not found)
     const UnitCastState* getUnitCastState(uint64_t guid) const {
@@ -818,6 +819,10 @@ public:
     float getTargetCastTimeRemaining() const {
         auto* s = getUnitCastState(targetGuid);
         return s ? s->timeRemaining : 0.0f;
+    }
+    bool isTargetCastInterruptible() const {
+        auto* s = getUnitCastState(targetGuid);
+        return s ? s->interruptible : true;
     }
 
     // Talents
@@ -2056,6 +2061,9 @@ public:
     const std::string& getSkillLineName(uint32_t spellId) const;
     /// Returns the DispelType for a spell (0=none,1=magic,2=curse,3=disease,4=poison,5+=other)
     uint8_t getSpellDispelType(uint32_t spellId) const;
+    /// Returns true if the spell can be interrupted by abilities like Kick/Counterspell.
+    /// False for spells with SPELL_ATTR_EX_NOT_INTERRUPTIBLE (attrEx bit 4 = 0x10).
+    bool isSpellInterruptible(uint32_t spellId) const;
 
     struct TrainerTab {
         std::string name;
@@ -3059,7 +3067,7 @@ private:
     // Trainer
     bool trainerWindowOpen_ = false;
     TrainerListData currentTrainerList_;
-    struct SpellNameEntry { std::string name; std::string rank; std::string description; uint32_t schoolMask = 0; uint8_t dispelType = 0; };
+    struct SpellNameEntry { std::string name; std::string rank; std::string description; uint32_t schoolMask = 0; uint8_t dispelType = 0; uint32_t attrEx = 0; };
     std::unordered_map<uint32_t, SpellNameEntry> spellNameCache_;
     bool spellNameCacheLoaded_ = false;
 
