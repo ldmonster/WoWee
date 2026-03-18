@@ -2725,6 +2725,9 @@ private:
     // Repeat-craft queue: re-cast the same profession spell N more times after current cast finishes
     uint32_t craftQueueSpellId_ = 0;
     int craftQueueRemaining_ = 0;
+    // Spell queue: next spell to cast within the 400ms window before current cast ends
+    uint32_t queuedSpellId_     = 0;
+    uint64_t queuedSpellTarget_ = 0;
     // Per-unit cast state (keyed by GUID, populated from SMSG_SPELL_START)
     std::unordered_map<uint64_t, UnitCastState> unitCastStates_;
     uint64_t pendingGameObjectInteractGuid_ = 0;

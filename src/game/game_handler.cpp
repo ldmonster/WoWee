@@ -2252,9 +2252,11 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     currentCastSpellId = 0;
                     castTimeRemaining  = 0.0f;
                     lastInteractedGoGuid_ = 0;
-                    // Cancel craft queue on cast failure
+                    // Cancel craft queue and spell queue on cast failure
                     craftQueueSpellId_ = 0;
                     craftQueueRemaining_ = 0;
+                    queuedSpellId_ = 0;
+                    queuedSpellTarget_ = 0;
                     // Pass player's power type so result 85 says "Not enough rage/energy/etc."
                     int playerPowerType = -1;
                     if (auto pe = entityManager.getEntity(playerGuid)) {
@@ -3353,6 +3355,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 castIsChannel = false;
                 currentCastSpellId = 0;
                 lastInteractedGoGuid_ = 0;
+                queuedSpellId_ = 0;
+                queuedSpellTarget_ = 0;
                 if (auto* renderer = core::Application::getInstance().getRenderer()) {
                     if (auto* ssm = renderer->getSpellSoundManager()) {
                         ssm->stopPrecast();
@@ -9090,6 +9094,8 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     lastInteractedGoGuid_ = 0;
     castTimeRemaining = 0.0f;
     castTimeTotal = 0.0f;
+    queuedSpellId_ = 0;
+    queuedSpellTarget_ = 0;
     playerDead_ = false;
     releasedSpirit_ = false;
     corpseGuid_ = 0;
@@ -17933,7 +17939,17 @@ void GameHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
         return;
     }
 
-    if (casting) return; // Already casting
+    if (casting) {
+        // Spell queue: if we're within 400ms of the cast completing (and not channeling),
+        // store the spell so it fires automatically when the cast finishes.
+        if (!castIsChannel && castTimeRemaining > 0.0f && castTimeRemaining <= 0.4f) {
+            queuedSpellId_     = spellId;
+            queuedSpellTarget_ = targetGuid != 0 ? targetGuid : this->targetGuid;
+            LOG_INFO("Spell queue: queued spellId=", spellId, " (", castTimeRemaining * 1000.0f,
+                     "ms remaining)");
+        }
+        return;
+    }
 
     // Hearthstone: cast spell directly (server checks item in inventory)
     // Using CMSG_CAST_SPELL is more reliable than CMSG_USE_ITEM which
@@ -18035,9 +18051,11 @@ void GameHandler::cancelCast() {
     castIsChannel = false;
     currentCastSpellId = 0;
     castTimeRemaining = 0.0f;
-    // Cancel craft queue when player manually cancels cast
+    // Cancel craft queue and spell queue when player manually cancels cast
     craftQueueSpellId_ = 0;
     craftQueueRemaining_ = 0;
+    queuedSpellId_ = 0;
+    queuedSpellTarget_ = 0;
 }
 
 void GameHandler::startCraftQueue(uint32_t spellId, int count) {
@@ -18311,6 +18329,8 @@ void GameHandler::handleCastFailed(network::Packet& packet) {
     currentCastSpellId = 0;
     castTimeRemaining = 0.0f;
     lastInteractedGoGuid_ = 0;
+    queuedSpellId_ = 0;
+    queuedSpellTarget_ = 0;
 
     // Stop precast sound — spell failed before completing
     if (auto* renderer = core::Application::getInstance().getRenderer()) {
@@ -18482,6 +18502,16 @@ void GameHandler::handleSpellGo(network::Packet& packet) {
         // End cast animation on player character
         if (spellCastAnimCallback_) {
             spellCastAnimCallback_(playerGuid, false, false);
+        }
+
+        // Spell queue: fire the next queued spell now that casting has ended
+        if (queuedSpellId_ != 0) {
+            uint32_t nextSpell  = queuedSpellId_;
+            uint64_t nextTarget = queuedSpellTarget_;
+            queuedSpellId_     = 0;
+            queuedSpellTarget_ = 0;
+            LOG_INFO("Spell queue: firing queued spellId=", nextSpell);
+            castSpell(nextSpell, nextTarget);
         }
     } else {
         if (spellCastAnimCallback_) {
@@ -22063,6 +22093,8 @@ void GameHandler::handleNewWorld(network::Packet& packet) {
     pendingGameObjectInteractGuid_ = 0;
     lastInteractedGoGuid_ = 0;
     castTimeRemaining = 0.0f;
+    queuedSpellId_ = 0;
+    queuedSpellTarget_ = 0;
 
     // Send MSG_MOVE_WORLDPORT_ACK to tell the server we're ready
     if (socket) {
