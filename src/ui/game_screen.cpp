@@ -19558,6 +19558,37 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     }
     ImGui::End();
 
+    // Clock display at bottom-right of minimap (local time)
+    {
+        auto now = std::chrono::system_clock::now();
+        auto tt  = std::chrono::system_clock::to_time_t(now);
+        std::tm tmBuf{};
+#ifdef _WIN32
+        localtime_s(&tmBuf, &tt);
+#else
+        localtime_r(&tt, &tmBuf);
+#endif
+        char clockText[16];
+        std::snprintf(clockText, sizeof(clockText), "%d:%02d %s",
+                      (tmBuf.tm_hour % 12 == 0) ? 12 : tmBuf.tm_hour % 12,
+                      tmBuf.tm_min,
+                      tmBuf.tm_hour >= 12 ? "PM" : "AM");
+        ImVec2 clockSz = ImGui::CalcTextSize(clockText);
+        float clockW = clockSz.x + 10.0f;
+        float clockH = clockSz.y + 6.0f;
+        ImGui::SetNextWindowPos(ImVec2(centerX + mapRadius - clockW - 2.0f,
+                                       centerY + mapRadius - clockH - 2.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(clockW, clockH), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.45f);
+        ImGuiWindowFlags clockFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                                      ImGuiWindowFlags_NoInputs;
+        if (ImGui::Begin("##MinimapClock", nullptr, clockFlags)) {
+            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.8f, 0.85f), "%s", clockText);
+        }
+        ImGui::End();
+    }
+
     // Indicators below the minimap (stacked: new mail, then BG queue, then latency)
     float indicatorX = centerX - mapRadius;
     float nextIndicatorY = centerY + mapRadius + 4.0f;
