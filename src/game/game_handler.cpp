@@ -24487,27 +24487,32 @@ void GameHandler::resetTradeState() {
 }
 
 void GameHandler::handleTradeStatusExtended(network::Packet& packet) {
-    // WotLK 3.3.5a SMSG_TRADE_STATUS_EXTENDED format:
-    // uint8  isSelfState (1 = my trade window, 0 = peer's)
-    // uint32 tradeId
-    // uint32 slotCount  (7: 6 normal + 1 extra for enchanting)
-    // Per slot (up to slotCount):
-    //   uint8  slotIndex
-    //   uint32 itemId
-    //   uint32 displayId
-    //   uint32 stackCount
-    //   uint8  isWrapped
-    //   uint64 giftCreatorGuid
-    //   uint32 enchantId  (and several more enchant/stat fields)
-    //   ... (complex; we parse only the essential fields)
-    // uint64 coins (gold offered by the sender of this message)
+    // SMSG_TRADE_STATUS_EXTENDED format differs by expansion:
+    //
+    // Classic/TBC:
+    //   uint8  isSelf + uint32 slotCount + [slots] + uint64 coins
+    //   Per slot tail (after isWrapped): giftCreatorGuid(8) + enchants(24) +
+    //     randomPropertyId(4) + suffixFactor(4) + durability(4) + maxDurability(4) = 48 bytes
+    //
+    // WotLK 3.3.5a adds:
+    //   uint32 tradeId  (after isSelf, before slotCount)
+    //   Per slot: + createPlayedTime(4) at end of trail  → trail = 52 bytes
+    //
+    // Minimum: isSelf(1) + [tradeId(4)] + slotCount(4) = 5 or 9 bytes
+    const bool isWotLK = isActiveExpansion("wotlk");
+    size_t minHdr = isWotLK ? 9u : 5u;
+    if (packet.getSize() - packet.getReadPos() < minHdr) return;
 
-    size_t rem = packet.getSize() - packet.getReadPos();
-    if (rem < 9) return;
+    uint8_t isSelf = packet.readUInt8();
+    if (isWotLK) {
+        /*uint32_t tradeId =*/ packet.readUInt32();  // WotLK-only field
+    }
+    uint32_t slotCount = packet.readUInt32();
 
-    uint8_t  isSelf   = packet.readUInt8();
-    uint32_t tradeId  = packet.readUInt32();  (void)tradeId;
-    uint32_t slotCount= packet.readUInt32();
+    // Per-slot tail bytes after isWrapped:
+    //   Classic/TBC: giftCreatorGuid(8) + enchants(24) + stats(16) = 48
+    //   WotLK: same + createPlayedTime(4) = 52
+    const size_t SLOT_TRAIL = isWotLK ? 52u : 48u;
 
     auto& slots = isSelf ? myTradeSlots_ : peerTradeSlots_;
 
@@ -24521,12 +24526,6 @@ void GameHandler::handleTradeStatusExtended(network::Packet& packet) {
         if (packet.getSize() - packet.getReadPos() >= 1) {
             isWrapped = (packet.readUInt8() != 0);
         }
-        // AzerothCore 3.3.5a SendUpdateTrade() field order after isWrapped:
-        //   giftCreatorGuid (8) + PERM enchant (4) + SOCK enchants×3 (12)
-        //   + BONUS enchant (4) + TEMP enchant (4) [total enchants: 24]
-        //   + randomPropertyId (4) + suffixFactor (4)
-        //   + durability (4) + maxDurability (4) + createPlayedTime (4) = 52 bytes
-        constexpr size_t SLOT_TRAIL = 52;
         if (packet.getSize() - packet.getReadPos() >= SLOT_TRAIL) {
             packet.setReadPos(packet.getReadPos() + SLOT_TRAIL);
         } else {
