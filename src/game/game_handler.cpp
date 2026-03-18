@@ -4426,9 +4426,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 ActionBarSlot slot;
                 switch (type) {
                     case 0x00: slot.type = ActionBarSlot::SPELL; slot.id = id; break;
-                    case 0x01: slot.type = ActionBarSlot::ITEM;  slot.id = id; break;
-                    case 0x80: slot.type = ActionBarSlot::ITEM;  slot.id = id; break;
-                    default:   continue;  // macro or unknown — leave as-is
+                    case 0x01: slot.type = ActionBarSlot::ITEM;  slot.id = id; break;  // Classic item
+                    case 0x80: slot.type = ActionBarSlot::ITEM;  slot.id = id; break;  // TBC/WotLK item
+                    case 0x40: slot.type = ActionBarSlot::MACRO; slot.id = id; break;  // macro (all expansions)
+                    default:   continue;  // unknown — leave as-is
                 }
                 actionBar[i] = slot;
             }
