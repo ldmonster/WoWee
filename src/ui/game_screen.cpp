@@ -17595,6 +17595,46 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
         }
     }
 
+    // Player position arrow at minimap center, pointing in camera facing direction.
+    // On a rotating minimap the map already turns so forward = screen-up; on a fixed
+    // minimap we rotate the arrow to match the player's compass heading.
+    {
+        // Compute screen-space facing direction for the arrow.
+        // bearing = clockwise angle from screen-north (0 = facing north/up).
+        float arrowAngle = 0.0f; // 0 = pointing up (north)
+        if (!minimap->isRotateWithCamera()) {
+            // Fixed minimap: arrow must show actual facing relative to north.
+            glm::vec3 fwd = camera->getForward();
+            // +render_y = north = screen-up, +render_x = west = screen-left.
+            // bearing from north clockwise: atan2(-fwd.x_west, fwd.y_north)
+            //   => sin=east component, cos=north component
+            //   In render coords west=+x, east=-x, so sin(bearing)=east=-fwd.x
+            arrowAngle = std::atan2(-fwd.x, fwd.y); // clockwise from north in screen space
+        }
+        // Screen direction the arrow tip points toward
+        float nx =  std::sin(arrowAngle); // screen +X = east
+        float ny = -std::cos(arrowAngle); // screen -Y = north
+
+        // Draw a chevron-style arrow: tip, two base corners, and a notch at the back
+        const float tipLen  = 8.0f;  // tip forward distance
+        const float baseW   = 5.0f;  // half-width at base
+        const float notchIn = 3.0f;  // how far back the center notch sits
+        // Perpendicular direction (rotated 90°)
+        float px =  ny; // perpendicular x
+        float py = -nx; // perpendicular y
+
+        ImVec2 tip  (centerX + nx * tipLen,  centerY + ny * tipLen);
+        ImVec2 baseL(centerX - nx * baseW + px * baseW,  centerY - ny * baseW + py * baseW);
+        ImVec2 baseR(centerX - nx * baseW - px * baseW,  centerY - ny * baseW - py * baseW);
+        ImVec2 notch(centerX - nx * (baseW - notchIn),   centerY - ny * (baseW - notchIn));
+
+        // Fill: bright white with slight gold tint, dark outline for readability
+        drawList->AddTriangleFilled(tip, baseL, notch, IM_COL32(255, 248, 200, 245));
+        drawList->AddTriangleFilled(tip, notch, baseR, IM_COL32(255, 248, 200, 245));
+        drawList->AddTriangle(tip, baseL, notch, IM_COL32(60, 40, 0, 200), 1.2f);
+        drawList->AddTriangle(tip, notch, baseR, IM_COL32(60, 40, 0, 200), 1.2f);
+    }
+
     // Scroll wheel over minimap → zoom in/out
     {
         float wheel = ImGui::GetIO().MouseWheel;
