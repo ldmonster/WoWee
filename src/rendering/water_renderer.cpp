@@ -1142,10 +1142,14 @@ void WaterRenderer::captureSceneHistory(VkCommandBuffer cmd,
     };
 
     // Color source: final render pass layout is PRESENT_SRC.
+    // srcAccessMask must be COLOR_ATTACHMENT_WRITE (not 0) so that GPU cache flushes
+    // happen before the transfer read.  Using srcAccessMask=0 with BOTTOM_OF_PIPE
+    // causes VK_ERROR_DEVICE_LOST on strict drivers (AMD/Mali) because color writes
+    // are not made visible to the transfer unit before the copy begins.
     barrier2(srcColorImage, VK_IMAGE_ASPECT_COLOR_BIT,
              VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-             0, VK_ACCESS_TRANSFER_READ_BIT,
-             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
     barrier2(sh.colorImage, VK_IMAGE_ASPECT_COLOR_BIT,
              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
              VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
