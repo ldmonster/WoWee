@@ -10706,6 +10706,21 @@ void GameHandler::sendMovement(Opcode opcode) {
         }
     }
 
+    // Cancel any timed (non-channeled) cast the moment the player starts moving.
+    // Channeled spells end via MSG_CHANNEL_UPDATE / SMSG_CHANNEL_NOTIFY from the server.
+    // Turning (MSG_MOVE_START_TURN_*) is allowed while casting.
+    if (casting && !castIsChannel) {
+        const bool isPositionalMove =
+            opcode == Opcode::MSG_MOVE_START_FORWARD  ||
+            opcode == Opcode::MSG_MOVE_START_BACKWARD ||
+            opcode == Opcode::MSG_MOVE_START_STRAFE_LEFT  ||
+            opcode == Opcode::MSG_MOVE_START_STRAFE_RIGHT ||
+            opcode == Opcode::MSG_MOVE_JUMP;
+        if (isPositionalMove) {
+            cancelCast();
+        }
+    }
+
     // Update movement flags based on opcode
     switch (opcode) {
         case Opcode::MSG_MOVE_START_FORWARD:
