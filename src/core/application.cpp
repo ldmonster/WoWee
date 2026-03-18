@@ -6908,6 +6908,10 @@ void Application::setOnlinePlayerEquipment(uint64_t guid,
     };
 
     // --- Geosets ---
+    // Mirror the same group-range logic as CharacterPreview::applyEquipment to
+    // keep other-player rendering consistent with the local character preview.
+    // Group 4 (4xx) = forearms/gloves, 5 (5xx) = shins/boots, 8 (8xx) = wrists/sleeves,
+    // 13 (13xx) = legs/trousers.  Missing defaults caused the shin-mesh gap (status.md).
     std::unordered_set<uint16_t> geosets;
     // Body parts (group 0: IDs 0-99, some models use up to 27)
     for (uint16_t i = 0; i <= 99; i++) geosets.insert(i);
@@ -6915,8 +6919,6 @@ void Application::setOnlinePlayerEquipment(uint64_t guid,
     uint8_t hairStyleId = static_cast<uint8_t>((st.appearanceBytes >> 16) & 0xFF);
     geosets.insert(static_cast<uint16_t>(100 + hairStyleId + 1));
     geosets.insert(static_cast<uint16_t>(200 + st.facialFeatures + 1));
-    geosets.insert(401);   // Body joint patches (knees)
-    geosets.insert(402);   // Body joint patches (elbows)
     geosets.insert(701);   // Ears
     geosets.insert(902);   // Kneepads
     geosets.insert(2002);  // Bare feet mesh
@@ -6924,39 +6926,47 @@ void Application::setOnlinePlayerEquipment(uint64_t guid,
     const uint32_t geosetGroup1Field = idiL ? (*idiL)["GeosetGroup1"] : 7;
     const uint32_t geosetGroup3Field = idiL ? (*idiL)["GeosetGroup3"] : 9;
 
-    // Chest/Shirt/Robe (invType 4,5,20)
+    // Per-group defaults — overridden below when equipment provides a geoset value.
+    uint16_t geosetGloves  = 401;   // Bare forearms (group 4, no gloves)
+    uint16_t geosetBoots   = 502;   // Bare shins   (group 5, no boots)
+    uint16_t geosetSleeves = 801;   // Bare wrists  (group 8, no chest/sleeves)
+    uint16_t geosetPants   = 1301;  // Bare legs    (group 13, no leggings)
+
+    // Chest/Shirt/Robe (invType 4,5,20) → wrist/sleeve group 8
     {
         uint32_t did = findDisplayIdByInvType({4, 5, 20});
         uint32_t gg1 = getGeosetGroup(did, geosetGroup1Field);
-        geosets.insert(static_cast<uint16_t>(gg1 > 0 ? 501 + gg1 : 501));
-
+        if (gg1 > 0) geosetSleeves = static_cast<uint16_t>(801 + gg1);
+        // Robe kilt → leg group 13
         uint32_t gg3 = getGeosetGroup(did, geosetGroup3Field);
-        if (gg3 > 0) geosets.insert(static_cast<uint16_t>(1301 + gg3));
+        if (gg3 > 0) geosetPants = static_cast<uint16_t>(1301 + gg3);
     }
 
-    // Legs (invType 7)
+    // Legs (invType 7) → leg group 13
     {
         uint32_t did = findDisplayIdByInvType({7});
         uint32_t gg1 = getGeosetGroup(did, geosetGroup1Field);
-        if (geosets.count(1302) == 0 && geosets.count(1303) == 0) {
-            geosets.insert(static_cast<uint16_t>(gg1 > 0 ? 1301 + gg1 : 1301));
-        }
+        if (gg1 > 0) geosetPants = static_cast<uint16_t>(1301 + gg1);
     }
 
-    // Feet (invType 8): 401/402 are body patches (always on), 403+ are boot meshes
+    // Feet/Boots (invType 8) → shin group 5
     {
         uint32_t did = findDisplayIdByInvType({8});
         uint32_t gg1 = getGeosetGroup(did, geosetGroup1Field);
-        if (gg1 > 0) geosets.insert(static_cast<uint16_t>(402 + gg1));
+        if (gg1 > 0) geosetBoots = static_cast<uint16_t>(501 + gg1);
     }
 
-    // Hands (invType 10)
+    // Hands/Gloves (invType 10) → forearm group 4
     {
         uint32_t did = findDisplayIdByInvType({10});
         uint32_t gg1 = getGeosetGroup(did, geosetGroup1Field);
-        geosets.insert(static_cast<uint16_t>(gg1 > 0 ? 301 + gg1 : 301));
+        if (gg1 > 0) geosetGloves = static_cast<uint16_t>(401 + gg1);
     }
 
+    geosets.insert(geosetGloves);
+    geosets.insert(geosetBoots);
+    geosets.insert(geosetSleeves);
+    geosets.insert(geosetPants);
     // Back/Cloak (invType 16)
     geosets.insert(hasInvType({16}) ? 1502 : 1501);
     // Tabard (invType 19)
