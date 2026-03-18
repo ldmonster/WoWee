@@ -3889,7 +3889,27 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
         return false;
     }
 
+    const size_t missCountPos = packet.getReadPos();
     const uint8_t rawMissCount = packet.readUInt8();
+    if (rawMissCount > 20) {
+        // Likely offset error — dump context bytes for diagnostics.
+        const auto& raw = packet.getData();
+        std::string hexCtx;
+        size_t dumpStart = (missCountPos >= 8) ? missCountPos - 8 : startPos;
+        size_t dumpEnd = std::min(missCountPos + 16, raw.size());
+        for (size_t i = dumpStart; i < dumpEnd; ++i) {
+            char buf[4];
+            std::snprintf(buf, sizeof(buf), "%02x ", raw[i]);
+            hexCtx += buf;
+            if (i == missCountPos - 1) hexCtx += "[";
+            if (i == missCountPos) hexCtx += "] ";
+        }
+        LOG_WARNING("Spell go: suspect missCount=", (int)rawMissCount,
+                    " spell=", data.spellId, " hits=", (int)data.hitCount,
+                    " castFlags=0x", std::hex, data.castFlags, std::dec,
+                    " missCountPos=", missCountPos, " pktSize=", packet.getSize(),
+                    " ctx=", hexCtx);
+    }
     if (rawMissCount > 128) {
         LOG_WARNING("Spell go: missCount capped (requested=", (int)rawMissCount,
                     ") spell=", data.spellId, " hits=", (int)data.hitCount,
