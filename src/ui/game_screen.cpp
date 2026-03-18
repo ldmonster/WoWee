@@ -5879,6 +5879,26 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                 return;
             }
 
+            // /loc command — print player coordinates and zone name
+            if (cmdLower == "loc" || cmdLower == "coords" || cmdLower == "whereami") {
+                const auto& pmi = gameHandler.getMovementInfo();
+                std::string zoneName;
+                if (auto* rend = core::Application::getInstance().getRenderer())
+                    zoneName = rend->getCurrentZoneName();
+                char buf[256];
+                snprintf(buf, sizeof(buf), "%.1f, %.1f, %.1f%s%s",
+                         pmi.x, pmi.y, pmi.z,
+                         zoneName.empty() ? "" : " — ",
+                         zoneName.c_str());
+                game::MessageChatData sysMsg;
+                sysMsg.type = game::ChatType::SYSTEM;
+                sysMsg.language = game::ChatLanguage::UNIVERSAL;
+                sysMsg.message = buf;
+                gameHandler.addLocalChatMessage(sysMsg);
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+
             // /zone command — print current zone name
             if (cmdLower == "zone") {
                 std::string zoneName;
