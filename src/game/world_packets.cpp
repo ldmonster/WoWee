@@ -1061,22 +1061,26 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
             // Legacy UPDATE_OBJECT spline layout used by many servers:
             // timePassed, duration, splineId, durationMod, durationModNext,
             // [ANIMATION: animType(1)+animTime(4) if SPLINEFLAG_ANIMATION(0x00400000)],
-            // verticalAccel, effectStartTime, pointCount, points, splineMode, endPoint.
+            // [PARABOLIC: verticalAccel(4)+effectStartTime(4) if SPLINEFLAG_PARABOLIC(0x00000800)],
+            // pointCount, points, splineMode, endPoint.
             const size_t legacyStart = packet.getReadPos();
-            if (!bytesAvailable(12 + 8 + 8 + 4)) return false;
+            if (!bytesAvailable(12 + 8 + 4)) return false;
             /*uint32_t timePassed =*/ packet.readUInt32();
             /*uint32_t duration =*/ packet.readUInt32();
             /*uint32_t splineId =*/ packet.readUInt32();
             /*float durationMod =*/ packet.readFloat();
             /*float durationModNext =*/ packet.readFloat();
-            // Animation flag inserts 5 bytes (uint8 type + int32 time) before verticalAccel
             if (splineFlags & 0x00400000) { // SPLINEFLAG_ANIMATION
                 if (!bytesAvailable(5)) return false;
                 packet.readUInt8();   // animationType
                 packet.readUInt32();  // animTime
             }
-            /*float verticalAccel =*/ packet.readFloat();
-            /*uint32_t effectStartTime =*/ packet.readUInt32();
+            if (splineFlags & 0x00000800) { // SPLINEFLAG_PARABOLIC
+                if (!bytesAvailable(8)) return false;
+                /*float verticalAccel =*/ packet.readFloat();
+                /*uint32_t effectStartTime =*/ packet.readUInt32();
+            }
+            if (!bytesAvailable(4)) return false;
             uint32_t pointCount = packet.readUInt32();
 
             const size_t remainingAfterCount = packet.getSize() - packet.getReadPos();
