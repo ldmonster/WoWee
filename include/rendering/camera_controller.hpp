@@ -44,6 +44,7 @@ public:
     }
 
     void reset();
+    void resetAngles();
     void teleportTo(const glm::vec3& pos);
     void setOnlineMode(bool online) { onlineMode = online; }
 

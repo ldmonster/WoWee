@@ -1232,6 +1232,66 @@ bool TbcPacketParsers::parseMailList(network::Packet& packet, std::vector<MailMe
 }
 
 // ============================================================================
+// ---------------------------------------------------------------------------
+// skipTbcSpellCastTargets — consume all SpellCastTargets payload bytes for TBC.
+//
+// TBC uses uint32 targetFlags (Classic: uint16). Unit/item/object/corpse targets
+// are PackedGuid (same as Classic). Source/dest location is 3 floats (12 bytes)
+// with no transport guid (Classic: same; WotLK adds a transport PackedGuid).
+//
+// This helper is used by parseSpellStart to ensure the read position advances
+// past ALL target payload fields so subsequent fields (e.g. those parsed by the
+// caller after spell targets) are not corrupted.
+// ---------------------------------------------------------------------------
+static bool skipTbcSpellCastTargets(network::Packet& packet, uint64_t* primaryTargetGuid = nullptr) {
+    if (packet.getSize() - packet.getReadPos() < 4) return false;
+
+    const uint32_t targetFlags = packet.readUInt32();
+
+    // Returns false if the packed guid can't be read, otherwise reads and optionally captures it.
+    auto readPackedGuidCond = [&](uint32_t flag, bool capture) -> bool {
+        if (!(targetFlags & flag)) return true;
+        // Packed GUID: 1-byte mask + up to 8 data bytes
+        if (packet.getReadPos() >= packet.getSize()) return false;
+        uint8_t mask = packet.getData()[packet.getReadPos()];
+        size_t needed = 1;
+        for (int b = 0; b < 8; ++b) if (mask & (1u << b)) ++needed;
+        if (packet.getSize() - packet.getReadPos() < needed) return false;
+        uint64_t g = UpdateObjectParser::readPackedGuid(packet);
+        if (capture && primaryTargetGuid && *primaryTargetGuid == 0) *primaryTargetGuid = g;
+        return true;
+    };
+    auto skipFloats3 = [&](uint32_t flag) -> bool {
+        if (!(targetFlags & flag)) return true;
+        if (packet.getSize() - packet.getReadPos() < 12) return false;
+        (void)packet.readFloat(); (void)packet.readFloat(); (void)packet.readFloat();
+        return true;
+    };
+
+    // Process in wire order matching cmangos-tbc SpellCastTargets::write()
+    if (!readPackedGuidCond(0x0002, true))  return false;  // UNIT
+    if (!readPackedGuidCond(0x0004, false)) return false;  // UNIT_MINIPET
+    if (!readPackedGuidCond(0x0010, false)) return false;  // ITEM
+    if (!skipFloats3(0x0020))               return false;  // SOURCE_LOCATION
+    if (!skipFloats3(0x0040))               return false;  // DEST_LOCATION
+
+    if (targetFlags & 0x1000) {  // TRADE_ITEM: uint8
+        if (packet.getReadPos() >= packet.getSize()) return false;
+        (void)packet.readUInt8();
+    }
+    if (targetFlags & 0x2000) {  // STRING: null-terminated
+        const auto& raw = packet.getData();
+        size_t pos = packet.getReadPos();
+        while (pos < raw.size() && raw[pos] != 0) ++pos;
+        if (pos >= raw.size()) return false;
+        packet.setReadPos(pos + 1);
+    }
+    if (!readPackedGuidCond(0x8200, false)) return false;  // CORPSE / PVP_CORPSE
+    if (!readPackedGuidCond(0x0800, true))  return false;  // OBJECT
+
+    return true;
+}
+
 // TbcPacketParsers::parseSpellStart — TBC 2.4.3 SMSG_SPELL_START
 //
 // TBC uses full uint64 GUIDs for casterGuid and casterUnit.
@@ -1243,7 +1303,6 @@ bool TbcPacketParsers::parseMailList(network::Packet& packet, std::vector<MailMe
 // ============================================================================
 bool TbcPacketParsers::parseSpellStart(network::Packet& packet, SpellStartData& data) {
     data = SpellStartData{};
-    const size_t startPos = packet.getReadPos();
     if (packet.getSize() - packet.getReadPos() < 22) return false;
 
     data.casterGuid = packet.readUInt64();   // full GUID (object)
@@ -1253,23 +1312,19 @@ bool TbcPacketParsers::parseSpellStart(network::Packet& packet, SpellStartData& 
     data.castFlags  = packet.readUInt32();
     data.castTime   = packet.readUInt32();
 
-    if (packet.getReadPos() + 4 > packet.getSize()) {
-        LOG_WARNING("[TBC] Spell start: missing targetFlags");
-        packet.setReadPos(startPos);
-        return false;
+    // SpellCastTargets: consume ALL target payload types to keep the read position
+    // aligned for any bytes the caller may parse after this (ammo, etc.).
+    // The previous code only read UNIT(0x02)/OBJECT(0x800) target GUIDs and left
+    // DEST_LOCATION(0x40)/SOURCE_LOCATION(0x20)/ITEM(0x10) bytes unconsumed,
+    // corrupting subsequent reads for every AOE/ground-targeted spell cast.
+    {
+        uint64_t targetGuid = 0;
+        skipTbcSpellCastTargets(packet, &targetGuid);  // non-fatal on truncation
+        data.targetGuid = targetGuid;
     }
 
-    uint32_t targetFlags = packet.readUInt32();
-    const bool needsTargetGuid = (targetFlags & 0x02) || (targetFlags & 0x800); // UNIT/OBJECT
-    if (needsTargetGuid) {
-        if (packet.getReadPos() + 8 > packet.getSize()) {
-            packet.setReadPos(startPos);
-            return false;
-        }
-        data.targetGuid = packet.readUInt64();  // full GUID in TBC
-    }
-
-    LOG_DEBUG("[TBC] Spell start: spell=", data.spellId, " castTime=", data.castTime, "ms");
+    LOG_DEBUG("[TBC] Spell start: spell=", data.spellId, " castTime=", data.castTime, "ms",
+              " targetGuid=0x", std::hex, data.targetGuid, std::dec);
     return true;
 }
 

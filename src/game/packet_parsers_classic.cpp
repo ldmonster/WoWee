@@ -520,23 +520,20 @@ bool ClassicPacketParsers::parseSpellStart(network::Packet& packet, SpellStartDa
     data.castFlags = packet.readUInt16();   // uint16 in Vanilla (uint32 in TBC/WotLK)
     data.castTime  = packet.readUInt32();
 
-    // SpellCastTargets: uint16 targetFlags in Vanilla (uint32 in TBC/WotLK)
-    if (rem() < 2) {
-        LOG_WARNING("[Classic] Spell start: missing targetFlags");
-        packet.setReadPos(startPos);
-        return false;
-    }
-    uint16_t targetFlags = packet.readUInt16();
-    // TARGET_FLAG_UNIT (0x02) or TARGET_FLAG_OBJECT (0x800) carry a packed GUID
-    if ((targetFlags & 0x02) || (targetFlags & 0x800)) {
-        if (!hasFullPackedGuid(packet)) {
-            packet.setReadPos(startPos);
-            return false;
-        }
-        data.targetGuid = UpdateObjectParser::readPackedGuid(packet);
+    // SpellCastTargets: consume ALL target payload types so subsequent reads stay aligned.
+    // Previously only UNIT(0x02)/OBJECT(0x800) were handled; DEST_LOCATION(0x40),
+    // SOURCE_LOCATION(0x20), and ITEM(0x10) bytes were silently skipped, corrupting
+    // castFlags/castTime for every AOE/ground-targeted spell (Rain of Fire, Blizzard, etc.).
+    {
+        uint64_t targetGuid = 0;
+        // skipClassicSpellCastTargets reads uint16 targetFlags and all payloads.
+        // Non-fatal on truncation: self-cast spells have zero-byte targets.
+        skipClassicSpellCastTargets(packet, &targetGuid);
+        data.targetGuid = targetGuid;
     }
 
-    LOG_DEBUG("[Classic] Spell start: spell=", data.spellId, " castTime=", data.castTime, "ms");
+    LOG_DEBUG("[Classic] Spell start: spell=", data.spellId, " castTime=", data.castTime, "ms",
+              " targetGuid=0x", std::hex, data.targetGuid, std::dec);
     return true;
 }
 

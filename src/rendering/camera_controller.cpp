@@ -388,10 +388,11 @@ void CameraController::update(float deltaTime) {
     if (mounted_) sitting = false;
     xKeyWasDown = xDown;
 
-    // Reset camera with R key (edge-triggered) — only when UI doesn't want keyboard
+    // Reset camera angles with R key (edge-triggered) — only when UI doesn't want keyboard
+    // Does NOT move the player; full reset() is reserved for world-entry/respawn.
     bool rDown = !uiWantsKeyboard && input.isKeyPressed(SDL_SCANCODE_R);
     if (rDown && !rKeyWasDown) {
-        reset();
+        resetAngles();
     }
     rKeyWasDown = rDown;
 
@@ -1939,6 +1940,14 @@ void CameraController::processMouseButton(const SDL_MouseButtonEvent& event) {
         SDL_SetRelativeMouseMode(SDL_FALSE);
     }
     mouseButtonDown = anyDown;
+}
+
+void CameraController::resetAngles() {
+    if (!camera) return;
+    yaw = defaultYaw;
+    facingYaw = defaultYaw;
+    pitch = defaultPitch;
+    camera->setRotation(yaw, pitch);
 }
 
 void CameraController::reset() {
