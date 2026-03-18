@@ -762,6 +762,10 @@ bool ClassicPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& da
         return false;
     }
 
+    // SpellCastTargets follows the miss list — consume all target bytes so that
+    // any subsequent fields (e.g. castFlags extras) are not misaligned.
+    skipClassicSpellCastTargets(packet, &data.targetGuid);
+
     LOG_DEBUG("[Classic] Spell go: spell=", data.spellId, " hits=", (int)data.hitCount,
               " misses=", (int)data.missCount);
     return true;

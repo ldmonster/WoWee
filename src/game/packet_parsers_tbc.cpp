@@ -1423,6 +1423,10 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
     }
     data.missCount = static_cast<uint8_t>(data.missTargets.size());
 
+    // SpellCastTargets follows the miss list — consume all target bytes so that
+    // any subsequent fields are not misaligned for ground-targeted AoE spells.
+    skipTbcSpellCastTargets(packet, &data.targetGuid);
+
     LOG_DEBUG("[TBC] Spell go: spell=", data.spellId, " hits=", (int)data.hitCount,
               " misses=", (int)data.missCount);
     return true;
