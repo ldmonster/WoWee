@@ -2751,7 +2751,6 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
 
         if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_SETTINGS, true)) {
             if (showSettingsWindow) {
-                // Close settings window if open
                 showSettingsWindow = false;
             } else if (showEscapeMenu) {
                 showEscapeMenu = false;
@@ -2762,6 +2761,30 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                 gameHandler.closeLoot();
             } else if (gameHandler.isGossipWindowOpen()) {
                 gameHandler.closeGossip();
+            } else if (gameHandler.isVendorWindowOpen()) {
+                gameHandler.closeVendor();
+            } else if (gameHandler.isBankOpen()) {
+                gameHandler.closeBank();
+            } else if (gameHandler.isTrainerWindowOpen()) {
+                gameHandler.closeTrainer();
+            } else if (showWhoWindow_) {
+                showWhoWindow_ = false;
+            } else if (showCombatLog_) {
+                showCombatLog_ = false;
+            } else if (showSocialFrame_) {
+                showSocialFrame_ = false;
+            } else if (talentScreen.isOpen()) {
+                talentScreen.setOpen(false);
+            } else if (spellbookScreen.isOpen()) {
+                spellbookScreen.setOpen(false);
+            } else if (questLogScreen.isOpen()) {
+                questLogScreen.setOpen(false);
+            } else if (inventoryScreen.isCharacterOpen()) {
+                inventoryScreen.toggleCharacter();
+            } else if (inventoryScreen.isOpen()) {
+                inventoryScreen.setOpen(false);
+            } else if (showWorldMap_) {
+                showWorldMap_ = false;
             } else {
                 showEscapeMenu = true;
             }
