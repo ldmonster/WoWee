@@ -147,8 +147,17 @@ private:
     uint32_t heapSize_;              // Heap size
     uint32_t apiStubBase_;           // API stub base address
 
-    // API hooks: DLL name -> Function name -> Handler
+    // API hooks: DLL name -> Function name -> stub address
     std::map<std::string, std::map<std::string, uint32_t>> apiAddresses_;
+
+    // API stub dispatch: stub address -> {argCount, handler}
+    struct ApiHookEntry {
+        int argCount;
+        std::function<uint32_t(WardenEmulator&, const std::vector<uint32_t>&)> handler;
+    };
+    std::map<uint32_t, ApiHookEntry> apiHandlers_;
+    uint32_t nextApiStubAddr_;   // tracks next free stub slot (replaces static local)
+    bool apiCodeHookRegistered_; // true once UC_HOOK_CODE for stub range is added
 
     // Memory allocation tracking
     std::map<uint32_t, size_t> allocations_;

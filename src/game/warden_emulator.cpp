@@ -32,6 +32,8 @@ WardenEmulator::WardenEmulator()
     , heapBase_(HEAP_BASE)
     , heapSize_(HEAP_SIZE)
     , apiStubBase_(API_STUB_BASE)
+    , nextApiStubAddr_(API_STUB_BASE)
+    , apiCodeHookRegistered_(false)
     , nextHeapAddr_(HEAP_BASE)
 {
 }
@@ -51,8 +53,11 @@ bool WardenEmulator::initialize(const void* moduleCode, size_t moduleSize, uint3
     allocations_.clear();
     freeBlocks_.clear();
     apiAddresses_.clear();
+    apiHandlers_.clear();
     hooks_.clear();
     nextHeapAddr_ = heapBase_;
+    nextApiStubAddr_ = apiStubBase_;
+    apiCodeHookRegistered_ = false;
 
     {
         char addrBuf[32];
@@ -149,6 +154,13 @@ bool WardenEmulator::initialize(const void* moduleCode, size_t moduleSize, uint3
     uc_hook_add(uc_, &hh, UC_HOOK_MEM_INVALID, (void*)hookMemInvalid, this, 1, 0);
     hooks_.push_back(hh);
 
+    // Add code hook over the API stub area so Windows API calls are intercepted
+    uc_hook apiHook;
+    uc_hook_add(uc_, &apiHook, UC_HOOK_CODE, (void*)hookCode, this,
+                API_STUB_BASE, API_STUB_BASE + 0x10000 - 1);
+    hooks_.push_back(apiHook);
+    apiCodeHookRegistered_ = true;
+
     {
         char sBuf[128];
         std::snprintf(sBuf, sizeof(sBuf), "WardenEmulator: Emulator initialized  Stack: 0x%X-0x%X  Heap: 0x%X-0x%X",
@@ -161,23 +173,45 @@ bool WardenEmulator::initialize(const void* moduleCode, size_t moduleSize, uint3
 
 uint32_t WardenEmulator::hookAPI(const std::string& dllName,
                                  const std::string& functionName,
-                                 [[maybe_unused]] std::function<uint32_t(WardenEmulator&, const std::vector<uint32_t>&)> handler) {
-    // Allocate address for this API stub
-    static uint32_t nextStubAddr = API_STUB_BASE;
-    uint32_t stubAddr = nextStubAddr;
-    nextStubAddr += 16; // Space for stub code
+                                 std::function<uint32_t(WardenEmulator&, const std::vector<uint32_t>&)> handler) {
+    // Allocate address for this API stub (16 bytes each)
+    uint32_t stubAddr = nextApiStubAddr_;
+    nextApiStubAddr_ += 16;
 
-    // Store mapping
+    // Store address mapping for IAT patching
     apiAddresses_[dllName][functionName] = stubAddr;
 
-    {
-        char hBuf[32];
-        std::snprintf(hBuf, sizeof(hBuf), "0x%X", stubAddr);
-        LOG_DEBUG("WardenEmulator: Hooked ", dllName, "!", functionName, " at ", hBuf);
+    // Determine stdcall arg count from known Windows APIs so the hook can
+    // clean up the stack correctly (RETN N convention).
+    static const std::pair<const char*, int> knownArgCounts[] = {
+        {"VirtualAlloc",           4},
+        {"VirtualFree",            3},
+        {"GetTickCount",           0},
+        {"Sleep",                  1},
+        {"GetCurrentThreadId",     0},
+        {"GetCurrentProcessId",    0},
+        {"ReadProcessMemory",      5},
+    };
+    int argCount = 0;
+    for (const auto& [name, cnt] : knownArgCounts) {
+        if (functionName == name) { argCount = cnt; break; }
     }
 
-    // TODO: Write stub code that triggers a hook callback
-    // For now, just return the address for IAT patching
+    // Store the handler so hookCode() can dispatch to it
+    apiHandlers_[stubAddr] = { argCount, std::move(handler) };
+
+    // Write a RET (0xC3) at the stub address as a safe fallback in case
+    // the code hook fires after EIP has already advanced past our intercept.
+    if (uc_) {
+        static const uint8_t retInstr = 0xC3;
+        uc_mem_write(uc_, stubAddr, &retInstr, 1);
+    }
+
+    {
+        char hBuf[64];
+        std::snprintf(hBuf, sizeof(hBuf), "0x%X (argCount=%d)", stubAddr, argCount);
+        LOG_DEBUG("WardenEmulator: Hooked ", dllName, "!", functionName, " at ", hBuf);
+    }
 
     return stubAddr;
 }
@@ -503,8 +537,40 @@ uint32_t WardenEmulator::apiReadProcessMemory(WardenEmulator& emu, const std::ve
 // Unicorn Callbacks
 // ============================================================================
 
-void WardenEmulator::hookCode([[maybe_unused]] uc_engine* uc, uint64_t address, [[maybe_unused]] uint32_t size, [[maybe_unused]] void* userData) {
-    (void)address; // Trace disabled by default to avoid log spam
+void WardenEmulator::hookCode(uc_engine* uc, uint64_t address, [[maybe_unused]] uint32_t size, void* userData) {
+    auto* self = static_cast<WardenEmulator*>(userData);
+    if (!self) return;
+
+    auto it = self->apiHandlers_.find(static_cast<uint32_t>(address));
+    if (it == self->apiHandlers_.end()) return; // not an API stub — trace disabled to avoid spam
+
+    const ApiHookEntry& entry = it->second;
+
+    // Read stack: [ESP+0] = return address, [ESP+4..] = stdcall args
+    uint32_t esp = 0;
+    uc_reg_read(uc, UC_X86_REG_ESP, &esp);
+
+    uint32_t retAddr = 0;
+    uc_mem_read(uc, esp, &retAddr, 4);
+
+    std::vector<uint32_t> args(static_cast<size_t>(entry.argCount));
+    for (int i = 0; i < entry.argCount; ++i) {
+        uint32_t val = 0;
+        uc_mem_read(uc, esp + 4 + static_cast<uint32_t>(i) * 4, &val, 4);
+        args[static_cast<size_t>(i)] = val;
+    }
+
+    // Dispatch to the C++ handler
+    uint32_t retVal = 0;
+    if (entry.handler) {
+        retVal = entry.handler(*self, args);
+    }
+
+    // Simulate stdcall epilogue: pop return address + args
+    uint32_t newEsp = esp + 4 + static_cast<uint32_t>(entry.argCount) * 4;
+    uc_reg_write(uc, UC_X86_REG_EAX, &retVal);
+    uc_reg_write(uc, UC_X86_REG_ESP, &newEsp);
+    uc_reg_write(uc, UC_X86_REG_EIP, &retAddr);
 }
 
 void WardenEmulator::hookMemInvalid([[maybe_unused]] uc_engine* uc, int type, uint64_t address, int size, [[maybe_unused]] int64_t value, [[maybe_unused]] void* userData) {
@@ -533,7 +599,8 @@ WardenEmulator::WardenEmulator()
     : uc_(nullptr), moduleBase_(0), moduleSize_(0)
     , stackBase_(0), stackSize_(0)
     , heapBase_(0), heapSize_(0)
-    , apiStubBase_(0), nextHeapAddr_(0) {}
+    , apiStubBase_(0), nextApiStubAddr_(0), apiCodeHookRegistered_(false)
+    , nextHeapAddr_(0) {}
 WardenEmulator::~WardenEmulator() {}
 bool WardenEmulator::initialize(const void*, size_t, uint32_t) { return false; }
 uint32_t WardenEmulator::hookAPI(const std::string&, const std::string&,
