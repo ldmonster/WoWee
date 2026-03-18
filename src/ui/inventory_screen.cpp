@@ -2335,8 +2335,12 @@ void InventoryScreen::renderItemSlot(game::Inventory& inventory, const game::Ite
             } else if (kind == SlotKind::BACKPACK && backpackIndex >= 0) {
                 LOG_INFO("Right-click backpack item: name='", item.name,
                          "' inventoryType=", (int)item.inventoryType,
-                         " itemId=", item.itemId);
-                if (item.inventoryType > 0) {
+                         " itemId=", item.itemId,
+                         " startQuestId=", item.startQuestId);
+                if (item.startQuestId != 0) {
+                    uint64_t iGuid = gameHandler_->getBackpackItemGuid(backpackIndex);
+                    gameHandler_->offerQuestFromItem(iGuid, item.startQuestId);
+                } else if (item.inventoryType > 0) {
                     gameHandler_->autoEquipItemBySlot(backpackIndex);
                 } else {
                     gameHandler_->useItemBySlot(backpackIndex);
@@ -2344,8 +2348,12 @@ void InventoryScreen::renderItemSlot(game::Inventory& inventory, const game::Ite
             } else if (kind == SlotKind::BACKPACK && isBagSlot) {
                 LOG_INFO("Right-click bag item: name='", item.name,
                          "' inventoryType=", (int)item.inventoryType,
-                         " bagIndex=", bagIndex, " slotIndex=", bagSlotIndex);
-                if (item.inventoryType > 0) {
+                         " bagIndex=", bagIndex, " slotIndex=", bagSlotIndex,
+                         " startQuestId=", item.startQuestId);
+                if (item.startQuestId != 0) {
+                    uint64_t iGuid = gameHandler_->getBagItemGuid(bagIndex, bagSlotIndex);
+                    gameHandler_->offerQuestFromItem(iGuid, item.startQuestId);
+                } else if (item.inventoryType > 0) {
                     gameHandler_->autoEquipItemInBag(bagIndex, bagSlotIndex);
                 } else {
                     gameHandler_->useItemInBag(bagIndex, bagSlotIndex);

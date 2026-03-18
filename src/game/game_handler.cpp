@@ -20552,6 +20552,34 @@ void GameHandler::closeGossip() {
     currentGossip = GossipMessageData{};
 }
 
+void GameHandler::offerQuestFromItem(uint64_t itemGuid, uint32_t questId) {
+    if (state != WorldState::IN_WORLD || !socket) return;
+    if (itemGuid == 0 || questId == 0) {
+        addSystemChatMessage("Cannot start quest right now.");
+        return;
+    }
+    // Send CMSG_QUESTGIVER_QUERY_QUEST with the item GUID as the "questgiver."
+    // The server responds with SMSG_QUESTGIVER_QUEST_DETAILS which handleQuestDetails()
+    // picks up and opens the Accept/Decline dialog.
+    auto queryPkt = packetParsers_
+        ? packetParsers_->buildQueryQuestPacket(itemGuid, questId)
+        : QuestgiverQueryQuestPacket::build(itemGuid, questId);
+    socket->send(queryPkt);
+    LOG_INFO("offerQuestFromItem: itemGuid=0x", std::hex, itemGuid, std::dec,
+             " questId=", questId);
+}
+
+uint64_t GameHandler::getBagItemGuid(int bagIndex, int slotIndex) const {
+    if (bagIndex < 0 || bagIndex >= inventory.NUM_BAG_SLOTS) return 0;
+    if (slotIndex < 0) return 0;
+    uint64_t bagGuid = equipSlotGuids_[19 + bagIndex];
+    if (bagGuid == 0) return 0;
+    auto it = containerContents_.find(bagGuid);
+    if (it == containerContents_.end()) return 0;
+    if (slotIndex >= static_cast<int>(it->second.numSlots)) return 0;
+    return it->second.slotGuids[slotIndex];
+}
+
 void GameHandler::openVendor(uint64_t npcGuid) {
     if (state != WorldState::IN_WORLD || !socket) return;
     buybackItems_.clear();
