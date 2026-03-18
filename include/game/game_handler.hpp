@@ -2135,6 +2135,12 @@ public:
         if (it == onlineItems_.end()) return {0, 0};
         return {it->second.permanentEnchantId, it->second.temporaryEnchantId};
     }
+    // Returns the socket gem enchant IDs (3 slots; 0 = empty socket) for an item by GUID.
+    std::array<uint32_t, 3> getItemSocketEnchantIds(uint64_t guid) const {
+        auto it = onlineItems_.find(guid);
+        if (it == onlineItems_.end()) return {};
+        return it->second.socketEnchantIds;
+    }
     uint64_t getVendorGuid() const { return currentVendorItems.vendorGuid; }
 
     /**
@@ -2633,6 +2639,7 @@ private:
         uint32_t maxDurability = 0;
         uint32_t permanentEnchantId = 0;  // ITEM_ENCHANTMENT_SLOT 0 (enchanting)
         uint32_t temporaryEnchantId = 0;  // ITEM_ENCHANTMENT_SLOT 1 (sharpening stones, poisons)
+        std::array<uint32_t, 3> socketEnchantIds{};  // ITEM_ENCHANTMENT_SLOT 2-4 (gems)
     };
     std::unordered_map<uint64_t, OnlineItemInfo> onlineItems_;
     std::unordered_map<uint32_t, ItemQueryResponseData> itemInfoCache_;
