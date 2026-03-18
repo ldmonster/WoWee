@@ -22421,11 +22421,7 @@ void GameScreen::renderBgScoreboard(game::GameHandler& gameHandler) {
     ImGui::End();
 }
 
-// ─── Quest Objective Tracker (legacy stub — superseded by renderQuestObjectiveTracker) ───
-void GameScreen::renderObjectiveTracker(game::GameHandler&) {
-    // No-op: consolidated into renderQuestObjectiveTracker which renders the
-    // full-featured draggable tracker with context menus and item icons.
-}
+
 
 // ─── Book / Scroll / Note Window ──────────────────────────────────────────────
 void GameScreen::renderBookWindow(game::GameHandler& gameHandler) {

@@ -161,24 +161,53 @@ bool WardenModule::processCheckRequest(const std::vector<uint8_t>& checkData,
             }
 
             try {
-                // Call module's PacketHandler
-                // void PacketHandler(uint8_t* checkData, size_t checkSize,
-                //                   uint8_t* responseOut, size_t* responseSizeOut)
-                LOG_INFO("WardenModule: Calling PacketHandler...");
+                if (emulatedPacketHandlerAddr_ == 0) {
+                    LOG_ERROR("WardenModule: PacketHandler address not set (module not fully initialized)");
+                    emulator_->freeMemory(checkDataAddr);
+                    emulator_->freeMemory(responseAddr);
+                    return false;
+                }
 
-                // For now, this is a placeholder - actual calling would depend on
-                // the module's exact function signature
-                LOG_WARNING("WardenModule: PacketHandler execution stubbed");
-                LOG_INFO("WardenModule:   Would call emulated function to process checks");
-                LOG_INFO("WardenModule:   This would generate REAL responses (not fakes!)");
+                // Allocate uint32_t for responseSizeOut in emulated memory
+                uint32_t initialSize = 1024;
+                uint32_t responseSizeAddr = emulator_->writeData(&initialSize, sizeof(uint32_t));
+                if (responseSizeAddr == 0) {
+                    LOG_ERROR("WardenModule: Failed to allocate responseSizeAddr");
+                    emulator_->freeMemory(checkDataAddr);
+                    emulator_->freeMemory(responseAddr);
+                    return false;
+                }
 
-                // Clean up
+                // Call: void PacketHandler(uint8_t* data, uint32_t size,
+                //                          uint8_t* responseOut, uint32_t* responseSizeOut)
+                LOG_INFO("WardenModule: Calling emulated PacketHandler...");
+                emulator_->callFunction(emulatedPacketHandlerAddr_, {
+                    checkDataAddr,
+                    static_cast<uint32_t>(checkData.size()),
+                    responseAddr,
+                    responseSizeAddr
+                });
+
+                // Read back response size and data
+                uint32_t responseSize = 0;
+                emulator_->readMemory(responseSizeAddr, &responseSize, sizeof(uint32_t));
+                emulator_->freeMemory(responseSizeAddr);
+
+                if (responseSize > 0 && responseSize <= 1024) {
+                    responseOut.resize(responseSize);
+                    if (!emulator_->readMemory(responseAddr, responseOut.data(), responseSize)) {
+                        LOG_ERROR("WardenModule: Failed to read response data");
+                        responseOut.clear();
+                    } else {
+                        LOG_INFO("WardenModule: PacketHandler wrote ", responseSize, " byte response");
+                    }
+                } else {
+                    LOG_WARNING("WardenModule: PacketHandler returned invalid responseSize=", responseSize);
+                }
+
                 emulator_->freeMemory(checkDataAddr);
                 emulator_->freeMemory(responseAddr);
-
-                // For now, return false to use fake responses
-                // Once we have a real module, we'd read the response from responseAddr
-                return false;
+                return !responseOut.empty();
 
             } catch (const std::exception& e) {
                 LOG_ERROR("WardenModule: Exception during PacketHandler: ", e.what());
@@ -240,6 +269,7 @@ void WardenModule::unload() {
 
     // Clear function pointers
     funcList_ = {};
+    emulatedPacketHandlerAddr_ = 0;
 
     loaded_ = false;
     moduleData_.clear();
@@ -961,7 +991,12 @@ bool WardenModule::initializeModule() {
             }
 
             // Read WardenFuncList structure from emulated memory
-            // Structure has 4 function pointers (16 bytes)
+            // Structure has 4 function pointers (16 bytes):
+            //   [0] generateRC4Keys(uint8_t* seed)
+            //   [1] unload(uint8_t* rc4Keys)
+            //   [2] packetHandler(uint8_t* data, uint32_t size,
+            //                     uint8_t* responseOut, uint32_t* responseSizeOut)
+            //   [3] tick(uint32_t deltaMs) -> uint32_t
             uint32_t funcAddrs[4] = {};
             if (emulator_->readMemory(result, funcAddrs, 16)) {
                 char fb[4][32];
@@ -973,11 +1008,48 @@ bool WardenModule::initializeModule() {
                 LOG_INFO("WardenModule:   packetHandler:   ", fb[2]);
                 LOG_INFO("WardenModule:   tick:            ", fb[3]);
 
-                // Store function addresses for later use
-                // funcList_.generateRC4Keys = ... (would wrap emulator calls)
-                // funcList_.unload = ...
-                // funcList_.packetHandler = ...
-                // funcList_.tick = ...
+                // Wrap emulated function addresses into std::function dispatchers
+                WardenEmulator* emu = emulator_.get();
+
+                if (funcAddrs[0]) {
+                    uint32_t addr = funcAddrs[0];
+                    funcList_.generateRC4Keys = [emu, addr](uint8_t* seed) {
+                        // Warden RC4 seed is a fixed 4-byte value
+                        uint32_t seedAddr = emu->writeData(seed, 4);
+                        if (seedAddr) {
+                            emu->callFunction(addr, {seedAddr});
+                            emu->freeMemory(seedAddr);
+                        }
+                    };
+                }
+
+                if (funcAddrs[1]) {
+                    uint32_t addr = funcAddrs[1];
+                    funcList_.unload = [emu, addr]([[maybe_unused]] uint8_t* rc4Keys) {
+                        emu->callFunction(addr, {0u}); // pass NULL; module saves its own state
+                    };
+                }
+
+                if (funcAddrs[2]) {
+                    // Store raw address for the 4-arg call in processCheckRequest
+                    emulatedPacketHandlerAddr_ = funcAddrs[2];
+                    uint32_t addr = funcAddrs[2];
+                    // Simple 2-arg variant for generic callers (no response extraction)
+                    funcList_.packetHandler = [emu, addr](uint8_t* data, size_t length) {
+                        uint32_t dataAddr = emu->writeData(data, length);
+                        if (dataAddr) {
+                            emu->callFunction(addr, {dataAddr, static_cast<uint32_t>(length)});
+                            emu->freeMemory(dataAddr);
+                        }
+                    };
+                }
+
+                if (funcAddrs[3]) {
+                    uint32_t addr = funcAddrs[3];
+                    funcList_.tick = [emu, addr](uint32_t deltaMs) -> uint32_t {
+                        return emu->callFunction(addr, {deltaMs});
+                    };
+                }
             }
 
             LOG_INFO("WardenModule: Module fully initialized and ready!");
