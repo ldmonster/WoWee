@@ -11138,13 +11138,17 @@ void GameScreen::renderBossFrames(game::GameHandler& gameHandler) {
                 uint32_t bspell = cs->spellId;
                 const std::string& bcastName = (bspell != 0)
                     ? gameHandler.getSpellName(bspell) : "";
-                // Pulse bright orange when > 80% complete — interrupt window closing
+                // Green = interruptible, Red = immune; pulse when > 80% complete
                 ImVec4 bcastColor;
                 if (castPct > 0.8f) {
                     float pulse = 0.7f + 0.3f * std::sin(static_cast<float>(ImGui::GetTime()) * 8.0f);
-                    bcastColor = ImVec4(1.0f * pulse, 0.5f * pulse, 0.0f, 1.0f);
+                    bcastColor = cs->interruptible
+                        ? ImVec4(0.2f * pulse, 0.9f * pulse, 0.2f * pulse, 1.0f)
+                        : ImVec4(1.0f * pulse, 0.1f * pulse, 0.1f * pulse, 1.0f);
                 } else {
-                    bcastColor = ImVec4(0.9f, 0.3f, 0.2f, 1.0f);
+                    bcastColor = cs->interruptible
+                        ? ImVec4(0.2f, 0.75f, 0.2f, 1.0f)
+                        : ImVec4(0.9f, 0.15f, 0.15f, 1.0f);
                 }
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram, bcastColor);
                 char bcastLabel[72];
