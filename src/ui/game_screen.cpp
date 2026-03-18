@@ -2833,6 +2833,15 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                         gameHandler.castSpell(bar[slotIdx].id, target);
                     } else if (bar[slotIdx].type == game::ActionBarSlot::ITEM && bar[slotIdx].id != 0) {
                         gameHandler.useItemById(bar[slotIdx].id);
+                    } else if (bar[slotIdx].type == game::ActionBarSlot::MACRO) {
+                        const std::string& macroTxt = gameHandler.getMacroText(bar[slotIdx].id);
+                        if (!macroTxt.empty()) {
+                            size_t nl = macroTxt.find('\n');
+                            std::string firstLine = (nl != std::string::npos) ? macroTxt.substr(0, nl) : macroTxt;
+                            strncpy(chatInputBuffer, firstLine.c_str(), sizeof(chatInputBuffer) - 1);
+                            chatInputBuffer[sizeof(chatInputBuffer) - 1] = '\0';
+                            sendChatMessage(gameHandler);
+                        }
                     }
                 }
             }
@@ -6026,6 +6035,25 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                 // Trim leading/trailing whitespace
                 while (!spellArg.empty() && spellArg.front() == ' ') spellArg.erase(spellArg.begin());
                 while (!spellArg.empty() && spellArg.back()  == ' ') spellArg.pop_back();
+
+                // Support numeric spell ID: /cast 133 or /cast #133
+                {
+                    std::string numStr = spellArg;
+                    if (!numStr.empty() && numStr.front() == '#') numStr.erase(numStr.begin());
+                    bool isNumeric = !numStr.empty() &&
+                        std::all_of(numStr.begin(), numStr.end(),
+                                    [](unsigned char c){ return std::isdigit(c); });
+                    if (isNumeric) {
+                        uint32_t spellId = 0;
+                        try { spellId = static_cast<uint32_t>(std::stoul(numStr)); } catch (...) {}
+                        if (spellId != 0) {
+                            uint64_t targetGuid = gameHandler.hasTarget() ? gameHandler.getTargetGuid() : 0;
+                            gameHandler.castSpell(spellId, targetGuid);
+                        }
+                        chatInputBuffer[0] = '\0';
+                        return;
+                    }
+                }
 
                 // Parse optional "(Rank N)" suffix: "Fireball(Rank 3)" or "Fireball (Rank 3)"
                 int requestedRank = -1;  // -1 = highest rank
