@@ -3891,23 +3891,27 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
 
     const uint8_t rawMissCount = packet.readUInt8();
     if (rawMissCount > 128) {
-        LOG_WARNING("Spell go: missCount capped (requested=", (int)rawMissCount, ")");
+        LOG_WARNING("Spell go: missCount capped (requested=", (int)rawMissCount,
+                    ") spell=", data.spellId, " hits=", (int)data.hitCount,
+                    " remaining=", packet.getSize() - packet.getReadPos());
     }
     const uint8_t storedMissLimit = std::min<uint8_t>(rawMissCount, 128);
 
     data.missTargets.reserve(storedMissLimit);
     for (uint16_t i = 0; i < rawMissCount; ++i) {
         // Each miss entry: packed GUID(1-8 bytes) + missType(1 byte).
-        // REFLECT additionally appends uint32 reflectSpellId + uint8 reflectResult.
+        // REFLECT additionally appends uint8 reflectResult.
         if (!hasFullPackedGuid(packet)) {
-            LOG_WARNING("Spell go: truncated miss targets at index ", i, "/", (int)rawMissCount);
+            LOG_WARNING("Spell go: truncated miss targets at index ", i, "/", (int)rawMissCount,
+                        " spell=", data.spellId, " hits=", (int)data.hitCount);
             truncatedTargets = true;
             break;
         }
         SpellGoMissEntry m;
         m.targetGuid = UpdateObjectParser::readPackedGuid(packet);  // packed GUID in WotLK
         if (packet.getSize() - packet.getReadPos() < 1) {
-            LOG_WARNING("Spell go: missing missType at miss index ", i, "/", (int)rawMissCount);
+            LOG_WARNING("Spell go: missing missType at miss index ", i, "/", (int)rawMissCount,
+                        " spell=", data.spellId);
             truncatedTargets = true;
             break;
         }
@@ -3924,11 +3928,16 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
             data.missTargets.push_back(m);
         }
     }
-    if (truncatedTargets) {
-        packet.setReadPos(startPos);
-        return false;
-    }
     data.missCount = static_cast<uint8_t>(data.missTargets.size());
+
+    // If miss targets were truncated, salvage the successfully-parsed hit data
+    // rather than discarding the entire spell. The server already applied effects;
+    // we just need the hit list for UI feedback (combat text, health bars).
+    if (truncatedTargets) {
+        LOG_DEBUG("Spell go: salvaging ", (int)data.hitCount, " hits despite miss truncation");
+        packet.setReadPos(packet.getSize()); // consume remaining bytes
+        return true;
+    }
 
     // WotLK 3.3.5a SpellCastTargets — consume ALL target payload bytes so that
     // any trailing fields after the target section are not misaligned for
