@@ -4582,6 +4582,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                         "Unknown error", "Only empty bag"
                     };
                     const char* msg = (result < 7) ? sellErrors[result] : "Unknown sell error";
+                    addUIError(std::string("Sell failed: ") + msg);
                     addSystemChatMessage(std::string("Sell failed: ") + msg);
                     if (auto* renderer = core::Application::getInstance().getRenderer()) {
                         if (auto* sfx = renderer->getUiSoundManager())
@@ -4744,6 +4745,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     case 6: msg = "You can't carry any more items."; break;
                     default: break;
                 }
+                addUIError(msg);
                 addSystemChatMessage(msg);
                 if (auto* renderer = core::Application::getInstance().getRenderer()) {
                     if (auto* sfx = renderer->getUiSoundManager())
