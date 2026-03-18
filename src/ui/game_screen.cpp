@@ -256,6 +256,9 @@ bool GameScreen::shouldShowMessage(const game::MessageChatData& msg, int tabInde
     return (tab.typeMask & typeBit) != 0;
 }
 
+// Forward declaration — defined near sendChatMessage below
+static std::string firstMacroCommand(const std::string& macroText);
+
 void GameScreen::render(game::GameHandler& gameHandler) {
     // Set up chat bubble callback (once)
     if (!chatBubbleCallbackSet_) {
@@ -2835,11 +2838,9 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                     } else if (bar[slotIdx].type == game::ActionBarSlot::ITEM && bar[slotIdx].id != 0) {
                         gameHandler.useItemById(bar[slotIdx].id);
                     } else if (bar[slotIdx].type == game::ActionBarSlot::MACRO) {
-                        const std::string& macroTxt = gameHandler.getMacroText(bar[slotIdx].id);
-                        if (!macroTxt.empty()) {
-                            size_t nl = macroTxt.find('\n');
-                            std::string firstLine = (nl != std::string::npos) ? macroTxt.substr(0, nl) : macroTxt;
-                            strncpy(chatInputBuffer, firstLine.c_str(), sizeof(chatInputBuffer) - 1);
+                        std::string cmd = firstMacroCommand(gameHandler.getMacroText(bar[slotIdx].id));
+                        if (!cmd.empty()) {
+                            strncpy(chatInputBuffer, cmd.c_str(), sizeof(chatInputBuffer) - 1);
                             chatInputBuffer[sizeof(chatInputBuffer) - 1] = '\0';
                             sendChatMessage(gameHandler);
                         }
@@ -5239,6 +5240,24 @@ void GameScreen::renderFocusFrame(game::GameHandler& gameHandler) {
     ImGui::PopStyleVar();
 }
 
+// Returns the first executable line of a macro text block, skipping blank lines
+// and # directive lines (e.g. #showtooltip).  Returns empty string if none found.
+static std::string firstMacroCommand(const std::string& macroText) {
+    size_t pos = 0;
+    while (pos <= macroText.size()) {
+        size_t nl = macroText.find('\n', pos);
+        std::string line = (nl != std::string::npos) ? macroText.substr(pos, nl - pos) : macroText.substr(pos);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t start = line.find_first_not_of(" \t");
+        if (start != std::string::npos) line = line.substr(start);
+        if (!line.empty() && line.front() != '#')
+            return line;
+        if (nl == std::string::npos) break;
+        pos = nl + 1;
+    }
+    return {};
+}
+
 void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
     if (strlen(chatInputBuffer) > 0) {
         std::string input(chatInputBuffer);
@@ -7558,12 +7577,9 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
             } else if (slot.type == game::ActionBarSlot::ITEM && slot.id != 0) {
                 gameHandler.useItemById(slot.id);
             } else if (slot.type == game::ActionBarSlot::MACRO) {
-                const std::string& text = gameHandler.getMacroText(slot.id);
-                if (!text.empty()) {
-                    // Execute first line of macro as a chat command
-                    size_t nl = text.find('\n');
-                    std::string firstLine = (nl != std::string::npos) ? text.substr(0, nl) : text;
-                    strncpy(chatInputBuffer, firstLine.c_str(), sizeof(chatInputBuffer) - 1);
+                std::string cmd = firstMacroCommand(gameHandler.getMacroText(slot.id));
+                if (!cmd.empty()) {
+                    strncpy(chatInputBuffer, cmd.c_str(), sizeof(chatInputBuffer) - 1);
                     chatInputBuffer[sizeof(chatInputBuffer) - 1] = '\0';
                     sendChatMessage(gameHandler);
                 }
@@ -7599,11 +7615,9 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
                     ImGui::TextDisabled("Macro #%u", slot.id);
                     ImGui::Separator();
                     if (ImGui::MenuItem("Execute")) {
-                        const std::string& text = gameHandler.getMacroText(slot.id);
-                        if (!text.empty()) {
-                            size_t nl = text.find('\n');
-                            std::string firstLine = (nl != std::string::npos) ? text.substr(0, nl) : text;
-                            strncpy(chatInputBuffer, firstLine.c_str(), sizeof(chatInputBuffer) - 1);
+                        std::string cmd = firstMacroCommand(gameHandler.getMacroText(slot.id));
+                        if (!cmd.empty()) {
+                            strncpy(chatInputBuffer, cmd.c_str(), sizeof(chatInputBuffer) - 1);
                             chatInputBuffer[sizeof(chatInputBuffer) - 1] = '\0';
                             sendChatMessage(gameHandler);
                         }
