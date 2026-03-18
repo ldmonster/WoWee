@@ -2951,6 +2951,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
             struct SpellMissLogEntry {
                 uint64_t victimGuid = 0;
                 uint8_t missInfo = 0;
+                uint32_t reflectSpellId = 0;  // Only valid when missInfo==11 (REFLECT)
             };
             std::vector<SpellMissLogEntry> parsedMisses;
             parsedMisses.reserve(storedLimit);
@@ -2969,17 +2970,18 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 }
                 const uint8_t missInfo = packet.readUInt8();
                 // REFLECT (11): extra uint32 reflectSpellId + uint8 reflectResult
+                uint32_t reflectSpellId = 0;
                 if (missInfo == 11) {
                     if (packet.getSize() - packet.getReadPos() >= 5) {
-                        /*uint32_t reflectSpellId =*/ packet.readUInt32();
-                        /*uint8_t  reflectResult  =*/ packet.readUInt8();
+                        reflectSpellId = packet.readUInt32();
+                        /*uint8_t reflectResult =*/ packet.readUInt8();
                     } else {
                         truncated = true;
                         break;
                     }
                 }
                 if (i < storedLimit) {
-                    parsedMisses.push_back({victimGuid, missInfo});
+                    parsedMisses.push_back({victimGuid, missInfo, reflectSpellId});
                 }
             }
 
@@ -2992,12 +2994,15 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 const uint64_t victimGuid = miss.victimGuid;
                 const uint8_t missInfo = miss.missInfo;
                 CombatTextEntry::Type ct = combatTextTypeFromSpellMissInfo(missInfo);
+                // For REFLECT, use the reflected spell ID so combat text shows the spell name
+                uint32_t combatSpellId = (ct == CombatTextEntry::REFLECT && miss.reflectSpellId != 0)
+                                         ? miss.reflectSpellId : spellId;
                 if (casterGuid == playerGuid) {
                     // We cast a spell and it missed the target
-                    addCombatText(ct, 0, spellId, true, 0, casterGuid, victimGuid);
+                    addCombatText(ct, 0, combatSpellId, true, 0, casterGuid, victimGuid);
                 } else if (victimGuid == playerGuid) {
                     // Enemy spell missed us (we dodged/parried/blocked/resisted/etc.)
-                    addCombatText(ct, 0, spellId, false, 0, casterGuid, victimGuid);
+                    addCombatText(ct, 0, combatSpellId, false, 0, casterGuid, victimGuid);
                 }
             }
             break;
