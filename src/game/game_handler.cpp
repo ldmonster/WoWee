@@ -7431,7 +7431,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 glm::vec3 canonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());
                 spawnPos = core::coords::canonicalToRender(canonical);
             }
-            renderer->playSpellVisual(impVisualId, spawnPos);
+            renderer->playSpellVisual(impVisualId, spawnPos, /*useImpactKit=*/true);
             break;
         }
 

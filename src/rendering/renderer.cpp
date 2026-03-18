@@ -2644,11 +2644,13 @@ void Renderer::loadSpellVisualDbc() {
     const pipeline::DBCFieldMap* fxLayout  = layout ? layout->getLayout("SpellVisualEffectName") : nullptr;
 
     uint32_t svCastKitField   = svLayout  ? (*svLayout)["CastKit"]       : 2;
+    uint32_t svImpactKitField = svLayout  ? (*svLayout)["ImpactKit"]     : 3;
     uint32_t svMissileField   = svLayout  ? (*svLayout)["MissileModel"]  : 8;
     uint32_t kitSpecial0Field = kitLayout ? (*kitLayout)["SpecialEffect0"] : 11;
     uint32_t kitBaseField     = kitLayout ? (*kitLayout)["BaseEffect"]     : 5;
     uint32_t fxFilePathField  = fxLayout  ? (*fxLayout)["FilePath"]       : 2;
 
+    // Helper to look up effectName path from a kit ID
     // Load SpellVisualEffectName.dbc — ID → M2 path
     auto fxDbc = cachedAssetManager->loadDBC("SpellVisualEffectName.dbc");
     if (!fxDbc || !fxDbc->isLoaded() || fxDbc->getFieldCount() <= fxFilePathField) {
@@ -2679,50 +2681,57 @@ void Renderer::loadSpellVisualDbc() {
         }
     }
 
-    // Load SpellVisual.dbc — visualId → M2 path via kit chain
+    // Helper: resolve path for a given kit ID
+    auto kitPath = [&](uint32_t kitId) -> std::string {
+        if (!kitId) return {};
+        auto kitIt = kitToEffectName.find(kitId);
+        if (kitIt == kitToEffectName.end()) return {};
+        auto fxIt = effectPaths.find(kitIt->second);
+        return (fxIt != effectPaths.end()) ? fxIt->second : std::string{};
+    };
+    auto missilePath = [&](uint32_t effId) -> std::string {
+        if (!effId) return {};
+        auto fxIt = effectPaths.find(effId);
+        return (fxIt != effectPaths.end()) ? fxIt->second : std::string{};
+    };
+
+    // Load SpellVisual.dbc — visualId → cast/impact M2 paths via kit chain
     auto svDbc = cachedAssetManager->loadDBC("SpellVisual.dbc");
     if (!svDbc || !svDbc->isLoaded()) {
         LOG_DEBUG("SpellVisual: SpellVisual.dbc unavailable");
         return;
     }
     uint32_t svFc = svDbc->getFieldCount();
-    uint32_t loaded = 0;
+    uint32_t loadedCast = 0, loadedImpact = 0;
     for (uint32_t i = 0; i < svDbc->getRecordCount(); ++i) {
         uint32_t vid = svDbc->getUInt32(i, 0);
         if (!vid) continue;
 
-        std::string path;
-
-        // Try CastKit → SpellVisualKit → SpecialEffect0 path
-        if (svCastKitField < svFc) {
-            uint32_t kitId = svDbc->getUInt32(i, svCastKitField);
-            if (kitId) {
-                auto kitIt = kitToEffectName.find(kitId);
-                if (kitIt != kitToEffectName.end()) {
-                    auto fxIt = effectPaths.find(kitIt->second);
-                    if (fxIt != effectPaths.end()) path = fxIt->second;
-                }
-            }
+        // Cast path: CastKit → SpecialEffect0/BaseEffect, fallback to MissileModel
+        {
+            std::string path;
+            if (svCastKitField < svFc)
+                path = kitPath(svDbc->getUInt32(i, svCastKitField));
+            if (path.empty() && svMissileField < svFc)
+                path = missilePath(svDbc->getUInt32(i, svMissileField));
+            if (!path.empty()) { spellVisualCastPath_[vid] = path; ++loadedCast; }
         }
-        // Fallback: MissileModel directly references SpellVisualEffectName
-        if (path.empty() && svMissileField < svFc) {
-            uint32_t missileEff = svDbc->getUInt32(i, svMissileField);
-            if (missileEff) {
-                auto fxIt = effectPaths.find(missileEff);
-                if (fxIt != effectPaths.end()) path = fxIt->second;
-            }
-        }
-
-        if (!path.empty()) {
-            spellVisualModelPath_[vid] = path;
-            ++loaded;
+        // Impact path: ImpactKit → SpecialEffect0/BaseEffect, fallback to MissileModel
+        {
+            std::string path;
+            if (svImpactKitField < svFc)
+                path = kitPath(svDbc->getUInt32(i, svImpactKitField));
+            if (path.empty() && svMissileField < svFc)
+                path = missilePath(svDbc->getUInt32(i, svMissileField));
+            if (!path.empty()) { spellVisualImpactPath_[vid] = path; ++loadedImpact; }
         }
     }
-    LOG_INFO("SpellVisual: loaded ", loaded, " visual→M2 mappings (of ",
-             svDbc->getRecordCount(), " records)");
+    LOG_INFO("SpellVisual: loaded cast=", loadedCast, " impact=", loadedImpact,
+             " visual→M2 mappings (of ", svDbc->getRecordCount(), " records)");
 }
 
-void Renderer::playSpellVisual(uint32_t visualId, const glm::vec3& worldPosition) {
+void Renderer::playSpellVisual(uint32_t visualId, const glm::vec3& worldPosition,
+                                bool useImpactKit) {
     if (!m2Renderer || visualId == 0) return;
 
     if (!cachedAssetManager)
@@ -2731,9 +2740,10 @@ void Renderer::playSpellVisual(uint32_t visualId, const glm::vec3& worldPosition
 
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
 
-    // Find the M2 path for this visual
-    auto pathIt = spellVisualModelPath_.find(visualId);
-    if (pathIt == spellVisualModelPath_.end()) return; // No model for this visual
+    // Select cast or impact path map
+    auto& pathMap = useImpactKit ? spellVisualImpactPath_ : spellVisualCastPath_;
+    auto pathIt = pathMap.find(visualId);
+    if (pathIt == pathMap.end()) return; // No model for this visual
 
     const std::string& modelPath = pathIt->second;
 

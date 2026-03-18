@@ -154,8 +154,10 @@ public:
     void triggerLevelUpEffect(const glm::vec3& position);
     void cancelEmote();
 
-    // Spell visual effects (SMSG_PLAY_SPELL_VISUAL)
-    void playSpellVisual(uint32_t visualId, const glm::vec3& worldPosition);
+    // Spell visual effects (SMSG_PLAY_SPELL_VISUAL / SMSG_PLAY_SPELL_IMPACT)
+    // useImpactKit=false → CastKit path; useImpactKit=true → ImpactKit path
+    void playSpellVisual(uint32_t visualId, const glm::vec3& worldPosition,
+                         bool useImpactKit = false);
     bool isEmoteActive() const { return emoteActive; }
     static std::string getEmoteText(const std::string& emoteName, const std::string* targetName = nullptr);
     static uint32_t getEmoteDbcId(const std::string& emoteName);
@@ -328,11 +330,12 @@ private:
 
     pipeline::AssetManager* cachedAssetManager = nullptr;
 
-    // Spell visual effects — transient M2 instances spawned by SMSG_PLAY_SPELL_VISUAL
+    // Spell visual effects — transient M2 instances spawned by SMSG_PLAY_SPELL_VISUAL/IMPACT
     struct SpellVisualInstance { uint32_t instanceId; float elapsed; };
     std::vector<SpellVisualInstance> activeSpellVisuals_;
-    std::unordered_map<uint32_t, std::string> spellVisualModelPath_; // visualId → resolved M2 path
-    std::unordered_map<std::string, uint32_t> spellVisualModelIds_;  // M2 path → M2Renderer modelId
+    std::unordered_map<uint32_t, std::string> spellVisualCastPath_;   // visualId → cast M2 path
+    std::unordered_map<uint32_t, std::string> spellVisualImpactPath_; // visualId → impact M2 path
+    std::unordered_map<std::string, uint32_t> spellVisualModelIds_;   // M2 path → M2Renderer modelId
     uint32_t nextSpellVisualModelId_ = 999000; // Reserved range 999000-999799
     bool spellVisualDbcLoaded_ = false;
     void loadSpellVisualDbc();
