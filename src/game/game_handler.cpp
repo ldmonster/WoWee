@@ -12759,6 +12759,15 @@ void GameHandler::handleMessageChat(network::Packet& packet) {
     // Track whisper sender for /r command
     if (data.type == ChatType::WHISPER && !data.senderName.empty()) {
         lastWhisperSender_ = data.senderName;
+
+        // Auto-reply if AFK or DND
+        if (afkStatus_ && !data.senderName.empty()) {
+            std::string reply = afkMessage_.empty() ? "Away from Keyboard" : afkMessage_;
+            sendChatMessage(ChatType::WHISPER, "<AFK> " + reply, data.senderName);
+        } else if (dndStatus_ && !data.senderName.empty()) {
+            std::string reply = dndMessage_.empty() ? "Do Not Disturb" : dndMessage_;
+            sendChatMessage(ChatType::WHISPER, "<DND> " + reply, data.senderName);
+        }
     }
 
     // Trigger chat bubble for SAY/YELL messages from others
@@ -18533,6 +18542,12 @@ void GameHandler::handleCastFailed(network::Packet& packet) {
     msg.language = ChatLanguage::UNIVERSAL;
     msg.message = errMsg;
     addLocalChatMessage(msg);
+
+    // Play error sound for cast failure feedback
+    if (auto* renderer = core::Application::getInstance().getRenderer()) {
+        if (auto* sfx = renderer->getUiSoundManager())
+            sfx->playError();
+    }
 }
 
 static audio::SpellSoundManager::MagicSchool schoolMaskToMagicSchool(uint32_t mask) {
