@@ -3780,14 +3780,44 @@ bool SpellStartParser::parse(network::Packet& packet, SpellStartData& data) {
         return false;
     }
 
+    // WotLK 3.3.5a SpellCastTargets — consume ALL target payload bytes so that
+    // subsequent fields (e.g. school mask, cast flags 0x20 extra data) are not
+    // misaligned for ground-targeted or AoE spells.
     uint32_t targetFlags = packet.readUInt32();
-    const bool needsTargetGuid = (targetFlags & 0x02) || (targetFlags & 0x800); // UNIT/OBJECT
-    if (needsTargetGuid) {
-        if (!hasFullPackedGuid(packet)) {
-            packet.setReadPos(startPos);
-            return false;
-        }
-        data.targetGuid = UpdateObjectParser::readPackedGuid(packet);
+
+    auto readPackedTarget = [&](uint64_t* out) -> bool {
+        if (!hasFullPackedGuid(packet)) return false;
+        uint64_t g = UpdateObjectParser::readPackedGuid(packet);
+        if (out) *out = g;
+        return true;
+    };
+    auto skipPackedAndFloats3 = [&]() -> bool {
+        if (!hasFullPackedGuid(packet)) return false;
+        UpdateObjectParser::readPackedGuid(packet); // transport GUID (may be zero)
+        if (packet.getSize() - packet.getReadPos() < 12) return false;
+        packet.readFloat(); packet.readFloat(); packet.readFloat();
+        return true;
+    };
+
+    // UNIT/UNIT_MINIPET/CORPSE_ALLY/GAMEOBJECT share a single object target GUID
+    if (targetFlags & (0x0002u | 0x0004u | 0x0400u | 0x0800u)) {
+        readPackedTarget(&data.targetGuid); // best-effort; ignore failure
+    }
+    // ITEM/TRADE_ITEM share a single item target GUID
+    if (targetFlags & (0x0010u | 0x0100u)) {
+        readPackedTarget(nullptr);
+    }
+    // SOURCE_LOCATION: PackedGuid (transport) + float x,y,z
+    if (targetFlags & 0x0020u) {
+        skipPackedAndFloats3();
+    }
+    // DEST_LOCATION: PackedGuid (transport) + float x,y,z
+    if (targetFlags & 0x0040u) {
+        skipPackedAndFloats3();
+    }
+    // STRING: null-terminated
+    if (targetFlags & 0x0200u) {
+        while (packet.getReadPos() < packet.getSize() && packet.readUInt8() != 0) {}
     }
 
     LOG_DEBUG("Spell start: spell=", data.spellId, " castTime=", data.castTime, "ms");
