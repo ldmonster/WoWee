@@ -949,6 +949,10 @@ public:
     using StandStateCallback = std::function<void(uint8_t standState)>;
     void setStandStateCallback(StandStateCallback cb) { standStateCallback_ = std::move(cb); }
 
+    // Appearance changed callback — fired when PLAYER_BYTES or facial features update (barber shop, etc.)
+    using AppearanceChangedCallback = std::function<void()>;
+    void setAppearanceChangedCallback(AppearanceChangedCallback cb) { appearanceChangedCallback_ = std::move(cb); }
+
     // Ghost state callback — fired when player enters or leaves ghost (spirit) form
     using GhostStateCallback = std::function<void(bool isGhost)>;
     void setGhostStateCallback(GhostStateCallback cb) { ghostStateCallback_ = std::move(cb); }
@@ -3348,6 +3352,7 @@ private:
     NpcAggroCallback npcAggroCallback_;
     NpcRespawnCallback npcRespawnCallback_;
     StandStateCallback standStateCallback_;
+    AppearanceChangedCallback appearanceChangedCallback_;
     GhostStateCallback ghostStateCallback_;
     MeleeSwingCallback meleeSwingCallback_;
     uint64_t lastMeleeSwingMs_ = 0;   // system_clock ms at last player auto-attack swing

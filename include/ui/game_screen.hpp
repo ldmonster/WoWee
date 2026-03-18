@@ -665,6 +665,7 @@ private:
     float resurrectFlashTimer_ = 0.0f;
     static constexpr float kResurrectFlashDuration = 3.0f;
     bool ghostStateCallbackSet_ = false;
+    bool appearanceCallbackSet_ = false;
     bool ghostOpacityStateKnown_ = false;
     bool ghostOpacityLastState_ = false;
     uint32_t ghostOpacityLastInstanceId_ = 0;

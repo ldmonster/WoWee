@@ -401,6 +401,14 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         ghostStateCallbackSet_ = true;
     }
 
+    // Set up appearance-changed callback to refresh inventory preview (barber shop, etc.)
+    if (!appearanceCallbackSet_) {
+        gameHandler.setAppearanceChangedCallback([this]() {
+            inventoryScreenCharGuid_ = 0;  // force preview re-sync on next frame
+        });
+        appearanceCallbackSet_ = true;
+    }
+
     // Set up UI error frame callback (once)
     if (!uiErrorCallbackSet_) {
         gameHandler.setUIErrorCallback([this](const std::string& msg) {

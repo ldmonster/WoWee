@@ -12177,6 +12177,7 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                     const uint16_t ufCoinage = fieldIndex(UF::PLAYER_FIELD_COINAGE);
                     const uint16_t ufPlayerFlags = fieldIndex(UF::PLAYER_FLAGS);
                     const uint16_t ufArmor = fieldIndex(UF::UNIT_FIELD_RESISTANCES);
+                    const uint16_t ufPBytesV = fieldIndex(UF::PLAYER_BYTES);
                     const uint16_t ufPBytes2v = fieldIndex(UF::PLAYER_BYTES_2);
                     const uint16_t ufChosenTitle = fieldIndex(UF::PLAYER_CHOSEN_TITLE);
                     const uint16_t ufStatsV[5] = {
@@ -12227,15 +12228,38 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                         else if (ufArmor != 0xFFFF && key > ufArmor && key <= ufArmor + 6) {
                             playerResistances_[key - ufArmor - 1] = static_cast<int32_t>(val);
                         }
+                        else if (ufPBytesV != 0xFFFF && key == ufPBytesV) {
+                            // PLAYER_BYTES changed (barber shop, polymorph, etc.)
+                            // Update the Character struct so inventory preview refreshes
+                            for (auto& ch : characters) {
+                                if (ch.guid == playerGuid) {
+                                    ch.appearanceBytes = val;
+                                    break;
+                                }
+                            }
+                            if (appearanceChangedCallback_)
+                                appearanceChangedCallback_();
+                        }
                         else if (ufPBytes2v != 0xFFFF && key == ufPBytes2v) {
+                            // Byte 0 (bits 0-7): facial hair / piercings
+                            uint8_t facialHair = static_cast<uint8_t>(val & 0xFF);
+                            for (auto& ch : characters) {
+                                if (ch.guid == playerGuid) {
+                                    ch.facialFeatures = facialHair;
+                                    break;
+                                }
+                            }
                             uint8_t bankBagSlots = static_cast<uint8_t>((val >> 16) & 0xFF);
-                            LOG_WARNING("PLAYER_BYTES_2 (VALUES): raw=0x", std::hex, val, std::dec,
-                                       " bankBagSlots=", static_cast<int>(bankBagSlots));
+                            LOG_DEBUG("PLAYER_BYTES_2 (VALUES): raw=0x", std::hex, val, std::dec,
+                                       " bankBagSlots=", static_cast<int>(bankBagSlots),
+                                       " facial=", static_cast<int>(facialHair));
                             inventory.setPurchasedBankBagSlots(bankBagSlots);
                             // Byte 3 (bits 24-31): REST_STATE
                             // 0 = not resting, 1 = REST_TYPE_IN_TAVERN, 2 = REST_TYPE_IN_CITY
                             uint8_t restStateByte = static_cast<uint8_t>((val >> 24) & 0xFF);
                             isResting_ = (restStateByte != 0);
+                            if (appearanceChangedCallback_)
+                                appearanceChangedCallback_();
                         }
                         else if (ufChosenTitle != 0xFFFF && key == ufChosenTitle) {
                             chosenTitleBit_ = static_cast<int32_t>(val);
