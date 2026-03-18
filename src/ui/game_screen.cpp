@@ -6519,6 +6519,57 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                 return;
             }
 
+            // /mark [icon] — set or clear a raid target mark on the current target.
+            // Icon names (case-insensitive): star, circle, diamond, triangle, moon, square, cross, skull
+            // /mark clear | /mark 0 — remove all marks (sets icon 0xFF = clear)
+            // /mark — no arg marks with skull (icon 7)
+            if (cmdLower == "mark" || cmdLower == "marktarget" || cmdLower == "raidtarget") {
+                if (!gameHandler.hasTarget()) {
+                    game::MessageChatData noTgt;
+                    noTgt.type = game::ChatType::SYSTEM;
+                    noTgt.language = game::ChatLanguage::UNIVERSAL;
+                    noTgt.message = "No target selected.";
+                    gameHandler.addLocalChatMessage(noTgt);
+                    chatInputBuffer[0] = '\0';
+                    return;
+                }
+                static const char* kMarkWords[] = {
+                    "star", "circle", "diamond", "triangle", "moon", "square", "cross", "skull"
+                };
+                uint8_t icon = 7; // default: skull
+                if (spacePos != std::string::npos) {
+                    std::string arg = command.substr(spacePos + 1);
+                    while (!arg.empty() && arg.front() == ' ') arg.erase(arg.begin());
+                    std::string argLow = arg;
+                    for (auto& c : argLow) c = static_cast<char>(std::tolower(c));
+                    if (argLow == "clear" || argLow == "0" || argLow == "none") {
+                        gameHandler.setRaidMark(gameHandler.getTargetGuid(), 0xFF);
+                        chatInputBuffer[0] = '\0';
+                        return;
+                    }
+                    bool found = false;
+                    for (int mi = 0; mi < 8; ++mi) {
+                        if (argLow == kMarkWords[mi]) { icon = static_cast<uint8_t>(mi); found = true; break; }
+                    }
+                    if (!found && !argLow.empty() && argLow[0] >= '1' && argLow[0] <= '8') {
+                        icon = static_cast<uint8_t>(argLow[0] - '1');
+                        found = true;
+                    }
+                    if (!found) {
+                        game::MessageChatData badArg;
+                        badArg.type = game::ChatType::SYSTEM;
+                        badArg.language = game::ChatLanguage::UNIVERSAL;
+                        badArg.message = "Unknown mark. Use: star circle diamond triangle moon square cross skull";
+                        gameHandler.addLocalChatMessage(badArg);
+                        chatInputBuffer[0] = '\0';
+                        return;
+                    }
+                }
+                gameHandler.setRaidMark(gameHandler.getTargetGuid(), icon);
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+
             // Combat and Trade commands
             if (cmdLower == "duel") {
                 if (gameHandler.hasTarget()) {
