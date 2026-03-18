@@ -871,6 +871,35 @@ void InventoryScreen::render(game::Inventory& inventory, uint64_t moneyCopper) {
         ImGui::EndPopup();
     }
 
+    // Stack split popup
+    if (splitConfirmOpen_) {
+        ImVec2 mousePos = ImGui::GetIO().MousePos;
+        ImGui::SetNextWindowPos(ImVec2(mousePos.x - 80.0f, mousePos.y - 20.0f), ImGuiCond_Always);
+        ImGui::OpenPopup("##SplitStack");
+        splitConfirmOpen_ = false;
+    }
+    if (ImGui::BeginPopup("##SplitStack", ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+        ImGui::Text("Split %s", splitItemName_.c_str());
+        ImGui::Spacing();
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::SliderInt("##splitcount", &splitCount_, 1, splitMax_ - 1);
+        ImGui::Spacing();
+        if (ImGui::Button("OK", ImVec2(55, 0))) {
+            if (gameHandler_ && splitCount_ > 0 && splitCount_ < splitMax_) {
+                gameHandler_->splitItem(splitBag_, splitSlot_, static_cast<uint8_t>(splitCount_));
+            }
+            splitItemName_.clear();
+            inventoryDirty = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(55, 0))) {
+            splitItemName_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
     // Draw held item at cursor
     renderHeldItem();
 }
@@ -2302,22 +2331,39 @@ void InventoryScreen::renderItemSlot(game::Inventory& inventory, const game::Ite
             }
         }
 
-        // Shift+right-click: open destroy confirmation for non-quest items
+        // Shift+right-click: split stack (if stackable >1) or destroy confirmation
         if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right) &&
-            !holdingItem && ImGui::GetIO().KeyShift && item.itemId != 0 && item.bindType != 4) {
-            destroyConfirmOpen_ = true;
-            destroyItemName_ = item.name;
-            destroyCount_ = static_cast<uint8_t>(std::clamp<uint32_t>(
-                std::max<uint32_t>(1u, item.stackCount), 1u, 255u));
-            if (kind == SlotKind::BACKPACK && backpackIndex >= 0) {
-                destroyBag_ = 0xFF;
-                destroySlot_ = static_cast<uint8_t>(23 + backpackIndex);
-            } else if (kind == SlotKind::BACKPACK && isBagSlot) {
-                destroyBag_ = static_cast<uint8_t>(19 + bagIndex);
-                destroySlot_ = static_cast<uint8_t>(bagSlotIndex);
-            } else if (kind == SlotKind::EQUIPMENT) {
-                destroyBag_ = 0xFF;
-                destroySlot_ = static_cast<uint8_t>(equipSlot);
+            !holdingItem && ImGui::GetIO().KeyShift && item.itemId != 0) {
+            if (item.stackCount > 1 && item.maxStack > 1) {
+                // Open split popup for stackable items
+                splitConfirmOpen_ = true;
+                splitItemName_ = item.name;
+                splitMax_ = static_cast<int>(item.stackCount);
+                splitCount_ = splitMax_ / 2;
+                if (splitCount_ < 1) splitCount_ = 1;
+                if (kind == SlotKind::BACKPACK && backpackIndex >= 0) {
+                    splitBag_ = 0xFF;
+                    splitSlot_ = static_cast<uint8_t>(23 + backpackIndex);
+                } else if (kind == SlotKind::BACKPACK && isBagSlot) {
+                    splitBag_ = static_cast<uint8_t>(19 + bagIndex);
+                    splitSlot_ = static_cast<uint8_t>(bagSlotIndex);
+                }
+            } else if (item.bindType != 4) {
+                // Destroy confirmation for non-quest, non-stackable items
+                destroyConfirmOpen_ = true;
+                destroyItemName_ = item.name;
+                destroyCount_ = static_cast<uint8_t>(std::clamp<uint32_t>(
+                    std::max<uint32_t>(1u, item.stackCount), 1u, 255u));
+                if (kind == SlotKind::BACKPACK && backpackIndex >= 0) {
+                    destroyBag_ = 0xFF;
+                    destroySlot_ = static_cast<uint8_t>(23 + backpackIndex);
+                } else if (kind == SlotKind::BACKPACK && isBagSlot) {
+                    destroyBag_ = static_cast<uint8_t>(19 + bagIndex);
+                    destroySlot_ = static_cast<uint8_t>(bagSlotIndex);
+                } else if (kind == SlotKind::EQUIPMENT) {
+                    destroyBag_ = 0xFF;
+                    destroySlot_ = static_cast<uint8_t>(equipSlot);
+                }
             }
         }
 

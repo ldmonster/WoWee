@@ -4358,6 +4358,17 @@ network::Packet SwapItemPacket::build(uint8_t dstBag, uint8_t dstSlot, uint8_t s
     return packet;
 }
 
+network::Packet SplitItemPacket::build(uint8_t srcBag, uint8_t srcSlot,
+                                       uint8_t dstBag, uint8_t dstSlot, uint8_t count) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_SPLIT_ITEM));
+    packet.writeUInt8(srcBag);
+    packet.writeUInt8(srcSlot);
+    packet.writeUInt8(dstBag);
+    packet.writeUInt8(dstSlot);
+    packet.writeUInt8(count);
+    return packet;
+}
+
 network::Packet SwapInvItemPacket::build(uint8_t srcSlot, uint8_t dstSlot) {
     network::Packet packet(wireOpcode(Opcode::CMSG_SWAP_INV_ITEM));
     packet.writeUInt8(srcSlot);

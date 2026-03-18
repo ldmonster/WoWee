@@ -2046,6 +2046,13 @@ public:
     static network::Packet build(uint8_t dstBag, uint8_t dstSlot, uint8_t srcBag, uint8_t srcSlot);
 };
 
+/** CMSG_SPLIT_ITEM packet builder */
+class SplitItemPacket {
+public:
+    static network::Packet build(uint8_t srcBag, uint8_t srcSlot,
+                                 uint8_t dstBag, uint8_t dstSlot, uint8_t count);
+};
+
 /** CMSG_SWAP_INV_ITEM packet builder */
 class SwapInvItemPacket {
 public:

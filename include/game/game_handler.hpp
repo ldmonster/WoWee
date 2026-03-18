@@ -2029,6 +2029,7 @@ public:
     void openItemBySlot(int backpackIndex);
     void openItemInBag(int bagIndex, int slotIndex);
     void destroyItem(uint8_t bag, uint8_t slot, uint8_t count = 1);
+    void splitItem(uint8_t srcBag, uint8_t srcSlot, uint8_t count);
     void swapContainerItems(uint8_t srcBag, uint8_t srcSlot, uint8_t dstBag, uint8_t dstSlot);
     void swapBagSlots(int srcBagIndex, int dstBagIndex);
     void useItemById(uint32_t itemId);

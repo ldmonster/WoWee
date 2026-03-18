@@ -21177,6 +21177,40 @@ void GameHandler::destroyItem(uint8_t bag, uint8_t slot, uint8_t count) {
     socket->send(packet);
 }
 
+void GameHandler::splitItem(uint8_t srcBag, uint8_t srcSlot, uint8_t count) {
+    if (state != WorldState::IN_WORLD || !socket) return;
+    if (count == 0) return;
+
+    // Find a free slot for the split destination: try backpack first, then bags
+    int freeBp = inventory.findFreeBackpackSlot();
+    if (freeBp >= 0) {
+        uint8_t dstBag = 0xFF;
+        uint8_t dstSlot = static_cast<uint8_t>(23 + freeBp);
+        LOG_INFO("splitItem: src(bag=", (int)srcBag, " slot=", (int)srcSlot,
+                 ") count=", (int)count, " -> dst(bag=0xFF slot=", (int)dstSlot, ")");
+        auto packet = SplitItemPacket::build(srcBag, srcSlot, dstBag, dstSlot, count);
+        socket->send(packet);
+        return;
+    }
+    // Try equipped bags
+    for (int b = 0; b < inventory.NUM_BAG_SLOTS; b++) {
+        int bagSize = inventory.getBagSize(b);
+        for (int s = 0; s < bagSize; s++) {
+            if (inventory.getBagSlot(b, s).empty()) {
+                uint8_t dstBag = static_cast<uint8_t>(19 + b);
+                uint8_t dstSlot = static_cast<uint8_t>(s);
+                LOG_INFO("splitItem: src(bag=", (int)srcBag, " slot=", (int)srcSlot,
+                         ") count=", (int)count, " -> dst(bag=", (int)dstBag,
+                         " slot=", (int)dstSlot, ")");
+                auto packet = SplitItemPacket::build(srcBag, srcSlot, dstBag, dstSlot, count);
+                socket->send(packet);
+                return;
+            }
+        }
+    }
+    addSystemChatMessage("Cannot split: no free inventory slots.");
+}
+
 void GameHandler::useItemBySlot(int backpackIndex) {
     if (backpackIndex < 0 || backpackIndex >= inventory.getBackpackSize()) return;
     const auto& slot = inventory.getBackpackSlot(backpackIndex);

@@ -187,6 +187,14 @@ private:
     uint8_t destroyCount_ = 1;
     std::string destroyItemName_;
 
+    // Stack split popup state
+    bool splitConfirmOpen_ = false;
+    uint8_t splitBag_ = 0xFF;
+    uint8_t splitSlot_ = 0;
+    int splitMax_ = 1;
+    int splitCount_ = 1;
+    std::string splitItemName_;
+
     // Pending chat item link from shift-click
     std::string pendingChatItemLink_;
 
