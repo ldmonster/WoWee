@@ -4008,13 +4008,66 @@ void M2Renderer::setInstanceTransform(uint32_t instanceId, const glm::mat4& tran
 }
 
 void M2Renderer::removeInstance(uint32_t instanceId) {
-    for (auto it = instances.begin(); it != instances.end(); ++it) {
-        if (it->id == instanceId) {
-            destroyInstanceBones(*it);
-            instances.erase(it);
-            rebuildSpatialIndex();
-            return;
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end()) return;
+    size_t idx = idxIt->second;
+    if (idx >= instances.size()) return;
+
+    auto& inst = instances[idx];
+
+    // Remove from spatial grid incrementally (same pattern as the move-update path)
+    GridCell minCell = toCell(inst.worldBoundsMin);
+    GridCell maxCell = toCell(inst.worldBoundsMax);
+    for (int z = minCell.z; z <= maxCell.z; z++) {
+        for (int y = minCell.y; y <= maxCell.y; y++) {
+            for (int x = minCell.x; x <= maxCell.x; x++) {
+                auto gIt = spatialGrid.find(GridCell{x, y, z});
+                if (gIt != spatialGrid.end()) {
+                    auto& vec = gIt->second;
+                    vec.erase(std::remove(vec.begin(), vec.end(), instanceId), vec.end());
+                }
+            }
         }
+    }
+
+    // Remove from dedup map
+    if (!inst.cachedIsGroundDetail) {
+        DedupKey dk{inst.modelId,
+                    static_cast<int32_t>(std::round(inst.position.x * 10.0f)),
+                    static_cast<int32_t>(std::round(inst.position.y * 10.0f)),
+                    static_cast<int32_t>(std::round(inst.position.z * 10.0f))};
+        instanceDedupMap_.erase(dk);
+    }
+
+    destroyInstanceBones(inst);
+
+    // Swap-remove: move last element to the hole and pop_back to avoid O(n) shift
+    instanceIndexById.erase(instanceId);
+    if (idx < instances.size() - 1) {
+        uint32_t movedId = instances.back().id;
+        instances[idx] = std::move(instances.back());
+        instances.pop_back();
+        instanceIndexById[movedId] = idx;
+    } else {
+        instances.pop_back();
+    }
+
+    // Rebuild the lightweight auxiliary index vectors (smoke, portal, etc.)
+    // These are small vectors of indices that are rebuilt cheaply.
+    smokeInstanceIndices_.clear();
+    portalInstanceIndices_.clear();
+    animatedInstanceIndices_.clear();
+    particleOnlyInstanceIndices_.clear();
+    particleInstanceIndices_.clear();
+    for (size_t i = 0; i < instances.size(); i++) {
+        auto& ri = instances[i];
+        if (ri.cachedIsSmoke) smokeInstanceIndices_.push_back(i);
+        if (ri.cachedIsInstancePortal) portalInstanceIndices_.push_back(i);
+        if (ri.cachedHasParticleEmitters) particleInstanceIndices_.push_back(i);
+        if (ri.cachedHasAnimation && !ri.cachedDisableAnimation)
+            animatedInstanceIndices_.push_back(i);
+        else if (ri.cachedHasParticleEmitters)
+            particleOnlyInstanceIndices_.push_back(i);
     }
 }
 
