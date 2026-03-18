@@ -3304,6 +3304,15 @@ void GameScreen::renderPlayerFrame(game::GameHandler& gameHandler) {
             ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.2f, 1.0f), "<DND>");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Do not disturb — /dnd to cancel");
         }
+        if (auto* ren = core::Application::getInstance().getRenderer()) {
+            if (auto* cam = ren->getCameraController()) {
+                if (cam->isAutoRunning()) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(0.4f, 0.9f, 1.0f, 1.0f), "[Auto-Run]");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Auto-running — press ` or NumLock to stop");
+                }
+            }
+        }
         if (inCombatConfirmed && !isDead) {
             float combatPulse = 0.75f + 0.25f * std::sin(static_cast<float>(ImGui::GetTime()) * 4.0f);
             ImGui::SameLine();

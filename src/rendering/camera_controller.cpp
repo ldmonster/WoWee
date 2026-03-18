@@ -273,8 +273,9 @@ void CameraController::update(float deltaTime) {
         keyW = keyS = keyA = keyD = keyQ = keyE = nowJump = false;
     }
 
-    // Tilde toggles auto-run; any forward/backward key cancels it
-    bool tildeDown = !uiWantsKeyboard && input.isKeyPressed(SDL_SCANCODE_GRAVE);
+    // Tilde or NumLock toggles auto-run; any forward/backward key cancels it
+    bool tildeDown = !uiWantsKeyboard && (input.isKeyPressed(SDL_SCANCODE_GRAVE) ||
+                                           input.isKeyPressed(SDL_SCANCODE_NUMLOCKCLEAR));
     if (tildeDown && !tildeWasDown) {
         autoRunning = !autoRunning;
     }
