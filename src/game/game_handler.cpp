@@ -2049,6 +2049,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 uint8_t reason = packet.readUInt8();
                 const char* msg = (reason < 8) ? reasons[reason] : "Unknown reason";
                 std::string s = std::string("Failed to tame: ") + msg;
+                addUIError(s);
                 addSystemChatMessage(s);
             }
             break;
@@ -6111,6 +6112,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
             // Clear cached talent data so the talent screen reflects the reset.
             learnedTalents_[0].clear();
             learnedTalents_[1].clear();
+            addUIError("Your talents have been reset by the server.");
             addSystemChatMessage("Your talents have been reset by the server.");
             packet.setReadPos(packet.getSize());
             break;
@@ -6205,7 +6207,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_EQUIPMENT_SET_USE_RESULT: {
             if (packet.getSize() - packet.getReadPos() >= 1) {
                 uint8_t result = packet.readUInt8();
-                if (result != 0) addSystemChatMessage("Failed to equip item set.");
+                if (result != 0) { addUIError("Failed to equip item set."); addSystemChatMessage("Failed to equip item set."); }
             }
             break;
         }
@@ -6759,6 +6761,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 addCombatText(CombatTextEntry::INSTAKILL, 0, ikSpell, true, 0, ikCaster, ikVictim);
             } else if (ikVictim == playerGuid) {
                 addCombatText(CombatTextEntry::INSTAKILL, 0, ikSpell, false, 0, ikCaster, ikVictim);
+                addUIError("You were killed by an instant-kill effect.");
                 addSystemChatMessage("You were killed by an instant-kill effect.");
             }
             LOG_DEBUG("SMSG_SPELLINSTAKILLLOG: caster=0x", std::hex, ikCaster,
@@ -7288,6 +7291,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
 
         // ---- Instance/raid errors ----
         case Opcode::SMSG_RAID_GROUP_ONLY: {
+            addUIError("You must be in a raid group to enter this instance.");
             addSystemChatMessage("You must be in a raid group to enter this instance.");
             packet.setReadPos(packet.getSize());
             break;
@@ -7295,13 +7299,14 @@ void GameHandler::handlePacket(network::Packet& packet) {
         case Opcode::SMSG_RAID_READY_CHECK_ERROR: {
             if (packet.getSize() - packet.getReadPos() >= 1) {
                 uint8_t err = packet.readUInt8();
-                if (err == 0) addSystemChatMessage("Ready check failed: not in a group.");
-                else if (err == 1) addSystemChatMessage("Ready check failed: in instance.");
-                else addSystemChatMessage("Ready check failed.");
+                if (err == 0) { addUIError("Ready check failed: not in a group."); addSystemChatMessage("Ready check failed: not in a group."); }
+                else if (err == 1) { addUIError("Ready check failed: in instance."); addSystemChatMessage("Ready check failed: in instance."); }
+                else { addUIError("Ready check failed."); addSystemChatMessage("Ready check failed."); }
             }
             break;
         }
         case Opcode::SMSG_RESET_FAILED_NOTIFY: {
+            addUIError("Cannot reset instance: another player is still inside.");
             addSystemChatMessage("Cannot reset instance: another player is still inside.");
             packet.setReadPos(packet.getSize());
             break;
