@@ -18157,21 +18157,20 @@ void GameHandler::handleCastFailed(network::Packet& packet) {
         }
     }
 
-    // Add system message about failed cast with readable reason
+    // Show failure reason in the UIError overlay and in chat
     int powerType = -1;
     auto playerEntity = entityManager.getEntity(playerGuid);
     if (auto playerUnit = std::dynamic_pointer_cast<Unit>(playerEntity)) {
         powerType = playerUnit->getPowerType();
     }
     const char* reason = getSpellCastResultString(data.result, powerType);
+    std::string errMsg = reason ? reason
+                                : ("Spell cast failed (error " + std::to_string(data.result) + ")");
+    addUIError(errMsg);
     MessageChatData msg;
     msg.type = ChatType::SYSTEM;
     msg.language = ChatLanguage::UNIVERSAL;
-    if (reason) {
-        msg.message = reason;
-    } else {
-        msg.message = "Spell cast failed (error " + std::to_string(data.result) + ")";
-    }
+    msg.message = errMsg;
     addLocalChatMessage(msg);
 }
 
