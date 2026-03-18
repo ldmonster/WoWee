@@ -5528,6 +5528,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 case 0x0C: abortMsg = "Transfer aborted."; break;
                 default:   abortMsg = "Transfer aborted."; break;
             }
+            addUIError(abortMsg);
             addSystemChatMessage(abortMsg);
             break;
         }
