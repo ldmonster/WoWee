@@ -25,6 +25,9 @@ Implemented (working in normal use):
 - Talent tree UI with proper visuals and functionality
 - Pet tracking (SMSG_PET_SPELLS), dismiss pet button
 - Party: group invites, party list, out-of-range member health (SMSG_PARTY_MEMBER_STATS)
+- Nameplates: NPC subtitles, guild names, elite/boss/rare borders, quest/raid indicators, cast bars, debuff dots
+- Floating combat text: world-space damage/heal numbers above entities with 3D projection
+- Target/focus frames: guild name, creature type, rank badges, combo points, cast bars
 - Map exploration: subzone-level fog-of-war reveal
 - Warden anti-cheat: full module execution via Unicorn Engine x86 emulation; module caching
 - Audio: ambient, movement, combat, spell, and UI sound systems
