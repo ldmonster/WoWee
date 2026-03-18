@@ -2644,6 +2644,14 @@ private:
     std::unordered_map<uint64_t, OnlineItemInfo> onlineItems_;
     std::unordered_map<uint32_t, ItemQueryResponseData> itemInfoCache_;
     std::unordered_set<uint32_t> pendingItemQueries_;
+
+    // Deferred SMSG_ITEM_PUSH_RESULT notifications for items whose info wasn't
+    // cached at arrival time; emitted once the query response arrives.
+    struct PendingItemPushNotif {
+        uint32_t itemId = 0;
+        uint32_t count  = 1;
+    };
+    std::vector<PendingItemPushNotif> pendingItemPushNotifs_;
     std::array<uint64_t, 23> equipSlotGuids_{};
     std::array<uint64_t, 16> backpackSlotGuids_{};
     std::array<uint64_t, 32> keyringSlotGuids_{};

@@ -1956,22 +1956,22 @@ void GameHandler::handlePacket(network::Packet& packet) {
 
                 queryItemInfo(itemId, 0);
                 if (showInChat) {
-                    std::string itemName = "item #" + std::to_string(itemId);
-                    uint32_t quality = 1;  // white default
                     if (const ItemQueryResponseData* info = getItemInfo(itemId)) {
-                        if (!info->name.empty()) itemName = info->name;
-                        quality = info->quality;
-                    }
-                    std::string link = buildItemLink(itemId, quality, itemName);
-                    std::string msg = "Received: " + link;
-                    if (count > 1) msg += " x" + std::to_string(count);
-                    addSystemChatMessage(msg);
-                    if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                        if (auto* sfx = renderer->getUiSoundManager())
-                            sfx->playLootItem();
-                    }
-                    if (itemLootCallback_) {
-                        itemLootCallback_(itemId, count, quality, itemName);
+                        // Item info already cached — emit immediately.
+                        std::string itemName = info->name.empty() ? ("item #" + std::to_string(itemId)) : info->name;
+                        uint32_t quality = info->quality;
+                        std::string link = buildItemLink(itemId, quality, itemName);
+                        std::string msg = "Received: " + link;
+                        if (count > 1) msg += " x" + std::to_string(count);
+                        addSystemChatMessage(msg);
+                        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                            if (auto* sfx = renderer->getUiSoundManager())
+                                sfx->playLootItem();
+                        }
+                        if (itemLootCallback_) itemLootCallback_(itemId, count, quality, itemName);
+                    } else {
+                        // Item info not yet cached; defer until SMSG_ITEM_QUERY_SINGLE_RESPONSE.
+                        pendingItemPushNotifs_.push_back({itemId, count});
                     }
                 }
                 LOG_INFO("Item push: itemId=", itemId, " count=", count,
@@ -14490,6 +14490,25 @@ void GameHandler::handleItemQueryResponse(network::Packet& packet) {
         itemInfoCache_[data.entry] = data;
         rebuildOnlineInventory();
         maybeDetectVisibleItemLayout();
+
+        // Flush any deferred loot notifications waiting on this item's name/quality.
+        for (auto it = pendingItemPushNotifs_.begin(); it != pendingItemPushNotifs_.end(); ) {
+            if (it->itemId == data.entry) {
+                std::string itemName = data.name.empty() ? ("item #" + std::to_string(data.entry)) : data.name;
+                std::string link = buildItemLink(data.entry, data.quality, itemName);
+                std::string msg = "Received: " + link;
+                if (it->count > 1) msg += " x" + std::to_string(it->count);
+                addSystemChatMessage(msg);
+                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                    if (auto* sfx = renderer->getUiSoundManager())
+                        sfx->playLootItem();
+                }
+                if (itemLootCallback_) itemLootCallback_(data.entry, it->count, data.quality, itemName);
+                it = pendingItemPushNotifs_.erase(it);
+            } else {
+                ++it;
+            }
+        }
 
         // Selectively re-emit only players whose equipment references this item entry
         const uint32_t resolvedEntry = data.entry;
