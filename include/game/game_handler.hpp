@@ -1171,6 +1171,10 @@ public:
     bool isPlayerGhost() const { return releasedSpirit_; }
     bool showDeathDialog() const { return playerDead_ && !releasedSpirit_; }
     bool showResurrectDialog() const { return resurrectRequestPending_; }
+    /** True when SMSG_PRE_RESURRECT arrived — Reincarnation/Twisting Nether available. */
+    bool canSelfRes() const { return selfResAvailable_; }
+    /** Send CMSG_SELF_RES to use Reincarnation / Twisting Nether. */
+    void useSelfRes();
     const std::string& getResurrectCasterName() const { return resurrectCasterName_; }
     bool showTalentWipeConfirmDialog() const { return talentWipePending_; }
     uint32_t getTalentWipeCost() const { return talentWipeCost_; }
@@ -3314,6 +3318,7 @@ private:
     uint64_t pendingSpiritHealerGuid_ = 0;
     bool resurrectPending_ = false;
     bool resurrectRequestPending_ = false;
+    bool selfResAvailable_ = false;  // SMSG_PRE_RESURRECT received — Reincarnation/Twisting Nether
     // ---- Talent wipe confirm dialog ----
     bool talentWipePending_ = false;
     uint64_t talentWipeNpcGuid_ = 0;

@@ -15364,8 +15364,10 @@ void GameScreen::renderDeathScreen(game::GameHandler& gameHandler) {
     ImGui::PopStyleColor();
 
     // "Release Spirit" dialog centered on screen
+    const bool hasSelfRes = gameHandler.canSelfRes();
     float dlgW = 280.0f;
-    float dlgH = 130.0f;
+    // Extra height when self-res button is available
+    float dlgH = hasSelfRes ? 170.0f : 130.0f;
     ImGui::SetNextWindowPos(ImVec2(screenW / 2 - dlgW / 2, screenH * 0.35f), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(dlgW, dlgH), ImGuiCond_Always);
 
@@ -15398,6 +15400,19 @@ void GameScreen::renderDeathScreen(game::GameHandler& gameHandler) {
 
         ImGui::Spacing();
         ImGui::Spacing();
+
+        // Self-resurrection button (Reincarnation / Twisting Nether / Deathpact)
+        if (hasSelfRes) {
+            float btnW2 = 220.0f;
+            ImGui::SetCursorPosX((dlgW - btnW2) / 2);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.35f, 0.55f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.5f, 0.75f, 1.0f));
+            if (ImGui::Button("Use Self-Resurrection", ImVec2(btnW2, 30))) {
+                gameHandler.useSelfRes();
+            }
+            ImGui::PopStyleColor(2);
+            ImGui::Spacing();
+        }
 
         // Center the Release Spirit button
         float btnW = 180.0f;

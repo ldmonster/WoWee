@@ -7316,8 +7316,15 @@ void GameHandler::handlePacket(network::Packet& packet) {
 
         // ---- Pre-resurrect state ----
         case Opcode::SMSG_PRE_RESURRECT: {
-            // packed GUID of the player to enter pre-resurrect
-            (void)UpdateObjectParser::readPackedGuid(packet);
+            // SMSG_PRE_RESURRECT: packed GUID of the player who can self-resurrect.
+            // Sent when the dead player has Reincarnation (Shaman), Twisting Nether (Warlock),
+            // or Deathpact (Death Knight passive). The client must send CMSG_SELF_RES to accept.
+            uint64_t targetGuid = UpdateObjectParser::readPackedGuid(packet);
+            if (targetGuid == playerGuid || targetGuid == 0) {
+                selfResAvailable_ = true;
+                LOG_INFO("SMSG_PRE_RESURRECT: self-resurrection available (guid=0x",
+                         std::hex, targetGuid, std::dec, ")");
+            }
             break;
         }
 
@@ -9193,6 +9200,7 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
     movementInfo.jumpXYSpeed = 0.0f;
     resurrectPending_ = false;
     resurrectRequestPending_ = false;
+    selfResAvailable_ = false;
     onTaxiFlight_ = false;
     taxiMountActive_ = false;
     taxiActivatePending_ = false;
@@ -10985,6 +10993,7 @@ void GameHandler::forceClearTaxiAndMovementState() {
     vehicleId_ = 0;
     resurrectPending_ = false;
     resurrectRequestPending_ = false;
+    selfResAvailable_ = false;
     playerDead_ = false;
     releasedSpirit_ = false;
     corpseGuid_ = 0;
@@ -11886,6 +11895,7 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                                 } else if (wasDead && !nowDead) {
                                     playerDead_ = false;
                                     releasedSpirit_ = false;
+                                    selfResAvailable_ = false;
                                     LOG_INFO("Player resurrected (dynamic flags)");
                                 }
                             } else if (entity->getType() == ObjectType::UNIT) {
@@ -12167,6 +12177,7 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                                 playerDead_ = false;
                                 repopPending_ = false;
                                 resurrectPending_ = false;
+                                selfResAvailable_ = false;
                                 corpseMapId_ = 0;  // corpse reclaimed
                                 corpseGuid_ = 0;
                                 corpseReclaimAvailableMs_ = 0;
@@ -13965,6 +13976,15 @@ void GameHandler::reclaimCorpse() {
     auto packet = ReclaimCorpsePacket::build(corpseGuid_);
     socket->send(packet);
     LOG_INFO("Sent CMSG_RECLAIM_CORPSE for corpse guid=0x", std::hex, corpseGuid_, std::dec);
+}
+
+void GameHandler::useSelfRes() {
+    if (!selfResAvailable_ || !socket) return;
+    // CMSG_SELF_RES: empty body — server confirms resurrection via SMSG_UPDATE_OBJECT.
+    network::Packet pkt(wireOpcode(Opcode::CMSG_SELF_RES));
+    socket->send(pkt);
+    selfResAvailable_ = false;
+    LOG_INFO("Sent CMSG_SELF_RES (Reincarnation / Twisting Nether)");
 }
 
 void GameHandler::activateSpiritHealer(uint64_t npcGuid) {
