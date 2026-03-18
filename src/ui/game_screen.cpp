@@ -2602,7 +2602,9 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                     "/gmticket", "/grouploot", "/i", "/instance",
                     "/invite", "/j", "/join", "/kick",
                     "/l", "/leave", "/local", "/me",
-                    "/p", "/party", "/r", "/raid",
+                    "/p", "/party", "/petaggressive", "/petattack", "/petdefensive",
+                    "/petdismiss", "/petfollow", "/pethalt", "/petpassive", "/petstay",
+                    "/r", "/raid",
                     "/raidwarning", "/random", "/reply", "/roll",
                     "/s", "/say", "/setloot", "/shout", "/sit", "/stand",
                     "/startattack", "/stopattack", "/stopfollow", "/stopcasting",
@@ -5618,6 +5620,45 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
             // /dismount command
             if (cmdLower == "dismount") {
                 gameHandler.dismount();
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+
+            // Pet control commands (common macro use)
+            // Action IDs: 1=passive, 2=follow, 3=stay, 4=defensive, 5=attack, 6=aggressive
+            if (cmdLower == "petattack") {
+                uint64_t target = gameHandler.hasTarget() ? gameHandler.getTargetGuid() : 0;
+                gameHandler.sendPetAction(5, target);
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+            if (cmdLower == "petfollow") {
+                gameHandler.sendPetAction(2, 0);
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+            if (cmdLower == "petstay" || cmdLower == "pethalt") {
+                gameHandler.sendPetAction(3, 0);
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+            if (cmdLower == "petpassive") {
+                gameHandler.sendPetAction(1, 0);
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+            if (cmdLower == "petdefensive") {
+                gameHandler.sendPetAction(4, 0);
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+            if (cmdLower == "petaggressive") {
+                gameHandler.sendPetAction(6, 0);
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+            if (cmdLower == "petdismiss") {
+                gameHandler.dismissPet();
                 chatInputBuffer[0] = '\0';
                 return;
             }
