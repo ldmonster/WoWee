@@ -807,6 +807,9 @@ public:
     int getCraftQueueRemaining() const { return craftQueueRemaining_; }
     uint32_t getCraftQueueSpellId() const { return craftQueueSpellId_; }
 
+    // 400ms spell-queue window: next spell to cast when current finishes
+    uint32_t getQueuedSpellId() const { return queuedSpellId_; }
+
     // Unit cast state (tracked per GUID for target frame + boss frames)
     struct UnitCastState {
         bool     casting         = false;

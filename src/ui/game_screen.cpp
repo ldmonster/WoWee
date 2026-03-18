@@ -9732,13 +9732,32 @@ void GameScreen::renderCastBar(game::GameHandler& gameHandler) {
             }
         }
 
+        // Queued spell icon (right edge): the next spell queued to fire within 400ms.
+        uint32_t queuedId = gameHandler.getQueuedSpellId();
+        VkDescriptorSet queuedTex = (queuedId != 0 && assetMgr)
+            ? getSpellIcon(queuedId, assetMgr) : VK_NULL_HANDLE;
+
+        const float iconSz = 20.0f;
+        const float reservedRight = (queuedTex) ? (iconSz + 4.0f) : 0.0f;
+
         if (iconTex) {
             // Spell icon to the left of the progress bar
-            ImGui::Image((ImTextureID)(uintptr_t)iconTex, ImVec2(20, 20));
+            ImGui::Image((ImTextureID)(uintptr_t)iconTex, ImVec2(iconSz, iconSz));
             ImGui::SameLine(0, 4);
-            ImGui::ProgressBar(progress, ImVec2(-1, 20), overlay);
+            ImGui::ProgressBar(progress, ImVec2(-reservedRight - 1.0f, iconSz), overlay);
         } else {
-            ImGui::ProgressBar(progress, ImVec2(-1, 20), overlay);
+            ImGui::ProgressBar(progress, ImVec2(-reservedRight - 1.0f, iconSz), overlay);
+        }
+        // Draw queued-spell icon on the right with a ">" arrow prefix tooltip.
+        if (queuedTex) {
+            ImGui::SameLine(0, 4);
+            ImGui::Image((ImTextureID)(uintptr_t)queuedTex, ImVec2(iconSz, iconSz),
+                         ImVec2(0,0), ImVec2(1,1),
+                         ImVec4(1,1,1,0.8f), ImVec4(0,0,0,0));  // slightly dimmed
+            if (ImGui::IsItemHovered()) {
+                const std::string& qn = gameHandler.getSpellName(queuedId);
+                ImGui::SetTooltip("Queued: %s", qn.empty() ? "Unknown" : qn.c_str());
+            }
         }
         ImGui::PopStyleColor();
     }
