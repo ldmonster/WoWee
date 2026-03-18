@@ -913,6 +913,9 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
     // 1. UpdateFlags (1 byte, sometimes 2)
     // 2. Movement data depends on update flags
 
+    auto rem = [&]() -> size_t { return packet.getSize() - packet.getReadPos(); };
+    if (rem() < 2) return false;
+
     // Update flags (3.3.5a uses 2 bytes for flags)
     uint16_t updateFlags = packet.readUInt16();
     block.updateFlags = updateFlags;
@@ -957,6 +960,9 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
     const uint16_t UPDATEFLAG_HIGHGUID = 0x0010;
 
     if (updateFlags & UPDATEFLAG_LIVING) {
+        // Minimum: moveFlags(4)+moveFlags2(2)+time(4)+position(16)+fallTime(4)+speeds(36) = 66
+        if (rem() < 66) return false;
+
         // Full movement block for living units
         uint32_t moveFlags = packet.readUInt32();
         uint16_t moveFlags2 = packet.readUInt16();
@@ -974,8 +980,10 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
 
         // Transport data (if on transport)
         if (moveFlags & 0x00000200) { // MOVEMENTFLAG_ONTRANSPORT
+            if (rem() < 1) return false;
             block.onTransport = true;
             block.transportGuid = readPackedGuid(packet);
+            if (rem() < 21) return false; // 4 floats + uint32 + uint8
             block.transportX = packet.readFloat();
             block.transportY = packet.readFloat();
             block.transportZ = packet.readFloat();
@@ -987,6 +995,7 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
                       " offset=(", block.transportX, ", ", block.transportY, ", ", block.transportZ, ")");
 
             if (moveFlags2 & 0x0200) { // MOVEMENTFLAG2_INTERPOLATED_MOVEMENT
+                if (rem() < 4) return false;
                 /*uint32_t tTime2 =*/ packet.readUInt32();
             }
         }
@@ -1005,14 +1014,17 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
         if ((moveFlags & 0x00200000) /* SWIMMING */ ||
             (moveFlags & 0x01000000) /* FLYING */ ||
             (moveFlags2 & 0x0010)    /* MOVEMENTFLAG2_ALWAYS_ALLOW_PITCHING */) {
+            if (rem() < 4) return false;
             /*float pitch =*/ packet.readFloat();
         }
 
         // Fall time
+        if (rem() < 4) return false;
         /*uint32_t fallTime =*/ packet.readUInt32();
 
         // Jumping
         if (moveFlags & 0x00001000) { // MOVEMENTFLAG_FALLING
+            if (rem() < 16) return false;
             /*float jumpVelocity =*/ packet.readFloat();
             /*float jumpSinAngle =*/ packet.readFloat();
             /*float jumpCosAngle =*/ packet.readFloat();
@@ -1021,10 +1033,12 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
 
         // Spline elevation
         if (moveFlags & 0x04000000) { // MOVEMENTFLAG_SPLINE_ELEVATION
+            if (rem() < 4) return false;
             /*float splineElevation =*/ packet.readFloat();
         }
 
         // Speeds (9 values in WotLK: walk/run/runBack/swim/swimBack/flight/flightBack/turn/pitch)
+        if (rem() < 36) return false;
         /*float walkSpeed =*/ packet.readFloat();
         float runSpeed = packet.readFloat();
         /*float runBackSpeed =*/ packet.readFloat();
@@ -1157,7 +1171,9 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
     }
     else if (updateFlags & UPDATEFLAG_POSITION) {
         // Transport position update (UPDATEFLAG_POSITION = 0x0100)
+        if (rem() < 1) return false;
         uint64_t transportGuid = readPackedGuid(packet);
+        if (rem() < 32) return false; // 8 floats
         block.x = packet.readFloat();
         block.y = packet.readFloat();
         block.z = packet.readFloat();
@@ -1186,7 +1202,7 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
         }
     }
     else if (updateFlags & UPDATEFLAG_STATIONARY_POSITION) {
-        // Simple stationary position (4 floats)
+        if (rem() < 16) return false;
         block.x = packet.readFloat();
         block.y = packet.readFloat();
         block.z = packet.readFloat();
@@ -1198,32 +1214,38 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
 
     // Target GUID (for units with target)
     if (updateFlags & UPDATEFLAG_HAS_TARGET) {
+        if (rem() < 1) return false;
         /*uint64_t targetGuid =*/ readPackedGuid(packet);
     }
 
     // Transport time
     if (updateFlags & UPDATEFLAG_TRANSPORT) {
+        if (rem() < 4) return false;
         /*uint32_t transportTime =*/ packet.readUInt32();
     }
 
     // Vehicle
     if (updateFlags & UPDATEFLAG_VEHICLE) {
+        if (rem() < 8) return false;
         /*uint32_t vehicleId =*/ packet.readUInt32();
         /*float vehicleOrientation =*/ packet.readFloat();
     }
 
     // Rotation (GameObjects)
     if (updateFlags & UPDATEFLAG_ROTATION) {
+        if (rem() < 8) return false;
         /*int64_t rotation =*/ packet.readUInt64();
     }
 
     // Low GUID
     if (updateFlags & UPDATEFLAG_LOWGUID) {
+        if (rem() < 4) return false;
         /*uint32_t lowGuid =*/ packet.readUInt32();
     }
 
     // High GUID
     if (updateFlags & UPDATEFLAG_HIGHGUID) {
+        if (rem() < 4) return false;
         /*uint32_t highGuid =*/ packet.readUInt32();
     }
 
