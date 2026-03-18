@@ -11258,14 +11258,79 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                                         ImVec2(dotX + dotSize + 1.0f, nameplateBottom + dotSize + 1.0f),
                                         IM_COL32(0, 0, 0, A(150)), 1.0f);
 
-                // Spell name tooltip on hover
+                // Duration clock-sweep overlay (like target frame auras)
+                uint64_t nowMs = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count());
+                int32_t remainMs = aura.getRemainingMs(nowMs);
+                if (aura.maxDurationMs > 0 && remainMs > 0) {
+                    float pct = 1.0f - static_cast<float>(remainMs) / static_cast<float>(aura.maxDurationMs);
+                    pct = std::clamp(pct, 0.0f, 1.0f);
+                    float cx = dotX + dotSize * 0.5f;
+                    float cy = nameplateBottom + dotSize * 0.5f;
+                    float r  = dotSize * 0.5f;
+                    float startAngle = -IM_PI * 0.5f;
+                    float endAngle   = startAngle + pct * IM_PI * 2.0f;
+                    ImVec2 center(cx, cy);
+                    const int segments = 12;
+                    for (int seg = 0; seg < segments; seg++) {
+                        float a0 = startAngle + (endAngle - startAngle) * seg / segments;
+                        float a1 = startAngle + (endAngle - startAngle) * (seg + 1) / segments;
+                        drawList->AddTriangleFilled(
+                            center,
+                            ImVec2(cx + r * std::cos(a0), cy + r * std::sin(a0)),
+                            ImVec2(cx + r * std::cos(a1), cy + r * std::sin(a1)),
+                            IM_COL32(0, 0, 0, A(100)));
+                    }
+                }
+
+                // Stack count on dot (upper-left corner)
+                if (aura.charges > 1) {
+                    char stackBuf[8];
+                    snprintf(stackBuf, sizeof(stackBuf), "%d", aura.charges);
+                    drawList->AddText(ImVec2(dotX + 1.0f, nameplateBottom), IM_COL32(0, 0, 0, A(200)), stackBuf);
+                    drawList->AddText(ImVec2(dotX,         nameplateBottom - 1.0f), IM_COL32(255, 255, 255, A(240)), stackBuf);
+                }
+
+                // Duration text below dot
+                if (remainMs > 0) {
+                    char durBuf[8];
+                    if (remainMs >= 60000)
+                        snprintf(durBuf, sizeof(durBuf), "%dm", remainMs / 60000);
+                    else
+                        snprintf(durBuf, sizeof(durBuf), "%d", remainMs / 1000);
+                    ImVec2 durSz = ImGui::CalcTextSize(durBuf);
+                    float durX = dotX + (dotSize - durSz.x) * 0.5f;
+                    float durY = nameplateBottom + dotSize + 1.0f;
+                    drawList->AddText(ImVec2(durX + 1.0f, durY + 1.0f), IM_COL32(0, 0, 0, A(180)), durBuf);
+                    // Color: red if < 5s, yellow if < 15s, white otherwise
+                    ImU32 durCol = remainMs < 5000 ? IM_COL32(255, 60, 60, A(240))
+                                 : remainMs < 15000 ? IM_COL32(255, 200, 60, A(240))
+                                 : IM_COL32(230, 230, 230, A(220));
+                    drawList->AddText(ImVec2(durX, durY), durCol, durBuf);
+                }
+
+                // Spell name + duration tooltip on hover
                 {
                     ImVec2 mouse = ImGui::GetMousePos();
                     if (mouse.x >= dotX && mouse.x < dotX + dotSize &&
                         mouse.y >= nameplateBottom && mouse.y < nameplateBottom + dotSize) {
                         const std::string& dotSpellName = gameHandler.getSpellName(aura.spellId);
-                        if (!dotSpellName.empty())
-                            ImGui::SetTooltip("%s", dotSpellName.c_str());
+                        if (!dotSpellName.empty()) {
+                            if (remainMs > 0) {
+                                int secs = remainMs / 1000;
+                                int mins = secs / 60;
+                                secs %= 60;
+                                char tipBuf[128];
+                                if (mins > 0)
+                                    snprintf(tipBuf, sizeof(tipBuf), "%s (%dm %ds)", dotSpellName.c_str(), mins, secs);
+                                else
+                                    snprintf(tipBuf, sizeof(tipBuf), "%s (%ds)", dotSpellName.c_str(), secs);
+                                ImGui::SetTooltip("%s", tipBuf);
+                            } else {
+                                ImGui::SetTooltip("%s", dotSpellName.c_str());
+                            }
+                        }
                     }
                 }
 
