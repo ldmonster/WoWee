@@ -8688,6 +8688,54 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
 
         const auto& slot = bar[absSlot];
         bool onCooldown = !slot.isReady();
+
+        // Macro cooldown: resolve the macro's primary spell and check its cooldown.
+        // In WoW, a macro like "/cast Fireball" shows Fireball's cooldown on the button.
+        float macroCooldownRemaining = 0.0f;
+        float macroCooldownTotal = 0.0f;
+        if (slot.type == game::ActionBarSlot::MACRO && slot.id != 0 && !onCooldown) {
+            const std::string& macroText = gameHandler.getMacroText(slot.id);
+            if (!macroText.empty()) {
+                // Find first /cast spell ID (same logic as icon resolution)
+                for (const auto& cmdLine : allMacroCommands(macroText)) {
+                    std::string cl = cmdLine;
+                    for (char& c : cl) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    if (cl.rfind("/cast ", 0) != 0) continue;
+                    size_t sp2 = cmdLine.find(' ');
+                    if (sp2 == std::string::npos) continue;
+                    std::string spellArg = cmdLine.substr(sp2 + 1);
+                    if (!spellArg.empty() && spellArg.front() == '[') {
+                        size_t ce = spellArg.find(']');
+                        if (ce != std::string::npos) spellArg = spellArg.substr(ce + 1);
+                    }
+                    size_t semi = spellArg.find(';');
+                    if (semi != std::string::npos) spellArg = spellArg.substr(0, semi);
+                    size_t ss = spellArg.find_first_not_of(" \t!");
+                    if (ss != std::string::npos) spellArg = spellArg.substr(ss);
+                    size_t se = spellArg.find_last_not_of(" \t");
+                    if (se != std::string::npos) spellArg.resize(se + 1);
+                    if (spellArg.empty()) continue;
+                    // Find spell ID by name
+                    std::string spLow = spellArg;
+                    for (char& c : spLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    for (uint32_t sid : gameHandler.getKnownSpells()) {
+                        std::string sn = gameHandler.getSpellName(sid);
+                        for (char& c : sn) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        if (sn == spLow) {
+                            float cd = gameHandler.getSpellCooldown(sid);
+                            if (cd > 0.0f) {
+                                macroCooldownRemaining = cd;
+                                macroCooldownTotal = cd;
+                                onCooldown = true;
+                            }
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
         const bool onGCD = gameHandler.isGCDActive() && !onCooldown && !slot.isEmpty();
 
         // Out-of-range check: red tint when a targeted spell cannot reach the current target.
@@ -9094,8 +9142,11 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
             float r  = (btnMax.x - btnMin.x) * 0.5f;
             auto* dl = ImGui::GetWindowDrawList();
 
-            float total       = (slot.cooldownTotal > 0.0f) ? slot.cooldownTotal : 1.0f;
-            float elapsed     = total - slot.cooldownRemaining;
+            // For macros, use the resolved primary spell cooldown instead of the slot's own.
+            float effCdTotal = (macroCooldownTotal > 0.0f) ? macroCooldownTotal : slot.cooldownTotal;
+            float effCdRemaining = (macroCooldownRemaining > 0.0f) ? macroCooldownRemaining : slot.cooldownRemaining;
+            float total       = (effCdTotal > 0.0f) ? effCdTotal : 1.0f;
+            float elapsed     = total - effCdRemaining;
             float elapsedFrac = std::min(1.0f, std::max(0.0f, elapsed / total));
             if (elapsedFrac > 0.005f) {
                 constexpr int N_SEGS = 32;
@@ -9112,7 +9163,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
             }
 
             char cdText[16];
-            float cd = slot.cooldownRemaining;
+            float cd = effCdRemaining;
             if (cd >= 3600.0f)    snprintf(cdText, sizeof(cdText), "%dh", (int)cd / 3600);
             else if (cd >= 60.0f) snprintf(cdText, sizeof(cdText), "%dm%ds", (int)cd / 60, (int)cd % 60);
             else if (cd >= 5.0f)  snprintf(cdText, sizeof(cdText), "%ds", (int)cd);
