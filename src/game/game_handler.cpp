@@ -922,6 +922,17 @@ void GameHandler::update(float deltaTime) {
         clearTarget();
     }
 
+    // Detect combat state transitions → fire PLAYER_REGEN_DISABLED / PLAYER_REGEN_ENABLED
+    {
+        bool combatNow = isInCombat();
+        if (combatNow != wasCombat_) {
+            wasCombat_ = combatNow;
+            if (addonEventCallback_) {
+                addonEventCallback_(combatNow ? "PLAYER_REGEN_DISABLED" : "PLAYER_REGEN_ENABLED", {});
+            }
+        }
+    }
+
     if (auctionSearchDelayTimer_ > 0.0f) {
         auctionSearchDelayTimer_ -= deltaTime;
         if (auctionSearchDelayTimer_ < 0.0f) auctionSearchDelayTimer_ = 0.0f;
@@ -12453,6 +12464,8 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                         if (key == ufPlayerXp) {
                             playerXp_ = val;
                             LOG_DEBUG("XP updated: ", val);
+                            if (addonEventCallback_)
+                                addonEventCallback_("PLAYER_XP_UPDATE", {std::to_string(val)});
                         }
                         else if (key == ufPlayerNextXp) {
                             playerNextLevelXp_ = val;
@@ -19203,6 +19216,10 @@ void GameHandler::handleCooldownEvent(network::Packet& packet) {
             slot.cooldownRemaining = 0.0f;
         }
     }
+    if (addonEventCallback_) {
+        addonEventCallback_("SPELL_UPDATE_COOLDOWN", {});
+        addonEventCallback_("ACTIONBAR_UPDATE_COOLDOWN", {});
+    }
 }
 
 void GameHandler::handleAuraUpdate(network::Packet& packet, bool isAll) {
@@ -19293,6 +19310,12 @@ void GameHandler::handleLearnedSpell(network::Packet& packet) {
         }
     }
 
+    // Fire LEARNED_SPELL_IN_TAB / SPELLS_CHANGED for Lua addons
+    if (!alreadyKnown && addonEventCallback_) {
+        addonEventCallback_("LEARNED_SPELL_IN_TAB", {std::to_string(spellId)});
+        addonEventCallback_("SPELLS_CHANGED", {});
+    }
+
     // Show chat message for non-talent spells, but only if not already announced by
     // SMSG_TRAINER_BUY_SUCCEEDED (which pre-inserts into knownSpells).
     if (!alreadyKnown) {
@@ -19313,6 +19336,7 @@ void GameHandler::handleRemovedSpell(network::Packet& packet) {
     uint32_t spellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
     knownSpells.erase(spellId);
     LOG_INFO("Removed spell: ", spellId);
+    if (addonEventCallback_) addonEventCallback_("SPELLS_CHANGED", {});
 
     const std::string& name = getSpellName(spellId);
     if (!name.empty())

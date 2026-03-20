@@ -2797,6 +2797,7 @@ private:
     float autoAttackResendTimer_ = 0.0f;  // Re-send CMSG_ATTACKSWING every ~1s while attacking
     float autoAttackFacingSyncTimer_ = 0.0f; // Periodic facing sync while meleeing
     std::unordered_set<uint64_t> hostileAttackers_;
+    bool wasCombat_ = false;  // Previous frame combat state for PLAYER_REGEN edge detection
     std::vector<CombatTextEntry> combatText;
     static constexpr size_t MAX_COMBAT_LOG = 500;
     struct RecentSpellstealLogEntry {
