@@ -23507,6 +23507,8 @@ void GameScreen::renderBattlegroundScore(game::GameHandler& gameHandler) {
         { 566, "Eye of the Storm", 2757, 2758, 0, 1600, "resources" },
         // Strand of the Ancients (WotLK)
         { 607, "Strand of the Ancients", 3476, 3477, 0, 4, "" },
+        // Isle of Conquest (WotLK): reinforcements (300 default)
+        { 628, "Isle of Conquest", 4221, 4222, 0, 300, "reinforcements" },
     };
 
     const BgScoreDef* def = nullptr;
