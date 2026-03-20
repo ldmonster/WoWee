@@ -27,9 +27,14 @@ public:
 
     void saveAllSavedVariables();
 
+    /// Re-initialize the Lua VM and reload all addons (used by /reload).
+    bool reload();
+
 private:
     LuaEngine luaEngine_;
     std::vector<TocFile> addons_;
+    game::GameHandler* gameHandler_ = nullptr;
+    std::string addonsPath_;
 
     bool loadAddon(const TocFile& addon);
     std::string getSavedVariablesPath(const TocFile& addon) const;

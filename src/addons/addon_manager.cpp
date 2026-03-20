@@ -11,12 +11,14 @@ AddonManager::AddonManager() = default;
 AddonManager::~AddonManager() { shutdown(); }
 
 bool AddonManager::initialize(game::GameHandler* gameHandler) {
+    gameHandler_ = gameHandler;
     if (!luaEngine_.initialize()) return false;
     luaEngine_.setGameHandler(gameHandler);
     return true;
 }
 
 void AddonManager::scanAddons(const std::string& addonsPath) {
+    addonsPath_ = addonsPath;
     addons_.clear();
 
     std::error_code ec;
@@ -119,6 +121,26 @@ void AddonManager::saveAllSavedVariables() {
             luaEngine_.saveSavedVariables(svPath, savedVars);
         }
     }
+}
+
+bool AddonManager::reload() {
+    LOG_INFO("AddonManager: reloading all addons...");
+    saveAllSavedVariables();
+    addons_.clear();
+    luaEngine_.shutdown();
+
+    if (!luaEngine_.initialize()) {
+        LOG_ERROR("AddonManager: failed to reinitialize Lua VM during reload");
+        return false;
+    }
+    luaEngine_.setGameHandler(gameHandler_);
+
+    if (!addonsPath_.empty()) {
+        scanAddons(addonsPath_);
+        loadAllAddons();
+    }
+    LOG_INFO("AddonManager: reload complete");
+    return true;
 }
 
 void AddonManager::shutdown() {

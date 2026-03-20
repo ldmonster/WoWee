@@ -6035,6 +6035,30 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                 return;
             }
 
+            // /reload or /reloadui — reload all addons (save variables, re-init Lua, re-scan .toc files)
+            if (cmdLower == "reload" || cmdLower == "reloadui" || cmdLower == "rl") {
+                auto* am = core::Application::getInstance().getAddonManager();
+                if (am) {
+                    am->reload();
+                    am->fireEvent("VARIABLES_LOADED");
+                    am->fireEvent("PLAYER_LOGIN");
+                    am->fireEvent("PLAYER_ENTERING_WORLD");
+                    game::MessageChatData rlMsg;
+                    rlMsg.type = game::ChatType::SYSTEM;
+                    rlMsg.language = game::ChatLanguage::UNIVERSAL;
+                    rlMsg.message = "Interface reloaded.";
+                    gameHandler.addLocalChatMessage(rlMsg);
+                } else {
+                    game::MessageChatData rlMsg;
+                    rlMsg.type = game::ChatType::SYSTEM;
+                    rlMsg.language = game::ChatLanguage::UNIVERSAL;
+                    rlMsg.message = "Addon system not available.";
+                    gameHandler.addLocalChatMessage(rlMsg);
+                }
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+
             // /stopmacro [conditions]
             // Halts execution of the current macro (remaining lines are skipped).
             // With a condition block, only stops if the conditions evaluate to true.
