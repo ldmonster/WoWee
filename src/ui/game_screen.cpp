@@ -9412,7 +9412,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
                 }
             }
             if (totalCount > 0) {
-                char countStr[8];
+                char countStr[16];
                 snprintf(countStr, sizeof(countStr), "%d", totalCount);
                 ImVec2 btnMax = ImGui::GetItemRectMax();
                 ImVec2 tsz = ImGui::CalcTextSize(countStr);

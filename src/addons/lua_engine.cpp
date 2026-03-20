@@ -59,15 +59,6 @@ static int lua_wow_message(lua_State* L) {
     return lua_wow_print(L);
 }
 
-// Helper: get player Unit from game handler
-static game::Unit* getPlayerUnit(lua_State* L) {
-    auto* gh = getGameHandler(L);
-    if (!gh) return nullptr;
-    auto entity = gh->getEntityManager().getEntity(gh->getPlayerGuid());
-    if (!entity) return nullptr;
-    return dynamic_cast<game::Unit*>(entity.get());
-}
-
 // Helper: resolve WoW unit IDs to GUID
 static uint64_t resolveUnitGuid(game::GameHandler* gh, const std::string& uid) {
     if (uid == "player")      return gh->getPlayerGuid();
