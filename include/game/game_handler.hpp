@@ -1534,6 +1534,7 @@ public:
         std::string iconName;
     };
     const std::vector<EquipmentSetInfo>& getEquipmentSets() const { return equipmentSetInfo_; }
+    bool supportsEquipmentSets() const;
     void useEquipmentSet(uint32_t setId);
     void saveEquipmentSet(const std::string& name, const std::string& iconName = "INV_Misc_QuestionMark",
                           uint64_t existingGuid = 0, uint32_t setIndex = 0xFFFFFFFF);

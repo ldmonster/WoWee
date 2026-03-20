@@ -1438,8 +1438,8 @@ void InventoryScreen::renderCharacterScreen(game::GameHandler& gameHandler) {
             ImGui::EndTabItem();
         }
 
-        // Equipment Sets tab (WotLK — always show so player can create sets)
-        if (ImGui::BeginTabItem("Outfits")) {
+        // Equipment Sets tab (WotLK only — requires server support)
+        if (gameHandler.supportsEquipmentSets() && ImGui::BeginTabItem("Outfits")) {
             ImGui::Spacing();
 
             // Save current gear as new set

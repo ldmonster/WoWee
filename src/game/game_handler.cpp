@@ -10675,8 +10675,14 @@ void GameHandler::sendRequestVehicleExit() {
     vehicleId_ = 0;  // Optimistically clear; server will confirm via SMSG_PLAYER_VEHICLE_DATA(0)
 }
 
+bool GameHandler::supportsEquipmentSets() const {
+    return wireOpcode(Opcode::CMSG_EQUIPMENT_SET_SAVE) != 0xFFFF;
+}
+
 void GameHandler::useEquipmentSet(uint32_t setId) {
     if (state != WorldState::IN_WORLD || !socket) return;
+    uint16_t wire = wireOpcode(Opcode::CMSG_EQUIPMENT_SET_USE);
+    if (wire == 0xFFFF) { addUIError("Equipment sets not supported."); return; }
     // Find the equipment set to get target item GUIDs per slot
     const EquipmentSet* es = nullptr;
     for (const auto& s : equipmentSets_) {
@@ -10687,7 +10693,7 @@ void GameHandler::useEquipmentSet(uint32_t setId) {
         return;
     }
     // CMSG_EQUIPMENT_SET_USE: 19 × (PackedGuid itemGuid + uint8 srcBag + uint8 srcSlot)
-    network::Packet pkt(wireOpcode(Opcode::CMSG_EQUIPMENT_SET_USE));
+    network::Packet pkt(wire);
     for (int slot = 0; slot < 19; ++slot) {
         uint64_t itemGuid = es->itemGuids[slot];
         MovementPacket::writePackedGuid(pkt, itemGuid);
@@ -10733,6 +10739,8 @@ void GameHandler::useEquipmentSet(uint32_t setId) {
 void GameHandler::saveEquipmentSet(const std::string& name, const std::string& iconName,
                                     uint64_t existingGuid, uint32_t setIndex) {
     if (state != WorldState::IN_WORLD) return;
+    uint16_t wire = wireOpcode(Opcode::CMSG_EQUIPMENT_SET_SAVE);
+    if (wire == 0xFFFF) { addUIError("Equipment sets not supported."); return; }
     // CMSG_EQUIPMENT_SET_SAVE: uint64 setGuid + uint32 setIndex + string name + string iconName
     //   + 19 × PackedGuid itemGuid (one per equipment slot, 0–18)
     if (setIndex == 0xFFFFFFFF) {
@@ -10742,7 +10750,7 @@ void GameHandler::saveEquipmentSet(const std::string& name, const std::string& i
             if (es.setId >= setIndex) setIndex = es.setId + 1;
         }
     }
-    network::Packet pkt(wireOpcode(Opcode::CMSG_EQUIPMENT_SET_SAVE));
+    network::Packet pkt(wire);
     pkt.writeUInt64(existingGuid);  // 0 = create new, nonzero = update
     pkt.writeUInt32(setIndex);
     pkt.writeString(name);
@@ -10757,8 +10765,10 @@ void GameHandler::saveEquipmentSet(const std::string& name, const std::string& i
 
 void GameHandler::deleteEquipmentSet(uint64_t setGuid) {
     if (state != WorldState::IN_WORLD || setGuid == 0) return;
+    uint16_t wire = wireOpcode(Opcode::CMSG_DELETEEQUIPMENT_SET);
+    if (wire == 0xFFFF) { addUIError("Equipment sets not supported."); return; }
     // CMSG_DELETEEQUIPMENT_SET: uint64 setGuid
-    network::Packet pkt(wireOpcode(Opcode::CMSG_DELETEEQUIPMENT_SET));
+    network::Packet pkt(wire);
     pkt.writeUInt64(setGuid);
     socket->send(pkt);
     // Remove locally so UI updates immediately
