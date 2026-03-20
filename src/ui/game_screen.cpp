@@ -8746,23 +8746,28 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
         const bool onGCD = gameHandler.isGCDActive() && !onCooldown && !slot.isEmpty();
 
         // Out-of-range check: red tint when a targeted spell cannot reach the current target.
-        // Only applies to SPELL slots with a known max range (>5 yd) and an active target.
+        // Applies to SPELL and MACRO slots with a known max range (>5 yd) and an active target.
         // Item range is checked below after barItemDef is populated.
         bool outOfRange = false;
-        if (!slot.isEmpty() && slot.type == game::ActionBarSlot::SPELL && slot.id != 0
-            && !onCooldown && gameHandler.hasTarget()) {
-            uint32_t maxRange = spellbookScreen.getSpellMaxRange(slot.id, assetMgr);
-            if (maxRange > 5) {  // >5 yd = not melee/self
-                auto& em = gameHandler.getEntityManager();
-                auto playerEnt = em.getEntity(gameHandler.getPlayerGuid());
-                auto targetEnt = em.getEntity(gameHandler.getTargetGuid());
-                if (playerEnt && targetEnt) {
-                    float dx = playerEnt->getX() - targetEnt->getX();
-                    float dy = playerEnt->getY() - targetEnt->getY();
-                    float dz = playerEnt->getZ() - targetEnt->getZ();
-                    float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-                    if (dist > static_cast<float>(maxRange))
-                        outOfRange = true;
+        {
+            uint32_t rangeCheckSpellId = 0;
+            if (slot.type == game::ActionBarSlot::SPELL && slot.id != 0)
+                rangeCheckSpellId = slot.id;
+            else if (slot.type == game::ActionBarSlot::MACRO && slot.id != 0)
+                rangeCheckSpellId = resolveMacroPrimarySpellId(slot.id, gameHandler);
+            if (rangeCheckSpellId != 0 && !onCooldown && gameHandler.hasTarget()) {
+                uint32_t maxRange = spellbookScreen.getSpellMaxRange(rangeCheckSpellId, assetMgr);
+                if (maxRange > 5) {
+                    auto& em = gameHandler.getEntityManager();
+                    auto playerEnt = em.getEntity(gameHandler.getPlayerGuid());
+                    auto targetEnt = em.getEntity(gameHandler.getTargetGuid());
+                    if (playerEnt && targetEnt) {
+                        float dx = playerEnt->getX() - targetEnt->getX();
+                        float dy = playerEnt->getY() - targetEnt->getY();
+                        float dz = playerEnt->getZ() - targetEnt->getZ();
+                        if (std::sqrt(dx*dx + dy*dy + dz*dz) > static_cast<float>(maxRange))
+                            outOfRange = true;
+                    }
                 }
             }
         }
