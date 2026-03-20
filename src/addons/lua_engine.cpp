@@ -396,6 +396,17 @@ static int lua_UnitAura(lua_State* L, bool wantBuff) {
 static int lua_UnitBuff(lua_State* L) { return lua_UnitAura(L, true); }
 static int lua_UnitDebuff(lua_State* L) { return lua_UnitAura(L, false); }
 
+// UnitAura(unit, index, filter) — generic aura query with filter string
+// filter: "HELPFUL" = buffs, "HARMFUL" = debuffs, "PLAYER" = cast by player,
+//         "HELPFUL|PLAYER" = buffs cast by player, etc.
+static int lua_UnitAuraGeneric(lua_State* L) {
+    const char* filter = luaL_optstring(L, 3, "HELPFUL");
+    std::string f(filter ? filter : "HELPFUL");
+    for (char& c : f) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    bool wantBuff = (f.find("HARMFUL") == std::string::npos);
+    return lua_UnitAura(L, wantBuff);
+}
+
 // --- Action API ---
 
 static int lua_SendChatMessage(lua_State* L) {
@@ -1189,6 +1200,7 @@ void LuaEngine::registerCoreAPI() {
         {"InCombatLockdown",  lua_InCombatLockdown},
         {"UnitBuff",          lua_UnitBuff},
         {"UnitDebuff",        lua_UnitDebuff},
+        {"UnitAura",          lua_UnitAuraGeneric},
         {"GetNumAddOns",      lua_GetNumAddOns},
         {"GetAddOnInfo",      lua_GetAddOnInfo},
         {"GetSpellInfo",      lua_GetSpellInfo},
