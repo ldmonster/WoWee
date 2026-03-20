@@ -1629,6 +1629,7 @@ public:
     void setQuestTracked(uint32_t questId, bool tracked) {
         if (tracked) trackedQuestIds_.insert(questId);
         else trackedQuestIds_.erase(questId);
+        saveCharacterConfig();
     }
     const std::unordered_set<uint32_t>& getTrackedQuestIds() const { return trackedQuestIds_; }
     bool isQuestQueryPending(uint32_t questId) const {
