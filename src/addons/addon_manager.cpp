@@ -52,6 +52,7 @@ void AddonManager::scanAddons(const std::string& addonsPath) {
 }
 
 void AddonManager::loadAllAddons() {
+    luaEngine_.setAddonList(addons_);
     int loaded = 0, failed = 0;
     for (const auto& addon : addons_) {
         if (loadAddon(addon)) loaded++;

@@ -1,4 +1,5 @@
 #include "addons/lua_engine.hpp"
+#include "addons/toc_parser.hpp"
 #include "game/game_handler.hpp"
 #include "game/entity.hpp"
 #include "core/logger.hpp"
@@ -280,6 +281,54 @@ static int lua_InCombatLockdown(lua_State* L) {
     auto* gh = getGameHandler(L);
     lua_pushboolean(L, gh && gh->isInCombat());
     return 1;
+}
+
+// --- Addon Info API ---
+// These need the AddonManager pointer stored in registry
+
+static int lua_GetNumAddOns(lua_State* L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, "wowee_addon_count");
+    return 1;
+}
+
+static int lua_GetAddOnInfo(lua_State* L) {
+    // Accept index (1-based) or addon name
+    lua_getfield(L, LUA_REGISTRYINDEX, "wowee_addon_info");
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushnil(L); return 1;
+    }
+
+    int idx = 0;
+    if (lua_isnumber(L, 1)) {
+        idx = static_cast<int>(lua_tonumber(L, 1));
+    } else if (lua_isstring(L, 1)) {
+        // Search by name
+        const char* name = lua_tostring(L, 1);
+        int count = static_cast<int>(lua_objlen(L, -1));
+        for (int i = 1; i <= count; i++) {
+            lua_rawgeti(L, -1, i);
+            lua_getfield(L, -1, "name");
+            const char* aName = lua_tostring(L, -1);
+            lua_pop(L, 1);
+            if (aName && strcmp(aName, name) == 0) { idx = i; lua_pop(L, 1); break; }
+            lua_pop(L, 1);
+        }
+    }
+
+    if (idx < 1) { lua_pop(L, 1); lua_pushnil(L); return 1; }
+
+    lua_rawgeti(L, -1, idx);
+    if (!lua_istable(L, -1)) { lua_pop(L, 2); lua_pushnil(L); return 1; }
+
+    lua_getfield(L, -1, "name");
+    lua_getfield(L, -2, "title");
+    lua_getfield(L, -3, "notes");
+    lua_pushboolean(L, 1); // loadable (always true for now)
+    lua_pushstring(L, "INSECURE"); // security
+    lua_pop(L, 1); // pop addon info entry (keep others)
+    // Return: name, title, notes, loadable, reason, security
+    return 5;
 }
 
 // UnitBuff(unitId, index) / UnitDebuff(unitId, index)
@@ -761,6 +810,8 @@ void LuaEngine::registerCoreAPI() {
         {"InCombatLockdown",  lua_InCombatLockdown},
         {"UnitBuff",          lua_UnitBuff},
         {"UnitDebuff",        lua_UnitDebuff},
+        {"GetNumAddOns",      lua_GetNumAddOns},
+        {"GetAddOnInfo",      lua_GetAddOnInfo},
         // Utilities
         {"strsplit",          lua_strsplit},
         {"strtrim",           lua_strtrim},
@@ -1161,6 +1212,26 @@ static void serializeLuaValue(lua_State* L, int idx, std::string& out, int inden
             out += "nil"; // Functions, userdata, etc. can't be serialized
             break;
     }
+}
+
+void LuaEngine::setAddonList(const std::vector<TocFile>& addons) {
+    if (!L_) return;
+    lua_pushnumber(L_, static_cast<double>(addons.size()));
+    lua_setfield(L_, LUA_REGISTRYINDEX, "wowee_addon_count");
+
+    lua_newtable(L_);
+    for (size_t i = 0; i < addons.size(); i++) {
+        lua_newtable(L_);
+        lua_pushstring(L_, addons[i].addonName.c_str());
+        lua_setfield(L_, -2, "name");
+        lua_pushstring(L_, addons[i].getTitle().c_str());
+        lua_setfield(L_, -2, "title");
+        auto notesIt = addons[i].directives.find("Notes");
+        lua_pushstring(L_, notesIt != addons[i].directives.end() ? notesIt->second.c_str() : "");
+        lua_setfield(L_, -2, "notes");
+        lua_rawseti(L_, -2, static_cast<int>(i + 1));
+    }
+    lua_setfield(L_, LUA_REGISTRYINDEX, "wowee_addon_info");
 }
 
 bool LuaEngine::loadSavedVariables(const std::string& path) {
