@@ -283,6 +283,10 @@ public:
     using AddonChatCallback = std::function<void(const MessageChatData&)>;
     void setAddonChatCallback(AddonChatCallback cb) { addonChatCallback_ = std::move(cb); }
 
+    // Generic addon event callback: fires named events with string args
+    using AddonEventCallback = std::function<void(const std::string&, const std::vector<std::string>&)>;
+    void setAddonEventCallback(AddonEventCallback cb) { addonEventCallback_ = std::move(cb); }
+
     // Emote animation callback: (entityGuid, animationId)
     using EmoteAnimCallback = std::function<void(uint64_t, uint32_t)>;
     void setEmoteAnimCallback(EmoteAnimCallback cb) { emoteAnimCallback_ = std::move(cb); }
@@ -2639,6 +2643,7 @@ private:
     std::vector<std::string> joinedChannels_;   // Active channel memberships
     ChatBubbleCallback chatBubbleCallback_;
     AddonChatCallback addonChatCallback_;
+    AddonEventCallback addonEventCallback_;
     EmoteAnimCallback emoteAnimCallback_;
 
     // Targeting

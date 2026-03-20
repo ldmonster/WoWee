@@ -360,6 +360,12 @@ bool Application::initialize() {
                     addonManager_->fireEvent(eventName, {msg.message, msg.senderName});
                 }
             });
+            // Wire generic game events to addon dispatch
+            gameHandler->setAddonEventCallback([this](const std::string& event, const std::vector<std::string>& args) {
+                if (addonManager_ && addonsLoaded_) {
+                    addonManager_->fireEvent(event, args);
+                }
+            });
             LOG_INFO("Addon system initialized, found ", addonManager_->getAddons().size(), " addon(s)");
         } else {
             LOG_WARNING("Failed to initialize addon system");

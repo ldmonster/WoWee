@@ -4557,6 +4557,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                                 sfx->playLevelUp();
                         }
                         if (levelUpCallback_) levelUpCallback_(newLevel);
+                        if (addonEventCallback_) addonEventCallback_("PLAYER_LEVEL_UP", {std::to_string(newLevel)});
                     }
                 }
             }
@@ -13332,11 +13333,13 @@ void GameHandler::setTarget(uint64_t guid) {
     if (guid != 0) {
         LOG_INFO("Target set: 0x", std::hex, guid, std::dec);
     }
+    if (addonEventCallback_) addonEventCallback_("PLAYER_TARGET_CHANGED", {});
 }
 
 void GameHandler::clearTarget() {
     if (targetGuid != 0) {
         LOG_INFO("Target cleared");
+        if (addonEventCallback_) addonEventCallback_("PLAYER_TARGET_CHANGED", {});
     }
     targetGuid = 0;
     tabCycleIndex = -1;
