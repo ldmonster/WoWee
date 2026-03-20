@@ -4502,6 +4502,21 @@ void GameHandler::handlePacket(network::Packet& packet) {
                         slot.cooldownRemaining = cdIt->second;
                         slot.cooldownTotal     = cdIt->second;
                     }
+                } else if (slot.type == ActionBarSlot::ITEM && slot.id != 0) {
+                    // Items (potions, trinkets): look up the item's on-use spell
+                    // and check if that spell has a pending cooldown.
+                    const auto* qi = getItemInfo(slot.id);
+                    if (qi && qi->valid) {
+                        for (const auto& sp : qi->spells) {
+                            if (sp.spellId == 0) continue;
+                            auto cdIt = spellCooldowns.find(sp.spellId);
+                            if (cdIt != spellCooldowns.end() && cdIt->second > 0.0f) {
+                                slot.cooldownRemaining = cdIt->second;
+                                slot.cooldownTotal     = cdIt->second;
+                                break;
+                            }
+                        }
+                    }
                 }
             }
             LOG_INFO("SMSG_ACTION_BUTTONS: populated action bar from server");
@@ -18778,6 +18793,19 @@ void GameHandler::handleInitialSpells(network::Packet& packet) {
             if (it != spellCooldowns.end() && it->second > 0.0f) {
                 slot.cooldownTotal     = it->second;
                 slot.cooldownRemaining = it->second;
+            }
+        } else if (slot.type == ActionBarSlot::ITEM && slot.id != 0) {
+            const auto* qi = getItemInfo(slot.id);
+            if (qi && qi->valid) {
+                for (const auto& sp : qi->spells) {
+                    if (sp.spellId == 0) continue;
+                    auto it = spellCooldowns.find(sp.spellId);
+                    if (it != spellCooldowns.end() && it->second > 0.0f) {
+                        slot.cooldownTotal     = it->second;
+                        slot.cooldownRemaining = it->second;
+                        break;
+                    }
+                }
             }
         }
     }
