@@ -423,6 +423,18 @@ private:
     bool spellIconDbLoaded_ = false;
     VkDescriptorSet getSpellIcon(uint32_t spellId, pipeline::AssetManager* am);
 
+    // ItemExtendedCost.dbc cache: extendedCostId -> cost details
+    struct ExtendedCostEntry {
+        uint32_t honorPoints = 0;
+        uint32_t arenaPoints = 0;
+        uint32_t itemId[5] = {};
+        uint32_t itemCount[5] = {};
+    };
+    std::unordered_map<uint32_t, ExtendedCostEntry> extendedCostCache_;
+    bool extendedCostDbLoaded_ = false;
+    void loadExtendedCostDBC();
+    std::string formatExtendedCost(uint32_t extendedCostId, game::GameHandler& gameHandler);
+
     // Death Knight rune bar: client-predicted fill (0.0=depleted, 1.0=ready) for smooth animation
     float runeClientFill_[6] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
 

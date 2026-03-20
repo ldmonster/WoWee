@@ -16021,6 +16021,60 @@ void GameScreen::renderQuestOfferRewardWindow(game::GameHandler& gameHandler) {
 }
 
 // ============================================================
+// ItemExtendedCost.dbc loader
+// ============================================================
+
+void GameScreen::loadExtendedCostDBC() {
+    if (extendedCostDbLoaded_) return;
+    extendedCostDbLoaded_ = true;
+    auto* am = core::Application::getInstance().getAssetManager();
+    if (!am || !am->isInitialized()) return;
+    auto dbc = am->loadDBC("ItemExtendedCost.dbc");
+    if (!dbc || !dbc->isLoaded()) return;
+    // WotLK ItemExtendedCost.dbc: field 0=ID, 1=honorPoints, 2=arenaPoints,
+    // 3=arenaSlotRestrictions, 4-8=itemId[5], 9-13=itemCount[5], 14=reqRating, 15=purchaseGroup
+    for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+        uint32_t id = dbc->getUInt32(i, 0);
+        if (id == 0) continue;
+        ExtendedCostEntry e;
+        e.honorPoints = dbc->getUInt32(i, 1);
+        e.arenaPoints = dbc->getUInt32(i, 2);
+        for (int j = 0; j < 5; ++j) {
+            e.itemId[j]    = dbc->getUInt32(i, 4 + j);
+            e.itemCount[j] = dbc->getUInt32(i, 9 + j);
+        }
+        extendedCostCache_[id] = e;
+    }
+    LOG_INFO("ItemExtendedCost.dbc: loaded ", extendedCostCache_.size(), " entries");
+}
+
+std::string GameScreen::formatExtendedCost(uint32_t extendedCostId, game::GameHandler& gameHandler) {
+    loadExtendedCostDBC();
+    auto it = extendedCostCache_.find(extendedCostId);
+    if (it == extendedCostCache_.end()) return "[Tokens]";
+    const auto& e = it->second;
+    std::string result;
+    if (e.honorPoints > 0) {
+        result += std::to_string(e.honorPoints) + " Honor";
+    }
+    if (e.arenaPoints > 0) {
+        if (!result.empty()) result += ", ";
+        result += std::to_string(e.arenaPoints) + " Arena";
+    }
+    for (int j = 0; j < 5; ++j) {
+        if (e.itemId[j] == 0 || e.itemCount[j] == 0) continue;
+        if (!result.empty()) result += ", ";
+        const auto* itemInfo = gameHandler.getItemInfo(e.itemId[j]);
+        if (itemInfo && itemInfo->valid && !itemInfo->name.empty()) {
+            result += std::to_string(e.itemCount[j]) + "x " + itemInfo->name;
+        } else {
+            result += std::to_string(e.itemCount[j]) + "x Item#" + std::to_string(e.itemId[j]);
+        }
+    }
+    return result.empty() ? "[Tokens]" : result;
+}
+
+// ============================================================
 // Vendor Window (Phase 5)
 // ============================================================
 
@@ -16272,8 +16326,9 @@ void GameScreen::renderVendorWindow(game::GameHandler& gameHandler) {
 
                     ImGui::TableSetColumnIndex(2);
                     if (item.buyPrice == 0 && item.extendedCost != 0) {
-                        // Token-only item (no gold cost)
-                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "[Tokens]");
+                        // Token-only item — show detailed cost from ItemExtendedCost.dbc
+                        std::string costStr = formatExtendedCost(item.extendedCost, gameHandler);
+                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", costStr.c_str());
                     } else {
                         uint32_t g = item.buyPrice / 10000;
                         uint32_t s = (item.buyPrice / 100) % 100;
@@ -16283,6 +16338,13 @@ void GameScreen::renderVendorWindow(game::GameHandler& gameHandler) {
                             renderCoinsText(g, s, c);
                         } else {
                             ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%ug %us %uc", g, s, c);
+                        }
+                        // Show additional token cost if both gold and tokens are required
+                        if (item.extendedCost != 0) {
+                            std::string costStr = formatExtendedCost(item.extendedCost, gameHandler);
+                            if (costStr != "[Tokens]") {
+                                ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 0.8f), "+ %s", costStr.c_str());
+                            }
                         }
                     }
 
