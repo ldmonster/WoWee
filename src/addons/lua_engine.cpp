@@ -243,6 +243,7 @@ bool LuaEngine::initialize() {
     }
 
     registerCoreAPI();
+    registerEventAPI();
 
     LOG_INFO("LuaEngine: initialized (Lua 5.1)");
     return true;
@@ -296,6 +297,117 @@ void LuaEngine::registerCoreAPI() {
         lua_pushcfunction(L_, func);
         lua_setglobal(L_, name);
     }
+}
+
+// ---- Event System ----
+// Lua-side: WoweeEvents table holds { ["EVENT_NAME"] = { handler1, handler2, ... } }
+// RegisterEvent("EVENT", handler) adds a handler function
+// UnregisterEvent("EVENT", handler) removes it
+
+static int lua_RegisterEvent(lua_State* L) {
+    const char* eventName = luaL_checkstring(L, 1);
+    luaL_checktype(L, 2, LUA_TFUNCTION);
+
+    // Get or create the WoweeEvents table
+    lua_getglobal(L, "__WoweeEvents");
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setglobal(L, "__WoweeEvents");
+    }
+
+    // Get or create the handler list for this event
+    lua_getfield(L, -1, eventName);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setfield(L, -3, eventName);
+    }
+
+    // Append the handler function to the list
+    int len = static_cast<int>(lua_objlen(L, -1));
+    lua_pushvalue(L, 2);  // push the handler function
+    lua_rawseti(L, -2, len + 1);
+
+    lua_pop(L, 2);  // pop handler list + WoweeEvents
+    return 0;
+}
+
+static int lua_UnregisterEvent(lua_State* L) {
+    const char* eventName = luaL_checkstring(L, 1);
+    luaL_checktype(L, 2, LUA_TFUNCTION);
+
+    lua_getglobal(L, "__WoweeEvents");
+    if (lua_isnil(L, -1)) { lua_pop(L, 1); return 0; }
+
+    lua_getfield(L, -1, eventName);
+    if (lua_isnil(L, -1)) { lua_pop(L, 2); return 0; }
+
+    // Remove matching handler from the list
+    int len = static_cast<int>(lua_objlen(L, -1));
+    for (int i = 1; i <= len; i++) {
+        lua_rawgeti(L, -1, i);
+        if (lua_rawequal(L, -1, 2)) {
+            lua_pop(L, 1);
+            // Shift remaining elements down
+            for (int j = i; j < len; j++) {
+                lua_rawgeti(L, -1, j + 1);
+                lua_rawseti(L, -2, j);
+            }
+            lua_pushnil(L);
+            lua_rawseti(L, -2, len);
+            break;
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 2);
+    return 0;
+}
+
+void LuaEngine::registerEventAPI() {
+    lua_pushcfunction(L_, lua_RegisterEvent);
+    lua_setglobal(L_, "RegisterEvent");
+
+    lua_pushcfunction(L_, lua_UnregisterEvent);
+    lua_setglobal(L_, "UnregisterEvent");
+
+    // Create the events table
+    lua_newtable(L_);
+    lua_setglobal(L_, "__WoweeEvents");
+}
+
+void LuaEngine::fireEvent(const std::string& eventName,
+                           const std::vector<std::string>& args) {
+    if (!L_) return;
+
+    lua_getglobal(L_, "__WoweeEvents");
+    if (lua_isnil(L_, -1)) { lua_pop(L_, 1); return; }
+
+    lua_getfield(L_, -1, eventName.c_str());
+    if (lua_isnil(L_, -1)) { lua_pop(L_, 2); return; }
+
+    int handlerCount = static_cast<int>(lua_objlen(L_, -1));
+    for (int i = 1; i <= handlerCount; i++) {
+        lua_rawgeti(L_, -1, i);
+        if (!lua_isfunction(L_, -1)) { lua_pop(L_, 1); continue; }
+
+        // Push arguments: event name first, then extra args
+        lua_pushstring(L_, eventName.c_str());
+        for (const auto& arg : args) {
+            lua_pushstring(L_, arg.c_str());
+        }
+
+        int nargs = 1 + static_cast<int>(args.size());
+        if (lua_pcall(L_, nargs, 0, 0) != 0) {
+            const char* err = lua_tostring(L_, -1);
+            LOG_ERROR("LuaEngine: event '", eventName, "' handler error: ",
+                      err ? err : "(unknown)");
+            lua_pop(L_, 1);
+        }
+    }
+    lua_pop(L_, 2);  // pop handler list + WoweeEvents
 }
 
 bool LuaEngine::executeFile(const std::string& path) {

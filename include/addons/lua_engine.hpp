@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 struct lua_State;
 
@@ -24,6 +25,11 @@ public:
 
     void setGameHandler(game::GameHandler* handler);
 
+    // Fire a WoW event to all registered Lua handlers.
+    // Extra string args are pushed as event arguments.
+    void fireEvent(const std::string& eventName,
+                   const std::vector<std::string>& args = {});
+
     lua_State* getState() { return L_; }
     bool isInitialized() const { return L_ != nullptr; }
 
@@ -32,6 +38,7 @@ private:
     game::GameHandler* gameHandler_ = nullptr;
 
     void registerCoreAPI();
+    void registerEventAPI();
 };
 
 } // namespace wowee::addons

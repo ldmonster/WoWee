@@ -660,6 +660,9 @@ void Application::setState(AppState newState) {
             }
             // Ensure no stale in-world player model leaks into the next login attempt.
             // If we reuse a previously spawned instance without forcing a respawn, appearance (notably hair) can desync.
+            if (addonManager_ && addonsLoaded_) {
+                addonManager_->fireEvent("PLAYER_LEAVING_WORLD");
+            }
             npcsSpawned = false;
             playerCharacterSpawned = false;
             addonsLoaded_ = false;
@@ -5049,6 +5052,7 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
     if (addonManager_ && !addonsLoaded_) {
         addonManager_->loadAllAddons();
         addonsLoaded_ = true;
+        addonManager_->fireEvent("PLAYER_ENTERING_WORLD");
     }
 }
 

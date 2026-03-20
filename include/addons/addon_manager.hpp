@@ -17,6 +17,7 @@ public:
     void scanAddons(const std::string& addonsPath);
     void loadAllAddons();
     bool runScript(const std::string& code);
+    void fireEvent(const std::string& event, const std::vector<std::string>& args = {});
     void shutdown();
 
     const std::vector<TocFile>& getAddons() const { return addons_; }

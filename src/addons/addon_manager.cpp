@@ -85,6 +85,10 @@ bool AddonManager::runScript(const std::string& code) {
     return luaEngine_.executeString(code);
 }
 
+void AddonManager::fireEvent(const std::string& event, const std::vector<std::string>& args) {
+    luaEngine_.fireEvent(event, args);
+}
+
 void AddonManager::shutdown() {
     addons_.clear();
     luaEngine_.shutdown();
