@@ -4492,6 +4492,18 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 }
                 actionBar[i] = slot;
             }
+            // Apply any pending cooldowns from spellCooldowns to newly populated slots.
+            // SMSG_SPELL_COOLDOWN often arrives before SMSG_ACTION_BUTTONS during login,
+            // so the per-slot cooldownRemaining would be 0 without this sync.
+            for (auto& slot : actionBar) {
+                if (slot.type == ActionBarSlot::SPELL && slot.id != 0) {
+                    auto cdIt = spellCooldowns.find(slot.id);
+                    if (cdIt != spellCooldowns.end() && cdIt->second > 0.0f) {
+                        slot.cooldownRemaining = cdIt->second;
+                        slot.cooldownTotal     = cdIt->second;
+                    }
+                }
+            }
             LOG_INFO("SMSG_ACTION_BUTTONS: populated action bar from server");
             packet.setReadPos(packet.getSize());
             break;
