@@ -1315,7 +1315,12 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
             if (i > 0 && i < static_cast<int>(chatTabUnread_.size()) && chatTabUnread_[i] > 0) {
                 tabLabel += " (" + std::to_string(chatTabUnread_[i]) + ")";
             }
-            // Use ImGuiTabItemFlags_NoPushId so label changes don't break tab identity
+            // Flash tab text color when unread messages exist
+            bool hasUnread = (i > 0 && i < static_cast<int>(chatTabUnread_.size()) && chatTabUnread_[i] > 0);
+            if (hasUnread) {
+                float pulse = 0.6f + 0.4f * std::sin(static_cast<float>(ImGui::GetTime()) * 4.0f);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f * pulse, 0.2f * pulse, 1.0f));
+            }
             if (ImGui::BeginTabItem(tabLabel.c_str())) {
                 if (activeChatTab_ != i) {
                     activeChatTab_ = i;
@@ -1325,6 +1330,7 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                 }
                 ImGui::EndTabItem();
             }
+            if (hasUnread) ImGui::PopStyleColor();
         }
         ImGui::EndTabBar();
     }
