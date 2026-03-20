@@ -6241,7 +6241,7 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
             }
 
             // Default equipment geosets (bare/no armor)
-            // CharGeosets: group 4=gloves(forearm), 5=boots(shin), 8=sleeves, 9=kneepads, 13=pants
+            // CharGeosets: group 4=gloves(forearm), 5=boots(shin), 8=sleeves, 12=tabard, 13=pants
             std::unordered_set<uint16_t> modelGeosets;
             std::unordered_map<uint16_t, uint16_t> firstByGroup;
             if (const auto* md = charRenderer->getModelData(modelId)) {
@@ -6262,9 +6262,8 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                 return preferred;
             };
 
-            uint16_t geosetGloves = pickGeoset(301, 3);   // Bare gloves/forearms (group 3)
-            uint16_t geosetBoots = pickGeoset(401, 4);    // Bare boots/shins (group 4)
-            uint16_t geosetTorso = pickGeoset(501, 5);    // Base torso/waist (group 5)
+            uint16_t geosetGloves = pickGeoset(401, 4);   // Bare gloves/forearms (group 4)
+            uint16_t geosetBoots = pickGeoset(502, 5);    // Bare boots/shins (group 5)
             uint16_t geosetSleeves = pickGeoset(801, 8);  // Bare wrists (group 8, controlled by chest)
             uint16_t geosetPants = pickGeoset(1301, 13);  // Bare legs (group 13)
             uint16_t geosetCape = 0;       // Group 15 disabled unless cape is equipped
@@ -6292,10 +6291,9 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                     return gg;
                 };
 
-                // Chest (slot 3) → group 5 (torso) + group 8 (sleeves/wristbands)
+                // Chest (slot 3) → group 8 (sleeves/wristbands)
                 {
                     uint32_t gg = readGeosetGroup(3, "chest");
-                    if (gg > 0) geosetTorso = pickGeoset(static_cast<uint16_t>(501 + gg), 5);
                     if (gg > 0) geosetSleeves = pickGeoset(static_cast<uint16_t>(801 + gg), 8);
                 }
 
@@ -6305,16 +6303,16 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                     if (gg > 0) geosetPants = pickGeoset(static_cast<uint16_t>(1301 + gg), 13);
                 }
 
-                // Feet (slot 6) → group 4 (boots/shins)
+                // Feet (slot 6) → group 5 (boots/shins)
                 {
                     uint32_t gg = readGeosetGroup(6, "feet");
-                    if (gg > 0) geosetBoots = pickGeoset(static_cast<uint16_t>(401 + gg), 4);
+                    if (gg > 0) geosetBoots = pickGeoset(static_cast<uint16_t>(501 + gg), 5);
                 }
 
-                // Hands (slot 8) → group 3 (gloves/forearms)
+                // Hands (slot 8) → group 4 (gloves/forearms)
                 {
                     uint32_t gg = readGeosetGroup(8, "hands");
-                    if (gg > 0) geosetGloves = pickGeoset(static_cast<uint16_t>(301 + gg), 3);
+                    if (gg > 0) geosetGloves = pickGeoset(static_cast<uint16_t>(401 + gg), 4);
                 }
 
                 // Tabard (slot 9) → group 12 (tabard/robe mesh)
@@ -6391,7 +6389,6 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
             // Apply equipment geosets
             activeGeosets.insert(geosetGloves);
             activeGeosets.insert(geosetBoots);
-            activeGeosets.insert(geosetTorso);
             activeGeosets.insert(geosetSleeves);
             activeGeosets.insert(geosetPants);
             if (geosetCape != 0) {
