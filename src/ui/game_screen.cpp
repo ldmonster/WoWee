@@ -2614,23 +2614,28 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                 for (auto& ch : lowerWord) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
 
                 static const std::vector<std::string> kCmds = {
-                    "/afk", "/away", "/cancelaura", "/cancelform", "/cancelshapeshift",
-                    "/cast", "/chathelp", "/clear",
-                    "/dance", "/do", "/dnd", "/e", "/emote",
-                    "/cl", "/combatlog", "/dismount", "/equip", "/follow",
-                    "/g", "/guild", "/guildinfo",
-                    "/gmticket", "/grouploot", "/i", "/instance",
-                    "/invite", "/j", "/join", "/kick",
-                    "/l", "/leave", "/local", "/macrohelp", "/me",
+                    "/afk", "/assist", "/away",
+                    "/cancelaura", "/cancelform", "/cancelshapeshift",
+                    "/cast", "/castsequence", "/chathelp", "/clear", "/clearfocus", "/cleartarget",
+                    "/combatlog", "/dance", "/dismount", "/dnd", "/do", "/duel",
+                    "/e", "/emote", "/equip", "/equipset",
+                    "/focus", "/follow", "/forfeit", "/friend",
+                    "/g", "/ginvite", "/gmticket", "/grouploot", "/guild", "/guildinfo",
+                    "/helm", "/help",
+                    "/i", "/ignore", "/inspect", "/instance", "/invite",
+                    "/j", "/join", "/kick", "/kneel",
+                    "/l", "/leave", "/loc", "/local", "/logout",
+                    "/macrohelp", "/mark", "/me",
                     "/p", "/party", "/petaggressive", "/petattack", "/petdefensive",
                     "/petdismiss", "/petfollow", "/pethalt", "/petpassive", "/petstay",
-                    "/r", "/raid",
-                    "/raidwarning", "/random", "/reply", "/roll",
-                    "/s", "/say", "/setloot", "/shout", "/sit", "/stand",
-                    "/startattack", "/stopattack", "/stopfollow", "/stopcasting",
-                    "/t", "/target", "/time",
-                    "/trade", "/uninvite", "/use", "/w", "/whisper",
-                    "/who", "/wts", "/wtb", "/y", "/yell", "/zone"
+                    "/played", "/pvp",
+                    "/r", "/raid", "/raidinfo", "/raidwarning", "/random", "/reply", "/roll",
+                    "/s", "/say", "/screenshot", "/setloot", "/shout", "/sit", "/stand",
+                    "/startattack", "/stopattack", "/stopcasting", "/stopfollow", "/stopmacro",
+                    "/t", "/target", "/threat", "/time", "/trade",
+                    "/unignore", "/uninvite", "/unstuck", "/use",
+                    "/w", "/whisper", "/who", "/wts", "/wtb",
+                    "/y", "/yell", "/zone"
                 };
 
                 // New session if prefix changed
