@@ -1438,32 +1438,54 @@ void InventoryScreen::renderCharacterScreen(game::GameHandler& gameHandler) {
             ImGui::EndTabItem();
         }
 
-        // Equipment Sets tab (WotLK only)
-        const auto& eqSets = gameHandler.getEquipmentSets();
-        if (!eqSets.empty()) {
-            if (ImGui::BeginTabItem("Outfits")) {
-                ImGui::Spacing();
-                ImGui::TextDisabled("Saved Equipment Sets");
-                ImGui::Separator();
+        // Equipment Sets tab (WotLK — always show so player can create sets)
+        if (ImGui::BeginTabItem("Outfits")) {
+            ImGui::Spacing();
+
+            // Save current gear as new set
+            static char newSetName[64] = {};
+            ImGui::SetNextItemWidth(160.0f);
+            ImGui::InputTextWithHint("##newsetname", "New set name...", newSetName, sizeof(newSetName));
+            ImGui::SameLine();
+            bool canSave = (newSetName[0] != '\0');
+            if (!canSave) ImGui::BeginDisabled();
+            if (ImGui::SmallButton("Save Current Gear")) {
+                gameHandler.saveEquipmentSet(newSetName);
+                newSetName[0] = '\0';
+            }
+            if (!canSave) ImGui::EndDisabled();
+
+            ImGui::Separator();
+
+            const auto& eqSets = gameHandler.getEquipmentSets();
+            if (eqSets.empty()) {
+                ImGui::TextDisabled("No saved equipment sets.");
+            } else {
                 ImGui::BeginChild("##EqSetsList", ImVec2(0, 0), false);
                 for (const auto& es : eqSets) {
                     ImGui::PushID(static_cast<int>(es.setId));
-                    // Icon placeholder or name
                     const char* displayName = es.name.empty() ? "(Unnamed)" : es.name.c_str();
                     ImGui::Text("%s", displayName);
-                    if (!es.iconName.empty()) {
-                        ImGui::SameLine();
-                        ImGui::TextDisabled("(%s)", es.iconName.c_str());
-                    }
-                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
+                    float btnAreaW = 150.0f;
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - btnAreaW + ImGui::GetCursorPosX());
                     if (ImGui::SmallButton("Equip")) {
                         gameHandler.useEquipmentSet(es.setId);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Update")) {
+                        gameHandler.saveEquipmentSet(es.name, es.iconName, es.setGuid, es.setId);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Delete")) {
+                        gameHandler.deleteEquipmentSet(es.setGuid);
+                        ImGui::PopID();
+                        break;  // Iterator invalidated
                     }
                     ImGui::PopID();
                 }
                 ImGui::EndChild();
-                ImGui::EndTabItem();
             }
+            ImGui::EndTabItem();
         }
 
         ImGui::EndTabBar();

@@ -1535,6 +1535,9 @@ public:
     };
     const std::vector<EquipmentSetInfo>& getEquipmentSets() const { return equipmentSetInfo_; }
     void useEquipmentSet(uint32_t setId);
+    void saveEquipmentSet(const std::string& name, const std::string& iconName = "INV_Misc_QuestionMark",
+                          uint64_t existingGuid = 0, uint32_t setIndex = 0xFFFFFFFF);
+    void deleteEquipmentSet(uint64_t setGuid);
 
     // NPC Gossip
     void interactWithNpc(uint64_t guid);

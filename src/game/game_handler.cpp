@@ -10668,6 +10668,49 @@ void GameHandler::useEquipmentSet(uint32_t setId) {
     socket->send(pkt);
 }
 
+void GameHandler::saveEquipmentSet(const std::string& name, const std::string& iconName,
+                                    uint64_t existingGuid, uint32_t setIndex) {
+    if (state != WorldState::IN_WORLD) return;
+    // CMSG_EQUIPMENT_SET_SAVE: uint64 setGuid + uint32 setIndex + string name + string iconName
+    //   + 19 × PackedGuid itemGuid (one per equipment slot, 0–18)
+    if (setIndex == 0xFFFFFFFF) {
+        // Auto-assign next free index
+        setIndex = 0;
+        for (const auto& es : equipmentSets_) {
+            if (es.setId >= setIndex) setIndex = es.setId + 1;
+        }
+    }
+    network::Packet pkt(wireOpcode(Opcode::CMSG_EQUIPMENT_SET_SAVE));
+    pkt.writeUInt64(existingGuid);  // 0 = create new, nonzero = update
+    pkt.writeUInt32(setIndex);
+    pkt.writeString(name);
+    pkt.writeString(iconName);
+    for (int slot = 0; slot < 19; ++slot) {
+        uint64_t guid = getEquipSlotGuid(slot);
+        MovementPacket::writePackedGuid(pkt, guid);
+    }
+    socket->send(pkt);
+    LOG_INFO("CMSG_EQUIPMENT_SET_SAVE: name=\"", name, "\" guid=", existingGuid, " index=", setIndex);
+}
+
+void GameHandler::deleteEquipmentSet(uint64_t setGuid) {
+    if (state != WorldState::IN_WORLD || setGuid == 0) return;
+    // CMSG_DELETEEQUIPMENT_SET: uint64 setGuid
+    network::Packet pkt(wireOpcode(Opcode::CMSG_DELETEEQUIPMENT_SET));
+    pkt.writeUInt64(setGuid);
+    socket->send(pkt);
+    // Remove locally so UI updates immediately
+    equipmentSets_.erase(
+        std::remove_if(equipmentSets_.begin(), equipmentSets_.end(),
+                       [setGuid](const EquipmentSet& es) { return es.setGuid == setGuid; }),
+        equipmentSets_.end());
+    equipmentSetInfo_.erase(
+        std::remove_if(equipmentSetInfo_.begin(), equipmentSetInfo_.end(),
+                       [setGuid](const EquipmentSetInfo& es) { return es.setGuid == setGuid; }),
+        equipmentSetInfo_.end());
+    LOG_INFO("CMSG_DELETEEQUIPMENT_SET: guid=", setGuid);
+}
+
 void GameHandler::sendMinimapPing(float wowX, float wowY) {
     if (state != WorldState::IN_WORLD) return;
 
