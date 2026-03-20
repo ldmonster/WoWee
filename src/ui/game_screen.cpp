@@ -5768,6 +5768,14 @@ static std::string evaluateMacroConditionals(const std::string& rawArg,
         if (c == "stealthed")   return isStealthedFn();
         if (c == "nostealthed") return !isStealthedFn();
 
+        // pet / nopet — player has an active pet (hunters, warlocks, DKs)
+        if (c == "pet")   return gameHandler.hasPet();
+        if (c == "nopet") return !gameHandler.hasPet();
+
+        // group / nogroup — player is in a party or raid
+        if (c == "group" || c == "party") return gameHandler.isInGroup();
+        if (c == "nogroup")               return !gameHandler.isInGroup();
+
         // noform / nostance — player is NOT in a shapeshift/stance
         if (c == "noform" || c == "nostance") {
             for (const auto& a : gameHandler.getPlayerAuras())
@@ -6122,8 +6130,8 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                 static const char* kMacroHelp[] = {
                     "--- Macro Conditionals ---",
                     "Usage: /cast [cond1,cond2] Spell1; [cond3] Spell2; Default",
-                    "State:   [combat] [nocombat] [mounted] [nomounted]",
-                    "         [swimming] [flying] [stealthed] [channeling]",
+                    "State:   [combat] [mounted] [swimming] [flying] [stealthed]",
+                    "         [channeling] [pet] [group]  (prefix no- to negate)",
                     "Target:  [harm] [help] [exists] [noexists] [dead] [nodead]",
                     "         [target=focus] [target=pet] [target=player]",
                     "Form:    [noform] [nostance] [form:0]",
