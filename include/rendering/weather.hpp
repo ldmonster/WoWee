@@ -28,7 +28,8 @@ public:
     enum class Type {
         NONE,
         RAIN,
-        SNOW
+        SNOW,
+        STORM
     };
 
     Weather();

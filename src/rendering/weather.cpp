@@ -198,6 +198,10 @@ void Weather::update(const Camera& camera, float deltaTime) {
         if (weatherType == Type::RAIN) {
             p.velocity = glm::vec3(0.0f, -50.0f, 0.0f);  // Fast downward
             p.maxLifetime = 5.0f;
+        } else if (weatherType == Type::STORM) {
+            // Storm: faster, angled rain with wind
+            p.velocity = glm::vec3(15.0f, -70.0f, 8.0f);
+            p.maxLifetime = 3.5f;
         } else {  // SNOW
             p.velocity = glm::vec3(0.0f, -5.0f, 0.0f);   // Slow downward
             p.maxLifetime = 10.0f;
@@ -245,6 +249,12 @@ void Weather::updateParticle(Particle& particle, const Camera& camera, float del
         particle.velocity.x = windX;
         particle.velocity.z = windZ;
     }
+    // Storm: gusty, turbulent wind with varying direction
+    if (weatherType == Type::STORM) {
+        float gust = std::sin(particle.lifetime * 1.5f + particle.position.x * 0.1f) * 5.0f;
+        particle.velocity.x = 15.0f + gust;
+        particle.velocity.z = 8.0f + std::cos(particle.lifetime * 2.0f) * 3.0f;
+    }
 
     // Update position
     particle.position += particle.velocity * deltaTime;
@@ -275,6 +285,9 @@ void Weather::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet) {
     if (weatherType == Type::RAIN) {
         push.particleSize = 3.0f;
         push.particleColor = glm::vec4(0.7f, 0.8f, 0.9f, 0.6f);
+    } else if (weatherType == Type::STORM) {
+        push.particleSize = 3.5f;
+        push.particleColor = glm::vec4(0.6f, 0.65f, 0.75f, 0.7f);  // Darker, more opaque
     } else {  // SNOW
         push.particleSize = 8.0f;
         push.particleColor = glm::vec4(1.0f, 1.0f, 1.0f, 0.9f);

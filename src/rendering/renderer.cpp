@@ -3192,7 +3192,7 @@ void Renderer::update(float deltaTime) {
                 // Server-driven weather (SMSG_WEATHER) — authoritative
                 if (wType == 1)      weather->setWeatherType(Weather::Type::RAIN);
                 else if (wType == 2) weather->setWeatherType(Weather::Type::SNOW);
-                else if (wType == 3) weather->setWeatherType(Weather::Type::RAIN); // thunderstorm — use rain particles
+                else if (wType == 3) weather->setWeatherType(Weather::Type::STORM);
                 else                 weather->setWeatherType(Weather::Type::NONE);
                 weather->setIntensity(wInt);
             } else {
