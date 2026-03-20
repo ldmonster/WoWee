@@ -2627,6 +2627,20 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
                 ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", slotName);
             }
         }
+
+        // Show red warning if player lacks proficiency for this weapon/armor type
+        if (gameHandler_) {
+            const auto* qi = gameHandler_->getItemInfo(item.itemId);
+            if (qi && qi->valid) {
+                bool canUse = true;
+                if (qi->itemClass == 2) // Weapon
+                    canUse = gameHandler_->canUseWeaponSubclass(qi->subClass);
+                else if (qi->itemClass == 4 && qi->subClass > 0) // Armor (skip subclass 0 = misc)
+                    canUse = gameHandler_->canUseArmorSubclass(qi->subClass);
+                if (!canUse)
+                    ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "You can't use this type of item.");
+            }
+        }
     }
 
     auto isWeaponInventoryType = [](uint32_t invType) {
