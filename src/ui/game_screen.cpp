@@ -9205,13 +9205,43 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
                     }
                 }
                 if (!showedRich) {
-                    ImGui::Text("Macro #%u", slot.id);
-                    const std::string& macroText = gameHandler.getMacroText(slot.id);
-                    if (!macroText.empty()) {
-                        ImGui::Separator();
-                        ImGui::TextUnformatted(macroText.c_str());
-                    } else {
-                        ImGui::TextDisabled("(no text — right-click to Edit)");
+                    // For /use macros: try showing the item tooltip instead
+                    if (macroIsUseCmd) {
+                        const std::string& macroText = gameHandler.getMacroText(slot.id);
+                        // Extract item name from first /use command
+                        for (const auto& cmd : allMacroCommands(macroText)) {
+                            std::string cl = cmd;
+                            for (char& c : cl) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                            if (cl.rfind("/use ", 0) != 0) continue;
+                            size_t sp = cmd.find(' ');
+                            if (sp == std::string::npos) continue;
+                            std::string itemArg = cmd.substr(sp + 1);
+                            while (!itemArg.empty() && itemArg.front() == ' ') itemArg.erase(itemArg.begin());
+                            while (!itemArg.empty() && itemArg.back() == ' ') itemArg.pop_back();
+                            std::string itemLow = itemArg;
+                            for (char& c : itemLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                            for (const auto& [entry, info] : gameHandler.getItemInfoCache()) {
+                                if (!info.valid) continue;
+                                std::string iName = info.name;
+                                for (char& c : iName) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                                if (iName == itemLow) {
+                                    inventoryScreen.renderItemTooltip(info);
+                                    showedRich = true;
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    if (!showedRich) {
+                        ImGui::Text("Macro #%u", slot.id);
+                        const std::string& macroText = gameHandler.getMacroText(slot.id);
+                        if (!macroText.empty()) {
+                            ImGui::Separator();
+                            ImGui::TextUnformatted(macroText.c_str());
+                        } else {
+                            ImGui::TextDisabled("(no text — right-click to Edit)");
+                        }
                     }
                 }
                 ImGui::EndTooltip();
