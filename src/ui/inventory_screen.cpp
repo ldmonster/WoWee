@@ -3298,6 +3298,17 @@ void InventoryScreen::renderItemTooltip(const game::ItemQueryResponseData& info,
             else
                 ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", slotName);
         }
+
+        // Proficiency check for vendor/loot tooltips (ItemQueryResponseData has itemClass/subClass)
+        if (gameHandler_) {
+            bool canUse = true;
+            if (info.itemClass == 2) // Weapon
+                canUse = gameHandler_->canUseWeaponSubclass(info.subClass);
+            else if (info.itemClass == 4 && info.subClass > 0) // Armor (skip subclass 0 = misc)
+                canUse = gameHandler_->canUseArmorSubclass(info.subClass);
+            if (!canUse)
+                ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "You can't use this type of item.");
+        }
     }
 
     // Weapon stats
