@@ -2194,6 +2194,7 @@ public:
         auto it = itemInfoCache_.find(itemId);
         return (it != itemInfoCache_.end()) ? &it->second : nullptr;
     }
+    const std::unordered_map<uint32_t, ItemQueryResponseData>& getItemInfoCache() const { return itemInfoCache_; }
     // Request item info from server if not already cached/pending
     void ensureItemInfo(uint32_t entry) {
         if (entry == 0 || itemInfoCache_.count(entry) || pendingItemQueries_.count(entry)) return;

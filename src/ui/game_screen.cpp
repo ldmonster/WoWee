@@ -8660,7 +8660,8 @@ uint32_t GameScreen::resolveMacroPrimarySpellId(uint32_t macroId, game::GameHand
             for (char& c : cl) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             bool isCast = (cl.rfind("/cast ", 0) == 0);
             bool isCastSeq = (cl.rfind("/castsequence ", 0) == 0);
-            if (!isCast && !isCastSeq) continue;
+            bool isUse = (cl.rfind("/use ", 0) == 0);
+            if (!isCast && !isCastSeq && !isUse) continue;
             size_t sp2 = cmdLine.find(' ');
             if (sp2 == std::string::npos) continue;
             std::string spellArg = cmdLine.substr(sp2 + 1);
@@ -8688,10 +8689,26 @@ uint32_t GameScreen::resolveMacroPrimarySpellId(uint32_t macroId, game::GameHand
             if (spellArg.empty()) continue;
             std::string spLow = spellArg;
             for (char& c : spLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            for (uint32_t sid : gameHandler.getKnownSpells()) {
-                std::string sn = gameHandler.getSpellName(sid);
-                for (char& c : sn) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                if (sn == spLow) { result = sid; break; }
+            if (isUse) {
+                // /use resolves an item name → find the item's on-use spell ID
+                for (const auto& [entry, info] : gameHandler.getItemInfoCache()) {
+                    if (!info.valid) continue;
+                    std::string iName = info.name;
+                    for (char& c : iName) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    if (iName == spLow) {
+                        for (const auto& sp : info.spells) {
+                            if (sp.spellId != 0 && sp.spellTrigger == 0) { result = sp.spellId; break; }
+                        }
+                        break;
+                    }
+                }
+            } else {
+                // /cast and /castsequence resolve a spell name
+                for (uint32_t sid : gameHandler.getKnownSpells()) {
+                    std::string sn = gameHandler.getSpellName(sid);
+                    for (char& c : sn) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    if (sn == spLow) { result = sid; break; }
+                }
             }
             break;
         }
@@ -8875,7 +8892,8 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
                         for (char& c : cl) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
                         bool isCastCmd = (cl.rfind("/cast ", 0) == 0 || cl == "/cast");
                         bool isCastSeqCmd = (cl.rfind("/castsequence ", 0) == 0);
-                        if (!isCastCmd && !isCastSeqCmd) continue;
+                        bool isUseCmd = (cl.rfind("/use ", 0) == 0);
+                        if (!isCastCmd && !isCastSeqCmd && !isUseCmd) continue;
                         size_t sp2 = cmdLine.find(' ');
                         if (sp2 == std::string::npos) continue;
                         showArg = cmdLine.substr(sp2 + 1);
