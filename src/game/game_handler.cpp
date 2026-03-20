@@ -4050,7 +4050,18 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 break;
             }
             worldStateMapId_ = packet.readUInt32();
-            worldStateZoneId_ = packet.readUInt32();
+            {
+                uint32_t newZoneId = packet.readUInt32();
+                if (newZoneId != worldStateZoneId_ && newZoneId != 0) {
+                    worldStateZoneId_ = newZoneId;
+                    if (addonEventCallback_) {
+                        addonEventCallback_("ZONE_CHANGED_NEW_AREA", {});
+                        addonEventCallback_("ZONE_CHANGED", {});
+                    }
+                } else {
+                    worldStateZoneId_ = newZoneId;
+                }
+            }
             // WotLK adds areaId (uint32) before count; Classic/TBC/Turtle use the shorter format
             size_t remaining = packet.getSize() - packet.getReadPos();
             bool isWotLKFormat = isActiveExpansion("wotlk");

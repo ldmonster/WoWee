@@ -5134,6 +5134,11 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
     if (addonManager_ && !addonsLoaded_) {
         addonManager_->loadAllAddons();
         addonsLoaded_ = true;
+        addonManager_->fireEvent("VARIABLES_LOADED");
+        addonManager_->fireEvent("PLAYER_LOGIN");
+        addonManager_->fireEvent("PLAYER_ENTERING_WORLD");
+    } else if (addonManager_ && addonsLoaded_) {
+        // Subsequent world entries (e.g. teleport, instance entry)
         addonManager_->fireEvent("PLAYER_ENTERING_WORLD");
     }
 }
