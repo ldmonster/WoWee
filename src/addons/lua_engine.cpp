@@ -709,6 +709,139 @@ static int lua_GetUnitSpeed(lua_State* L) {
     return 1;
 }
 
+// --- Additional WoW API ---
+
+static int lua_UnitAffectingCombat(lua_State* L) {
+    const char* uid = luaL_optstring(L, 1, "player");
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushboolean(L, 0); return 1; }
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (uidStr == "player") {
+        lua_pushboolean(L, gh->isInCombat());
+    } else {
+        lua_pushboolean(L, 0);
+    }
+    return 1;
+}
+
+static int lua_GetNumRaidMembers(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh || !gh->isInGroup()) { lua_pushnumber(L, 0); return 1; }
+    const auto& pd = gh->getPartyData();
+    lua_pushnumber(L, (pd.groupType == 1) ? pd.memberCount : 0);
+    return 1;
+}
+
+static int lua_GetNumPartyMembers(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh || !gh->isInGroup()) { lua_pushnumber(L, 0); return 1; }
+    const auto& pd = gh->getPartyData();
+    // In party (not raid), count excludes self
+    int count = (pd.groupType == 0) ? static_cast<int>(pd.memberCount) : 0;
+    // memberCount includes self on some servers, subtract 1 if needed
+    if (count > 0) count = std::max(0, count - 1);
+    lua_pushnumber(L, count);
+    return 1;
+}
+
+static int lua_UnitInParty(lua_State* L) {
+    const char* uid = luaL_optstring(L, 1, "player");
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushboolean(L, 0); return 1; }
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (uidStr == "player") {
+        lua_pushboolean(L, gh->isInGroup());
+    } else {
+        uint64_t guid = resolveUnitGuid(gh, uidStr);
+        if (guid == 0) { lua_pushboolean(L, 0); return 1; }
+        const auto& pd = gh->getPartyData();
+        bool found = false;
+        for (const auto& m : pd.members) {
+            if (m.guid == guid) { found = true; break; }
+        }
+        lua_pushboolean(L, found);
+    }
+    return 1;
+}
+
+static int lua_UnitInRaid(lua_State* L) {
+    const char* uid = luaL_optstring(L, 1, "player");
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushboolean(L, 0); return 1; }
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    const auto& pd = gh->getPartyData();
+    if (pd.groupType != 1) { lua_pushboolean(L, 0); return 1; }
+    if (uidStr == "player") {
+        lua_pushboolean(L, 1);
+        return 1;
+    }
+    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    bool found = false;
+    for (const auto& m : pd.members) {
+        if (m.guid == guid) { found = true; break; }
+    }
+    lua_pushboolean(L, found);
+    return 1;
+}
+
+static int lua_UnitIsUnit(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushboolean(L, 0); return 1; }
+    const char* uid1 = luaL_checkstring(L, 1);
+    const char* uid2 = luaL_checkstring(L, 2);
+    std::string u1(uid1), u2(uid2);
+    for (char& c : u1) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    for (char& c : u2) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t g1 = resolveUnitGuid(gh, u1);
+    uint64_t g2 = resolveUnitGuid(gh, u2);
+    lua_pushboolean(L, g1 != 0 && g1 == g2);
+    return 1;
+}
+
+static int lua_UnitIsFriend(lua_State* L) {
+    const char* uid = luaL_optstring(L, 1, "player");
+    auto* unit = resolveUnit(L, uid);
+    lua_pushboolean(L, unit && !unit->isHostile());
+    return 1;
+}
+
+static int lua_UnitIsEnemy(lua_State* L) {
+    const char* uid = luaL_optstring(L, 1, "player");
+    auto* unit = resolveUnit(L, uid);
+    lua_pushboolean(L, unit && unit->isHostile());
+    return 1;
+}
+
+static int lua_UnitCreatureType(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushstring(L, "Unknown"); return 1; }
+    const char* uid = luaL_optstring(L, 1, "target");
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    if (guid == 0) { lua_pushstring(L, "Unknown"); return 1; }
+    auto entity = gh->getEntityManager().getEntity(guid);
+    if (!entity) { lua_pushstring(L, "Unknown"); return 1; }
+    // Player units are always "Humanoid"
+    if (entity->getType() == game::ObjectType::PLAYER) {
+        lua_pushstring(L, "Humanoid");
+        return 1;
+    }
+    auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
+    if (!unit) { lua_pushstring(L, "Unknown"); return 1; }
+    uint32_t ct = gh->getCreatureType(unit->getEntry());
+    static const char* kTypes[] = {
+        "Unknown", "Beast", "Dragonkin", "Demon", "Elemental",
+        "Giant", "Undead", "Humanoid", "Critter", "Mechanical",
+        "Not specified", "Totem", "Non-combat Pet", "Gas Cloud"
+    };
+    lua_pushstring(L, (ct < 14) ? kTypes[ct] : "Unknown");
+    return 1;
+}
+
 // --- Frame System ---
 // Minimal WoW-compatible frame objects with RegisterEvent/SetScript/GetScript.
 // Frames are Lua tables with a metatable that provides methods.
@@ -1058,6 +1191,16 @@ void LuaEngine::registerCoreAPI() {
         {"IsFalling",         lua_IsFalling},
         {"IsStealthed",       lua_IsStealthed},
         {"GetUnitSpeed",      lua_GetUnitSpeed},
+        // Combat/group queries
+        {"UnitAffectingCombat", lua_UnitAffectingCombat},
+        {"GetNumRaidMembers",   lua_GetNumRaidMembers},
+        {"GetNumPartyMembers",  lua_GetNumPartyMembers},
+        {"UnitInParty",         lua_UnitInParty},
+        {"UnitInRaid",          lua_UnitInRaid},
+        {"UnitIsUnit",          lua_UnitIsUnit},
+        {"UnitIsFriend",        lua_UnitIsFriend},
+        {"UnitIsEnemy",         lua_UnitIsEnemy},
+        {"UnitCreatureType",    lua_UnitCreatureType},
         // Utilities
         {"strsplit",          lua_strsplit},
         {"strtrim",           lua_strtrim},
