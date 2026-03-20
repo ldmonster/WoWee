@@ -77,6 +77,10 @@ enum class UF : uint16_t {
     PLAYER_SPELL_CRIT_PERCENTAGE1,   // Spell crit chance % (first school; 7 consecutive float fields)
     PLAYER_FIELD_COMBAT_RATING_1,    // First of 25 int32 combat rating slots (CR_* indices)
 
+    // Player PvP currency (TBC/WotLK only — Classic uses the old weekly honor system)
+    PLAYER_FIELD_HONOR_CURRENCY,     // Accumulated honor points (uint32)
+    PLAYER_FIELD_ARENA_CURRENCY,     // Accumulated arena points (uint32)
+
     // GameObject fields
     GAMEOBJECT_DISPLAYID,
 

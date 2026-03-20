@@ -11781,6 +11781,8 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                 const uint16_t ufPlayerRestedXp = fieldIndex(UF::PLAYER_REST_STATE_EXPERIENCE);
                 const uint16_t ufPlayerLevel = fieldIndex(UF::UNIT_FIELD_LEVEL);
                 const uint16_t ufCoinage = fieldIndex(UF::PLAYER_FIELD_COINAGE);
+                const uint16_t ufHonor   = fieldIndex(UF::PLAYER_FIELD_HONOR_CURRENCY);
+                const uint16_t ufArena   = fieldIndex(UF::PLAYER_FIELD_ARENA_CURRENCY);
                 const uint16_t ufArmor = fieldIndex(UF::UNIT_FIELD_RESISTANCES);
                 const uint16_t ufPBytes2 = fieldIndex(UF::PLAYER_BYTES_2);
                 const uint16_t ufChosenTitle = fieldIndex(UF::PLAYER_CHOSEN_TITLE);
@@ -11813,6 +11815,14 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                     else if (key == ufCoinage) {
                         playerMoneyCopper_ = val;
                         LOG_DEBUG("Money set from update fields: ", val, " copper");
+                    }
+                    else if (ufHonor != 0xFFFF && key == ufHonor) {
+                        playerHonorPoints_ = val;
+                        LOG_DEBUG("Honor points from update fields: ", val);
+                    }
+                    else if (ufArena != 0xFFFF && key == ufArena) {
+                        playerArenaPoints_ = val;
+                        LOG_DEBUG("Arena points from update fields: ", val);
                     }
                     else if (ufArmor != 0xFFFF && key == ufArmor) {
                         playerArmorRating_ = static_cast<int32_t>(val);
@@ -12207,6 +12217,8 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                     const uint16_t ufPlayerRestedXpV = fieldIndex(UF::PLAYER_REST_STATE_EXPERIENCE);
                     const uint16_t ufPlayerLevel = fieldIndex(UF::UNIT_FIELD_LEVEL);
                     const uint16_t ufCoinage = fieldIndex(UF::PLAYER_FIELD_COINAGE);
+                    const uint16_t ufHonorV  = fieldIndex(UF::PLAYER_FIELD_HONOR_CURRENCY);
+                    const uint16_t ufArenaV  = fieldIndex(UF::PLAYER_FIELD_ARENA_CURRENCY);
                     const uint16_t ufPlayerFlags = fieldIndex(UF::PLAYER_FLAGS);
                     const uint16_t ufArmor = fieldIndex(UF::UNIT_FIELD_RESISTANCES);
                     const uint16_t ufPBytesV = fieldIndex(UF::PLAYER_BYTES);
@@ -12253,6 +12265,14 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                         else if (key == ufCoinage) {
                             playerMoneyCopper_ = val;
                             LOG_DEBUG("Money updated via VALUES: ", val, " copper");
+                        }
+                        else if (ufHonorV != 0xFFFF && key == ufHonorV) {
+                            playerHonorPoints_ = val;
+                            LOG_DEBUG("Honor points updated: ", val);
+                        }
+                        else if (ufArenaV != 0xFFFF && key == ufArenaV) {
+                            playerArenaPoints_ = val;
+                            LOG_DEBUG("Arena points updated: ", val);
                         }
                         else if (ufArmor != 0xFFFF && key == ufArmor) {
                             playerArmorRating_ = static_cast<int32_t>(val);

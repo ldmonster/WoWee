@@ -1249,6 +1249,22 @@ void InventoryScreen::renderCharacterScreen(game::GameHandler& gameHandler) {
                 ImGui::Text("%s", fmtTime(levelSec).c_str()); ImGui::NextColumn();
                 ImGui::Columns(1);
             }
+
+            // PvP Currency (TBC/WotLK only)
+            uint32_t honor = gameHandler.getHonorPoints();
+            uint32_t arena = gameHandler.getArenaPoints();
+            if (honor > 0 || arena > 0) {
+                ImGui::Separator();
+                ImGui::TextDisabled("PvP Currency");
+                ImGui::Columns(2, "##pvpcurrency", false);
+                ImGui::SetColumnWidth(0, 130);
+                ImGui::Text("Honor Points:"); ImGui::NextColumn();
+                ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.2f, 1.0f), "%u", honor); ImGui::NextColumn();
+                ImGui::Text("Arena Points:"); ImGui::NextColumn();
+                ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.2f, 1.0f), "%u", arena); ImGui::NextColumn();
+                ImGui::Columns(1);
+            }
+
             ImGui::EndTabItem();
         }
 

@@ -299,6 +299,10 @@ public:
     // Money (copper)
     uint64_t getMoneyCopper() const { return playerMoneyCopper_; }
 
+    // PvP currency (TBC/WotLK only)
+    uint32_t getHonorPoints() const { return playerHonorPoints_; }
+    uint32_t getArenaPoints() const { return playerArenaPoints_; }
+
     // Server-authoritative armor (UNIT_FIELD_RESISTANCES[0])
     int32_t getArmorRating() const { return playerArmorRating_; }
 
@@ -3067,6 +3071,8 @@ private:
     float pendingLootMoneyNotifyTimer_ = 0.0f;
     std::unordered_map<uint64_t, float> recentLootMoneyAnnounceCooldowns_;
     uint64_t playerMoneyCopper_ = 0;
+    uint32_t playerHonorPoints_ = 0;
+    uint32_t playerArenaPoints_ = 0;
     int32_t playerArmorRating_ = 0;
     int32_t playerResistances_[6] = {};  // [0]=Holy,[1]=Fire,[2]=Nature,[3]=Frost,[4]=Shadow,[5]=Arcane
     // Server-authoritative primary stats: [0]=STR [1]=AGI [2]=STA [3]=INT [4]=SPI; -1 = not received yet
