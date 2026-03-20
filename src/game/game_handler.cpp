@@ -19651,6 +19651,10 @@ void GameHandler::leaveGroup() {
     socket->send(packet);
     partyData = GroupListData{};
     LOG_INFO("Left group");
+    if (addonEventCallback_) {
+        addonEventCallback_("GROUP_ROSTER_UPDATE", {});
+        addonEventCallback_("PARTY_MEMBERS_CHANGED", {});
+    }
 }
 
 void GameHandler::handleGroupInvite(network::Packet& packet) {
@@ -19713,6 +19717,11 @@ void GameHandler::handleGroupUninvite(network::Packet& packet) {
     (void)packet;
     partyData = GroupListData{};
     LOG_INFO("Removed from group");
+
+    if (addonEventCallback_) {
+        addonEventCallback_("GROUP_ROSTER_UPDATE", {});
+        addonEventCallback_("PARTY_MEMBERS_CHANGED", {});
+    }
 
     MessageChatData msg;
     msg.type = ChatType::SYSTEM;
