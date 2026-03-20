@@ -3680,8 +3680,10 @@ bool InitialSpellsParser::parse(network::Packet& packet, InitialSpellsData& data
 
     uint16_t cooldownCount = packet.readUInt16();
 
-    // Cap cooldown count to prevent excessive iteration
-    constexpr uint16_t kMaxCooldowns = 256;
+    // Cap cooldown count to prevent excessive iteration.
+    // Some servers include entries for all spells (even with zero remaining time)
+    // to communicate category cooldown data, so the count can be high.
+    constexpr uint16_t kMaxCooldowns = 1024;
     if (cooldownCount > kMaxCooldowns) {
         LOG_WARNING("SMSG_INITIAL_SPELLS: cooldownCount=", cooldownCount, " exceeds max ", kMaxCooldowns,
                     ", capping");
