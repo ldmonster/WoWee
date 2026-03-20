@@ -581,6 +581,7 @@ private:
     uint32_t auctionBrowseOffset_ = 0;       // Pagination offset for browse results
     int auctionItemClass_ = -1;              // Item class filter (-1 = All)
     int auctionItemSubClass_ = -1;           // Item subclass filter (-1 = All)
+    bool auctionUsableOnly_ = false;         // Filter to items usable by current class/level
 
     // Guild bank money input
     int guildBankMoneyInput_[3] = {0, 0, 0};  // gold, silver, copper

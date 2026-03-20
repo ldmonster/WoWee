@@ -16064,6 +16064,7 @@ std::string GameScreen::formatExtendedCost(uint32_t extendedCostId, game::GameHa
     for (int j = 0; j < 5; ++j) {
         if (e.itemId[j] == 0 || e.itemCount[j] == 0) continue;
         if (!result.empty()) result += ", ";
+        gameHandler.ensureItemInfo(e.itemId[j]);  // query if not cached
         const auto* itemInfo = gameHandler.getItemInfo(e.itemId[j]);
         if (itemInfo && itemInfo->valid && !itemInfo->name.empty()) {
             result += std::to_string(e.itemCount[j]) + "x " + itemInfo->name;
@@ -21752,7 +21753,8 @@ void GameScreen::renderAuctionHouseWindow(game::GameHandler& gameHandler) {
             gameHandler.auctionSearch(auctionSearchName_,
                 static_cast<uint8_t>(auctionLevelMin_),
                 static_cast<uint8_t>(auctionLevelMax_),
-                q, getSearchClassId(), getSearchSubClassId(), 0, 0, offset);
+                q, getSearchClassId(), getSearchSubClassId(), 0,
+                auctionUsableOnly_ ? 1 : 0, offset);
         };
 
         // Row 1: Name + Level range
@@ -21798,6 +21800,8 @@ void GameScreen::renderAuctionHouseWindow(game::GameHandler& gameHandler) {
             }
         }
 
+        ImGui::SameLine();
+        ImGui::Checkbox("Usable", &auctionUsableOnly_);
         ImGui::SameLine();
         float delay = gameHandler.getAuctionSearchDelay();
         if (delay > 0.0f) {
