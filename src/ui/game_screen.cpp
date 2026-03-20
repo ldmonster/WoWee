@@ -8652,15 +8652,28 @@ uint32_t GameScreen::resolveMacroPrimarySpellId(uint32_t macroId, game::GameHand
         for (const auto& cmdLine : allMacroCommands(macroText)) {
             std::string cl = cmdLine;
             for (char& c : cl) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            if (cl.rfind("/cast ", 0) != 0) continue;
+            bool isCast = (cl.rfind("/cast ", 0) == 0);
+            bool isCastSeq = (cl.rfind("/castsequence ", 0) == 0);
+            if (!isCast && !isCastSeq) continue;
             size_t sp2 = cmdLine.find(' ');
             if (sp2 == std::string::npos) continue;
             std::string spellArg = cmdLine.substr(sp2 + 1);
+            // Strip conditionals [...]
             if (!spellArg.empty() && spellArg.front() == '[') {
                 size_t ce = spellArg.find(']');
                 if (ce != std::string::npos) spellArg = spellArg.substr(ce + 1);
             }
-            size_t semi = spellArg.find(';');
+            // Strip reset= spec for castsequence
+            if (isCastSeq) {
+                std::string tmp = spellArg;
+                while (!tmp.empty() && tmp.front() == ' ') tmp.erase(tmp.begin());
+                if (tmp.rfind("reset=", 0) == 0) {
+                    size_t spAfter = tmp.find(' ');
+                    if (spAfter != std::string::npos) spellArg = tmp.substr(spAfter + 1);
+                }
+            }
+            // Take first alternative before ';' (for /cast) or first spell before ',' (for /castsequence)
+            size_t semi = spellArg.find(isCastSeq ? ',' : ';');
             if (semi != std::string::npos) spellArg = spellArg.substr(0, semi);
             size_t ss = spellArg.find_first_not_of(" \t!");
             if (ss != std::string::npos) spellArg = spellArg.substr(ss);
@@ -8849,12 +8862,14 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
             if (!macroText.empty()) {
                 std::string showArg = getMacroShowtooltipArg(macroText);
                 if (showArg.empty() || showArg == "__auto__") {
-                    // No explicit #showtooltip arg — derive spell from first /cast line
+                    // No explicit #showtooltip arg — derive spell from first /cast or /castsequence line
                     for (const auto& cmdLine : allMacroCommands(macroText)) {
                         if (cmdLine.size() < 6) continue;
                         std::string cl = cmdLine;
                         for (char& c : cl) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                        if (cl.rfind("/cast ", 0) != 0 && cl != "/cast") continue;
+                        bool isCastCmd = (cl.rfind("/cast ", 0) == 0 || cl == "/cast");
+                        bool isCastSeqCmd = (cl.rfind("/castsequence ", 0) == 0);
+                        if (!isCastCmd && !isCastSeqCmd) continue;
                         size_t sp2 = cmdLine.find(' ');
                         if (sp2 == std::string::npos) continue;
                         showArg = cmdLine.substr(sp2 + 1);
@@ -8863,9 +8878,18 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
                             size_t ce = showArg.find(']');
                             if (ce != std::string::npos) showArg = showArg.substr(ce + 1);
                         }
-                        // Take first alternative before ';'
-                        size_t semi = showArg.find(';');
-                        if (semi != std::string::npos) showArg = showArg.substr(0, semi);
+                        // Strip reset= spec for castsequence
+                        if (isCastSeqCmd) {
+                            std::string tmp = showArg;
+                            while (!tmp.empty() && tmp.front() == ' ') tmp.erase(tmp.begin());
+                            if (tmp.rfind("reset=", 0) == 0) {
+                                size_t spA = tmp.find(' ');
+                                if (spA != std::string::npos) showArg = tmp.substr(spA + 1);
+                            }
+                        }
+                        // First alternative: ';' for /cast, ',' for /castsequence
+                        size_t sep = showArg.find(isCastSeqCmd ? ',' : ';');
+                        if (sep != std::string::npos) showArg = showArg.substr(0, sep);
                         // Trim and strip '!'
                         size_t ss = showArg.find_first_not_of(" \t!");
                         if (ss != std::string::npos) showArg = showArg.substr(ss);
