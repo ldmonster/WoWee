@@ -8772,13 +8772,18 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
             }
         }
 
-        // Insufficient-power check: orange tint when player doesn't have enough power to cast.
-        // Only applies to SPELL slots with a known power cost and when not already on cooldown.
+        // Insufficient-power check: tint when player doesn't have enough power to cast.
+        // Applies to SPELL and MACRO slots with a known power cost.
         bool insufficientPower = false;
-        if (!slot.isEmpty() && slot.type == game::ActionBarSlot::SPELL && slot.id != 0
-            && !onCooldown) {
+        {
+            uint32_t powerCheckSpellId = 0;
+            if (slot.type == game::ActionBarSlot::SPELL && slot.id != 0)
+                powerCheckSpellId = slot.id;
+            else if (slot.type == game::ActionBarSlot::MACRO && slot.id != 0)
+                powerCheckSpellId = resolveMacroPrimarySpellId(slot.id, gameHandler);
             uint32_t spellCost = 0, spellPowerType = 0;
-            spellbookScreen.getSpellPowerInfo(slot.id, assetMgr, spellCost, spellPowerType);
+            if (powerCheckSpellId != 0 && !onCooldown)
+                spellbookScreen.getSpellPowerInfo(powerCheckSpellId, assetMgr, spellCost, spellPowerType);
             if (spellCost > 0) {
                 auto playerEnt = gameHandler.getEntityManager().getEntity(gameHandler.getPlayerGuid());
                 if (playerEnt && (playerEnt->getType() == game::ObjectType::PLAYER ||
