@@ -14521,6 +14521,7 @@ void GameHandler::addLocalChatMessage(const MessageChatData& msg) {
     if (chatHistory.size() > maxChatHistory) {
         chatHistory.pop_front();
     }
+    if (addonChatCallback_) addonChatCallback_(msg);
 }
 
 // ============================================================

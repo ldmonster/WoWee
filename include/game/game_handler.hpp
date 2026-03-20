@@ -279,6 +279,10 @@ public:
     using ChatBubbleCallback = std::function<void(uint64_t, const std::string&, bool)>;
     void setChatBubbleCallback(ChatBubbleCallback cb) { chatBubbleCallback_ = std::move(cb); }
 
+    // Addon chat event callback: fires when any chat message is received (for Lua event dispatch)
+    using AddonChatCallback = std::function<void(const MessageChatData&)>;
+    void setAddonChatCallback(AddonChatCallback cb) { addonChatCallback_ = std::move(cb); }
+
     // Emote animation callback: (entityGuid, animationId)
     using EmoteAnimCallback = std::function<void(uint64_t, uint32_t)>;
     void setEmoteAnimCallback(EmoteAnimCallback cb) { emoteAnimCallback_ = std::move(cb); }
@@ -2634,6 +2638,7 @@ private:
     size_t maxChatHistory = 100;             // Maximum chat messages to keep
     std::vector<std::string> joinedChannels_;   // Active channel memberships
     ChatBubbleCallback chatBubbleCallback_;
+    AddonChatCallback addonChatCallback_;
     EmoteAnimCallback emoteAnimCallback_;
 
     // Targeting

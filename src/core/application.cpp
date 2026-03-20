@@ -335,6 +335,31 @@ bool Application::initialize() {
         if (addonManager_->initialize(gameHandler.get())) {
             std::string addonsDir = assetPath + "/interface/AddOns";
             addonManager_->scanAddons(addonsDir);
+            // Wire chat messages to addon event dispatch
+            gameHandler->setAddonChatCallback([this](const game::MessageChatData& msg) {
+                if (!addonManager_ || !addonsLoaded_) return;
+                // Map ChatType to WoW event name
+                const char* eventName = nullptr;
+                switch (msg.type) {
+                    case game::ChatType::SAY:          eventName = "CHAT_MSG_SAY"; break;
+                    case game::ChatType::YELL:         eventName = "CHAT_MSG_YELL"; break;
+                    case game::ChatType::WHISPER:       eventName = "CHAT_MSG_WHISPER"; break;
+                    case game::ChatType::PARTY:         eventName = "CHAT_MSG_PARTY"; break;
+                    case game::ChatType::GUILD:         eventName = "CHAT_MSG_GUILD"; break;
+                    case game::ChatType::OFFICER:       eventName = "CHAT_MSG_OFFICER"; break;
+                    case game::ChatType::RAID:          eventName = "CHAT_MSG_RAID"; break;
+                    case game::ChatType::RAID_WARNING:  eventName = "CHAT_MSG_RAID_WARNING"; break;
+                    case game::ChatType::BATTLEGROUND:  eventName = "CHAT_MSG_BATTLEGROUND"; break;
+                    case game::ChatType::SYSTEM:        eventName = "CHAT_MSG_SYSTEM"; break;
+                    case game::ChatType::CHANNEL:       eventName = "CHAT_MSG_CHANNEL"; break;
+                    case game::ChatType::EMOTE:
+                    case game::ChatType::TEXT_EMOTE:    eventName = "CHAT_MSG_EMOTE"; break;
+                    default: break;
+                }
+                if (eventName) {
+                    addonManager_->fireEvent(eventName, {msg.message, msg.senderName});
+                }
+            });
             LOG_INFO("Addon system initialized, found ", addonManager_->getAddons().size(), " addon(s)");
         } else {
             LOG_WARNING("Failed to initialize addon system");
