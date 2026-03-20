@@ -31,6 +31,7 @@
 #include "audio/footstep_manager.hpp"
 #include "audio/activity_sound_manager.hpp"
 #include "audio/audio_engine.hpp"
+#include "addons/addon_manager.hpp"
 #include <imgui.h>
 #include "pipeline/m2_loader.hpp"
 #include "pipeline/wmo_loader.hpp"
@@ -327,6 +328,17 @@ bool Application::initialize() {
             if (lastWorld.valid) {
                 startWorldPreload(lastWorld.mapId, lastWorld.mapName, lastWorld.x, lastWorld.y);
             }
+        }
+
+        // Initialize addon system
+        addonManager_ = std::make_unique<addons::AddonManager>();
+        if (addonManager_->initialize(gameHandler.get())) {
+            std::string addonsDir = assetPath + "/interface/AddOns";
+            addonManager_->scanAddons(addonsDir);
+            LOG_INFO("Addon system initialized, found ", addonManager_->getAddons().size(), " addon(s)");
+        } else {
+            LOG_WARNING("Failed to initialize addon system");
+            addonManager_.reset();
         }
 
     } else {
@@ -650,6 +662,7 @@ void Application::setState(AppState newState) {
             // If we reuse a previously spawned instance without forcing a respawn, appearance (notably hair) can desync.
             npcsSpawned = false;
             playerCharacterSpawned = false;
+            addonsLoaded_ = false;
             weaponsSheathed_ = false;
             wasAutoAttacking_ = false;
             loadedMapId_ = 0xFFFFFFFF;
@@ -5031,6 +5044,12 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
 
     // Only enter IN_GAME when this is the final map (no deferred entry pending).
     setState(AppState::IN_GAME);
+
+    // Load addons once per session on first world entry
+    if (addonManager_ && !addonsLoaded_) {
+        addonManager_->loadAllAddons();
+        addonsLoaded_ = true;
+    }
 }
 
 void Application::buildCharSectionsCache() {

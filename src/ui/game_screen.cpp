@@ -2,6 +2,7 @@
 #include "rendering/character_preview.hpp"
 #include "rendering/vk_context.hpp"
 #include "core/application.hpp"
+#include "addons/addon_manager.hpp"
 #include "core/coordinates.hpp"
 #include "core/spawn_presets.hpp"
 #include "core/input.hpp"
@@ -2629,7 +2630,7 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                     "/p", "/party", "/petaggressive", "/petattack", "/petdefensive",
                     "/petdismiss", "/petfollow", "/pethalt", "/petpassive", "/petstay",
                     "/played", "/pvp",
-                    "/r", "/raid", "/raidinfo", "/raidwarning", "/random", "/reply", "/roll",
+                    "/r", "/raid", "/raidinfo", "/raidwarning", "/random", "/reply", "/roll", "/run",
                     "/s", "/say", "/screenshot", "/setloot", "/shout", "/sit", "/stand",
                     "/startattack", "/stopattack", "/stopcasting", "/stopfollow", "/stopmacro",
                     "/t", "/target", "/threat", "/time", "/trade",
@@ -5992,6 +5993,19 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
             // Convert command to lowercase for comparison
             std::string cmdLower = cmd;
             for (char& c : cmdLower) c = std::tolower(c);
+
+            // /run <lua code> — execute Lua script via addon system
+            if ((cmdLower == "run" || cmdLower == "script") && spacePos != std::string::npos) {
+                std::string luaCode = command.substr(spacePos + 1);
+                auto* am = core::Application::getInstance().getAddonManager();
+                if (am) {
+                    am->runScript(luaCode);
+                } else {
+                    gameHandler.addUIError("Addon system not initialized.");
+                }
+                chatInputBuffer[0] = '\0';
+                return;
+            }
 
             // Special commands
             if (cmdLower == "logout") {

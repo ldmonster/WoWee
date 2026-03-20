@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(wowee VERSION 1.0.0 LANGUAGES CXX)
+project(wowee VERSION 1.0.0 LANGUAGES C CXX)
 include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -552,6 +552,11 @@ set(WOWEE_SOURCES
     src/ui/talent_screen.cpp
     src/ui/keybinding_manager.cpp
 
+    # Addons
+    src/addons/addon_manager.cpp
+    src/addons/lua_engine.cpp
+    src/addons/toc_parser.cpp
+
     # Main
     src/main.cpp
 )
@@ -668,6 +673,27 @@ if(WIN32)
     list(APPEND WOWEE_PLATFORM_SOURCES resources/wowee.rc)
 endif()
 
+# ---- Lua 5.1.5 (vendored, static library) ----
+set(LUA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern/lua-5.1.5/src)
+set(LUA_SOURCES
+    ${LUA_DIR}/lapi.c    ${LUA_DIR}/lcode.c   ${LUA_DIR}/ldebug.c
+    ${LUA_DIR}/ldo.c     ${LUA_DIR}/ldump.c   ${LUA_DIR}/lfunc.c
+    ${LUA_DIR}/lgc.c     ${LUA_DIR}/llex.c    ${LUA_DIR}/lmem.c
+    ${LUA_DIR}/lobject.c ${LUA_DIR}/lopcodes.c ${LUA_DIR}/lparser.c
+    ${LUA_DIR}/lstate.c  ${LUA_DIR}/lstring.c ${LUA_DIR}/ltable.c
+    ${LUA_DIR}/ltm.c     ${LUA_DIR}/lundump.c ${LUA_DIR}/lvm.c
+    ${LUA_DIR}/lzio.c    ${LUA_DIR}/lauxlib.c ${LUA_DIR}/lbaselib.c
+    ${LUA_DIR}/ldblib.c  ${LUA_DIR}/liolib.c  ${LUA_DIR}/lmathlib.c
+    ${LUA_DIR}/loslib.c  ${LUA_DIR}/ltablib.c ${LUA_DIR}/lstrlib.c
+    ${LUA_DIR}/linit.c
+)
+add_library(lua51 STATIC ${LUA_SOURCES})
+set_target_properties(lua51 PROPERTIES LINKER_LANGUAGE C C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+target_include_directories(lua51 PUBLIC ${LUA_DIR})
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(lua51 PRIVATE -w)
+endif()
+
 # Create executable
 add_executable(wowee ${WOWEE_SOURCES} ${WOWEE_HEADERS} ${WOWEE_PLATFORM_SOURCES})
 if(TARGET opcodes-generate)
@@ -709,6 +735,7 @@ target_link_libraries(wowee PRIVATE
     OpenSSL::Crypto
     Threads::Threads
     ZLIB::ZLIB
+    lua51
     ${CMAKE_DL_LIBS}
 )
 

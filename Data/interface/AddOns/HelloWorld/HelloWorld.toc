@@ -1,0 +1,4 @@
+## Interface: 30300
+## Title: Hello World
+## Notes: Test addon for the WoWee addon system
+HelloWorld.lua

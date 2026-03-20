@@ -26,6 +26,7 @@ namespace auth { class AuthHandler; }
 namespace game { class GameHandler; class World; class ExpansionRegistry; }
 namespace pipeline { class AssetManager; class DBCLayout; struct M2Model; struct WMOModel; }
 namespace audio { enum class VoiceType; }
+namespace addons { class AddonManager; }
 
 namespace core {
 
@@ -62,6 +63,7 @@ public:
     game::GameHandler* getGameHandler() { return gameHandler.get(); }
     game::World* getWorld() { return world.get(); }
     pipeline::AssetManager* getAssetManager() { return assetManager.get(); }
+    addons::AddonManager* getAddonManager() { return addonManager_.get(); }
     game::ExpansionRegistry* getExpansionRegistry() { return expansionRegistry_.get(); }
     pipeline::DBCLayout* getDBCLayout() { return dbcLayout_.get(); }
     void reloadExpansionData(); // Reload DBC layouts, opcodes, etc. after expansion change
@@ -129,6 +131,8 @@ private:
     std::unique_ptr<game::GameHandler> gameHandler;
     std::unique_ptr<game::World> world;
     std::unique_ptr<pipeline::AssetManager> assetManager;
+    std::unique_ptr<addons::AddonManager> addonManager_;
+    bool addonsLoaded_ = false;
     std::unique_ptr<game::ExpansionRegistry> expansionRegistry_;
     std::unique_ptr<pipeline::DBCLayout> dbcLayout_;
 
