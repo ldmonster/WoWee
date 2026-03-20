@@ -641,6 +641,29 @@ static int lua_GetCurrentMapAreaID(lua_State* L) {
     return 1;
 }
 
+// GetZoneText() / GetRealZoneText() → current zone name
+static int lua_GetZoneText(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushstring(L, ""); return 1; }
+    uint32_t zoneId = gh->getWorldStateZoneId();
+    if (zoneId != 0) {
+        std::string name = gh->getWhoAreaName(zoneId);
+        if (!name.empty()) { lua_pushstring(L, name.c_str()); return 1; }
+    }
+    lua_pushstring(L, "");
+    return 1;
+}
+
+// GetSubZoneText() → subzone name (same as zone for now — server doesn't always send subzone)
+static int lua_GetSubZoneText(lua_State* L) {
+    return lua_GetZoneText(L);  // Best-effort: zone and subzone often overlap
+}
+
+// GetMinimapZoneText() → zone name displayed near minimap
+static int lua_GetMinimapZoneText(lua_State* L) {
+    return lua_GetZoneText(L);
+}
+
 // --- Player State API ---
 // These replace the hardcoded "return false" Lua stubs with real game state.
 
@@ -1183,6 +1206,10 @@ void LuaEngine::registerCoreAPI() {
         {"GetLocale",         lua_GetLocale},
         {"GetBuildInfo",      lua_GetBuildInfo},
         {"GetCurrentMapAreaID", lua_GetCurrentMapAreaID},
+        {"GetZoneText",          lua_GetZoneText},
+        {"GetRealZoneText",      lua_GetZoneText},
+        {"GetSubZoneText",       lua_GetSubZoneText},
+        {"GetMinimapZoneText",   lua_GetMinimapZoneText},
         // Player state (replaces hardcoded stubs)
         {"IsMounted",         lua_IsMounted},
         {"IsFlying",          lua_IsFlying},
