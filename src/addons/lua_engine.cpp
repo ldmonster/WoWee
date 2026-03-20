@@ -917,6 +917,21 @@ void LuaEngine::registerCoreAPI() {
         "    return ticker\n"
         "end\n"
     );
+
+    // DEFAULT_CHAT_FRAME with AddMessage method (used by many addons)
+    luaL_dostring(L_,
+        "DEFAULT_CHAT_FRAME = {}\n"
+        "function DEFAULT_CHAT_FRAME:AddMessage(text, r, g, b)\n"
+        "    if r and g and b then\n"
+        "        local hex = format('|cff%02x%02x%02x', "
+        "            math.floor(r*255), math.floor(g*255), math.floor(b*255))\n"
+        "        print(hex .. tostring(text) .. '|r')\n"
+        "    else\n"
+        "        print(tostring(text))\n"
+        "    end\n"
+        "end\n"
+        "ChatFrame1 = DEFAULT_CHAT_FRAME\n"
+    );
 }
 
 // ---- Event System ----
