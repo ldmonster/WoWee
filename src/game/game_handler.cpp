@@ -5424,11 +5424,14 @@ void GameHandler::handlePacket(network::Packet& packet) {
                         }
                         questLog_.erase(it);
                         LOG_INFO("  Removed quest ", questId, " from quest log");
+                        if (addonEventCallback_)
+                            addonEventCallback_("QUEST_TURNED_IN", {std::to_string(questId)});
                         break;
                     }
                 }
             }
-            if (addonEventCallback_) addonEventCallback_("QUEST_LOG_UPDATE", {});
+            if (addonEventCallback_)
+                addonEventCallback_("QUEST_LOG_UPDATE", {});
             // Re-query all nearby quest giver NPCs so markers refresh
             if (socket) {
                 for (const auto& [guid, entity] : entityManager.getEntities()) {
