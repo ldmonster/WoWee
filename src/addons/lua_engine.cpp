@@ -445,6 +445,50 @@ static int lua_UnitIsTappedByAllThreatList(lua_State* L) {
     return 1;
 }
 
+// UnitThreatSituation(unit, mobUnit) → 0=not tanking, 1=not tanking but threat, 2=insecurely tanking, 3=securely tanking
+static int lua_UnitThreatSituation(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushnumber(L, 0); return 1; }
+    const char* uid = luaL_optstring(L, 1, "player");
+    const char* mobUid = luaL_optstring(L, 2, nullptr);
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t playerUnitGuid = resolveUnitGuid(gh, uidStr);
+    if (playerUnitGuid == 0) { lua_pushnumber(L, 0); return 1; }
+    // If no mob specified, check general combat threat against current target
+    uint64_t mobGuid = 0;
+    if (mobUid && *mobUid) {
+        std::string mStr(mobUid);
+        for (char& c : mStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        mobGuid = resolveUnitGuid(gh, mStr);
+    }
+    // Approximate threat: check if the mob is targeting this unit
+    if (mobGuid != 0) {
+        auto mobEntity = gh->getEntityManager().getEntity(mobGuid);
+        if (mobEntity) {
+            const auto& fields = mobEntity->getFields();
+            auto loIt = fields.find(game::fieldIndex(game::UF::UNIT_FIELD_TARGET_LO));
+            if (loIt != fields.end()) {
+                uint64_t mobTarget = loIt->second;
+                auto hiIt = fields.find(game::fieldIndex(game::UF::UNIT_FIELD_TARGET_HI));
+                if (hiIt != fields.end())
+                    mobTarget |= (static_cast<uint64_t>(hiIt->second) << 32);
+                if (mobTarget == playerUnitGuid) {
+                    lua_pushnumber(L, 3); // securely tanking
+                    return 1;
+                }
+            }
+        }
+    }
+    // Check if player is in combat (basic threat indicator)
+    if (playerUnitGuid == gh->getPlayerGuid() && gh->isInCombat()) {
+        lua_pushnumber(L, 1); // in combat but not tanking
+        return 1;
+    }
+    lua_pushnumber(L, 0);
+    return 1;
+}
+
 // UnitSex(unit) → 1=unknown, 2=male, 3=female
 static int lua_UnitSex(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
@@ -3112,6 +3156,7 @@ void LuaEngine::registerCoreAPI() {
         {"UnitIsTapped",        lua_UnitIsTapped},
         {"UnitIsTappedByPlayer", lua_UnitIsTappedByPlayer},
         {"UnitIsTappedByAllThreatList", lua_UnitIsTappedByAllThreatList},
+        {"UnitThreatSituation", lua_UnitThreatSituation},
         {"UnitSex",       lua_UnitSex},
         {"UnitClass",     lua_UnitClass},
         {"GetMoney",      lua_GetMoney},
