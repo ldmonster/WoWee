@@ -268,7 +268,17 @@ static int lua_UnitExists(lua_State* L) {
 static int lua_UnitIsDead(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* unit = resolveUnit(L, uid);
-    lua_pushboolean(L, unit && unit->getHealth() == 0);
+    if (unit) {
+        lua_pushboolean(L, unit->getHealth() == 0);
+    } else {
+        // Fallback: party member stats for out-of-range members
+        auto* gh = getGameHandler(L);
+        std::string uidStr(uid);
+        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
+        const auto* pm = findPartyMember(gh, guid);
+        lua_pushboolean(L, pm ? (pm->curHealth == 0 && pm->maxHealth > 0) : 0);
+    }
     return 1;
 }
 
