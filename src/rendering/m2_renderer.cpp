@@ -1579,11 +1579,25 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
             // since we don't have the full combo table — dual-UV effects are rare edge cases.
             bgpu.textureUnit = 0;
 
-            // Batch is hidden only when its named texture failed to load (avoids white shell artifacts).
-            // Do NOT bake transparency/color animation tracks here — they animate over time and
-            // baking the first keyframe value causes legitimate meshes to become invisible.
-            // Keep terrain clutter visible even when source texture paths are malformed.
+            // Start at full opacity; hide only if texture failed to load.
             bgpu.batchOpacity = (texFailed && !groundDetailModel) ? 0.0f : 1.0f;
+
+            // Apply at-rest transparency and color alpha from the M2 animation tracks.
+            // These provide per-batch opacity for ghosts, ethereal effects, fading doodads, etc.
+            // Skip zero values: some animated tracks start at 0 and animate up, and baking
+            // that first keyframe would make the entire batch permanently invisible.
+            if (bgpu.batchOpacity > 0.0f) {
+                float animAlpha = 1.0f;
+                if (batch.colorIndex < model.colorAlphas.size()) {
+                    float ca = model.colorAlphas[batch.colorIndex];
+                    if (ca > 0.001f) animAlpha *= ca;
+                }
+                if (batch.transparencyIndex < model.textureWeights.size()) {
+                    float tw = model.textureWeights[batch.transparencyIndex];
+                    if (tw > 0.001f) animAlpha *= tw;
+                }
+                bgpu.batchOpacity *= animAlpha;
+            }
 
             // Compute batch center and radius for glow sprite positioning
             if ((bgpu.blendMode >= 3 || bgpu.colorKeyBlack) && batch.indexCount > 0) {
