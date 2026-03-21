@@ -16803,6 +16803,8 @@ void GameHandler::handleBattlefieldStatus(network::Packet& packet) {
             LOG_INFO("Battlefield status: unknown (", statusId, ") for ", bgName);
             break;
     }
+    if (addonEventCallback_)
+        addonEventCallback_("UPDATE_BATTLEFIELD_STATUS", {std::to_string(statusId)});
 }
 
 void GameHandler::handleBattlefieldList(network::Packet& packet) {
