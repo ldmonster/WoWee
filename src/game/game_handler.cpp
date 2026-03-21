@@ -2372,9 +2372,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
             /*uint32_t mapId =*/ packet.readUInt32();
             uint32_t slot   = packet.readUInt32();
             uint32_t itemId = packet.readUInt32();
+            int32_t rollRandProp = 0;
             if (isWotLK) {
                 /*uint32_t randSuffix =*/ packet.readUInt32();
-                /*uint32_t randProp   =*/ packet.readUInt32();
+                rollRandProp = static_cast<int32_t>(packet.readUInt32());
             }
             uint32_t countdown  = packet.readUInt32();
             uint8_t voteMask = packet.readUInt8();
@@ -2384,11 +2385,14 @@ void GameHandler::handlePacket(network::Packet& packet) {
             pendingLootRoll_.slot       = slot;
             pendingLootRoll_.itemId     = itemId;
             // Ensure item info is queried so the roll popup can show the name/icon.
-            // The popup re-reads getItemInfo() live, so the name will populate once
-            // SMSG_ITEM_QUERY_SINGLE_RESPONSE arrives (usually within ~100 ms).
             queryItemInfo(itemId, 0);
             auto* info = getItemInfo(itemId);
-            pendingLootRoll_.itemName    = info ? info->name : std::to_string(itemId);
+            std::string rollItemName = info ? info->name : std::to_string(itemId);
+            if (rollRandProp != 0) {
+                std::string suffix = getRandomPropertyName(rollRandProp);
+                if (!suffix.empty()) rollItemName += " " + suffix;
+            }
+            pendingLootRoll_.itemName = rollItemName;
             pendingLootRoll_.itemQuality = info ? static_cast<uint8_t>(info->quality) : 0;
             pendingLootRoll_.rollCountdownMs = (countdown > 0 && countdown <= 120000) ? countdown : 60000;
             pendingLootRoll_.voteMask        = voteMask;
@@ -25854,9 +25858,10 @@ void GameHandler::handleLootRollWon(network::Packet& packet) {
     /*uint32_t slot       =*/ packet.readUInt32();
     uint64_t winnerGuid = packet.readUInt64();
     uint32_t itemId     = packet.readUInt32();
+    int32_t wonRandProp = 0;
     if (isWotLK) {
         /*uint32_t randSuffix =*/ packet.readUInt32();
-        /*uint32_t randProp   =*/ packet.readUInt32();
+        wonRandProp = static_cast<int32_t>(packet.readUInt32());
     }
     uint8_t  rollNum    = packet.readUInt8();
     uint8_t  rollType   = packet.readUInt8();
@@ -25875,6 +25880,10 @@ void GameHandler::handleLootRollWon(network::Packet& packet) {
 
     auto* info = getItemInfo(itemId);
     std::string iName = info && !info->name.empty() ? info->name : std::to_string(itemId);
+    if (wonRandProp != 0) {
+        std::string suffix = getRandomPropertyName(wonRandProp);
+        if (!suffix.empty()) iName += " " + suffix;
+    }
     uint32_t wonItemQuality = info ? info->quality : 1u;
     std::string wonItemLink = buildItemLink(itemId, wonItemQuality, iName);
 
