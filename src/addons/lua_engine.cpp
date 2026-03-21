@@ -540,6 +540,21 @@ static int lua_UnitDetailedThreatSituation(lua_State* L) {
     return 5;
 }
 
+// UnitOnTaxi(unit) → boolean (true if on a flight path)
+static int lua_UnitOnTaxi(lua_State* L) {
+    const char* uid = luaL_optstring(L, 1, "player");
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushboolean(L, 0); return 1; }
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (uidStr == "player") {
+        lua_pushboolean(L, gh->isOnTaxiFlight());
+    } else {
+        lua_pushboolean(L, 0); // Can't determine for other units
+    }
+    return 1;
+}
+
 // UnitSex(unit) → 1=unknown, 2=male, 3=female
 static int lua_UnitSex(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
@@ -3219,6 +3234,7 @@ void LuaEngine::registerCoreAPI() {
         {"UnitIsTapped",        lua_UnitIsTapped},
         {"UnitIsTappedByPlayer", lua_UnitIsTappedByPlayer},
         {"UnitIsTappedByAllThreatList", lua_UnitIsTappedByAllThreatList},
+        {"UnitOnTaxi",          lua_UnitOnTaxi},
         {"UnitThreatSituation", lua_UnitThreatSituation},
         {"UnitDetailedThreatSituation", lua_UnitDetailedThreatSituation},
         {"UnitSex",       lua_UnitSex},
