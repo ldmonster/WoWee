@@ -1234,6 +1234,141 @@ static int lua_GetSkillLineInfo(lua_State* L) {
     return 12;
 }
 
+// --- Talent API ---
+
+// GetNumTalentTabs() → count (usually 3)
+static int lua_GetNumTalentTabs(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushnumber(L, 0); return 1; }
+    // Count tabs matching the player's class
+    uint8_t classId = gh->getPlayerClass();
+    uint32_t classMask = (classId > 0) ? (1u << (classId - 1)) : 0;
+    int count = 0;
+    for (const auto& [tabId, tab] : gh->getAllTalentTabs()) {
+        if (tab.classMask & classMask) count++;
+    }
+    lua_pushnumber(L, count);
+    return 1;
+}
+
+// GetTalentTabInfo(tabIndex) → name, iconTexture, pointsSpent, background
+static int lua_GetTalentTabInfo(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    int tabIndex = static_cast<int>(luaL_checknumber(L, 1)); // 1-indexed
+    if (!gh || tabIndex < 1) {
+        lua_pushnil(L); return 1;
+    }
+    uint8_t classId = gh->getPlayerClass();
+    uint32_t classMask = (classId > 0) ? (1u << (classId - 1)) : 0;
+    // Find the Nth tab for this class (sorted by orderIndex)
+    std::vector<const game::GameHandler::TalentTabEntry*> classTabs;
+    for (const auto& [tabId, tab] : gh->getAllTalentTabs()) {
+        if (tab.classMask & classMask) classTabs.push_back(&tab);
+    }
+    std::sort(classTabs.begin(), classTabs.end(),
+        [](const auto* a, const auto* b) { return a->orderIndex < b->orderIndex; });
+    if (tabIndex > static_cast<int>(classTabs.size())) {
+        lua_pushnil(L); return 1;
+    }
+    const auto* tab = classTabs[tabIndex - 1];
+    // Count points spent in this tab
+    int pointsSpent = 0;
+    const auto& learned = gh->getLearnedTalents();
+    for (const auto& [talentId, rank] : learned) {
+        const auto* entry = gh->getTalentEntry(talentId);
+        if (entry && entry->tabId == tab->tabId) pointsSpent += rank;
+    }
+    lua_pushstring(L, tab->name.c_str());              // 1: name
+    lua_pushnil(L);                                     // 2: iconTexture (not resolved)
+    lua_pushnumber(L, pointsSpent);                     // 3: pointsSpent
+    lua_pushstring(L, tab->backgroundFile.c_str());     // 4: background
+    return 4;
+}
+
+// GetNumTalents(tabIndex) → count
+static int lua_GetNumTalents(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    int tabIndex = static_cast<int>(luaL_checknumber(L, 1));
+    if (!gh || tabIndex < 1) { lua_pushnumber(L, 0); return 1; }
+    uint8_t classId = gh->getPlayerClass();
+    uint32_t classMask = (classId > 0) ? (1u << (classId - 1)) : 0;
+    std::vector<const game::GameHandler::TalentTabEntry*> classTabs;
+    for (const auto& [tabId, tab] : gh->getAllTalentTabs()) {
+        if (tab.classMask & classMask) classTabs.push_back(&tab);
+    }
+    std::sort(classTabs.begin(), classTabs.end(),
+        [](const auto* a, const auto* b) { return a->orderIndex < b->orderIndex; });
+    if (tabIndex > static_cast<int>(classTabs.size())) {
+        lua_pushnumber(L, 0); return 1;
+    }
+    uint32_t targetTabId = classTabs[tabIndex - 1]->tabId;
+    int count = 0;
+    for (const auto& [talentId, entry] : gh->getAllTalents()) {
+        if (entry.tabId == targetTabId) count++;
+    }
+    lua_pushnumber(L, count);
+    return 1;
+}
+
+// GetTalentInfo(tabIndex, talentIndex) → name, iconTexture, tier, column, rank, maxRank, isExceptional, available
+static int lua_GetTalentInfo(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    int tabIndex = static_cast<int>(luaL_checknumber(L, 1));
+    int talentIndex = static_cast<int>(luaL_checknumber(L, 2));
+    if (!gh || tabIndex < 1 || talentIndex < 1) {
+        for (int i = 0; i < 8; i++) lua_pushnil(L);
+        return 8;
+    }
+    uint8_t classId = gh->getPlayerClass();
+    uint32_t classMask = (classId > 0) ? (1u << (classId - 1)) : 0;
+    std::vector<const game::GameHandler::TalentTabEntry*> classTabs;
+    for (const auto& [tabId, tab] : gh->getAllTalentTabs()) {
+        if (tab.classMask & classMask) classTabs.push_back(&tab);
+    }
+    std::sort(classTabs.begin(), classTabs.end(),
+        [](const auto* a, const auto* b) { return a->orderIndex < b->orderIndex; });
+    if (tabIndex > static_cast<int>(classTabs.size())) {
+        for (int i = 0; i < 8; i++) lua_pushnil(L);
+        return 8;
+    }
+    uint32_t targetTabId = classTabs[tabIndex - 1]->tabId;
+    // Collect talents for this tab, sorted by row then column
+    std::vector<const game::GameHandler::TalentEntry*> tabTalents;
+    for (const auto& [talentId, entry] : gh->getAllTalents()) {
+        if (entry.tabId == targetTabId) tabTalents.push_back(&entry);
+    }
+    std::sort(tabTalents.begin(), tabTalents.end(),
+        [](const auto* a, const auto* b) {
+            return (a->row != b->row) ? a->row < b->row : a->column < b->column;
+        });
+    if (talentIndex > static_cast<int>(tabTalents.size())) {
+        for (int i = 0; i < 8; i++) lua_pushnil(L);
+        return 8;
+    }
+    const auto* talent = tabTalents[talentIndex - 1];
+    uint8_t rank = gh->getTalentRank(talent->talentId);
+    // Get spell name for rank 1 spell
+    std::string name = gh->getSpellName(talent->rankSpells[0]);
+    if (name.empty()) name = "Talent " + std::to_string(talent->talentId);
+
+    lua_pushstring(L, name.c_str());          // 1: name
+    lua_pushnil(L);                            // 2: iconTexture
+    lua_pushnumber(L, talent->row + 1);        // 3: tier (1-indexed)
+    lua_pushnumber(L, talent->column + 1);     // 4: column (1-indexed)
+    lua_pushnumber(L, rank);                   // 5: rank
+    lua_pushnumber(L, talent->maxRank);        // 6: maxRank
+    lua_pushboolean(L, 0);                     // 7: isExceptional
+    lua_pushboolean(L, 1);                     // 8: available
+    return 8;
+}
+
+// GetActiveTalentGroup() → 1 or 2
+static int lua_GetActiveTalentGroup(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    lua_pushnumber(L, gh ? (gh->getActiveTalentSpec() + 1) : 1);
+    return 1;
+}
+
 // --- Loot API ---
 
 // GetNumLootItems() → count
@@ -2464,6 +2599,12 @@ void LuaEngine::registerCoreAPI() {
         // Skill line API
         {"GetNumSkillLines",        lua_GetNumSkillLines},
         {"GetSkillLineInfo",        lua_GetSkillLineInfo},
+        // Talent API
+        {"GetNumTalentTabs",        lua_GetNumTalentTabs},
+        {"GetTalentTabInfo",        lua_GetTalentTabInfo},
+        {"GetNumTalents",           lua_GetNumTalents},
+        {"GetTalentInfo",           lua_GetTalentInfo},
+        {"GetActiveTalentGroup",    lua_GetActiveTalentGroup},
         // Reaction/connection queries
         {"UnitReaction",        lua_UnitReaction},
         {"UnitIsConnected",     lua_UnitIsConnected},
