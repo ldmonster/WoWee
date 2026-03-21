@@ -4808,6 +4808,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                         if (auto* sfx = renderer->getUiSoundManager())
                             sfx->playDropOnGround();
                     }
+                    if (addonEventCallback_) {
+                        addonEventCallback_("BAG_UPDATE", {});
+                        addonEventCallback_("PLAYER_MONEY", {});
+                    }
                 } else {
                     bool removedPending = false;
                     auto it = pendingSellToBuyback_.find(itemGuid);
