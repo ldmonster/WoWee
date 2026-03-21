@@ -2211,6 +2211,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
             uint32_t value = packet.readUInt32();
             worldStates_[field] = value;
             LOG_DEBUG("SMSG_UPDATE_WORLD_STATE: field=", field, " value=", value);
+            if (addonEventCallback_)
+                addonEventCallback_("UPDATE_WORLD_STATES", {});
             break;
         }
         case Opcode::SMSG_WORLD_STATE_UI_TIMER_UPDATE: {
