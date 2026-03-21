@@ -535,6 +535,65 @@ static int lua_CastSpellByName(lua_State* L) {
     return 0;
 }
 
+// SendAddonMessage(prefix, text, chatType, target) — send addon message
+static int lua_SendAddonMessage(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) return 0;
+    const char* prefix = luaL_checkstring(L, 1);
+    const char* text = luaL_checkstring(L, 2);
+    const char* chatType = luaL_optstring(L, 3, "PARTY");
+    const char* target = luaL_optstring(L, 4, "");
+
+    // Build addon message: prefix + TAB + text, send via the appropriate channel
+    std::string typeStr(chatType);
+    for (char& c : typeStr) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+    game::ChatType ct = game::ChatType::PARTY;
+    if (typeStr == "PARTY")           ct = game::ChatType::PARTY;
+    else if (typeStr == "RAID")       ct = game::ChatType::RAID;
+    else if (typeStr == "GUILD")      ct = game::ChatType::GUILD;
+    else if (typeStr == "OFFICER")    ct = game::ChatType::OFFICER;
+    else if (typeStr == "BATTLEGROUND") ct = game::ChatType::BATTLEGROUND;
+    else if (typeStr == "WHISPER")    ct = game::ChatType::WHISPER;
+
+    // Encode as prefix\ttext (WoW addon message format)
+    std::string encoded = std::string(prefix) + "\t" + text;
+    std::string targetStr(target && *target ? target : "");
+    gh->sendChatMessage(ct, encoded, targetStr);
+    return 0;
+}
+
+// RegisterAddonMessagePrefix(prefix) — register prefix for receiving addon messages
+static int lua_RegisterAddonMessagePrefix(lua_State* L) {
+    const char* prefix = luaL_checkstring(L, 1);
+    // Store in a global Lua table for filtering
+    lua_getglobal(L, "__WoweeAddonPrefixes");
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_setglobal(L, "__WoweeAddonPrefixes");
+    }
+    lua_pushboolean(L, 1);
+    lua_setfield(L, -2, prefix);
+    lua_pop(L, 1);
+    lua_pushboolean(L, 1); // success
+    return 1;
+}
+
+// IsAddonMessagePrefixRegistered(prefix) → boolean
+static int lua_IsAddonMessagePrefixRegistered(lua_State* L) {
+    const char* prefix = luaL_checkstring(L, 1);
+    lua_getglobal(L, "__WoweeAddonPrefixes");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, prefix);
+        lua_pushboolean(L, lua_toboolean(L, -1));
+        return 1;
+    }
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
 static int lua_IsSpellKnown(lua_State* L) {
     auto* gh = getGameHandler(L);
     uint32_t spellId = static_cast<uint32_t>(luaL_checknumber(L, 1));
@@ -2600,6 +2659,9 @@ void LuaEngine::registerCoreAPI() {
         {"IsInRaid",      lua_IsInRaid},
         {"GetPlayerMapPosition", lua_GetPlayerMapPosition},
         {"SendChatMessage",   lua_SendChatMessage},
+        {"SendAddonMessage",  lua_SendAddonMessage},
+        {"RegisterAddonMessagePrefix", lua_RegisterAddonMessagePrefix},
+        {"IsAddonMessagePrefixRegistered", lua_IsAddonMessagePrefixRegistered},
         {"CastSpellByName",   lua_CastSpellByName},
         {"IsSpellKnown",      lua_IsSpellKnown},
         {"GetSpellCooldown",  lua_GetSpellCooldown},
@@ -3130,6 +3192,11 @@ void LuaEngine::registerCoreAPI() {
         "HIGHLIGHT_FONT_COLOR = {r=1.0,g=1.0,b=1.0}\n"
         "GREEN_FONT_COLOR = {r=0.1,g=1.0,b=0.1}\n"
         "RED_FONT_COLOR = {r=1.0,g=0.1,b=0.1}\n"
+        // C_ChatInfo — addon message prefix API used by some addons
+        "C_ChatInfo = C_ChatInfo or {}\n"
+        "C_ChatInfo.RegisterAddonMessagePrefix = RegisterAddonMessagePrefix\n"
+        "C_ChatInfo.IsAddonMessagePrefixRegistered = IsAddonMessagePrefixRegistered\n"
+        "C_ChatInfo.SendAddonMessage = SendAddonMessage\n"
     );
 
     // WoW table/string utility functions used by many addons
