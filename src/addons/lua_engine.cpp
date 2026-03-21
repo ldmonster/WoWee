@@ -2599,6 +2599,66 @@ void LuaEngine::registerCoreAPI() {
         "end\n"
     );
 
+    // LibStub — universal library version management used by Ace3 and virtually all addon libs.
+    // This is the standard WoW LibStub implementation that addons embed/expect globally.
+    luaL_dostring(L_,
+        "local LibStub = LibStub or {}\n"
+        "LibStub.libs = LibStub.libs or {}\n"
+        "LibStub.minors = LibStub.minors or {}\n"
+        "function LibStub:NewLibrary(major, minor)\n"
+        "    assert(type(major) == 'string', 'LibStub:NewLibrary: bad argument #1 (string expected)')\n"
+        "    minor = assert(tonumber(minor or (type(minor) == 'string' and minor:match('(%d+)'))), 'LibStub:NewLibrary: bad argument #2 (number expected)')\n"
+        "    local oldMinor = self.minors[major]\n"
+        "    if oldMinor and oldMinor >= minor then return nil end\n"
+        "    local lib = self.libs[major] or {}\n"
+        "    self.libs[major] = lib\n"
+        "    self.minors[major] = minor\n"
+        "    return lib, oldMinor\n"
+        "end\n"
+        "function LibStub:GetLibrary(major, silent)\n"
+        "    if not self.libs[major] and not silent then\n"
+        "        error('Cannot find a library instance of \"' .. tostring(major) .. '\".')\n"
+        "    end\n"
+        "    return self.libs[major], self.minors[major]\n"
+        "end\n"
+        "function LibStub:IterateLibraries() return pairs(self.libs) end\n"
+        "setmetatable(LibStub, { __call = LibStub.GetLibrary })\n"
+        "_G['LibStub'] = LibStub\n"
+    );
+
+    // CallbackHandler-1.0 — minimal implementation for Ace3-based addons
+    luaL_dostring(L_,
+        "if LibStub then\n"
+        "  local CBH = LibStub:NewLibrary('CallbackHandler-1.0', 7)\n"
+        "  if CBH then\n"
+        "    CBH.mixins = { 'RegisterCallback', 'UnregisterCallback', 'UnregisterAllCallbacks', 'Fire' }\n"
+        "    function CBH:New(target, regName, unregName, unregAllName, onUsed)\n"
+        "      local registry = setmetatable({}, { __index = CBH })\n"
+        "      registry.callbacks = {}\n"
+        "      target = target or {}\n"
+        "      target[regName or 'RegisterCallback'] = function(self, event, method, ...)\n"
+        "        if not registry.callbacks[event] then registry.callbacks[event] = {} end\n"
+        "        local handler = type(method) == 'function' and method or self[method]\n"
+        "        registry.callbacks[event][self] = handler\n"
+        "      end\n"
+        "      target[unregName or 'UnregisterCallback'] = function(self, event)\n"
+        "        if registry.callbacks[event] then registry.callbacks[event][self] = nil end\n"
+        "      end\n"
+        "      target[unregAllName or 'UnregisterAllCallbacks'] = function(self)\n"
+        "        for event, handlers in pairs(registry.callbacks) do handlers[self] = nil end\n"
+        "      end\n"
+        "      registry.Fire = function(self, event, ...)\n"
+        "        if not self.callbacks[event] then return end\n"
+        "        for obj, handler in pairs(self.callbacks[event]) do\n"
+        "          handler(obj, event, ...)\n"
+        "        end\n"
+        "      end\n"
+        "      return registry\n"
+        "    end\n"
+        "  end\n"
+        "end\n"
+    );
+
     // Noop stubs for commonly called functions that don't need implementation
     luaL_dostring(L_,
         "function SetDesaturation() end\n"
