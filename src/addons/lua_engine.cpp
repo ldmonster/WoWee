@@ -391,7 +391,20 @@ static int lua_UnitAura(lua_State* L, bool wantBuff) {
                 }
             }
             lua_pushnumber(L, aura.maxDurationMs > 0 ? aura.maxDurationMs / 1000.0 : 0); // duration
-            lua_pushnumber(L, 0);            // expirationTime (would need absolute time)
+            // expirationTime: GetTime() + remaining seconds (so addons can compute countdown)
+            if (aura.durationMs > 0) {
+                uint64_t auraNowMs = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count());
+                int32_t remMs = aura.getRemainingMs(auraNowMs);
+                // GetTime epoch = steady_clock relative to engine start
+                static auto sStart = std::chrono::steady_clock::now();
+                double nowSec = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - sStart).count();
+                lua_pushnumber(L, nowSec + remMs / 1000.0);
+            } else {
+                lua_pushnumber(L, 0);  // permanent aura
+            }
             // caster: return unit ID string if caster is known
             if (aura.casterGuid != 0) {
                 if (aura.casterGuid == gh->getPlayerGuid())
