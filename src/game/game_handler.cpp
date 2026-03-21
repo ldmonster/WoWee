@@ -4270,8 +4270,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     addSystemChatMessage(buf);
                     watchedFactionId_ = factionId;
                     if (repChangeCallback_) repChangeCallback_(name, delta, standing);
-                    if (addonEventCallback_)
+                    if (addonEventCallback_) {
                         addonEventCallback_("UPDATE_FACTION", {});
+                        addonEventCallback_("CHAT_MSG_COMBAT_FACTION_CHANGE", {std::string(buf)});
+                    }
                 }
                 LOG_DEBUG("SMSG_SET_FACTION_STANDING: faction=", factionId, " standing=", standing);
             }
