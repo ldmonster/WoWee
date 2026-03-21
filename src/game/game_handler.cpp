@@ -2848,6 +2848,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
             // All threat dropped on the local player (e.g. Vanish, Feign Death)
             threatLists_.clear();
             LOG_DEBUG("SMSG_THREAT_CLEAR: threat wiped");
+            if (addonEventCallback_) addonEventCallback_("UNIT_THREAT_LIST_UPDATE", {});
             break;
         case Opcode::SMSG_THREAT_REMOVE: {
             // packed_guid (unit) + packed_guid (victim whose threat was removed)
@@ -2891,6 +2892,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
             std::sort(list.begin(), list.end(),
                 [](const ThreatEntry& a, const ThreatEntry& b){ return a.threat > b.threat; });
             threatLists_[unitGuid] = std::move(list);
+            if (addonEventCallback_)
+                addonEventCallback_("UNIT_THREAT_LIST_UPDATE", {});
             break;
         }
 
