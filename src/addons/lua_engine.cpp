@@ -133,56 +133,135 @@ static game::Unit* resolveUnit(lua_State* L, const char* unitId) {
 
 // --- WoW Unit API ---
 
+// Helper: find GroupMember data for a GUID (for party members out of entity range)
+static const game::GroupMember* findPartyMember(game::GameHandler* gh, uint64_t guid) {
+    if (!gh || guid == 0) return nullptr;
+    for (const auto& m : gh->getPartyData().members) {
+        if (m.guid == guid && m.hasPartyStats) return &m;
+    }
+    return nullptr;
+}
+
 static int lua_UnitName(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* unit = resolveUnit(L, uid);
     if (unit && !unit->getName().empty()) {
         lua_pushstring(L, unit->getName().c_str());
     } else {
-        lua_pushstring(L, "Unknown");
+        // Fallback: party member name for out-of-range members
+        auto* gh = getGameHandler(L);
+        std::string uidStr(uid);
+        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
+        const auto* pm = findPartyMember(gh, guid);
+        if (pm && !pm->name.empty()) {
+            lua_pushstring(L, pm->name.c_str());
+        } else if (gh && guid != 0) {
+            // Try player name cache
+            const std::string& cached = gh->lookupName(guid);
+            lua_pushstring(L, cached.empty() ? "Unknown" : cached.c_str());
+        } else {
+            lua_pushstring(L, "Unknown");
+        }
     }
     return 1;
 }
 
+
 static int lua_UnitHealth(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* unit = resolveUnit(L, uid);
-    lua_pushnumber(L, unit ? unit->getHealth() : 0);
+    if (unit) {
+        lua_pushnumber(L, unit->getHealth());
+    } else {
+        // Fallback: party member stats for out-of-range members
+        auto* gh = getGameHandler(L);
+        std::string uidStr(uid);
+        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
+        const auto* pm = findPartyMember(gh, guid);
+        lua_pushnumber(L, pm ? pm->curHealth : 0);
+    }
     return 1;
 }
 
 static int lua_UnitHealthMax(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* unit = resolveUnit(L, uid);
-    lua_pushnumber(L, unit ? unit->getMaxHealth() : 0);
+    if (unit) {
+        lua_pushnumber(L, unit->getMaxHealth());
+    } else {
+        auto* gh = getGameHandler(L);
+        std::string uidStr(uid);
+        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
+        const auto* pm = findPartyMember(gh, guid);
+        lua_pushnumber(L, pm ? pm->maxHealth : 0);
+    }
     return 1;
 }
 
 static int lua_UnitPower(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* unit = resolveUnit(L, uid);
-    lua_pushnumber(L, unit ? unit->getPower() : 0);
+    if (unit) {
+        lua_pushnumber(L, unit->getPower());
+    } else {
+        auto* gh = getGameHandler(L);
+        std::string uidStr(uid);
+        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
+        const auto* pm = findPartyMember(gh, guid);
+        lua_pushnumber(L, pm ? pm->curPower : 0);
+    }
     return 1;
 }
 
 static int lua_UnitPowerMax(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* unit = resolveUnit(L, uid);
-    lua_pushnumber(L, unit ? unit->getMaxPower() : 0);
+    if (unit) {
+        lua_pushnumber(L, unit->getMaxPower());
+    } else {
+        auto* gh = getGameHandler(L);
+        std::string uidStr(uid);
+        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
+        const auto* pm = findPartyMember(gh, guid);
+        lua_pushnumber(L, pm ? pm->maxPower : 0);
+    }
     return 1;
 }
 
 static int lua_UnitLevel(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* unit = resolveUnit(L, uid);
-    lua_pushnumber(L, unit ? unit->getLevel() : 0);
+    if (unit) {
+        lua_pushnumber(L, unit->getLevel());
+    } else {
+        auto* gh = getGameHandler(L);
+        std::string uidStr(uid);
+        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
+        const auto* pm = findPartyMember(gh, guid);
+        lua_pushnumber(L, pm ? pm->level : 0);
+    }
     return 1;
 }
 
 static int lua_UnitExists(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* unit = resolveUnit(L, uid);
-    lua_pushboolean(L, unit != nullptr);
+    if (unit) {
+        lua_pushboolean(L, 1);
+    } else {
+        // Party members in other zones don't have entities but still "exist"
+        auto* gh = getGameHandler(L);
+        std::string uidStr(uid);
+        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
+        lua_pushboolean(L, guid != 0 && findPartyMember(gh, guid) != nullptr);
+    }
     return 1;
 }
 
