@@ -13534,6 +13534,7 @@ std::shared_ptr<Entity> GameHandler::getTarget() const {
 
 void GameHandler::setFocus(uint64_t guid) {
     focusGuid = guid;
+    if (addonEventCallback_) addonEventCallback_("PLAYER_FOCUS_CHANGED", {});
     if (guid != 0) {
         auto entity = entityManager.getEntity(guid);
         if (entity) {
@@ -13559,6 +13560,14 @@ void GameHandler::clearFocus() {
         LOG_INFO("Focus cleared");
     }
     focusGuid = 0;
+    if (addonEventCallback_) addonEventCallback_("PLAYER_FOCUS_CHANGED", {});
+}
+
+void GameHandler::setMouseoverGuid(uint64_t guid) {
+    if (mouseoverGuid_ != guid) {
+        mouseoverGuid_ = guid;
+        if (addonEventCallback_) addonEventCallback_("UPDATE_MOUSEOVER_UNIT", {});
+    }
 }
 
 std::shared_ptr<Entity> GameHandler::getFocus() const {

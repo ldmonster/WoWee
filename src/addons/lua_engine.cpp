@@ -64,6 +64,7 @@ static uint64_t resolveUnitGuid(game::GameHandler* gh, const std::string& uid) {
     if (uid == "player")      return gh->getPlayerGuid();
     if (uid == "target")      return gh->getTargetGuid();
     if (uid == "focus")       return gh->getFocusGuid();
+    if (uid == "mouseover")   return gh->getMouseoverGuid();
     if (uid == "pet")         return gh->getPetGuid();
     // party1-party4, raid1-raid40
     if (uid.rfind("party", 0) == 0 && uid.size() > 5) {
@@ -91,7 +92,7 @@ static uint64_t resolveUnitGuid(game::GameHandler* gh, const std::string& uid) {
     return 0;
 }
 
-// Helper: resolve "player", "target", "focus", "pet", "partyN", "raidN" unit IDs to entity
+// Helper: resolve "player", "target", "focus", "mouseover", "pet", "partyN", "raidN" unit IDs to entity
 static game::Unit* resolveUnit(lua_State* L, const char* unitId) {
     auto* gh = getGameHandler(L);
     if (!gh || !unitId) return nullptr;

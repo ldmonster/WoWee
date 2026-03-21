@@ -403,7 +403,7 @@ public:
     bool hasFocus() const { return focusGuid != 0; }
 
     // Mouseover targeting — set each frame by the nameplate renderer
-    void setMouseoverGuid(uint64_t guid) { mouseoverGuid_ = guid; }
+    void setMouseoverGuid(uint64_t guid);
     uint64_t getMouseoverGuid() const { return mouseoverGuid_; }
 
     // Advanced targeting
