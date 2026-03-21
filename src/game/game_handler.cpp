@@ -11173,6 +11173,13 @@ void GameHandler::sendMovement(Opcode opcode) {
         }
     }
 
+    // Track movement state transition for PLAYER_STARTED/STOPPED_MOVING events
+    const uint32_t kMoveMask = static_cast<uint32_t>(MovementFlags::FORWARD) |
+                               static_cast<uint32_t>(MovementFlags::BACKWARD) |
+                               static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
+                               static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT);
+    const bool wasMoving = (movementInfo.flags & kMoveMask) != 0;
+
     // Cancel any timed (non-channeled) cast the moment the player starts moving.
     // Channeled spells end via MSG_CHANNEL_UPDATE / SMSG_CHANNEL_NOTIFY from the server.
     // Turning (MSG_MOVE_START_TURN_*) is allowed while casting.
@@ -11275,6 +11282,15 @@ void GameHandler::sendMovement(Opcode opcode) {
             break;
         default:
             break;
+    }
+
+    // Fire PLAYER_STARTED/STOPPED_MOVING on movement state transitions
+    {
+        const bool isMoving = (movementInfo.flags & kMoveMask) != 0;
+        if (isMoving && !wasMoving && addonEventCallback_)
+            addonEventCallback_("PLAYER_STARTED_MOVING", {});
+        else if (!isMoving && wasMoving && addonEventCallback_)
+            addonEventCallback_("PLAYER_STOPPED_MOVING", {});
     }
 
     if (opcode == Opcode::MSG_MOVE_SET_FACING) {
