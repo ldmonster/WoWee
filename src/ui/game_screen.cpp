@@ -2620,7 +2620,7 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                     "/cancelaura", "/cancelform", "/cancellogout", "/cancelshapeshift",
                     "/cast", "/castsequence", "/chathelp", "/clear", "/clearfocus",
                     "/clearmainassist", "/clearmaintank", "/cleartarget", "/cloak",
-                    "/combatlog", "/dance", "/dismount", "/dnd", "/do", "/duel",
+                    "/combatlog", "/dance", "/dismount", "/dnd", "/do", "/duel", "/dump",
                     "/e", "/emote", "/equip", "/equipset",
                     "/focus", "/follow", "/forfeit", "/friend",
                     "/g", "/gdemote", "/ginvite", "/gkick", "/gleader", "/gmotd",
@@ -6011,6 +6011,30 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                     am->runScript(luaCode);
                 } else {
                     gameHandler.addUIError("Addon system not initialized.");
+                }
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+
+            // /dump <expression> — evaluate Lua expression and print result
+            if ((cmdLower == "dump" || cmdLower == "print") && spacePos != std::string::npos) {
+                std::string expr = command.substr(spacePos + 1);
+                auto* am = core::Application::getInstance().getAddonManager();
+                if (am && am->isInitialized()) {
+                    // Wrap expression in print(tostring(...)) to display the value
+                    std::string wrapped = "local __v = " + expr +
+                        "; if type(__v) == 'table' then "
+                        "  local parts = {} "
+                        "  for k,v in pairs(__v) do parts[#parts+1] = tostring(k)..'='..tostring(v) end "
+                        "  print('{' .. table.concat(parts, ', ') .. '}') "
+                        "else print(tostring(__v)) end";
+                    am->runScript(wrapped);
+                } else {
+                    game::MessageChatData errMsg;
+                    errMsg.type = game::ChatType::SYSTEM;
+                    errMsg.language = game::ChatLanguage::UNIVERSAL;
+                    errMsg.message = "Addon system not initialized.";
+                    gameHandler.addLocalChatMessage(errMsg);
                 }
                 chatInputBuffer[0] = '\0';
                 return;
