@@ -540,6 +540,35 @@ static int lua_UnitDetailedThreatSituation(lua_State* L) {
     return 5;
 }
 
+// CheckInteractDistance(unit, distIndex) → boolean
+// distIndex: 1=inspect(28yd), 2=trade(11yd), 3=duel(10yd), 4=follow(28yd)
+static int lua_CheckInteractDistance(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushboolean(L, 0); return 1; }
+    const char* uid = luaL_checkstring(L, 1);
+    int distIdx = static_cast<int>(luaL_optnumber(L, 2, 4));
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    if (guid == 0) { lua_pushboolean(L, 0); return 1; }
+    auto targetEnt = gh->getEntityManager().getEntity(guid);
+    auto playerEnt = gh->getEntityManager().getEntity(gh->getPlayerGuid());
+    if (!targetEnt || !playerEnt) { lua_pushboolean(L, 0); return 1; }
+    float dx = playerEnt->getX() - targetEnt->getX();
+    float dy = playerEnt->getY() - targetEnt->getY();
+    float dz = playerEnt->getZ() - targetEnt->getZ();
+    float dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+    float maxDist = 28.0f; // default: follow/inspect range
+    switch (distIdx) {
+        case 1: maxDist = 28.0f; break; // inspect
+        case 2: maxDist = 11.11f; break; // trade
+        case 3: maxDist = 9.9f; break; // duel
+        case 4: maxDist = 28.0f; break; // follow
+    }
+    lua_pushboolean(L, dist <= maxDist);
+    return 1;
+}
+
 // IsSpellInRange(spellName, unit) → 0 or 1 (nil if can't determine)
 static int lua_IsSpellInRange(lua_State* L) {
     auto* gh = getGameHandler(L);
@@ -3415,6 +3444,7 @@ void LuaEngine::registerCoreAPI() {
         {"GetSpellCooldown",  lua_GetSpellCooldown},
         {"GetSpellPowerCost", lua_GetSpellPowerCost},
         {"IsSpellInRange",    lua_IsSpellInRange},
+        {"CheckInteractDistance", lua_CheckInteractDistance},
         {"HasTarget",         lua_HasTarget},
         {"TargetUnit",        lua_TargetUnit},
         {"ClearTarget",       lua_ClearTarget},
