@@ -21110,6 +21110,7 @@ void GameHandler::handleQuestDetails(network::Packet& packet) {
     // Delay opening the window slightly to allow item queries to complete
     questDetailsOpenTime = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
     gossipWindowOpen = false;
+    if (addonEventCallback_) addonEventCallback_("QUEST_DETAIL", {});
 }
 
 bool GameHandler::hasQuestInLog(uint32_t questId) const {
@@ -21555,6 +21556,7 @@ void GameHandler::handleQuestOfferReward(network::Packet& packet) {
     gossipWindowOpen = false;
     questDetailsOpen = false;
     questDetailsOpenTime = std::chrono::steady_clock::time_point{};
+    if (addonEventCallback_) addonEventCallback_("QUEST_COMPLETE", {});
 
     // Query item names for reward items
     for (const auto& item : data.choiceRewards)
@@ -21613,6 +21615,7 @@ void GameHandler::closeQuestOfferReward() {
 
 void GameHandler::closeGossip() {
     gossipWindowOpen = false;
+    if (addonEventCallback_) addonEventCallback_("GOSSIP_CLOSED", {});
     currentGossip = GossipMessageData{};
 }
 
@@ -22121,6 +22124,7 @@ void GameHandler::handleLootResponse(network::Packet& packet) {
         return;
     }
     lootWindowOpen = true;
+    if (addonEventCallback_) addonEventCallback_("LOOT_OPENED", {});
     lastInteractedGoGuid_ = 0; // loot opened — no need to re-send in handleSpellGo
     pendingGameObjectLootOpens_.erase(
         std::remove_if(pendingGameObjectLootOpens_.begin(), pendingGameObjectLootOpens_.end(),
@@ -22165,6 +22169,7 @@ void GameHandler::handleLootReleaseResponse(network::Packet& packet) {
     (void)packet;
     localLootState_.erase(currentLoot.lootGuid);
     lootWindowOpen = false;
+    if (addonEventCallback_) addonEventCallback_("LOOT_CLOSED", {});
     currentLoot = LootResponseData{};
 }
 
@@ -22198,6 +22203,7 @@ void GameHandler::handleGossipMessage(network::Packet& packet) {
     if (!ok) return;
     if (questDetailsOpen) return; // Don't reopen gossip while viewing quest
     gossipWindowOpen = true;
+    if (addonEventCallback_) addonEventCallback_("GOSSIP_SHOW", {});
     vendorWindowOpen = false; // Close vendor if gossip opens
 
     // Update known quest-log entries based on gossip quests.
@@ -22311,6 +22317,7 @@ void GameHandler::handleQuestgiverQuestList(network::Packet& packet) {
 
     currentGossip = std::move(data);
     gossipWindowOpen = true;
+    if (addonEventCallback_) addonEventCallback_("GOSSIP_SHOW", {});
     vendorWindowOpen = false;
 
     bool hasAvailableQuest = false;
@@ -22361,6 +22368,7 @@ void GameHandler::handleGossipComplete(network::Packet& packet) {
     }
 
     gossipWindowOpen = false;
+    if (addonEventCallback_) addonEventCallback_("GOSSIP_CLOSED", {});
     currentGossip = GossipMessageData{};
 }
 
@@ -22489,6 +22497,7 @@ void GameHandler::handleTrainerList(network::Packet& packet) {
     if (!TrainerListParser::parse(packet, currentTrainerList_, isClassic)) return;
     trainerWindowOpen_ = true;
     gossipWindowOpen = false;
+    if (addonEventCallback_) addonEventCallback_("TRAINER_SHOW", {});
 
     LOG_INFO("Trainer list: ", currentTrainerList_.spells.size(), " spells");
     LOG_DEBUG("Known spells count: ", knownSpells.size());
@@ -22546,6 +22555,7 @@ void GameHandler::trainSpell(uint32_t spellId) {
 
 void GameHandler::closeTrainer() {
     trainerWindowOpen_ = false;
+    if (addonEventCallback_) addonEventCallback_("TRAINER_CLOSED", {});
     currentTrainerList_ = TrainerListData{};
     trainerTabs_.clear();
 }
