@@ -4156,6 +4156,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     addSystemChatMessage(buf);
                     watchedFactionId_ = factionId;
                     if (repChangeCallback_) repChangeCallback_(name, delta, standing);
+                    if (addonEventCallback_)
+                        addonEventCallback_("UPDATE_FACTION", {});
                 }
                 LOG_DEBUG("SMSG_SET_FACTION_STANDING: faction=", factionId, " standing=", standing);
             }
@@ -5289,6 +5291,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     }
                 }
             }
+            if (addonEventCallback_) addonEventCallback_("QUEST_LOG_UPDATE", {});
             // Re-query all nearby quest giver NPCs so markers refresh
             if (socket) {
                 for (const auto& [guid, entity] : entityManager.getEntities()) {
@@ -21052,6 +21055,10 @@ void GameHandler::addQuestToLocalLogIfMissing(uint32_t questId, const std::strin
     entry.title = title.empty() ? ("Quest #" + std::to_string(questId)) : title;
     entry.objectives = objectives;
     questLog_.push_back(std::move(entry));
+    if (addonEventCallback_) {
+        addonEventCallback_("QUEST_ACCEPTED", {std::to_string(questId)});
+        addonEventCallback_("QUEST_LOG_UPDATE", {});
+    }
 }
 
 bool GameHandler::resyncQuestLogFromServerSlots(bool forceQueryMetadata) {
