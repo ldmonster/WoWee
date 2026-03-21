@@ -5022,6 +5022,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 }
             }
             LOG_DEBUG("MSG_RAID_TARGET_UPDATE: type=", static_cast<int>(rtuType));
+            if (addonEventCallback_)
+                addonEventCallback_("RAID_TARGET_UPDATE", {});
             break;
         }
         case Opcode::SMSG_BUY_ITEM: {

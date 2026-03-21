@@ -948,6 +948,38 @@ static int lua_TargetNearestFriend(lua_State* L) {
     return 0;
 }
 
+// GetRaidTargetIndex(unit) → icon index (1-8) or nil
+static int lua_GetRaidTargetIndex(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushnil(L); return 1; }
+    const char* uid = luaL_optstring(L, 1, "target");
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    if (guid == 0) { lua_pushnil(L); return 1; }
+    uint8_t mark = gh->getEntityRaidMark(guid);
+    if (mark == 0xFF) { lua_pushnil(L); return 1; }
+    lua_pushnumber(L, mark + 1); // WoW uses 1-indexed (1=Star, 2=Circle, ... 8=Skull)
+    return 1;
+}
+
+// SetRaidTarget(unit, index) — set raid marker (1-8, or 0 to clear)
+static int lua_SetRaidTarget(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) return 0;
+    const char* uid = luaL_optstring(L, 1, "target");
+    int index = static_cast<int>(luaL_checknumber(L, 2));
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    if (guid == 0) return 0;
+    if (index >= 1 && index <= 8)
+        gh->setRaidMark(guid, static_cast<uint8_t>(index - 1));
+    else if (index == 0)
+        gh->setRaidMark(guid, 0xFF); // clear
+    return 0;
+}
+
 // --- GetSpellInfo / GetSpellTexture ---
 // GetSpellInfo(spellIdOrName) -> name, rank, icon, castTime, minRange, maxRange, spellId
 static int lua_GetSpellInfo(lua_State* L) {
@@ -3036,6 +3068,8 @@ void LuaEngine::registerCoreAPI() {
         {"TargetLastTarget",  lua_TargetLastTarget},
         {"TargetNearestEnemy",  lua_TargetNearestEnemy},
         {"TargetNearestFriend", lua_TargetNearestFriend},
+        {"GetRaidTargetIndex",  lua_GetRaidTargetIndex},
+        {"SetRaidTarget",       lua_SetRaidTarget},
         {"UnitRace",          lua_UnitRace},
         {"UnitPowerType",     lua_UnitPowerType},
         {"GetNumGroupMembers", lua_GetNumGroupMembers},
