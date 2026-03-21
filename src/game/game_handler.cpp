@@ -24793,11 +24793,13 @@ void GameHandler::updateAttachedTransportChildren(float /*deltaTime*/) {
 // ============================================================
 
 void GameHandler::closeMailbox() {
+    bool wasOpen = mailboxOpen_;
     mailboxOpen_ = false;
     mailboxGuid_ = 0;
     mailInbox_.clear();
     selectedMailIndex_ = -1;
     showMailCompose_ = false;
+    if (wasOpen && addonEventCallback_) addonEventCallback_("MAIL_CLOSED", {});
 }
 
 void GameHandler::refreshMailList() {
@@ -24974,6 +24976,7 @@ void GameHandler::handleShowMailbox(network::Packet& packet) {
     hasNewMail_ = false;
     selectedMailIndex_ = -1;
     showMailCompose_ = false;
+    if (addonEventCallback_) addonEventCallback_("MAIL_SHOW", {});
     // Request inbox contents
     refreshMailList();
 }
@@ -25285,8 +25288,10 @@ void GameHandler::openAuctionHouse(uint64_t guid) {
 }
 
 void GameHandler::closeAuctionHouse() {
+    bool wasOpen = auctionOpen_;
     auctionOpen_ = false;
     auctioneerGuid_ = 0;
+    if (wasOpen && addonEventCallback_) addonEventCallback_("AUCTION_HOUSE_CLOSED", {});
 }
 
 void GameHandler::auctionSearch(const std::string& name, uint8_t levelMin, uint8_t levelMax,
@@ -25367,6 +25372,7 @@ void GameHandler::handleAuctionHello(network::Packet& packet) {
     auctionHouseId_ = data.auctionHouseId;
     auctionOpen_ = true;
     gossipWindowOpen = false;  // Close gossip when auction house opens
+    if (addonEventCallback_) addonEventCallback_("AUCTION_HOUSE_SHOW", {});
     auctionActiveTab_ = 0;
     auctionBrowseResults_ = AuctionListResult{};
     auctionOwnerResults_ = AuctionListResult{};
