@@ -3750,6 +3750,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
             addUIError("Your party has been disbanded.");
             addSystemChatMessage("Your party has been disbanded.");
             LOG_INFO("SMSG_GROUP_DESTROYED: party cleared");
+            if (addonEventCallback_) {
+                addonEventCallback_("GROUP_ROSTER_UPDATE", {});
+                addonEventCallback_("PARTY_MEMBERS_CHANGED", {});
+            }
             break;
         case Opcode::SMSG_GROUP_CANCEL:
             // Group invite was cancelled before being accepted.
