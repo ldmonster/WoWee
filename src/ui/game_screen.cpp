@@ -22504,6 +22504,11 @@ void GameScreen::renderAuctionHouseWindow(game::GameHandler& gameHandler) {
                 const auto& a = results.auctions[bi];
                 auto* info = gameHandler.getItemInfo(a.itemEntry);
                 std::string name = info ? info->name : ("Item #" + std::to_string(a.itemEntry));
+                if (a.randomPropertyId != 0) {
+                    std::string suffix = gameHandler.getRandomPropertyName(
+                        static_cast<int32_t>(a.randomPropertyId));
+                    if (!suffix.empty()) name += " " + suffix;
+                }
                 game::ItemQuality quality = info ? static_cast<game::ItemQuality>(info->quality) : game::ItemQuality::COMMON;
                 ImVec4 bqc = InventoryScreen::getQualityColor(quality);
 
@@ -22588,6 +22593,11 @@ void GameScreen::renderAuctionHouseWindow(game::GameHandler& gameHandler) {
                 const auto& a = results.auctions[i];
                 auto* info = gameHandler.getItemInfo(a.itemEntry);
                 std::string name = info ? info->name : ("Item #" + std::to_string(a.itemEntry));
+                if (a.randomPropertyId != 0) {
+                    std::string suffix = gameHandler.getRandomPropertyName(
+                        static_cast<int32_t>(a.randomPropertyId));
+                    if (!suffix.empty()) name += " " + suffix;
+                }
                 game::ItemQuality quality = info ? static_cast<game::ItemQuality>(info->quality) : game::ItemQuality::COMMON;
 
                 ImGui::TableNextRow();
