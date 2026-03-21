@@ -5449,6 +5449,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                         if (questProgressCallback_) {
                             questProgressCallback_(quest.title, creatureName, count, reqCount);
                         }
+                        if (addonEventCallback_) {
+                            addonEventCallback_("QUEST_WATCH_UPDATE", {std::to_string(questId)});
+                            addonEventCallback_("QUEST_LOG_UPDATE", {});
+                        }
 
                         LOG_INFO("Updated kill count for quest ", questId, ": ",
                                  count, "/", reqCount);
@@ -5526,6 +5530,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     }
                 }
 
+                if (addonEventCallback_ && updatedAny) {
+                    addonEventCallback_("QUEST_WATCH_UPDATE", {});
+                    addonEventCallback_("QUEST_LOG_UPDATE", {});
+                }
                 LOG_INFO("Quest item update: itemId=", itemId, " count=", count,
                          " trackedQuestsUpdated=", updatedAny);
             }
