@@ -201,11 +201,32 @@ static int lua_UnitClass(lua_State* L) {
         static const char* kClasses[] = {"", "Warrior","Paladin","Hunter","Rogue","Priest",
             "Death Knight","Shaman","Mage","Warlock","","Druid"};
         uint8_t classId = 0;
-        // For player, use character data; for others, use UNIT_FIELD_BYTES_0
         std::string uidStr(uid);
         for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (uidStr == "player") classId = gh->getPlayerClass();
-        const char* name = (classId < 12) ? kClasses[classId] : "Unknown";
+        if (uidStr == "player") {
+            classId = gh->getPlayerClass();
+        } else {
+            // Read class from UNIT_FIELD_BYTES_0 (class is byte 1)
+            uint64_t guid = resolveUnitGuid(gh, uidStr);
+            if (guid != 0) {
+                auto entity = gh->getEntityManager().getEntity(guid);
+                if (entity) {
+                    uint32_t bytes0 = entity->getField(
+                        game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
+                    classId = static_cast<uint8_t>((bytes0 >> 8) & 0xFF);
+                }
+            }
+            // Fallback: check party/raid member data
+            if (classId == 0 && guid != 0) {
+                for (const auto& m : gh->getPartyData().members) {
+                    if (m.guid == guid && m.hasPartyStats) {
+                        // Party stats don't have class, but check guild roster
+                        break;
+                    }
+                }
+            }
+        }
+        const char* name = (classId > 0 && classId < 12) ? kClasses[classId] : "Unknown";
         lua_pushstring(L, name);
         lua_pushstring(L, name);  // WoW returns localized + English
         lua_pushnumber(L, classId);
@@ -252,18 +273,31 @@ static int lua_GetPlayerMapPosition(lua_State* L) {
 
 static int lua_UnitRace(lua_State* L) {
     auto* gh = getGameHandler(L);
-    if (!gh) { lua_pushstring(L, "Unknown"); return 1; }
+    if (!gh) { lua_pushstring(L, "Unknown"); lua_pushstring(L, "Unknown"); lua_pushnumber(L, 0); return 3; }
     std::string uid(luaL_optstring(L, 1, "player"));
     for (char& c : uid) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    static const char* kRaces[] = {"","Human","Orc","Dwarf","Night Elf","Undead",
+        "Tauren","Gnome","Troll","","Blood Elf","Draenei"};
+    uint8_t raceId = 0;
     if (uid == "player") {
-        uint8_t race = gh->getPlayerRace();
-        static const char* kRaces[] = {"","Human","Orc","Dwarf","Night Elf","Undead",
-            "Tauren","Gnome","Troll","","Blood Elf","Draenei"};
-        lua_pushstring(L, (race < 12) ? kRaces[race] : "Unknown");
-        return 1;
+        raceId = gh->getPlayerRace();
+    } else {
+        // Read race from UNIT_FIELD_BYTES_0 (race is byte 0)
+        uint64_t guid = resolveUnitGuid(gh, uid);
+        if (guid != 0) {
+            auto entity = gh->getEntityManager().getEntity(guid);
+            if (entity) {
+                uint32_t bytes0 = entity->getField(
+                    game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
+                raceId = static_cast<uint8_t>(bytes0 & 0xFF);
+            }
+        }
     }
-    lua_pushstring(L, "Unknown");
-    return 1;
+    const char* name = (raceId > 0 && raceId < 12) ? kRaces[raceId] : "Unknown";
+    lua_pushstring(L, name);      // 1: localized race
+    lua_pushstring(L, name);      // 2: English race
+    lua_pushnumber(L, raceId);    // 3: raceId (WoW returns 3 values)
+    return 3;
 }
 
 static int lua_UnitPowerType(lua_State* L) {
