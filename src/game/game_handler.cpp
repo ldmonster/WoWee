@@ -2304,8 +2304,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                                                 : ("Spell cast failed (error " + std::to_string(castResult) + ")");
                     addUIError(errMsg);
                     if (spellCastFailedCallback_) spellCastFailedCallback_(castResultSpellId);
-                    if (addonEventCallback_)
+                    if (addonEventCallback_) {
                         addonEventCallback_("UNIT_SPELLCAST_FAILED", {"player", std::to_string(castResultSpellId)});
+                        addonEventCallback_("UNIT_SPELLCAST_STOP", {"player", std::to_string(castResultSpellId)});
+                    }
                     MessageChatData msg;
                     msg.type     = ChatType::SYSTEM;
                     msg.language = ChatLanguage::UNIVERSAL;
@@ -3418,8 +3420,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 if (failGuid == playerGuid || failGuid == 0) unitId = "player";
                 else if (failGuid == targetGuid) unitId = "target";
                 else if (failGuid == focusGuid) unitId = "focus";
-                if (!unitId.empty())
+                if (!unitId.empty()) {
                     addonEventCallback_("UNIT_SPELLCAST_INTERRUPTED", {unitId});
+                    addonEventCallback_("UNIT_SPELLCAST_STOP", {unitId});
+                }
             }
             if (failGuid == playerGuid || failGuid == 0) {
                 // Player's own cast failed — clear gather-node loot target so the
@@ -18728,6 +18732,13 @@ void GameHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     socket->send(packet);
     LOG_INFO("Casting spell: ", spellId, " on 0x", std::hex, target, std::dec);
 
+    // Fire UNIT_SPELLCAST_SENT for cast bar addons (fires on client intent, before server confirms)
+    if (addonEventCallback_) {
+        std::string targetName;
+        if (target != 0) targetName = lookupName(target);
+        addonEventCallback_("UNIT_SPELLCAST_SENT", {"player", targetName, std::to_string(spellId)});
+    }
+
     // Optimistically start GCD immediately on cast, but do not restart it while
     // already active (prevents timeout animation reset on repeated key presses).
     if (!isGCDActive()) {
@@ -18756,6 +18767,8 @@ void GameHandler::cancelCast() {
     craftQueueRemaining_ = 0;
     queuedSpellId_ = 0;
     queuedSpellTarget_ = 0;
+    if (addonEventCallback_)
+        addonEventCallback_("UNIT_SPELLCAST_STOP", {"player"});
 }
 
 void GameHandler::startCraftQueue(uint32_t spellId, int count) {
@@ -19254,6 +19267,10 @@ void GameHandler::handleSpellGo(network::Packet& packet) {
         if (spellCastAnimCallback_) {
             spellCastAnimCallback_(playerGuid, false, false);
         }
+
+        // Fire UNIT_SPELLCAST_STOP — cast bar should disappear
+        if (addonEventCallback_)
+            addonEventCallback_("UNIT_SPELLCAST_STOP", {"player", std::to_string(data.spellId)});
 
         // Spell queue: fire the next queued spell now that casting has ended
         if (queuedSpellId_ != 0) {
