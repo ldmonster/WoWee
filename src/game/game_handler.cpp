@@ -4127,6 +4127,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 if (auto* sfx = renderer->getUiSoundManager())
                     sfx->playQuestActivate();
             }
+            if (addonEventCallback_) {
+                addonEventCallback_("TRAINER_UPDATE", {});
+                addonEventCallback_("SPELLS_CHANGED", {});
+            }
             break;
         }
         case Opcode::SMSG_TRAINER_BUY_FAILED: {
