@@ -22305,6 +22305,12 @@ void GameScreen::renderAuctionHouseWindow(game::GameHandler& gameHandler) {
                     const auto& auction = results.auctions[i];
                     auto* info = gameHandler.getItemInfo(auction.itemEntry);
                     std::string name = info ? info->name : ("Item #" + std::to_string(auction.itemEntry));
+                    // Append random suffix name (e.g., "of the Eagle") if present
+                    if (auction.randomPropertyId != 0) {
+                        std::string suffix = gameHandler.getRandomPropertyName(
+                            static_cast<int32_t>(auction.randomPropertyId));
+                        if (!suffix.empty()) name += " " + suffix;
+                    }
                     game::ItemQuality quality = info ? static_cast<game::ItemQuality>(info->quality) : game::ItemQuality::COMMON;
                     ImVec4 qc = InventoryScreen::getQualityColor(quality);
 
