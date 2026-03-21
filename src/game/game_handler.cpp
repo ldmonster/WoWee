@@ -6205,16 +6205,23 @@ void GameHandler::handlePacket(network::Packet& packet) {
             handleAuctionCommandResult(packet);
             break;
         case Opcode::SMSG_AUCTION_OWNER_NOTIFICATION: {
-            // auctionId(u32) + action(u32) + error(u32) + itemEntry(u32) + ...
+            // auctionId(u32) + action(u32) + error(u32) + itemEntry(u32) + randomPropertyId(u32) + ...
             // action: 0=sold/won, 1=expired, 2=bid placed on your auction
             if (packet.getSize() - packet.getReadPos() >= 16) {
                 /*uint32_t auctionId =*/ packet.readUInt32();
                 uint32_t action    = packet.readUInt32();
                 /*uint32_t error   =*/ packet.readUInt32();
                 uint32_t itemEntry = packet.readUInt32();
+                int32_t ownerRandProp = 0;
+                if (packet.getSize() - packet.getReadPos() >= 4)
+                    ownerRandProp = static_cast<int32_t>(packet.readUInt32());
                 ensureItemInfo(itemEntry);
                 auto* info = getItemInfo(itemEntry);
                 std::string rawName = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
+                if (ownerRandProp != 0) {
+                    std::string suffix = getRandomPropertyName(ownerRandProp);
+                    if (!suffix.empty()) rawName += " " + suffix;
+                }
                 uint32_t aucQuality = info ? info->quality : 1u;
                 std::string itemLink = buildItemLink(itemEntry, aucQuality, rawName);
                 if (action == 1)
