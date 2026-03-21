@@ -1222,6 +1222,23 @@ static int lua_UnitCreatureType(lua_State* L) {
     return 1;
 }
 
+// GetItemLink(itemId) → "|cFFxxxxxx|Hitem:ID:...|h[Name]|h|r"
+static int lua_GetItemLink(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushnil(L); return 1; }
+    uint32_t itemId = static_cast<uint32_t>(luaL_checknumber(L, 1));
+    if (itemId == 0) { lua_pushnil(L); return 1; }
+    const auto* info = gh->getItemInfo(itemId);
+    if (!info || info->name.empty()) { lua_pushnil(L); return 1; }
+    static const char* kQH[] = {"9d9d9d","ffffff","1eff00","0070dd","a335ee","ff8000","e6cc80","e6cc80"};
+    uint32_t qi = info->quality < 8 ? info->quality : 1u;
+    char link[256];
+    snprintf(link, sizeof(link), "|cff%s|Hitem:%u:0:0:0:0:0:0:0|h[%s]|h|r",
+             kQH[qi], itemId, info->name.c_str());
+    lua_pushstring(L, link);
+    return 1;
+}
+
 // GetSpellLink(spellIdOrName) → "|cFFxxxxxx|Hspell:ID|h[Name]|h|r"
 static int lua_GetSpellLink(lua_State* L) {
     auto* gh = getGameHandler(L);
@@ -1713,6 +1730,7 @@ void LuaEngine::registerCoreAPI() {
         {"UnitIsEnemy",         lua_UnitIsEnemy},
         {"UnitCreatureType",    lua_UnitCreatureType},
         {"UnitClassification",  lua_UnitClassification},
+        {"GetItemLink",          lua_GetItemLink},
         {"GetSpellLink",         lua_GetSpellLink},
         {"IsUsableSpell",        lua_IsUsableSpell},
         {"IsInInstance",         lua_IsInInstance},
