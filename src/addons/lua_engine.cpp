@@ -1222,6 +1222,55 @@ static int lua_UnitCreatureType(lua_State* L) {
     return 1;
 }
 
+// GetPlayerInfoByGUID(guid) → localizedClass, englishClass, localizedRace, englishRace, sex, name, realm
+static int lua_GetPlayerInfoByGUID(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    const char* guidStr = luaL_checkstring(L, 1);
+    if (!gh || !guidStr) {
+        for (int i = 0; i < 7; i++) lua_pushnil(L);
+        return 7;
+    }
+    // Parse hex GUID string "0x0000000000000001"
+    uint64_t guid = 0;
+    if (guidStr[0] == '0' && (guidStr[1] == 'x' || guidStr[1] == 'X'))
+        guid = strtoull(guidStr + 2, nullptr, 16);
+    else
+        guid = strtoull(guidStr, nullptr, 16);
+
+    if (guid == 0) { for (int i = 0; i < 7; i++) lua_pushnil(L); return 7; }
+
+    // Look up entity name
+    std::string name = gh->lookupName(guid);
+    if (name.empty() && guid == gh->getPlayerGuid()) {
+        const auto& chars = gh->getCharacters();
+        for (const auto& c : chars)
+            if (c.guid == guid) { name = c.name; break; }
+    }
+
+    // For player GUID, return class/race if it's the local player
+    const char* className = "Unknown";
+    const char* raceName = "Unknown";
+    if (guid == gh->getPlayerGuid()) {
+        static const char* kClasses[] = {"","Warrior","Paladin","Hunter","Rogue","Priest",
+            "Death Knight","Shaman","Mage","Warlock","","Druid"};
+        static const char* kRaces[] = {"","Human","Orc","Dwarf","Night Elf","Undead",
+            "Tauren","Gnome","Troll","","Blood Elf","Draenei"};
+        uint8_t cid = gh->getPlayerClass();
+        uint8_t rid = gh->getPlayerRace();
+        if (cid < 12) className = kClasses[cid];
+        if (rid < 12) raceName = kRaces[rid];
+    }
+
+    lua_pushstring(L, className);  // 1: localizedClass
+    lua_pushstring(L, className);  // 2: englishClass
+    lua_pushstring(L, raceName);   // 3: localizedRace
+    lua_pushstring(L, raceName);   // 4: englishRace
+    lua_pushnumber(L, 0);          // 5: sex (0=unknown)
+    lua_pushstring(L, name.c_str()); // 6: name
+    lua_pushstring(L, "");         // 7: realm
+    return 7;
+}
+
 // GetItemLink(itemId) → "|cFFxxxxxx|Hitem:ID:...|h[Name]|h|r"
 static int lua_GetItemLink(lua_State* L) {
     auto* gh = getGameHandler(L);
@@ -1730,6 +1779,7 @@ void LuaEngine::registerCoreAPI() {
         {"UnitIsEnemy",         lua_UnitIsEnemy},
         {"UnitCreatureType",    lua_UnitCreatureType},
         {"UnitClassification",  lua_UnitClassification},
+        {"GetPlayerInfoByGUID",  lua_GetPlayerInfoByGUID},
         {"GetItemLink",          lua_GetItemLink},
         {"GetSpellLink",         lua_GetSpellLink},
         {"IsUsableSpell",        lua_IsUsableSpell},
