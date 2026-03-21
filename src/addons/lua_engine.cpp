@@ -489,6 +489,47 @@ static int lua_UnitThreatSituation(lua_State* L) {
     return 1;
 }
 
+// UnitDetailedThreatSituation(unit, mobUnit) → isTanking, status, threatPct, rawThreatPct, threatValue
+static int lua_UnitDetailedThreatSituation(lua_State* L) {
+    // Use UnitThreatSituation logic for the basics
+    auto* gh = getGameHandler(L);
+    if (!gh) {
+        lua_pushboolean(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 0);
+        return 5;
+    }
+    const char* uid = luaL_optstring(L, 1, "player");
+    const char* mobUid = luaL_optstring(L, 2, nullptr);
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t unitGuid = resolveUnitGuid(gh, uidStr);
+    bool isTanking = false;
+    int status = 0;
+    if (unitGuid != 0 && mobUid && *mobUid) {
+        std::string mStr(mobUid);
+        for (char& c : mStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        uint64_t mobGuid = resolveUnitGuid(gh, mStr);
+        if (mobGuid != 0) {
+            auto mobEnt = gh->getEntityManager().getEntity(mobGuid);
+            if (mobEnt) {
+                const auto& f = mobEnt->getFields();
+                auto lo = f.find(game::fieldIndex(game::UF::UNIT_FIELD_TARGET_LO));
+                if (lo != f.end()) {
+                    uint64_t mt = lo->second;
+                    auto hi = f.find(game::fieldIndex(game::UF::UNIT_FIELD_TARGET_HI));
+                    if (hi != f.end()) mt |= (static_cast<uint64_t>(hi->second) << 32);
+                    if (mt == unitGuid) { isTanking = true; status = 3; }
+                }
+            }
+        }
+    }
+    lua_pushboolean(L, isTanking);
+    lua_pushnumber(L, status);
+    lua_pushnumber(L, isTanking ? 100.0 : 0.0); // threatPct
+    lua_pushnumber(L, isTanking ? 100.0 : 0.0); // rawThreatPct
+    lua_pushnumber(L, 0); // threatValue (not available without server threat data)
+    return 5;
+}
+
 // UnitSex(unit) → 1=unknown, 2=male, 3=female
 static int lua_UnitSex(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
@@ -3157,6 +3198,7 @@ void LuaEngine::registerCoreAPI() {
         {"UnitIsTappedByPlayer", lua_UnitIsTappedByPlayer},
         {"UnitIsTappedByAllThreatList", lua_UnitIsTappedByAllThreatList},
         {"UnitThreatSituation", lua_UnitThreatSituation},
+        {"UnitDetailedThreatSituation", lua_UnitDetailedThreatSituation},
         {"UnitSex",       lua_UnitSex},
         {"UnitClass",     lua_UnitClass},
         {"GetMoney",      lua_GetMoney},
