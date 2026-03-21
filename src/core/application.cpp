@@ -368,6 +368,11 @@ bool Application::initialize() {
                     case game::ChatType::BG_SYSTEM_NEUTRAL:  eventName = "CHAT_MSG_BG_SYSTEM_NEUTRAL"; break;
                     case game::ChatType::BG_SYSTEM_ALLIANCE: eventName = "CHAT_MSG_BG_SYSTEM_ALLIANCE"; break;
                     case game::ChatType::BG_SYSTEM_HORDE:    eventName = "CHAT_MSG_BG_SYSTEM_HORDE"; break;
+                    case game::ChatType::MONSTER_PARTY:  eventName = "CHAT_MSG_MONSTER_PARTY"; break;
+                    case game::ChatType::AFK:            eventName = "CHAT_MSG_AFK"; break;
+                    case game::ChatType::DND:            eventName = "CHAT_MSG_DND"; break;
+                    case game::ChatType::LOOT:           eventName = "CHAT_MSG_LOOT"; break;
+                    case game::ChatType::SKILL:          eventName = "CHAT_MSG_SKILL"; break;
                     default: break;
                 }
                 if (eventName) {
