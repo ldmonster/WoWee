@@ -646,6 +646,15 @@ void Application::run() {
                 LOG_ERROR("GPU device lost — exiting application");
                 window->setShouldClose(true);
             }
+
+            // Soft frame rate cap when vsync is off to prevent 100% CPU usage.
+            // Target ~240 FPS max (~4.2ms per frame); vsync handles its own pacing.
+            if (!window->isVsyncEnabled() && deltaTime < 0.004f) {
+                float sleepMs = (0.004f - deltaTime) * 1000.0f;
+                if (sleepMs > 0.5f)
+                    std::this_thread::sleep_for(std::chrono::microseconds(
+                        static_cast<int64_t>(sleepMs * 900.0f)));  // 90% of target to account for sleep overshoot
+            }
         }
     } catch (...) {
         watchdogRunning.store(false, std::memory_order_release);

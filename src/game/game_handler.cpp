@@ -2539,6 +2539,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
             poi.icon = icon;
             poi.data = data;
             poi.name = std::move(name);
+            // Cap POI count to prevent unbounded growth from rapid gossip queries
+            if (gossipPois_.size() >= 200) gossipPois_.erase(gossipPois_.begin());
             gossipPois_.push_back(std::move(poi));
             LOG_DEBUG("SMSG_GOSSIP_POI: x=", poiX, " y=", poiY, " icon=", icon);
             break;
@@ -21031,6 +21033,7 @@ void GameHandler::handleQuestPoiQueryResponse(network::Packet& packet) {
             poi.name = questTitle.empty() ? "Quest objective" : questTitle;
             LOG_DEBUG("Quest POI: questId=", questId, " mapId=", mapId,
                       " centroid=(", poi.x, ",", poi.y, ") title=", poi.name);
+            if (gossipPois_.size() >= 200) gossipPois_.erase(gossipPois_.begin());
             gossipPois_.push_back(std::move(poi));
         }
     }
