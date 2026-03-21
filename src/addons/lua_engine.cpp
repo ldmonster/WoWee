@@ -582,6 +582,80 @@ static int lua_HasTarget(lua_State* L) {
     return 1;
 }
 
+// TargetUnit(unitId) — set current target
+static int lua_TargetUnit(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) return 0;
+    const char* uid = luaL_checkstring(L, 1);
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    if (guid != 0) gh->setTarget(guid);
+    return 0;
+}
+
+// ClearTarget() — clear current target
+static int lua_ClearTarget(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (gh) gh->clearTarget();
+    return 0;
+}
+
+// FocusUnit(unitId) — set focus target
+static int lua_FocusUnit(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) return 0;
+    const char* uid = luaL_optstring(L, 1, nullptr);
+    if (!uid || !*uid) return 0;
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    if (guid != 0) gh->setFocus(guid);
+    return 0;
+}
+
+// ClearFocus() — clear focus target
+static int lua_ClearFocus(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (gh) gh->clearFocus();
+    return 0;
+}
+
+// AssistUnit(unitId) — target whatever the given unit is targeting
+static int lua_AssistUnit(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) return 0;
+    const char* uid = luaL_optstring(L, 1, "target");
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    if (guid == 0) return 0;
+    uint64_t theirTarget = getEntityTargetGuid(gh, guid);
+    if (theirTarget != 0) gh->setTarget(theirTarget);
+    return 0;
+}
+
+// TargetLastTarget() — re-target previous target
+static int lua_TargetLastTarget(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (gh) gh->targetLastTarget();
+    return 0;
+}
+
+// TargetNearestEnemy() — tab-target nearest enemy
+static int lua_TargetNearestEnemy(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (gh) gh->targetEnemy(false);
+    return 0;
+}
+
+// TargetNearestFriend() — target nearest friendly unit
+static int lua_TargetNearestFriend(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (gh) gh->targetFriend(false);
+    return 0;
+}
+
 // --- GetSpellInfo / GetSpellTexture ---
 // GetSpellInfo(spellIdOrName) -> name, rank, icon, castTime, minRange, maxRange, spellId
 static int lua_GetSpellInfo(lua_State* L) {
@@ -2214,6 +2288,14 @@ void LuaEngine::registerCoreAPI() {
         {"IsSpellKnown",      lua_IsSpellKnown},
         {"GetSpellCooldown",  lua_GetSpellCooldown},
         {"HasTarget",         lua_HasTarget},
+        {"TargetUnit",        lua_TargetUnit},
+        {"ClearTarget",       lua_ClearTarget},
+        {"FocusUnit",         lua_FocusUnit},
+        {"ClearFocus",        lua_ClearFocus},
+        {"AssistUnit",        lua_AssistUnit},
+        {"TargetLastTarget",  lua_TargetLastTarget},
+        {"TargetNearestEnemy",  lua_TargetNearestEnemy},
+        {"TargetNearestFriend", lua_TargetNearestFriend},
         {"UnitRace",          lua_UnitRace},
         {"UnitPowerType",     lua_UnitPowerType},
         {"GetNumGroupMembers", lua_GetNumGroupMembers},
