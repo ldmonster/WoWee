@@ -7993,6 +7993,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 const std::string& sname = getSpellName(spellId);
                 addSystemChatMessage("Your pet has learned " + (sname.empty() ? "a new ability." : sname + "."));
                 LOG_DEBUG("SMSG_PET_LEARNED_SPELL: spellId=", spellId);
+                if (addonEventCallback_) addonEventCallback_("PET_BAR_UPDATE", {});
             }
             packet.setReadPos(packet.getSize());
             break;
@@ -19017,7 +19018,10 @@ done:
     LOG_INFO("SMSG_PET_SPELLS: petGuid=0x", std::hex, petGuid_, std::dec,
              " react=", (int)petReact_, " command=", (int)petCommand_,
              " spells=", petSpellList_.size());
-    if (addonEventCallback_) addonEventCallback_("UNIT_PET", {"player"});
+    if (addonEventCallback_) {
+        addonEventCallback_("UNIT_PET", {"player"});
+        addonEventCallback_("PET_BAR_UPDATE", {});
+    }
 }
 
 void GameHandler::sendPetAction(uint32_t action, uint64_t targetGuid) {
