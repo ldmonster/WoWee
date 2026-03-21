@@ -2189,8 +2189,22 @@ static int lua_IsUsableSpell(lua_State* L) {
     float cd = gh->getSpellCooldown(spellId);
     bool onCooldown = (cd > 0.1f);
 
-    lua_pushboolean(L, onCooldown ? 0 : 1);  // usable (not on cooldown)
-    lua_pushboolean(L, 0);  // noMana (can't determine without spell cost data)
+    // Check mana/power cost
+    bool noMana = false;
+    if (!onCooldown) {
+        auto spellData = gh->getSpellData(spellId);
+        if (spellData.manaCost > 0) {
+            auto playerEntity = gh->getEntityManager().getEntity(gh->getPlayerGuid());
+            if (playerEntity) {
+                auto* unit = dynamic_cast<game::Unit*>(playerEntity.get());
+                if (unit && unit->getPower() < spellData.manaCost) {
+                    noMana = true;
+                }
+            }
+        }
+    }
+    lua_pushboolean(L, (onCooldown || noMana) ? 0 : 1);  // usable
+    lua_pushboolean(L, noMana ? 1 : 0);                    // notEnoughMana
     return 2;
 }
 

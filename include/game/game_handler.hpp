@@ -295,7 +295,7 @@ public:
     }
 
     // Spell data resolver: spellId -> {castTimeMs, minRange, maxRange}
-    struct SpellDataInfo { uint32_t castTimeMs = 0; float minRange = 0; float maxRange = 0; };
+    struct SpellDataInfo { uint32_t castTimeMs = 0; float minRange = 0; float maxRange = 0; uint32_t manaCost = 0; uint8_t powerType = 0; };
     using SpellDataResolver = std::function<SpellDataInfo(uint32_t)>;
     void setSpellDataResolver(SpellDataResolver r) { spellDataResolver_ = std::move(r); }
     SpellDataInfo getSpellData(uint32_t spellId) const {

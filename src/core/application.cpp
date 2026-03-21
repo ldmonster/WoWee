@@ -445,9 +445,11 @@ bool Application::initialize() {
                 auto rangeMap    = std::make_shared<std::unordered_map<uint32_t, std::pair<float,float>>>();
                 auto spellCastIdx = std::make_shared<std::unordered_map<uint32_t, uint32_t>>(); // spellId→castTimeIdx
                 auto spellRangeIdx = std::make_shared<std::unordered_map<uint32_t, uint32_t>>(); // spellId→rangeIdx
+                struct SpellCostEntry { uint32_t manaCost = 0; uint8_t powerType = 0; };
+                auto spellCostMap = std::make_shared<std::unordered_map<uint32_t, SpellCostEntry>>();
                 auto loaded = std::make_shared<bool>(false);
                 auto* am = assetManager.get();
-                gameHandler->setSpellDataResolver([castTimeMap, rangeMap, spellCastIdx, spellRangeIdx, loaded, am](uint32_t spellId) -> game::GameHandler::SpellDataInfo {
+                gameHandler->setSpellDataResolver([castTimeMap, rangeMap, spellCastIdx, spellRangeIdx, spellCostMap, loaded, am](uint32_t spellId) -> game::GameHandler::SpellDataInfo {
                     if (!am) return {};
                     if (!*loaded) {
                         *loaded = true;
@@ -480,6 +482,12 @@ bool Application::initialize() {
                             uint32_t idF = spL ? (*spL)["ID"] : 0;
                             uint32_t ctF = spL ? (*spL)["CastingTimeIndex"] : 134; // WotLK default
                             uint32_t rF  = spL ? (*spL)["RangeIndex"] : 132;
+                            uint32_t ptF = UINT32_MAX, mcF = UINT32_MAX;
+                            if (spL) {
+                                try { ptF = (*spL)["PowerType"]; } catch (...) {}
+                                try { mcF = (*spL)["ManaCost"]; } catch (...) {}
+                            }
+                            uint32_t fc = sDbc->getFieldCount();
                             for (uint32_t i = 0; i < sDbc->getRecordCount(); ++i) {
                                 uint32_t id = sDbc->getUInt32(i, idF);
                                 if (id == 0) continue;
@@ -487,6 +495,10 @@ bool Application::initialize() {
                                 uint32_t ri = sDbc->getUInt32(i, rF);
                                 if (ct > 0) (*spellCastIdx)[id] = ct;
                                 if (ri > 0) (*spellRangeIdx)[id] = ri;
+                                // Extract power cost
+                                uint32_t mc = (mcF < fc) ? sDbc->getUInt32(i, mcF) : 0;
+                                uint8_t  pt = (ptF < fc) ? static_cast<uint8_t>(sDbc->getUInt32(i, ptF)) : 0;
+                                if (mc > 0) (*spellCostMap)[id] = {mc, pt};
                             }
                         }
                         LOG_INFO("SpellDataResolver: loaded ", spellCastIdx->size(), " cast indices, ",
@@ -505,6 +517,11 @@ bool Application::initialize() {
                             info.minRange = rIt->second.first;
                             info.maxRange = rIt->second.second;
                         }
+                    }
+                    auto mcIt = spellCostMap->find(spellId);
+                    if (mcIt != spellCostMap->end()) {
+                        info.manaCost = mcIt->second.manaCost;
+                        info.powerType = mcIt->second.powerType;
                     }
                     return info;
                 });
