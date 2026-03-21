@@ -24215,6 +24215,7 @@ void GameHandler::handleFriendList(network::Packet& packet) {
         entry.classId = classId;
         contacts_.push_back(std::move(entry));
     }
+    if (addonEventCallback_) addonEventCallback_("FRIENDLIST_UPDATE", {});
 }
 
 void GameHandler::handleContactList(network::Packet& packet) {
@@ -24278,6 +24279,11 @@ void GameHandler::handleContactList(network::Packet& packet) {
     }
     LOG_INFO("SMSG_CONTACT_LIST: mask=", lastContactListMask_,
              " count=", lastContactListCount_);
+    if (addonEventCallback_) {
+        addonEventCallback_("FRIENDLIST_UPDATE", {});
+        if (lastContactListMask_ & 0x2) // ignore list
+            addonEventCallback_("IGNORELIST_UPDATE", {});
+    }
 }
 
 void GameHandler::handleFriendStatus(network::Packet& packet) {
@@ -24361,6 +24367,7 @@ void GameHandler::handleFriendStatus(network::Packet& packet) {
     }
 
     LOG_INFO("Friend status update: ", playerName, " status=", (int)data.status);
+    if (addonEventCallback_) addonEventCallback_("FRIENDLIST_UPDATE", {});
 }
 
 void GameHandler::handleRandomRoll(network::Packet& packet) {
