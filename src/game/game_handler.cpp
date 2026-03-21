@@ -21643,6 +21643,7 @@ void GameHandler::openVendor(uint64_t npcGuid) {
 }
 
 void GameHandler::closeVendor() {
+    bool wasOpen = vendorWindowOpen;
     vendorWindowOpen = false;
     currentVendorItems = ListInventoryData{};
     buybackItems_.clear();
@@ -21651,6 +21652,7 @@ void GameHandler::closeVendor() {
     pendingBuybackWireSlot_ = 0;
     pendingBuyItemId_ = 0;
     pendingBuyItemSlot_ = 0;
+    if (wasOpen && addonEventCallback_) addonEventCallback_("MERCHANT_CLOSED", {});
 }
 
 void GameHandler::buyItem(uint64_t vendorGuid, uint32_t itemId, uint32_t slot, uint32_t count) {
@@ -22372,6 +22374,7 @@ void GameHandler::handleListInventory(network::Packet& packet) {
     currentVendorItems.canRepair = savedCanRepair;
     vendorWindowOpen = true;
     gossipWindowOpen = false; // Close gossip if vendor opens
+    if (addonEventCallback_) addonEventCallback_("MERCHANT_SHOW", {});
 
     // Auto-sell grey items if enabled
     if (autoSellGrey_ && currentVendorItems.vendorGuid != 0) {
