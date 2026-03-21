@@ -238,6 +238,129 @@ static int lua_UnitClass(lua_State* L) {
     return 3;
 }
 
+// UnitIsGhost(unit) — true if unit is in ghost form
+static int lua_UnitIsGhost(lua_State* L) {
+    const char* uid = luaL_optstring(L, 1, "player");
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushboolean(L, 0); return 1; }
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (uidStr == "player") {
+        lua_pushboolean(L, gh->isPlayerGhost());
+    } else {
+        // Check UNIT_FIELD_FLAGS for UNIT_FLAG_GHOST (0x00000100) — best approximation
+        uint64_t guid = resolveUnitGuid(gh, uidStr);
+        bool ghost = false;
+        if (guid != 0) {
+            auto entity = gh->getEntityManager().getEntity(guid);
+            if (entity) {
+                uint32_t flags = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS));
+                ghost = (flags & 0x00000100) != 0; // PLAYER_FLAGS_GHOST
+            }
+        }
+        lua_pushboolean(L, ghost);
+    }
+    return 1;
+}
+
+// UnitIsDeadOrGhost(unit)
+static int lua_UnitIsDeadOrGhost(lua_State* L) {
+    const char* uid = luaL_optstring(L, 1, "player");
+    auto* unit = resolveUnit(L, uid);
+    auto* gh = getGameHandler(L);
+    bool dead = (unit && unit->getHealth() == 0);
+    if (!dead && gh) {
+        std::string uidStr(uid);
+        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (uidStr == "player") dead = gh->isPlayerGhost() || gh->isPlayerDead();
+    }
+    lua_pushboolean(L, dead);
+    return 1;
+}
+
+// UnitIsAFK(unit), UnitIsDND(unit)
+static int lua_UnitIsAFK(lua_State* L) {
+    const char* uid = luaL_optstring(L, 1, "player");
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushboolean(L, 0); return 1; }
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    if (guid != 0) {
+        auto entity = gh->getEntityManager().getEntity(guid);
+        if (entity) {
+            // PLAYER_FLAGS at UNIT_FIELD_FLAGS: PLAYER_FLAGS_AFK = 0x01
+            uint32_t playerFlags = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS));
+            lua_pushboolean(L, (playerFlags & 0x01) != 0);
+            return 1;
+        }
+    }
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+static int lua_UnitIsDND(lua_State* L) {
+    const char* uid = luaL_optstring(L, 1, "player");
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushboolean(L, 0); return 1; }
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    if (guid != 0) {
+        auto entity = gh->getEntityManager().getEntity(guid);
+        if (entity) {
+            uint32_t playerFlags = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS));
+            lua_pushboolean(L, (playerFlags & 0x02) != 0); // PLAYER_FLAGS_DND
+            return 1;
+        }
+    }
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+// UnitPlayerControlled(unit) — true for players and player-controlled pets
+static int lua_UnitPlayerControlled(lua_State* L) {
+    const char* uid = luaL_optstring(L, 1, "player");
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushboolean(L, 0); return 1; }
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    if (guid == 0) { lua_pushboolean(L, 0); return 1; }
+    auto entity = gh->getEntityManager().getEntity(guid);
+    if (!entity) { lua_pushboolean(L, 0); return 1; }
+    // Players are always player-controlled; pets check UNIT_FLAG_PLAYER_CONTROLLED (0x01000000)
+    if (entity->getType() == game::ObjectType::PLAYER) {
+        lua_pushboolean(L, 1);
+    } else {
+        uint32_t flags = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS));
+        lua_pushboolean(L, (flags & 0x01000000) != 0);
+    }
+    return 1;
+}
+
+// UnitSex(unit) → 1=unknown, 2=male, 3=female
+static int lua_UnitSex(lua_State* L) {
+    const char* uid = luaL_optstring(L, 1, "player");
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushnumber(L, 1); return 1; }
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    if (guid != 0) {
+        auto entity = gh->getEntityManager().getEntity(guid);
+        if (entity) {
+            // Gender is byte 2 of UNIT_FIELD_BYTES_0 (0=male, 1=female)
+            uint32_t bytes0 = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
+            uint8_t gender = static_cast<uint8_t>((bytes0 >> 16) & 0xFF);
+            lua_pushnumber(L, gender == 0 ? 2 : (gender == 1 ? 3 : 1)); // WoW: 2=male, 3=female
+            return 1;
+        }
+    }
+    lua_pushnumber(L, 1); // unknown
+    return 1;
+}
+
 // --- Player/Game API ---
 
 static int lua_GetMoney(lua_State* L) {
@@ -1731,7 +1854,18 @@ static int lua_UnitAffectingCombat(lua_State* L) {
     if (uidStr == "player") {
         lua_pushboolean(L, gh->isInCombat());
     } else {
-        lua_pushboolean(L, 0);
+        // Check UNIT_FLAG_IN_COMBAT (0x00080000) in UNIT_FIELD_FLAGS
+        uint64_t guid = resolveUnitGuid(gh, uidStr);
+        bool inCombat = false;
+        if (guid != 0) {
+            auto entity = gh->getEntityManager().getEntity(guid);
+            if (entity) {
+                uint32_t flags = entity->getField(
+                    game::fieldIndex(game::UF::UNIT_FIELD_FLAGS));
+                inCombat = (flags & 0x00080000) != 0; // UNIT_FLAG_IN_COMBAT
+            }
+        }
+        lua_pushboolean(L, inCombat);
     }
     return 1;
 }
@@ -2768,6 +2902,12 @@ void LuaEngine::registerCoreAPI() {
         {"UnitLevel",     lua_UnitLevel},
         {"UnitExists",    lua_UnitExists},
         {"UnitIsDead",    lua_UnitIsDead},
+        {"UnitIsGhost",   lua_UnitIsGhost},
+        {"UnitIsDeadOrGhost", lua_UnitIsDeadOrGhost},
+        {"UnitIsAFK",     lua_UnitIsAFK},
+        {"UnitIsDND",     lua_UnitIsDND},
+        {"UnitPlayerControlled", lua_UnitPlayerControlled},
+        {"UnitSex",       lua_UnitSex},
         {"UnitClass",     lua_UnitClass},
         {"GetMoney",      lua_GetMoney},
         {"IsInGroup",     lua_IsInGroup},
