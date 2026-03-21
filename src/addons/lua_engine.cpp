@@ -1830,6 +1830,72 @@ static int lua_Frame_IsShown(lua_State* L) {
     return 1;
 }
 
+// Frame method: frame:CreateTexture(name, layer) → texture stub
+static int lua_Frame_CreateTexture(lua_State* L) {
+    lua_newtable(L);
+    // Add noop methods for common texture operations
+    luaL_dostring(L,
+        "return function(t) "
+        "function t:SetTexture() end "
+        "function t:SetTexCoord() end "
+        "function t:SetVertexColor() end "
+        "function t:SetAllPoints() end "
+        "function t:SetPoint() end "
+        "function t:SetSize() end "
+        "function t:SetWidth() end "
+        "function t:SetHeight() end "
+        "function t:Show() end "
+        "function t:Hide() end "
+        "function t:SetAlpha() end "
+        "function t:GetTexture() return '' end "
+        "function t:SetDesaturated() end "
+        "function t:SetBlendMode() end "
+        "function t:SetDrawLayer() end "
+        "end");
+    lua_pushvalue(L, -2); // push the table
+    lua_call(L, 1, 0);    // call the function with the table
+    return 1;
+}
+
+// Frame method: frame:CreateFontString(name, layer, template) → fontstring stub
+static int lua_Frame_CreateFontString(lua_State* L) {
+    lua_newtable(L);
+    luaL_dostring(L,
+        "return function(fs) "
+        "fs._text = '' "
+        "function fs:SetText(t) self._text = t or '' end "
+        "function fs:GetText() return self._text end "
+        "function fs:SetFont() end "
+        "function fs:SetFontObject() end "
+        "function fs:SetTextColor() end "
+        "function fs:SetJustifyH() end "
+        "function fs:SetJustifyV() end "
+        "function fs:SetPoint() end "
+        "function fs:SetAllPoints() end "
+        "function fs:Show() end "
+        "function fs:Hide() end "
+        "function fs:SetAlpha() end "
+        "function fs:GetStringWidth() return 0 end "
+        "function fs:GetStringHeight() return 0 end "
+        "function fs:SetWordWrap() end "
+        "function fs:SetNonSpaceWrap() end "
+        "function fs:SetMaxLines() end "
+        "function fs:SetShadowOffset() end "
+        "function fs:SetShadowColor() end "
+        "function fs:SetWidth() end "
+        "function fs:SetHeight() end "
+        "end");
+    lua_pushvalue(L, -2);
+    lua_call(L, 1, 0);
+    return 1;
+}
+
+// GetFramerate() → fps
+static int lua_GetFramerate(lua_State* L) {
+    lua_pushnumber(L, static_cast<double>(ImGui::GetIO().Framerate));
+    return 1;
+}
+
 // GetCursorPosition() → x, y (screen coordinates, origin top-left)
 static int lua_GetCursorPosition(lua_State* L) {
     const auto& io = ImGui::GetIO();
@@ -2289,6 +2355,8 @@ void LuaEngine::registerCoreAPI() {
         {"GetAlpha",        lua_Frame_GetAlpha},
         {"SetParent",       lua_Frame_SetParent},
         {"GetParent",       lua_Frame_GetParent},
+        {"CreateTexture",   lua_Frame_CreateTexture},
+        {"CreateFontString", lua_Frame_CreateFontString},
         {nullptr, nullptr}
     };
     for (const luaL_Reg* r = frameMethods; r->name; r++) {
@@ -2301,13 +2369,15 @@ void LuaEngine::registerCoreAPI() {
     lua_pushcfunction(L_, lua_CreateFrame);
     lua_setglobal(L_, "CreateFrame");
 
-    // Cursor/screen functions
+    // Cursor/screen/FPS functions
     lua_pushcfunction(L_, lua_GetCursorPosition);
     lua_setglobal(L_, "GetCursorPosition");
     lua_pushcfunction(L_, lua_GetScreenWidth);
     lua_setglobal(L_, "GetScreenWidth");
     lua_pushcfunction(L_, lua_GetScreenHeight);
     lua_setglobal(L_, "GetScreenHeight");
+    lua_pushcfunction(L_, lua_GetFramerate);
+    lua_setglobal(L_, "GetFramerate");
 
     // Frame event dispatch table
     lua_newtable(L_);
@@ -2402,6 +2472,33 @@ void LuaEngine::registerCoreAPI() {
         "function UIParent_OnEvent() end\n"
         "UIParent = CreateFrame('Frame', 'UIParent')\n"
         "WorldFrame = CreateFrame('Frame', 'WorldFrame')\n"
+        // GameTooltip: global tooltip frame used by virtually all addons
+        "GameTooltip = CreateFrame('Frame', 'GameTooltip')\n"
+        "GameTooltip.__lines = {}\n"
+        "function GameTooltip:SetOwner(owner, anchor) self.__owner = owner; self.__anchor = anchor end\n"
+        "function GameTooltip:ClearLines() self.__lines = {} end\n"
+        "function GameTooltip:AddLine(text, r, g, b, wrap) table.insert(self.__lines, {text=text or '',r=r,g=g,b=b}) end\n"
+        "function GameTooltip:AddDoubleLine(l, r, lr, lg, lb, rr, rg, rb) table.insert(self.__lines, {text=(l or '')..'  '..(r or '')}) end\n"
+        "function GameTooltip:SetText(text, r, g, b) self.__lines = {{text=text or '',r=r,g=g,b=b}} end\n"
+        "function GameTooltip:GetItem() return nil end\n"
+        "function GameTooltip:GetSpell() return nil end\n"
+        "function GameTooltip:GetUnit() return nil end\n"
+        "function GameTooltip:NumLines() return #self.__lines end\n"
+        "function GameTooltip:GetText() return self.__lines[1] and self.__lines[1].text or '' end\n"
+        "function GameTooltip:SetUnitBuff(...) end\n"
+        "function GameTooltip:SetUnitDebuff(...) end\n"
+        "function GameTooltip:SetHyperlink(...) end\n"
+        "function GameTooltip:SetInventoryItem(...) end\n"
+        "function GameTooltip:SetBagItem(...) end\n"
+        "function GameTooltip:SetSpellByID(...) end\n"
+        "function GameTooltip:SetAction(...) end\n"
+        "function GameTooltip:FadeOut() end\n"
+        "function GameTooltip:SetFrameStrata(...) end\n"
+        "function GameTooltip:SetClampedToScreen(...) end\n"
+        "function GameTooltip:IsOwned(f) return self.__owner == f end\n"
+        // ShoppingTooltip: used by comparison tooltips
+        "ShoppingTooltip1 = CreateFrame('Frame', 'ShoppingTooltip1')\n"
+        "ShoppingTooltip2 = CreateFrame('Frame', 'ShoppingTooltip2')\n"
         // Error handling stubs (used by many addons)
         "local _errorHandler = function(err) return err end\n"
         "function geterrorhandler() return _errorHandler end\n"
@@ -2416,16 +2513,13 @@ void LuaEngine::registerCoreAPI() {
         "function GetCVarBool(name) return _cvars[name] == '1' end\n"
         "function SetCVar(name, value) _cvars[name] = tostring(value) end\n"
         // Misc compatibility stubs
-        "function GetScreenWidth() return 1920 end\n"
-        "function GetScreenHeight() return 1080 end\n"
-        "function GetFramerate() return 60 end\n"
+        // GetScreenWidth, GetScreenHeight, GetNumLootItems are now C functions
+        // GetFramerate is now a C function
         "function GetNetStats() return 0, 0, 0, 0 end\n"
         "function IsLoggedIn() return true end\n"
-        // IsMounted, IsFlying, IsSwimming, IsResting, IsFalling, IsStealthed
-        // are now C functions registered in registerCoreAPI() with real game state
-        "function GetNumLootItems() return 0 end\n"
         "function StaticPopup_Show() end\n"
         "function StaticPopup_Hide() end\n"
+        // CreateTexture/CreateFontString are now C frame methods in the metatable
         "RAID_CLASS_COLORS = {\n"
         "    WARRIOR={r=0.78,g=0.61,b=0.43}, PALADIN={r=0.96,g=0.55,b=0.73},\n"
         "    HUNTER={r=0.67,g=0.83,b=0.45}, ROGUE={r=1.0,g=0.96,b=0.41},\n"
