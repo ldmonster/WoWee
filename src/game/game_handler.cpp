@@ -12678,6 +12678,8 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                                 if (addonEventCallback_) addonEventCallback_("PLAYER_ALIVE", {});
                                 if (ghostStateCallback_) ghostStateCallback_(false);
                             }
+                            if (addonEventCallback_)
+                                addonEventCallback_("PLAYER_FLAGS_CHANGED", {});
                         }
                         else if (ufMeleeAPV  != 0xFFFF && key == ufMeleeAPV)  { playerMeleeAP_  = static_cast<int32_t>(val); }
                         else if (ufRangedAPV != 0xFFFF && key == ufRangedAPV) { playerRangedAP_ = static_cast<int32_t>(val); }
