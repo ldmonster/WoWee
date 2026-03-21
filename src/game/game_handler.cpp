@@ -25132,8 +25132,10 @@ void GameHandler::openBank(uint64_t guid) {
 }
 
 void GameHandler::closeBank() {
+    bool wasOpen = bankOpen_;
     bankOpen_ = false;
     bankerGuid_ = 0;
+    if (wasOpen && addonEventCallback_) addonEventCallback_("BANKFRAME_CLOSED", {});
 }
 
 void GameHandler::buyBankSlot() {
@@ -25164,6 +25166,7 @@ void GameHandler::handleShowBank(network::Packet& packet) {
     bankerGuid_ = packet.readUInt64();
     bankOpen_ = true;
     gossipWindowOpen = false;  // Close gossip when bank opens
+    if (addonEventCallback_) addonEventCallback_("BANKFRAME_OPENED", {});
     // Bank items are already tracked via update fields (bank slot GUIDs)
     // Trigger rebuild to populate bank slots in inventory
     rebuildOnlineInventory();
