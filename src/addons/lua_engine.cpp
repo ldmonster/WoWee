@@ -392,7 +392,24 @@ static int lua_UnitAura(lua_State* L, bool wantBuff) {
             }
             lua_pushnumber(L, aura.maxDurationMs > 0 ? aura.maxDurationMs / 1000.0 : 0); // duration
             lua_pushnumber(L, 0);            // expirationTime (would need absolute time)
-            lua_pushnil(L);                  // caster
+            // caster: return unit ID string if caster is known
+            if (aura.casterGuid != 0) {
+                if (aura.casterGuid == gh->getPlayerGuid())
+                    lua_pushstring(L, "player");
+                else if (aura.casterGuid == gh->getTargetGuid())
+                    lua_pushstring(L, "target");
+                else if (aura.casterGuid == gh->getFocusGuid())
+                    lua_pushstring(L, "focus");
+                else if (aura.casterGuid == gh->getPetGuid())
+                    lua_pushstring(L, "pet");
+                else {
+                    char cBuf[32];
+                    snprintf(cBuf, sizeof(cBuf), "0x%016llX", (unsigned long long)aura.casterGuid);
+                    lua_pushstring(L, cBuf);
+                }
+            } else {
+                lua_pushnil(L);
+            }
             lua_pushboolean(L, 0);           // isStealable
             lua_pushboolean(L, 0);           // shouldConsolidate
             lua_pushnumber(L, aura.spellId); // spellId
