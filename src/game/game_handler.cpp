@@ -2229,6 +2229,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 if (pvpHonorCallback_) {
                     pvpHonorCallback_(honor, victimGuid, rank);
                 }
+                if (addonEventCallback_)
+                    addonEventCallback_("CHAT_MSG_COMBAT_HONOR_GAIN", {msg});
             }
             break;
         }
