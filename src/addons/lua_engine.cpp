@@ -619,10 +619,22 @@ static int lua_UnitRace(lua_State* L) {
 static int lua_UnitPowerType(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* unit = resolveUnit(L, uid);
+    static const char* kPowerNames[] = {"MANA","RAGE","FOCUS","ENERGY","HAPPINESS","","RUNIC_POWER"};
     if (unit) {
-        lua_pushnumber(L, unit->getPowerType());
-        static const char* kPowerNames[] = {"MANA","RAGE","FOCUS","ENERGY","HAPPINESS","","RUNIC_POWER"};
         uint8_t pt = unit->getPowerType();
+        lua_pushnumber(L, pt);
+        lua_pushstring(L, (pt < 7) ? kPowerNames[pt] : "MANA");
+        return 2;
+    }
+    // Fallback: party member stats for out-of-range members
+    auto* gh = getGameHandler(L);
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
+    const auto* pm = findPartyMember(gh, guid);
+    if (pm) {
+        uint8_t pt = pm->powerType;
+        lua_pushnumber(L, pt);
         lua_pushstring(L, (pt < 7) ? kPowerNames[pt] : "MANA");
         return 2;
     }
