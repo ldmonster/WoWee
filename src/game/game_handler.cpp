@@ -14841,6 +14841,16 @@ void GameHandler::handleNameQueryResponse(network::Packet& packet) {
         if (friendGuids_.count(data.guid)) {
             friendsCache[data.name] = data.guid;
         }
+
+        // Fire UNIT_NAME_UPDATE so nameplate/unit frame addons know the name is available
+        if (addonEventCallback_) {
+            std::string unitId;
+            if (data.guid == targetGuid) unitId = "target";
+            else if (data.guid == focusGuid) unitId = "focus";
+            else if (data.guid == playerGuid) unitId = "player";
+            if (!unitId.empty())
+                addonEventCallback_("UNIT_NAME_UPDATE", {unitId});
+        }
     }
 }
 
