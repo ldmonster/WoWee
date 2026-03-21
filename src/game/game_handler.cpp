@@ -5063,6 +5063,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 }
                 pendingBuyItemId_   = 0;
                 pendingBuyItemSlot_ = 0;
+                if (addonEventCallback_) {
+                    addonEventCallback_("MERCHANT_UPDATE", {});
+                    addonEventCallback_("BAG_UPDATE", {});
+                }
             }
             break;
         }
