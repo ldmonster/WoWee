@@ -1988,6 +1988,20 @@ void LuaEngine::registerCoreAPI() {
         "    SHAMAN={r=0.0,g=0.44,b=0.87}, MAGE={r=0.41,g=0.80,b=0.94},\n"
         "    WARLOCK={r=0.58,g=0.51,b=0.79}, DRUID={r=1.0,g=0.49,b=0.04},\n"
         "}\n"
+        // Money formatting utility
+        "function GetCoinTextureString(copper)\n"
+        "    if not copper or copper == 0 then return '0c' end\n"
+        "    copper = math.floor(copper)\n"
+        "    local g = math.floor(copper / 10000)\n"
+        "    local s = math.floor(math.fmod(copper, 10000) / 100)\n"
+        "    local c = math.fmod(copper, 100)\n"
+        "    local r = ''\n"
+        "    if g > 0 then r = r .. g .. 'g ' end\n"
+        "    if s > 0 then r = r .. s .. 's ' end\n"
+        "    if c > 0 or r == '' then r = r .. c .. 'c' end\n"
+        "    return r\n"
+        "end\n"
+        "GetCoinText = GetCoinTextureString\n"
     );
 }
 
