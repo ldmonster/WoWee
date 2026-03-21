@@ -1415,6 +1415,165 @@ static int lua_UnitClassification(lua_State* L) {
     return 1;
 }
 
+// GetComboPoints("player"|"vehicle", "target") → number
+static int lua_GetComboPoints(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    lua_pushnumber(L, gh ? gh->getComboPoints() : 0);
+    return 1;
+}
+
+// UnitReaction(unit, otherUnit) → 1-8 (hostile to exalted)
+// Simplified: hostile=2, neutral=4, friendly=5
+static int lua_UnitReaction(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushnil(L); return 1; }
+    const char* uid1 = luaL_checkstring(L, 1);
+    const char* uid2 = luaL_checkstring(L, 2);
+    auto* unit2 = resolveUnit(L, uid2);
+    if (!unit2) { lua_pushnil(L); return 1; }
+    // If unit2 is the player, always friendly to self
+    std::string u1(uid1);
+    for (char& c : u1) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::string u2(uid2);
+    for (char& c : u2) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t g1 = resolveUnitGuid(gh, u1);
+    uint64_t g2 = resolveUnitGuid(gh, u2);
+    if (g1 == g2) { lua_pushnumber(L, 5); return 1; } // same unit = friendly
+    if (unit2->isHostile()) {
+        lua_pushnumber(L, 2); // hostile
+    } else {
+        lua_pushnumber(L, 5); // friendly
+    }
+    return 1;
+}
+
+// UnitIsConnected(unit) → boolean
+static int lua_UnitIsConnected(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushboolean(L, 0); return 1; }
+    const char* uid = luaL_optstring(L, 1, "player");
+    std::string uidStr(uid);
+    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    uint64_t guid = resolveUnitGuid(gh, uidStr);
+    if (guid == 0) { lua_pushboolean(L, 0); return 1; }
+    // Player is always connected
+    if (guid == gh->getPlayerGuid()) { lua_pushboolean(L, 1); return 1; }
+    // Check party/raid member online status
+    const auto& pd = gh->getPartyData();
+    for (const auto& m : pd.members) {
+        if (m.guid == guid) {
+            lua_pushboolean(L, m.isOnline ? 1 : 0);
+            return 1;
+        }
+    }
+    // Non-party entities that exist are considered connected
+    auto entity = gh->getEntityManager().getEntity(guid);
+    lua_pushboolean(L, entity ? 1 : 0);
+    return 1;
+}
+
+// HasAction(slot) → boolean (1-indexed slot)
+static int lua_HasAction(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushboolean(L, 0); return 1; }
+    int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1; // WoW uses 1-indexed slots
+    const auto& bar = gh->getActionBar();
+    if (slot < 0 || slot >= static_cast<int>(bar.size())) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    lua_pushboolean(L, !bar[slot].isEmpty());
+    return 1;
+}
+
+// GetActionTexture(slot) → texturePath or nil
+static int lua_GetActionTexture(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushnil(L); return 1; }
+    int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
+    const auto& bar = gh->getActionBar();
+    if (slot < 0 || slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const auto& action = bar[slot];
+    if (action.type == game::ActionBarSlot::SPELL) {
+        std::string icon = gh->getSpellIconPath(action.id);
+        if (!icon.empty()) {
+            lua_pushstring(L, icon.c_str());
+            return 1;
+        }
+    }
+    // For items we don't have icon resolution yet (needs ItemDisplayInfo DBC)
+    lua_pushnil(L);
+    return 1;
+}
+
+// IsCurrentAction(slot) → boolean
+static int lua_IsCurrentAction(lua_State* L) {
+    // Currently no "active action" tracking; return false
+    (void)L;
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+// IsUsableAction(slot) → usable, notEnoughMana
+static int lua_IsUsableAction(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushboolean(L, 0); lua_pushboolean(L, 0); return 2; }
+    int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
+    const auto& bar = gh->getActionBar();
+    if (slot < 0 || slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) {
+        lua_pushboolean(L, 0);
+        lua_pushboolean(L, 0);
+        return 2;
+    }
+    const auto& action = bar[slot];
+    bool usable = action.isReady();
+    if (action.type == game::ActionBarSlot::SPELL) {
+        usable = usable && gh->getKnownSpells().count(action.id);
+    }
+    lua_pushboolean(L, usable ? 1 : 0);
+    lua_pushboolean(L, 0); // notEnoughMana (can't determine without cost data)
+    return 2;
+}
+
+// GetActionCooldown(slot) → start, duration, enable
+static int lua_GetActionCooldown(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 1); return 3; }
+    int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
+    const auto& bar = gh->getActionBar();
+    if (slot < 0 || slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) {
+        lua_pushnumber(L, 0);
+        lua_pushnumber(L, 0);
+        lua_pushnumber(L, 1);
+        return 3;
+    }
+    const auto& action = bar[slot];
+    if (action.cooldownRemaining > 0.0f) {
+        // WoW returns GetTime()-based start time; approximate
+        double now = 0;
+        lua_getglobal(L, "GetTime");
+        if (lua_isfunction(L, -1)) {
+            lua_call(L, 0, 1);
+            now = lua_tonumber(L, -1);
+            lua_pop(L, 1);
+        } else {
+            lua_pop(L, 1);
+        }
+        double start = now - (action.cooldownTotal - action.cooldownRemaining);
+        lua_pushnumber(L, start);
+        lua_pushnumber(L, action.cooldownTotal);
+        lua_pushnumber(L, 1);
+    } else {
+        lua_pushnumber(L, 0);
+        lua_pushnumber(L, 0);
+        lua_pushnumber(L, 1);
+    }
+    return 3;
+}
+
 // --- Frame System ---
 // Minimal WoW-compatible frame objects with RegisterEvent/SetScript/GetScript.
 // Frames are Lua tables with a metatable that provides methods.
@@ -1727,6 +1886,8 @@ void LuaEngine::registerCoreAPI() {
         {"UnitHealthMax", lua_UnitHealthMax},
         {"UnitPower",     lua_UnitPower},
         {"UnitPowerMax",  lua_UnitPowerMax},
+        {"UnitMana",      lua_UnitPower},
+        {"UnitManaMax",   lua_UnitPowerMax},
         {"UnitLevel",     lua_UnitLevel},
         {"UnitExists",    lua_UnitExists},
         {"UnitIsDead",    lua_UnitIsDead},
@@ -1808,6 +1969,16 @@ void LuaEngine::registerCoreAPI() {
         {"GetQuestLogTitle",        lua_GetQuestLogTitle},
         {"GetQuestLogQuestText",    lua_GetQuestLogQuestText},
         {"IsQuestComplete",         lua_IsQuestComplete},
+        // Reaction/connection queries
+        {"UnitReaction",        lua_UnitReaction},
+        {"UnitIsConnected",     lua_UnitIsConnected},
+        {"GetComboPoints",      lua_GetComboPoints},
+        // Action bar API
+        {"HasAction",           lua_HasAction},
+        {"GetActionTexture",    lua_GetActionTexture},
+        {"IsCurrentAction",     lua_IsCurrentAction},
+        {"IsUsableAction",      lua_IsUsableAction},
+        {"GetActionCooldown",   lua_GetActionCooldown},
         // Utilities
         {"strsplit",          lua_strsplit},
         {"strtrim",           lua_strtrim},
