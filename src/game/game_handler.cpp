@@ -20820,6 +20820,8 @@ void GameHandler::handleGuildInvite(network::Packet& packet) {
     pendingGuildInviteGuildName_ = data.guildName;
     LOG_INFO("Guild invite from: ", data.inviterName, " to guild: ", data.guildName);
     addSystemChatMessage(data.inviterName + " has invited you to join " + data.guildName + ".");
+    if (addonEventCallback_)
+        addonEventCallback_("GUILD_INVITE_REQUEST", {data.inviterName, data.guildName});
 }
 
 void GameHandler::handleGuildCommandResult(network::Packet& packet) {
