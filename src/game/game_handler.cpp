@@ -19524,6 +19524,7 @@ void GameHandler::handleLearnedSpell(network::Packet& packet) {
     LOG_INFO("Learned spell: ", spellId, alreadyKnown ? " (already known, skipping chat)" : "");
 
     // Check if this spell corresponds to a talent rank
+    bool isTalentSpell = false;
     for (const auto& [talentId, talent] : talentCache_) {
         for (int rank = 0; rank < 5; ++rank) {
             if (talent.rankSpells[rank] == spellId) {
@@ -19532,9 +19533,15 @@ void GameHandler::handleLearnedSpell(network::Packet& packet) {
                 learnedTalents_[activeTalentSpec_][talentId] = newRank;
                 LOG_INFO("Talent learned: id=", talentId, " rank=", (int)newRank,
                          " (spell ", spellId, ") in spec ", (int)activeTalentSpec_);
-                return;
+                isTalentSpell = true;
+                if (addonEventCallback_) {
+                    addonEventCallback_("CHARACTER_POINTS_CHANGED", {});
+                    addonEventCallback_("PLAYER_TALENT_UPDATE", {});
+                }
+                break;
             }
         }
+        if (isTalentSpell) break;
     }
 
     // Fire LEARNED_SPELL_IN_TAB / SPELLS_CHANGED for Lua addons
@@ -19542,6 +19549,8 @@ void GameHandler::handleLearnedSpell(network::Packet& packet) {
         addonEventCallback_("LEARNED_SPELL_IN_TAB", {std::to_string(spellId)});
         addonEventCallback_("SPELLS_CHANGED", {});
     }
+
+    if (isTalentSpell) return; // talent spells don't show chat message
 
     // Show chat message for non-talent spells, but only if not already announced by
     // SMSG_TRAINER_BUY_SUCCEEDED (which pre-inserts into knownSpells).
@@ -19719,6 +19728,13 @@ void GameHandler::handleTalentsInfo(network::Packet& packet) {
     LOG_INFO("handleTalentsInfo: unspent=", unspentTalents,
              " groups=", (int)talentGroupCount, " active=", (int)activeTalentGroup,
              " learned=", learnedTalents_[activeTalentGroup].size());
+
+    // Fire talent-related events for addons
+    if (addonEventCallback_) {
+        addonEventCallback_("CHARACTER_POINTS_CHANGED", {});
+        addonEventCallback_("ACTIVE_TALENT_GROUP_CHANGED", {});
+        addonEventCallback_("PLAYER_TALENT_UPDATE", {});
+    }
 
     if (!talentsInitialized_) {
         talentsInitialized_ = true;
