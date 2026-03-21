@@ -18364,6 +18364,27 @@ void GameHandler::handleMonsterMove(network::Packet& packet) {
             creatureMoveCallback_(data.guid,
                 posCanonical.x, posCanonical.y, posCanonical.z, 0);
         }
+    } else if (data.moveType == 4) {
+        // FacingAngle without movement — rotate NPC in place
+        float orientation = core::coords::serverToCanonicalYaw(data.facingAngle);
+        glm::vec3 posCanonical = core::coords::serverToCanonical(
+            glm::vec3(data.x, data.y, data.z));
+        entity->setPosition(posCanonical.x, posCanonical.y, posCanonical.z, orientation);
+        if (creatureMoveCallback_) {
+            creatureMoveCallback_(data.guid,
+                posCanonical.x, posCanonical.y, posCanonical.z, 0);
+        }
+    } else if (data.moveType == 3 && data.facingTarget != 0) {
+        // FacingTarget without movement — rotate NPC to face a target
+        auto target = entityManager.getEntity(data.facingTarget);
+        if (target) {
+            float dx = target->getX() - entity->getX();
+            float dy = target->getY() - entity->getY();
+            if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
+                float orientation = std::atan2(-dy, dx);
+                entity->setOrientation(orientation);
+            }
+        }
     }
 }
 
