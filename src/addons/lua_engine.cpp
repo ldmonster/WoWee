@@ -766,7 +766,14 @@ static int lua_GetItemInfo(lua_State* L) {
     lua_pushstring(L, "");                           // 7: subclass
     lua_pushnumber(L, info->maxStack > 0 ? info->maxStack : 1); // 8: maxStack
     lua_pushstring(L, "");                           // 9: equipSlot
-    lua_pushnil(L);                                  // 10: texture (icon path — no ItemDisplayInfo icon resolver yet)
+    // 10: texture (icon path from ItemDisplayInfo.dbc)
+    if (info->displayInfoId != 0) {
+        std::string iconPath = gh->getItemIconPath(info->displayInfoId);
+        if (!iconPath.empty()) lua_pushstring(L, iconPath.c_str());
+        else lua_pushnil(L);
+    } else {
+        lua_pushnil(L);
+    }
     lua_pushnumber(L, info->sellPrice);              // 11: vendorPrice
     return 11;
 }
@@ -1393,11 +1400,10 @@ static int lua_GetLootSlotInfo(lua_State* L) {
     const auto& item = loot.items[slot - 1];
     const auto* info = gh->getItemInfo(item.itemId);
 
-    // texture (icon path — nil if not available)
+    // texture (icon path from ItemDisplayInfo.dbc)
     std::string icon;
-    if (info) {
-        // Try spell icon resolver as fallback for item icon
-        icon = gh->getSpellIconPath(item.itemId);
+    if (info && info->displayInfoId != 0) {
+        icon = gh->getItemIconPath(info->displayInfoId);
     }
     if (!icon.empty()) lua_pushstring(L, icon.c_str());
     else lua_pushnil(L);
@@ -1883,8 +1889,16 @@ static int lua_GetActionTexture(lua_State* L) {
             lua_pushstring(L, icon.c_str());
             return 1;
         }
+    } else if (action.type == game::ActionBarSlot::ITEM && action.id != 0) {
+        const auto* info = gh->getItemInfo(action.id);
+        if (info && info->displayInfoId != 0) {
+            std::string icon = gh->getItemIconPath(info->displayInfoId);
+            if (!icon.empty()) {
+                lua_pushstring(L, icon.c_str());
+                return 1;
+            }
+        }
     }
-    // For items we don't have icon resolution yet (needs ItemDisplayInfo DBC)
     lua_pushnil(L);
     return 1;
 }

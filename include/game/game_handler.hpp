@@ -294,6 +294,13 @@ public:
         return spellIconPathResolver_ ? spellIconPathResolver_(spellId) : std::string{};
     }
 
+    // Item icon path resolver: displayInfoId -> texture path (e.g., "Interface\\Icons\\INV_Sword_04")
+    using ItemIconPathResolver = std::function<std::string(uint32_t)>;
+    void setItemIconPathResolver(ItemIconPathResolver r) { itemIconPathResolver_ = std::move(r); }
+    std::string getItemIconPath(uint32_t displayInfoId) const {
+        return itemIconPathResolver_ ? itemIconPathResolver_(displayInfoId) : std::string{};
+    }
+
     // Random property/suffix name resolver: randomPropertyId -> suffix name (e.g., "of the Eagle")
     // Positive IDs → ItemRandomProperties.dbc; negative IDs → ItemRandomSuffix.dbc (abs value)
     using RandomPropertyNameResolver = std::function<std::string(int32_t)>;
@@ -2662,6 +2669,7 @@ private:
     AddonChatCallback addonChatCallback_;
     AddonEventCallback addonEventCallback_;
     SpellIconPathResolver spellIconPathResolver_;
+    ItemIconPathResolver itemIconPathResolver_;
     RandomPropertyNameResolver randomPropertyNameResolver_;
     EmoteAnimCallback emoteAnimCallback_;
 

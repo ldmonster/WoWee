@@ -413,6 +413,32 @@ bool Application::initialize() {
                     return pit->second;
                 });
             }
+            // Wire item icon path resolver: displayInfoId -> "Interface\\Icons\\INV_..."
+            {
+                auto iconNames = std::make_shared<std::unordered_map<uint32_t, std::string>>();
+                auto loaded    = std::make_shared<bool>(false);
+                auto* am = assetManager.get();
+                gameHandler->setItemIconPathResolver([iconNames, loaded, am](uint32_t displayInfoId) -> std::string {
+                    if (!am || displayInfoId == 0) return {};
+                    if (!*loaded) {
+                        *loaded = true;
+                        auto dbc = am->loadDBC("ItemDisplayInfo.dbc");
+                        const auto* dispL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("ItemDisplayInfo") : nullptr;
+                        if (dbc && dbc->isLoaded()) {
+                            uint32_t iconField = dispL ? (*dispL)["InventoryIcon"] : 5;
+                            for (uint32_t i = 0; i < dbc->getRecordCount(); i++) {
+                                uint32_t id = dbc->getUInt32(i, 0); // field 0 = ID
+                                std::string name = dbc->getString(i, iconField);
+                                if (id > 0 && !name.empty()) (*iconNames)[id] = name;
+                            }
+                            LOG_INFO("Loaded ", iconNames->size(), " item icon names from ItemDisplayInfo.dbc");
+                        }
+                    }
+                    auto it = iconNames->find(displayInfoId);
+                    if (it == iconNames->end()) return {};
+                    return "Interface\\Icons\\" + it->second;
+                });
+            }
             // Wire random property/suffix name resolver for item display
             {
                 auto propNames   = std::make_shared<std::unordered_map<int32_t, std::string>>();
