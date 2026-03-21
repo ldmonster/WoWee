@@ -3452,6 +3452,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 if (failGuid == playerGuid || failGuid == 0) unitId = "player";
                 else if (failGuid == targetGuid) unitId = "target";
                 else if (failGuid == focusGuid) unitId = "focus";
+                else if (failGuid == petGuid_) unitId = "pet";
                 if (!unitId.empty()) {
                     addonEventCallback_("UNIT_SPELLCAST_INTERRUPTED", {unitId});
                     addonEventCallback_("UNIT_SPELLCAST_STOP", {unitId});
@@ -7465,6 +7466,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     if (chanCaster == playerGuid) unitId = "player";
                     else if (chanCaster == targetGuid) unitId = "target";
                     else if (chanCaster == focusGuid) unitId = "focus";
+                    else if (chanCaster == petGuid_) unitId = "pet";
                     if (!unitId.empty())
                         addonEventCallback_("UNIT_SPELLCAST_CHANNEL_START", {unitId, std::to_string(chanSpellId)});
                 }
@@ -7501,6 +7503,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 if (chanCaster2 == playerGuid) unitId = "player";
                 else if (chanCaster2 == targetGuid) unitId = "target";
                 else if (chanCaster2 == focusGuid) unitId = "focus";
+                else if (chanCaster2 == petGuid_) unitId = "pet";
                 if (!unitId.empty())
                     addonEventCallback_("UNIT_SPELLCAST_CHANNEL_STOP", {unitId});
             }
@@ -19309,6 +19312,7 @@ void GameHandler::handleSpellStart(network::Packet& packet) {
         if (data.casterUnit == playerGuid) unitId = "player";
         else if (data.casterUnit == targetGuid) unitId = "target";
         else if (data.casterUnit == focusGuid) unitId = "focus";
+        else if (data.casterUnit == petGuid_) unitId = "pet";
         if (!unitId.empty())
             addonEventCallback_("UNIT_SPELLCAST_START", {unitId, std::to_string(data.spellId)});
     }
@@ -19458,6 +19462,7 @@ void GameHandler::handleSpellGo(network::Packet& packet) {
         if (data.casterUnit == playerGuid) unitId = "player";
         else if (data.casterUnit == targetGuid) unitId = "target";
         else if (data.casterUnit == focusGuid) unitId = "focus";
+        else if (data.casterUnit == petGuid_) unitId = "pet";
         if (!unitId.empty())
             addonEventCallback_("UNIT_SPELLCAST_SUCCEEDED", {unitId, std::to_string(data.spellId)});
     }
