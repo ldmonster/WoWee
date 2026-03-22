@@ -1857,6 +1857,100 @@ static int lua_GetMinimapZoneText(lua_State* L) {
     return lua_GetZoneText(L);
 }
 
+// --- World Map Navigation API ---
+
+// Map ID → continent mapping
+static int mapIdToContinent(uint32_t mapId) {
+    switch (mapId) {
+        case 0:   return 2; // Eastern Kingdoms
+        case 1:   return 1; // Kalimdor
+        case 530: return 3; // Outland
+        case 571: return 4; // Northrend
+        default:  return 0; // Instance or unknown
+    }
+}
+
+// Internal tracked map state (which continent/zone the map UI is viewing)
+static int s_mapContinent = 0;
+static int s_mapZone = 0;
+
+// SetMapToCurrentZone() — sets map view to the player's current zone
+static int lua_SetMapToCurrentZone(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (gh) {
+        s_mapContinent = mapIdToContinent(gh->getCurrentMapId());
+        s_mapZone = static_cast<int>(gh->getWorldStateZoneId());
+    }
+    return 0;
+}
+
+// GetCurrentMapContinent() → continentId (1=Kalimdor, 2=EK, 3=Outland, 4=Northrend)
+static int lua_GetCurrentMapContinent(lua_State* L) {
+    if (s_mapContinent == 0) {
+        auto* gh = getGameHandler(L);
+        if (gh) s_mapContinent = mapIdToContinent(gh->getCurrentMapId());
+    }
+    lua_pushnumber(L, s_mapContinent);
+    return 1;
+}
+
+// GetCurrentMapZone() → zoneId
+static int lua_GetCurrentMapZone(lua_State* L) {
+    if (s_mapZone == 0) {
+        auto* gh = getGameHandler(L);
+        if (gh) s_mapZone = static_cast<int>(gh->getWorldStateZoneId());
+    }
+    lua_pushnumber(L, s_mapZone);
+    return 1;
+}
+
+// SetMapZoom(continent [, zone]) — sets map view to continent/zone
+static int lua_SetMapZoom(lua_State* L) {
+    s_mapContinent = static_cast<int>(luaL_checknumber(L, 1));
+    s_mapZone = static_cast<int>(luaL_optnumber(L, 2, 0));
+    return 0;
+}
+
+// GetMapContinents() → "Kalimdor", "Eastern Kingdoms", ...
+static int lua_GetMapContinents(lua_State* L) {
+    lua_pushstring(L, "Kalimdor");
+    lua_pushstring(L, "Eastern Kingdoms");
+    lua_pushstring(L, "Outland");
+    lua_pushstring(L, "Northrend");
+    return 4;
+}
+
+// GetMapZones(continent) → zone names for that continent
+// Returns a basic list; addons mainly need this to not error
+static int lua_GetMapZones(lua_State* L) {
+    int cont = static_cast<int>(luaL_checknumber(L, 1));
+    // Return a minimal representative set per continent
+    switch (cont) {
+        case 1: // Kalimdor
+            lua_pushstring(L, "Durotar"); lua_pushstring(L, "Mulgore");
+            lua_pushstring(L, "The Barrens"); lua_pushstring(L, "Teldrassil");
+            return 4;
+        case 2: // Eastern Kingdoms
+            lua_pushstring(L, "Elwynn Forest"); lua_pushstring(L, "Westfall");
+            lua_pushstring(L, "Dun Morogh"); lua_pushstring(L, "Tirisfal Glades");
+            return 4;
+        case 3: // Outland
+            lua_pushstring(L, "Hellfire Peninsula"); lua_pushstring(L, "Zangarmarsh");
+            return 2;
+        case 4: // Northrend
+            lua_pushstring(L, "Borean Tundra"); lua_pushstring(L, "Howling Fjord");
+            return 2;
+        default:
+            return 0;
+    }
+}
+
+// GetNumMapLandmarks() → 0 (no landmark data exposed yet)
+static int lua_GetNumMapLandmarks(lua_State* L) {
+    lua_pushnumber(L, 0);
+    return 1;
+}
+
 // --- Player State API ---
 // These replace the hardcoded "return false" Lua stubs with real game state.
 
@@ -4167,6 +4261,13 @@ void LuaEngine::registerCoreAPI() {
         {"GetLocale",         lua_GetLocale},
         {"GetBuildInfo",      lua_GetBuildInfo},
         {"GetCurrentMapAreaID", lua_GetCurrentMapAreaID},
+        {"SetMapToCurrentZone", lua_SetMapToCurrentZone},
+        {"GetCurrentMapContinent", lua_GetCurrentMapContinent},
+        {"GetCurrentMapZone",   lua_GetCurrentMapZone},
+        {"SetMapZoom",          lua_SetMapZoom},
+        {"GetMapContinents",    lua_GetMapContinents},
+        {"GetMapZones",         lua_GetMapZones},
+        {"GetNumMapLandmarks",  lua_GetNumMapLandmarks},
         {"GetZoneText",          lua_GetZoneText},
         {"GetRealZoneText",      lua_GetZoneText},
         {"GetSubZoneText",       lua_GetSubZoneText},
