@@ -13468,6 +13468,31 @@ void GameHandler::handleMessageChat(network::Packet& packet) {
     }
 
     LOG_DEBUG("[", getChatTypeString(data.type), "] ", channelInfo, senderInfo, ": ", data.message);
+
+    // Fire CHAT_MSG_* addon events so Lua chat frames and addons receive messages.
+    // WoW event args: message, senderName, language, channelName
+    if (addonEventCallback_) {
+        std::string eventName = "CHAT_MSG_";
+        eventName += getChatTypeString(data.type);
+        std::string lang = std::to_string(static_cast<int>(data.language));
+        // Format sender GUID as hex string for addons that need it
+        char guidBuf[32];
+        snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", (unsigned long long)data.senderGuid);
+        addonEventCallback_(eventName, {
+            data.message,
+            data.senderName,
+            lang,
+            data.channelName,
+            senderInfo,       // arg5: displayName
+            "",               // arg6: specialFlags
+            "0",              // arg7: zoneChannelID
+            "0",              // arg8: channelIndex
+            "",               // arg9: channelBaseName
+            "0",              // arg10: unused
+            "0",              // arg11: lineID
+            guidBuf           // arg12: senderGUID
+        });
+    }
 }
 
 void GameHandler::sendTextEmote(uint32_t textEmoteId, uint64_t targetGuid) {
