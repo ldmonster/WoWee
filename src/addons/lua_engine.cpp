@@ -2919,6 +2919,115 @@ static int lua_IsUsableAction(lua_State* L) {
     return 2;
 }
 
+// IsActionInRange(slot) → 1 if in range, 0 if out, nil if no range check applicable
+static int lua_IsActionInRange(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushnil(L); return 1; }
+    int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
+    const auto& bar = gh->getActionBar();
+    if (slot < 0 || slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const auto& action = bar[slot];
+    uint32_t spellId = 0;
+    if (action.type == game::ActionBarSlot::SPELL) {
+        spellId = action.id;
+    } else {
+        // Items/macros: no range check for now
+        lua_pushnil(L);
+        return 1;
+    }
+    if (spellId == 0) { lua_pushnil(L); return 1; }
+
+    auto data = gh->getSpellData(spellId);
+    if (data.maxRange <= 0.0f) {
+        // Melee or self-cast spells: no range indicator
+        lua_pushnil(L);
+        return 1;
+    }
+
+    // Need a target to check range against
+    uint64_t targetGuid = gh->getTargetGuid();
+    if (targetGuid == 0) { lua_pushnil(L); return 1; }
+    auto targetEnt = gh->getEntityManager().getEntity(targetGuid);
+    auto playerEnt = gh->getEntityManager().getEntity(gh->getPlayerGuid());
+    if (!targetEnt || !playerEnt) { lua_pushnil(L); return 1; }
+
+    float dx = playerEnt->getX() - targetEnt->getX();
+    float dy = playerEnt->getY() - targetEnt->getY();
+    float dz = playerEnt->getZ() - targetEnt->getZ();
+    float dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+    lua_pushnumber(L, dist <= data.maxRange ? 1 : 0);
+    return 1;
+}
+
+// GetActionInfo(slot) → actionType, id, subType
+static int lua_GetActionInfo(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { return 0; }
+    int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
+    const auto& bar = gh->getActionBar();
+    if (slot < 0 || slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) {
+        return 0;
+    }
+    const auto& action = bar[slot];
+    switch (action.type) {
+        case game::ActionBarSlot::SPELL:
+            lua_pushstring(L, "spell");
+            lua_pushnumber(L, action.id);
+            lua_pushstring(L, "spell");
+            return 3;
+        case game::ActionBarSlot::ITEM:
+            lua_pushstring(L, "item");
+            lua_pushnumber(L, action.id);
+            lua_pushstring(L, "item");
+            return 3;
+        case game::ActionBarSlot::MACRO:
+            lua_pushstring(L, "macro");
+            lua_pushnumber(L, action.id);
+            lua_pushstring(L, "macro");
+            return 3;
+        default:
+            return 0;
+    }
+}
+
+// GetActionCount(slot) → count (item stack count or 0)
+static int lua_GetActionCount(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushnumber(L, 0); return 1; }
+    int slot = static_cast<int>(luaL_checknumber(L, 1)) - 1;
+    const auto& bar = gh->getActionBar();
+    if (slot < 0 || slot >= static_cast<int>(bar.size()) || bar[slot].isEmpty()) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+    const auto& action = bar[slot];
+    if (action.type == game::ActionBarSlot::ITEM && action.id != 0) {
+        // Count items across backpack + bags
+        uint32_t count = 0;
+        const auto& inv = gh->getInventory();
+        for (int i = 0; i < inv.getBackpackSize(); ++i) {
+            const auto& s = inv.getBackpackSlot(i);
+            if (!s.empty() && s.item.itemId == action.id)
+                count += (s.item.stackCount > 0 ? s.item.stackCount : 1);
+        }
+        for (int b = 0; b < game::Inventory::NUM_BAG_SLOTS; ++b) {
+            int bagSize = inv.getBagSize(b);
+            for (int i = 0; i < bagSize; ++i) {
+                const auto& s = inv.getBagSlot(b, i);
+                if (!s.empty() && s.item.itemId == action.id)
+                    count += (s.item.stackCount > 0 ? s.item.stackCount : 1);
+            }
+        }
+        lua_pushnumber(L, count);
+    } else {
+        lua_pushnumber(L, 0);
+    }
+    return 1;
+}
+
 // GetActionCooldown(slot) → start, duration, enable
 static int lua_GetActionCooldown(lua_State* L) {
     auto* gh = getGameHandler(L);
@@ -3655,6 +3764,9 @@ void LuaEngine::registerCoreAPI() {
         {"GetActionTexture",    lua_GetActionTexture},
         {"IsCurrentAction",     lua_IsCurrentAction},
         {"IsUsableAction",      lua_IsUsableAction},
+        {"IsActionInRange",     lua_IsActionInRange},
+        {"GetActionInfo",       lua_GetActionInfo},
+        {"GetActionCount",      lua_GetActionCount},
         {"GetActionCooldown",   lua_GetActionCooldown},
         {"UseAction",           lua_UseAction},
         {"CancelUnitBuff",      lua_CancelUnitBuff},
