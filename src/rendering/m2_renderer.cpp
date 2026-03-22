@@ -366,6 +366,41 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
         vkCreateDescriptorPool(device, &ci, nullptr, &boneDescPool_);
     }
 
+    // Create a small identity-bone SSBO + descriptor set so that non-animated
+    // draws always have a valid set 2 bound.  The Intel ANV driver segfaults
+    // on vkCmdDrawIndexed when a declared descriptor set slot is unbound.
+    {
+        // Single identity matrix (bone 0 = identity)
+        glm::mat4 identity(1.0f);
+        VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        bci.size = sizeof(glm::mat4);
+        bci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        VmaAllocationCreateInfo aci{};
+        aci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+        aci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        VmaAllocationInfo allocInfo{};
+        vmaCreateBuffer(ctx->getAllocator(), &bci, &aci,
+                        &dummyBoneBuffer_, &dummyBoneAlloc_, &allocInfo);
+        if (allocInfo.pMappedData) {
+            memcpy(allocInfo.pMappedData, &identity, sizeof(identity));
+        }
+
+        dummyBoneSet_ = allocateBoneSet();
+        if (dummyBoneSet_) {
+            VkDescriptorBufferInfo bufInfo{};
+            bufInfo.buffer = dummyBoneBuffer_;
+            bufInfo.offset = 0;
+            bufInfo.range = sizeof(glm::mat4);
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = dummyBoneSet_;
+            write.dstBinding = 0;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            write.pBufferInfo = &bufInfo;
+            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        }
+    }
+
     // --- Pipeline layouts ---
 
     // Main M2 pipeline layout: set 0 = perFrame, set 1 = material, set 2 = bones
@@ -746,6 +781,9 @@ void M2Renderer::shutdown() {
     if (ribbonPipelineLayout_) { vkDestroyPipelineLayout(device, ribbonPipelineLayout_, nullptr); ribbonPipelineLayout_ = VK_NULL_HANDLE; }
 
     // Destroy descriptor pools and layouts
+    if (dummyBoneBuffer_) { vmaDestroyBuffer(alloc, dummyBoneBuffer_, dummyBoneAlloc_); dummyBoneBuffer_ = VK_NULL_HANDLE; }
+    // dummyBoneSet_ is freed implicitly when boneDescPool_ is destroyed
+    dummyBoneSet_ = VK_NULL_HANDLE;
     if (materialDescPool_) { vkDestroyDescriptorPool(device, materialDescPool_, nullptr); materialDescPool_ = VK_NULL_HANDLE; }
     if (boneDescPool_) { vkDestroyDescriptorPool(device, boneDescPool_, nullptr); boneDescPool_ = VK_NULL_HANDLE; }
     if (materialSetLayout_) { vkDestroyDescriptorSetLayout(device, materialSetLayout_, nullptr); materialSetLayout_ = VK_NULL_HANDLE; }
@@ -812,7 +850,11 @@ VkDescriptorSet M2Renderer::allocateMaterialSet() {
     ai.descriptorSetCount = 1;
     ai.pSetLayouts = &materialSetLayout_;
     VkDescriptorSet set = VK_NULL_HANDLE;
-    vkAllocateDescriptorSets(vkCtx_->getDevice(), &ai, &set);
+    VkResult result = vkAllocateDescriptorSets(vkCtx_->getDevice(), &ai, &set);
+    if (result != VK_SUCCESS) {
+        LOG_ERROR("M2Renderer: material descriptor set allocation failed (", result, ")");
+        return VK_NULL_HANDLE;
+    }
     return set;
 }
 
@@ -822,7 +864,11 @@ VkDescriptorSet M2Renderer::allocateBoneSet() {
     ai.descriptorSetCount = 1;
     ai.pSetLayouts = &boneSetLayout_;
     VkDescriptorSet set = VK_NULL_HANDLE;
-    vkAllocateDescriptorSets(vkCtx_->getDevice(), &ai, &set);
+    VkResult result = vkAllocateDescriptorSets(vkCtx_->getDevice(), &ai, &set);
+    if (result != VK_SUCCESS) {
+        LOG_ERROR("M2Renderer: bone descriptor set allocation failed (", result, ")");
+        return VK_NULL_HANDLE;
+    }
     return set;
 }
 
@@ -1303,6 +1349,10 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
             gpuModel.indexBuffer = buf.buffer;
             gpuModel.indexAlloc = buf.allocation;
         }
+
+        if (!gpuModel.vertexBuffer || !gpuModel.indexBuffer) {
+            LOG_ERROR("M2Renderer::loadModel: GPU buffer upload failed for model ", modelId);
+        }
     }
 
     // Load ALL textures from the model into a local vector.
@@ -1751,6 +1801,7 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
     }
 
     models[modelId] = std::move(gpuModel);
+    spatialIndexDirty_ = true;  // Map may have rehashed — refresh cachedModel pointers
 
     LOG_DEBUG("Loaded M2 model: ", model.name, " (", models[modelId].vertexCount, " vertices, ",
               models[modelId].indexCount / 3, " triangles, ", models[modelId].batches.size(), " batches)");
@@ -2504,6 +2555,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
     uint32_t currentModelId = UINT32_MAX;
     const M2ModelGPU* currentModel = nullptr;
+    bool currentModelValid = false;
 
     // State tracking
     VkPipeline currentPipeline = VK_NULL_HANDLE;
@@ -2519,6 +2571,12 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         float fadeAlpha;
     };
 
+    // Validate per-frame descriptor set before any Vulkan commands
+    if (!perFrameSet) {
+        LOG_ERROR("M2Renderer::render: perFrameSet is VK_NULL_HANDLE — skipping M2 render");
+        return;
+    }
+
     // Bind per-frame descriptor set (set 0) — shared across all draws
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             pipelineLayout_, 0, 1, &perFrameSet, 0, nullptr);
@@ -2528,6 +2586,13 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     currentPipeline = opaquePipeline_;
     bool opaquePass = true; // Pass 1 = opaque, pass 2 = transparent (set below for second pass)
 
+    // Bind dummy bone set (set 2) so non-animated draws have a valid binding.
+    // Animated instances override this with their real bone set per-instance.
+    if (dummyBoneSet_) {
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipelineLayout_, 2, 1, &dummyBoneSet_, 0, nullptr);
+    }
+
     for (const auto& entry : sortedVisible_) {
         if (entry.index >= instances.size()) continue;
         auto& instance = instances[entry.index];
@@ -2535,14 +2600,17 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         // Bind vertex + index buffers once per model group
         if (entry.modelId != currentModelId) {
             currentModelId = entry.modelId;
+            currentModelValid = false;
             auto mdlIt = models.find(currentModelId);
             if (mdlIt == models.end()) continue;
             currentModel = &mdlIt->second;
-            if (!currentModel->vertexBuffer) continue;
+            if (!currentModel->vertexBuffer || !currentModel->indexBuffer) continue;
+            currentModelValid = true;
             VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &currentModel->vertexBuffer, &offset);
             vkCmdBindIndexBuffer(cmd, currentModel->indexBuffer, 0, VK_INDEX_TYPE_UINT16);
         }
+        if (!currentModelValid) continue;
 
         const M2ModelGPU& model = *currentModel;
 
@@ -2785,7 +2853,6 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 continue;
             }
             vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
-
             vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
             lastDrawCallCount++;
         }
@@ -2799,6 +2866,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
     currentModelId = UINT32_MAX;
     currentModel = nullptr;
+    currentModelValid = false;
     // Reset pipeline to opaque so the first transparent bind always sets explicitly
     currentPipeline = opaquePipeline_;
 
@@ -2817,14 +2885,17 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         // `!opaquePass && !rawTransparent → continue` handles opaque skipping)
         if (entry.modelId != currentModelId) {
             currentModelId = entry.modelId;
+            currentModelValid = false;
             auto mdlIt = models.find(currentModelId);
             if (mdlIt == models.end()) continue;
             currentModel = &mdlIt->second;
-            if (!currentModel->vertexBuffer) continue;
+            if (!currentModel->vertexBuffer || !currentModel->indexBuffer) continue;
+            currentModelValid = true;
             VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &currentModel->vertexBuffer, &offset);
             vkCmdBindIndexBuffer(cmd, currentModel->indexBuffer, 0, VK_INDEX_TYPE_UINT16);
         }
+        if (!currentModelValid) continue;
 
         const M2ModelGPU& model = *currentModel;
 
@@ -4168,6 +4239,21 @@ void M2Renderer::clear() {
         }
         if (boneDescPool_) {
             vkResetDescriptorPool(device, boneDescPool_, 0);
+            // Re-allocate the dummy bone set (invalidated by pool reset)
+            dummyBoneSet_ = allocateBoneSet();
+            if (dummyBoneSet_ && dummyBoneBuffer_) {
+                VkDescriptorBufferInfo bufInfo{};
+                bufInfo.buffer = dummyBoneBuffer_;
+                bufInfo.offset = 0;
+                bufInfo.range = sizeof(glm::mat4);
+                VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                write.dstSet = dummyBoneSet_;
+                write.dstBinding = 0;
+                write.descriptorCount = 1;
+                write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                write.pBufferInfo = &bufInfo;
+                vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+            }
         }
     }
     models.clear();

@@ -394,6 +394,11 @@ private:
     std::unordered_set<uint32_t> uploadedM2Ids_;
     std::mutex uploadedM2IdsMutex_;
 
+    // Cross-tile dedup for WMO doodad preparation on background workers
+    // (prevents re-parsing thousands of doodads when same WMO spans multiple tiles)
+    std::unordered_set<uint32_t> preparedWmoUniqueIds_;
+    std::mutex preparedWmoUniqueIdsMutex_;
+
     // Dedup set for doodad placements across tile boundaries
     std::unordered_set<uint32_t> placedDoodadIds;
 

@@ -832,7 +832,7 @@ void MovementPacket::writeMovementPayload(network::Packet& packet, const Movemen
         packet.writeUInt8(static_cast<uint8_t>(info.transportSeat));
 
         // Optional second transport time for interpolated movement.
-        if (info.flags2 & 0x0200) {
+        if (info.flags2 & 0x0400) { // MOVEMENTFLAG2_INTERPOLATED_MOVEMENT
             packet.writeUInt32(info.transportTime2);
         }
     }
@@ -994,26 +994,27 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
             LOG_DEBUG("  OnTransport: guid=0x", std::hex, block.transportGuid, std::dec,
                       " offset=(", block.transportX, ", ", block.transportY, ", ", block.transportZ, ")");
 
-            if (moveFlags2 & 0x0200) { // MOVEMENTFLAG2_INTERPOLATED_MOVEMENT
+            if (moveFlags2 & 0x0400) { // MOVEMENTFLAG2_INTERPOLATED_MOVEMENT
                 if (rem() < 4) return false;
                 /*uint32_t tTime2 =*/ packet.readUInt32();
             }
         }
 
         // Swimming/flying pitch
-        // WotLK 3.3.5a movement flags relevant here:
+        // WotLK 3.3.5a movement flags (wire format):
         //   SWIMMING          = 0x00200000
-        //   FLYING            = 0x01000000  (player/creature actively flying)
-        //   SPLINE_ELEVATION  = 0x02000000  (smooth vertical spline offset — no pitch field)
+        //   CAN_FLY           = 0x01000000  (ability to fly — no pitch field)
+        //   FLYING            = 0x02000000  (actively flying — has pitch field)
+        //   SPLINE_ELEVATION  = 0x04000000  (smooth vertical spline offset)
         // MovementFlags2:
-        //   MOVEMENTFLAG2_ALWAYS_ALLOW_PITCHING = 0x0010
+        //   MOVEMENTFLAG2_ALWAYS_ALLOW_PITCHING = 0x0020
         //
         // Pitch is present when SWIMMING or FLYING are set, or the always-allow flag is set.
-        // The original code checked 0x02000000 (SPLINE_ELEVATION) which neither covers SWIMMING
-        // nor FLYING, causing misaligned reads for swimming/flying entities in SMSG_UPDATE_OBJECT.
+        // Note: CAN_FLY (0x01000000) does NOT gate pitch; only FLYING (0x02000000) does.
+        // (TBC uses 0x01000000 for FLYING — see TbcMoveFlags in packet_parsers_tbc.cpp.)
         if ((moveFlags & 0x00200000) /* SWIMMING */ ||
-            (moveFlags & 0x01000000) /* FLYING */ ||
-            (moveFlags2 & 0x0010)    /* MOVEMENTFLAG2_ALWAYS_ALLOW_PITCHING */) {
+            (moveFlags & 0x02000000) /* FLYING */ ||
+            (moveFlags2 & 0x0020)    /* MOVEMENTFLAG2_ALWAYS_ALLOW_PITCHING */) {
             if (rem() < 4) return false;
             /*float pitch =*/ packet.readFloat();
         }

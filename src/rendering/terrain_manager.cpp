@@ -562,7 +562,17 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
 
                 // Pre-load WMO doodads (M2 models inside WMO)
                 if (!workerRunning.load()) return nullptr;
-                if (!wmoModel.doodadSets.empty() && !wmoModel.doodads.empty()) {
+
+                // Skip WMO doodads if this placement was already prepared by another tile's worker.
+                // This prevents 15+ copies of Stormwind's ~6000 doodads from being parsed
+                // simultaneously, which was the primary cause of OOM during world load.
+                bool wmoAlreadyPrepared = false;
+                if (placement.uniqueId != 0) {
+                    std::lock_guard<std::mutex> lock(preparedWmoUniqueIdsMutex_);
+                    wmoAlreadyPrepared = !preparedWmoUniqueIds_.insert(placement.uniqueId).second;
+                }
+
+                if (!wmoAlreadyPrepared && !wmoModel.doodadSets.empty() && !wmoModel.doodads.empty()) {
                     glm::mat4 wmoMatrix(1.0f);
                     wmoMatrix = glm::translate(wmoMatrix, pos);
                     wmoMatrix = glm::rotate(wmoMatrix, rot.z, glm::vec3(0, 0, 1));
@@ -575,6 +585,7 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
                         setsToLoad.push_back(placement.doodadSet);
                     }
                     std::unordered_set<uint32_t> loadedDoodadIndices;
+                    std::unordered_set<uint32_t> wmoPreparedModelIds;  // within-WMO model dedup
                     for (uint32_t setIdx : setsToLoad) {
                         const auto& doodadSet = wmoModel.doodadSets[setIdx];
                     for (uint32_t di = 0; di < doodadSet.count; di++) {
@@ -599,15 +610,16 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
 
                         uint32_t doodadModelId = static_cast<uint32_t>(std::hash<std::string>{}(m2Path));
 
-                        // Skip file I/O if model already uploaded from a previous tile
+                        // Skip file I/O if model already uploaded or already prepared within this WMO
                         bool modelAlreadyUploaded = false;
                         {
                             std::lock_guard<std::mutex> lock(uploadedM2IdsMutex_);
                             modelAlreadyUploaded = uploadedM2Ids_.count(doodadModelId) > 0;
                         }
+                        bool modelAlreadyPreparedInWmo = !wmoPreparedModelIds.insert(doodadModelId).second;
 
                         pipeline::M2Model m2Model;
-                        if (!modelAlreadyUploaded) {
+                        if (!modelAlreadyUploaded && !modelAlreadyPreparedInWmo) {
                             std::vector<uint8_t> m2Data = assetManager->readFile(m2Path);
                             if (m2Data.empty()) continue;
 
@@ -1404,7 +1416,11 @@ void TerrainManager::unloadTile(int x, int y) {
                 wmoRenderer->removeInstances(fit->wmoInstanceIds);
             }
             for (uint32_t uid : fit->tileUniqueIds) placedDoodadIds.erase(uid);
-            for (uint32_t uid : fit->tileWmoUniqueIds) placedWmoIds.erase(uid);
+            for (uint32_t uid : fit->tileWmoUniqueIds) {
+                placedWmoIds.erase(uid);
+                std::lock_guard<std::mutex> lock(preparedWmoUniqueIdsMutex_);
+                preparedWmoUniqueIds_.erase(uid);
+            }
             finalizingTiles_.erase(fit);
             return;
         }
@@ -1425,6 +1441,8 @@ void TerrainManager::unloadTile(int x, int y) {
     }
     for (uint32_t uid : tile->wmoUniqueIds) {
         placedWmoIds.erase(uid);
+        std::lock_guard<std::mutex> lock(preparedWmoUniqueIdsMutex_);
+        preparedWmoUniqueIds_.erase(uid);
     }
 
     // Remove M2 doodad instances
@@ -1509,6 +1527,10 @@ void TerrainManager::unloadAll() {
         std::lock_guard<std::mutex> lock(uploadedM2IdsMutex_);
         uploadedM2Ids_.clear();
     }
+    {
+        std::lock_guard<std::mutex> lock(preparedWmoUniqueIdsMutex_);
+        preparedWmoUniqueIds_.clear();
+    }
 
     LOG_INFO("Unloading all terrain tiles");
     loadedTiles.clear();
@@ -1560,6 +1582,10 @@ void TerrainManager::softReset() {
     {
         std::lock_guard<std::mutex> lock(uploadedM2IdsMutex_);
         uploadedM2Ids_.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(preparedWmoUniqueIdsMutex_);
+        preparedWmoUniqueIds_.clear();
     }
 
     // Clear tile cache — keys are (x,y) without map name, so stale entries from
