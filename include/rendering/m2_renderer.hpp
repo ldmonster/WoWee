@@ -416,6 +416,13 @@ private:
     static constexpr uint32_t MAX_MATERIAL_SETS = 8192;
     static constexpr uint32_t MAX_BONE_SETS = 8192;
 
+    // Dummy identity bone buffer + descriptor set for non-animated models.
+    // The pipeline layout declares set 2 (bones) and some drivers (Intel ANV)
+    // require all declared sets to be bound even when the shader doesn't access them.
+    ::VkBuffer dummyBoneBuffer_ = VK_NULL_HANDLE;
+    VmaAllocation dummyBoneAlloc_ = VK_NULL_HANDLE;
+    VkDescriptorSet dummyBoneSet_ = VK_NULL_HANDLE;
+
     // Dynamic ribbon vertex buffer (CPU-written triangle strip)
     static constexpr size_t MAX_RIBBON_VERTS = 2048;  // 9 floats each
     ::VkBuffer ribbonVB_ = VK_NULL_HANDLE;

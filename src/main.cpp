@@ -8,6 +8,8 @@
 #include <SDL2/SDL.h>
 #ifdef __linux__
 #include <X11/Xlib.h>
+#include <execinfo.h>
+#include <unistd.h>
 
 // Keep a persistent X11 connection for emergency mouse release in signal handlers.
 // XOpenDisplay inside a signal handler is unreliable, so we open it once at startup.
@@ -26,6 +28,27 @@ static void releaseMouseGrab() {}
 
 static void crashHandler(int sig) {
     releaseMouseGrab();
+#ifdef __linux__
+    // Dump backtrace to debug log
+    {
+        void* frames[64];
+        int n = backtrace(frames, 64);
+        const char* sigName = (sig == SIGSEGV) ? "SIGSEGV" :
+                              (sig == SIGABRT) ? "SIGABRT" :
+                              (sig == SIGFPE)  ? "SIGFPE"  : "UNKNOWN";
+        // Write to stderr and to the debug log file
+        fprintf(stderr, "\n=== CRASH: signal %s (%d) ===\n", sigName, sig);
+        backtrace_symbols_fd(frames, n, STDERR_FILENO);
+        FILE* f = fopen("/tmp/wowee_debug.log", "a");
+        if (f) {
+            fprintf(f, "\n=== CRASH: signal %s (%d) ===\n", sigName, sig);
+            fflush(f);
+            // Also write backtrace to the log file fd
+            backtrace_symbols_fd(frames, n, fileno(f));
+            fclose(f);
+        }
+    }
+#endif
     std::signal(sig, SIG_DFL);
     std::raise(sig);
 }

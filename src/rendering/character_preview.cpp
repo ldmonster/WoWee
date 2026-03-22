@@ -336,8 +336,8 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
         uint32_t fRace = csL ? (*csL)["RaceID"] : 1;
         uint32_t fSex = csL ? (*csL)["SexID"] : 2;
         uint32_t fBase = csL ? (*csL)["BaseSection"] : 3;
-        uint32_t fVar = csL ? (*csL)["VariationIndex"] : 4;
-        uint32_t fColor = csL ? (*csL)["ColorIndex"] : 5;
+        uint32_t fVar = csL ? (*csL)["VariationIndex"] : 8;
+        uint32_t fColor = csL ? (*csL)["ColorIndex"] : 9;
         for (uint32_t r = 0; r < charSectionsDbc->getRecordCount(); r++) {
             uint32_t raceId = charSectionsDbc->getUInt32(r, fRace);
             uint32_t sexId = charSectionsDbc->getUInt32(r, fSex);
@@ -350,7 +350,7 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
             // Section 0: Body skin (variation=0, colorIndex = skin color)
             if (baseSection == 0 && !foundSkin &&
                 variationIndex == 0 && colorIndex == static_cast<uint32_t>(skin)) {
-                std::string tex1 = charSectionsDbc->getString(r, csL ? (*csL)["Texture1"] : 6);
+                std::string tex1 = charSectionsDbc->getString(r, csL ? (*csL)["Texture1"] : 4);
                 if (!tex1.empty()) {
                     bodySkinPath_ = tex1;
                     foundSkin = true;
@@ -360,8 +360,8 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
             else if (baseSection == 1 && !foundFace &&
                      variationIndex == static_cast<uint32_t>(face) &&
                      colorIndex == static_cast<uint32_t>(skin)) {
-                std::string tex1 = charSectionsDbc->getString(r, csL ? (*csL)["Texture1"] : 6);
-                std::string tex2 = charSectionsDbc->getString(r, csL ? (*csL)["Texture2"] : 7);
+                std::string tex1 = charSectionsDbc->getString(r, csL ? (*csL)["Texture1"] : 4);
+                std::string tex2 = charSectionsDbc->getString(r, csL ? (*csL)["Texture2"] : 5);
                 if (!tex1.empty()) faceLowerPath = tex1;
                 if (!tex2.empty()) faceUpperPath = tex2;
                 foundFace = true;
@@ -370,7 +370,7 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
             else if (baseSection == 3 && !foundHair &&
                      variationIndex == static_cast<uint32_t>(hairStyle) &&
                      colorIndex == static_cast<uint32_t>(hairColor)) {
-                std::string tex1 = charSectionsDbc->getString(r, csL ? (*csL)["Texture1"] : 6);
+                std::string tex1 = charSectionsDbc->getString(r, csL ? (*csL)["Texture1"] : 4);
                 if (!tex1.empty()) {
                     hairScalpPath = tex1;
                     foundHair = true;
@@ -379,7 +379,7 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
             // Section 4: Underwear (variation=0, colorIndex = skin color)
             else if (baseSection == 4 && !foundUnderwear &&
                      variationIndex == 0 && colorIndex == static_cast<uint32_t>(skin)) {
-                uint32_t texBase = csL ? (*csL)["Texture1"] : 6;
+                uint32_t texBase = csL ? (*csL)["Texture1"] : 4;
                 for (uint32_t f = texBase; f <= texBase + 2; f++) {
                     std::string tex = charSectionsDbc->getString(r, f);
                     if (!tex.empty()) {

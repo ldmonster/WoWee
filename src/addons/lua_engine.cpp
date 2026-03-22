@@ -3869,6 +3869,7 @@ void LuaEngine::registerCoreAPI() {
         "function StopSound() end\n"
         "function UIParent_OnEvent() end\n"
         "UIParent = CreateFrame('Frame', 'UIParent')\n"
+        "UIPanelWindows = {}\n"
         "WorldFrame = CreateFrame('Frame', 'WorldFrame')\n"
         // GameTooltip: global tooltip frame used by virtually all addons
         "GameTooltip = CreateFrame('Frame', 'GameTooltip')\n"

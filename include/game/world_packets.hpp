@@ -399,9 +399,10 @@ enum class MovementFlags : uint32_t {
     WATER_WALK          = 0x00008000,  // Walk on water surface
     SWIMMING            = 0x00200000,
     ASCENDING           = 0x00400000,
-    CAN_FLY             = 0x00800000,
-    FLYING              = 0x01000000,
-    HOVER               = 0x02000000,
+    DESCENDING          = 0x00800000,
+    CAN_FLY             = 0x01000000,
+    FLYING              = 0x02000000,
+    HOVER               = 0x40000000,
 };
 
 /**
