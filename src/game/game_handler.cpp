@@ -9744,6 +9744,19 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
             LOG_INFO("Auto-requested played time on login");
         }
     }
+
+    // Fire PLAYER_ENTERING_WORLD — THE most important event for addon initialization.
+    // Fires on initial login, teleports, instance transitions, and zone changes.
+    if (addonEventCallback_) {
+        addonEventCallback_("PLAYER_ENTERING_WORLD", {initialWorldEntry ? "1" : "0"});
+        // Also fire ZONE_CHANGED_NEW_AREA and UPDATE_WORLD_STATES so map/BG addons refresh
+        addonEventCallback_("ZONE_CHANGED_NEW_AREA", {});
+        addonEventCallback_("UPDATE_WORLD_STATES", {});
+        // PLAYER_LOGIN fires only on initial login (not teleports)
+        if (initialWorldEntry) {
+            addonEventCallback_("PLAYER_LOGIN", {});
+        }
+    }
 }
 
 void GameHandler::handleClientCacheVersion(network::Packet& packet) {
@@ -19318,6 +19331,12 @@ void GameHandler::handleInitialSpells(network::Packet& packet) {
     loadSkillLineAbilityDbc();
 
     LOG_INFO("Learned ", knownSpells.size(), " spells");
+
+    // Notify addons that the full spell list is now available
+    if (addonEventCallback_) {
+        addonEventCallback_("SPELLS_CHANGED", {});
+        addonEventCallback_("LEARNED_SPELL_IN_TAB", {});
+    }
 }
 
 void GameHandler::handleCastFailed(network::Packet& packet) {
@@ -23634,6 +23653,12 @@ void GameHandler::handleNewWorld(network::Packet& packet) {
     // leaves zombie renderer instances that block fresh entity spawns.
     if (worldEntryCallback_) {
         worldEntryCallback_(mapId, serverX, serverY, serverZ, isSameMap);
+    }
+
+    // Fire PLAYER_ENTERING_WORLD for teleports / zone transitions
+    if (addonEventCallback_) {
+        addonEventCallback_("PLAYER_ENTERING_WORLD", {"0"});
+        addonEventCallback_("ZONE_CHANGED_NEW_AREA", {});
     }
 }
 
