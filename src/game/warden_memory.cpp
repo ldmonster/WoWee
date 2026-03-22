@@ -861,7 +861,7 @@ void WardenMemory::verifyWardenScanEntries() {
 bool WardenMemory::searchCodePattern(const uint8_t seed[4], const uint8_t expectedHash[20],
                                      uint8_t patternLen, bool imageOnly,
                                      uint32_t hintOffset, bool hintOnly) const {
-    if (!loaded_ || patternLen == 0 || patternLen > 255) return false;
+    if (!loaded_ || patternLen == 0) return false;
 
     // Build cache key from all inputs: seed(4) + hash(20) + patLen(1) + imageOnly(1)
     std::string cacheKey(26, '\0');
