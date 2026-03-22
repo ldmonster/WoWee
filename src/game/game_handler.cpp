@@ -5714,6 +5714,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 } else {
                     addSystemChatMessage("Quest removed (ID " + std::to_string(questId) + ").");
                 }
+                if (addonEventCallback_) {
+                    addonEventCallback_("QUEST_LOG_UPDATE", {});
+                    addonEventCallback_("QUEST_REMOVED", {std::to_string(questId)});
+                }
             }
             break;
         }
@@ -21883,6 +21887,10 @@ void GameHandler::abandonQuest(uint32_t questId) {
 
     if (localIndex >= 0) {
         questLog_.erase(questLog_.begin() + static_cast<ptrdiff_t>(localIndex));
+        if (addonEventCallback_) {
+            addonEventCallback_("QUEST_LOG_UPDATE", {});
+            addonEventCallback_("QUEST_REMOVED", {std::to_string(questId)});
+        }
     }
 
     // Remove any quest POI minimap markers for this quest.

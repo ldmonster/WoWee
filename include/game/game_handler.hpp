@@ -1989,7 +1989,13 @@ public:
     // UI error frame: prominent on-screen error messages (spell can't be cast, etc.)
     using UIErrorCallback = std::function<void(const std::string& msg)>;
     void setUIErrorCallback(UIErrorCallback cb) { uiErrorCallback_ = std::move(cb); }
-    void addUIError(const std::string& msg) { if (uiErrorCallback_) uiErrorCallback_(msg); }
+    void addUIError(const std::string& msg) {
+        if (uiErrorCallback_) uiErrorCallback_(msg);
+        if (addonEventCallback_) addonEventCallback_("UI_ERROR_MESSAGE", {msg});
+    }
+    void addUIInfoMessage(const std::string& msg) {
+        if (addonEventCallback_) addonEventCallback_("UI_INFO_MESSAGE", {msg});
+    }
 
     // Reputation change toast: factionName, delta, new standing
     using RepChangeCallback = std::function<void(const std::string& factionName, int32_t delta, int32_t standing)>;
