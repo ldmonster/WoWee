@@ -23191,6 +23191,15 @@ void GameHandler::loadSpellNameCache() {
             if (hasAttrExField) {
                 entry.attrEx = dbc->getUInt32(i, attrExField);
             }
+            // Load effect base points for $s1/$s2/$s3 tooltip substitution
+            if (spellL) {
+                uint32_t f0 = spellL->field("EffectBasePoints0");
+                uint32_t f1 = spellL->field("EffectBasePoints1");
+                uint32_t f2 = spellL->field("EffectBasePoints2");
+                if (f0 != 0xFFFFFFFF) entry.effectBasePoints[0] = static_cast<int32_t>(dbc->getUInt32(i, f0));
+                if (f1 != 0xFFFFFFFF) entry.effectBasePoints[1] = static_cast<int32_t>(dbc->getUInt32(i, f1));
+                if (f2 != 0xFFFFFFFF) entry.effectBasePoints[2] = static_cast<int32_t>(dbc->getUInt32(i, f2));
+            }
             spellNameCache_[id] = std::move(entry);
         }
     }
@@ -23429,6 +23438,12 @@ void GameHandler::loadTalentDbc() {
 }
 
 static const std::string EMPTY_STRING;
+
+const int32_t* GameHandler::getSpellEffectBasePoints(uint32_t spellId) const {
+    const_cast<GameHandler*>(this)->loadSpellNameCache();
+    auto it = spellNameCache_.find(spellId);
+    return (it != spellNameCache_.end()) ? it->second.effectBasePoints : nullptr;
+}
 
 const std::string& GameHandler::getSpellName(uint32_t spellId) const {
     auto it = spellNameCache_.find(spellId);
