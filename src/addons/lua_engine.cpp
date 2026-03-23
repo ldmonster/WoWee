@@ -5062,6 +5062,27 @@ void LuaEngine::registerCoreAPI() {
             lua_pushboolean(L, 1);                               // isCastable
             return 4;
         }},
+        // --- Vendor Buy/Sell ---
+        {"BuyMerchantItem", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            int index = static_cast<int>(luaL_checknumber(L, 1));
+            int count = static_cast<int>(luaL_optnumber(L, 2, 1));
+            if (!gh || index < 1) return 0;
+            const auto& items = gh->getVendorItems().items;
+            if (index > static_cast<int>(items.size())) return 0;
+            const auto& vi = items[index - 1];
+            gh->buyItem(gh->getVendorGuid(), vi.itemId, vi.slot, count);
+            return 0;
+        }},
+        {"SellContainerItem", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            int bag = static_cast<int>(luaL_checknumber(L, 1));
+            int slot = static_cast<int>(luaL_checknumber(L, 2));
+            if (!gh) return 0;
+            if (bag == 0) gh->sellItemBySlot(slot - 1);
+            else if (bag >= 1 && bag <= 4) gh->sellItemInBag(bag - 1, slot - 1);
+            return 0;
+        }},
         // --- Repair ---
         {"RepairAllItems", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
