@@ -5062,6 +5062,68 @@ void LuaEngine::registerCoreAPI() {
             lua_pushboolean(L, 1);                               // isCastable
             return 4;
         }},
+        // --- Pet Action Bar ---
+        {"HasPetUI", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            lua_pushboolean(L, gh && gh->hasPet() ? 1 : 0);
+            return 1;
+        }},
+        {"GetPetActionInfo", [](lua_State* L) -> int {
+            // GetPetActionInfo(index) → name, subtext, texture, isToken, isActive, autoCastAllowed, autoCastEnabled
+            auto* gh = getGameHandler(L);
+            int index = static_cast<int>(luaL_checknumber(L, 1));
+            if (!gh || index < 1 || index > game::GameHandler::PET_ACTION_BAR_SLOTS) {
+                lua_pushnil(L); return 1;
+            }
+            uint32_t packed = gh->getPetActionSlot(index - 1);
+            uint32_t spellId = packed & 0x00FFFFFF;
+            uint8_t actionType = static_cast<uint8_t>((packed >> 24) & 0xFF);
+            if (spellId == 0) { lua_pushnil(L); return 1; }
+            const std::string& name = gh->getSpellName(spellId);
+            std::string iconPath = gh->getSpellIconPath(spellId);
+            lua_pushstring(L, name.empty() ? "Unknown" : name.c_str()); // name
+            lua_pushstring(L, "");                                       // subtext
+            lua_pushstring(L, iconPath.empty() ? "Interface\\Icons\\INV_Misc_QuestionMark" : iconPath.c_str()); // texture
+            lua_pushboolean(L, 0);                                       // isToken
+            lua_pushboolean(L, (actionType & 0xC0) != 0 ? 1 : 0);      // isActive
+            lua_pushboolean(L, 1);                                       // autoCastAllowed
+            lua_pushboolean(L, gh->isPetSpellAutocast(spellId) ? 1 : 0); // autoCastEnabled
+            return 7;
+        }},
+        {"GetPetActionCooldown", [](lua_State* L) -> int {
+            lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 1);
+            return 3;
+        }},
+        {"PetAttack", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            if (gh && gh->hasPet() && gh->hasTarget())
+                gh->sendPetAction(0x00000007 | (2u << 24), gh->getTargetGuid()); // CMD_ATTACK
+            return 0;
+        }},
+        {"PetFollow", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            if (gh && gh->hasPet())
+                gh->sendPetAction(0x00000007 | (1u << 24), 0); // CMD_FOLLOW
+            return 0;
+        }},
+        {"PetWait", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            if (gh && gh->hasPet())
+                gh->sendPetAction(0x00000007 | (0u << 24), 0); // CMD_STAY
+            return 0;
+        }},
+        {"PetPassiveMode", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            if (gh && gh->hasPet())
+                gh->sendPetAction(0x00000007 | (0u << 16), 0); // REACT_PASSIVE
+            return 0;
+        }},
+        {"PetDefensiveMode", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            if (gh && gh->hasPet())
+                gh->sendPetAction(0x00000007 | (1u << 16), 0); // REACT_DEFENSIVE
+            return 0;
+        }},
         {"GetActionBarPage", [](lua_State* L) -> int {
             // Return current action bar page (1-6)
             lua_getglobal(L, "__WoweeActionBarPage");
