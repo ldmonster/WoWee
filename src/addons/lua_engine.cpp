@@ -4204,6 +4204,61 @@ static int lua_GetScreenHeight(lua_State* L) {
     return 1;
 }
 
+// Modifier key state queries using ImGui IO
+static int lua_IsShiftKeyDown(lua_State* L) {
+    lua_pushboolean(L, ImGui::GetIO().KeyShift ? 1 : 0);
+    return 1;
+}
+static int lua_IsControlKeyDown(lua_State* L) {
+    lua_pushboolean(L, ImGui::GetIO().KeyCtrl ? 1 : 0);
+    return 1;
+}
+static int lua_IsAltKeyDown(lua_State* L) {
+    lua_pushboolean(L, ImGui::GetIO().KeyAlt ? 1 : 0);
+    return 1;
+}
+
+// IsModifiedClick(action) → boolean
+// Checks if a modifier key combo matches a named click action.
+// Common actions: "CHATLINK" (shift-click), "DRESSUP" (ctrl-click),
+//                 "SPLITSTACK" (shift-click), "SELFCAST" (alt-click)
+static int lua_IsModifiedClick(lua_State* L) {
+    const char* action = luaL_optstring(L, 1, "");
+    std::string act(action);
+    for (char& c : act) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    const auto& io = ImGui::GetIO();
+    bool result = false;
+    if (act == "CHATLINK" || act == "SPLITSTACK")
+        result = io.KeyShift;
+    else if (act == "DRESSUP" || act == "COMPAREITEMS")
+        result = io.KeyCtrl;
+    else if (act == "SELFCAST" || act == "FOCUSCAST")
+        result = io.KeyAlt;
+    else if (act == "STICKYCAMERA")
+        result = io.KeyCtrl;
+    else
+        result = io.KeyShift; // Default: shift for unknown actions
+    lua_pushboolean(L, result ? 1 : 0);
+    return 1;
+}
+
+// GetModifiedClick(action) → key name ("SHIFT", "CTRL", "ALT", "NONE")
+static int lua_GetModifiedClick(lua_State* L) {
+    const char* action = luaL_optstring(L, 1, "");
+    std::string act(action);
+    for (char& c : act) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    if (act == "CHATLINK" || act == "SPLITSTACK")
+        lua_pushstring(L, "SHIFT");
+    else if (act == "DRESSUP" || act == "COMPAREITEMS")
+        lua_pushstring(L, "CTRL");
+    else if (act == "SELFCAST" || act == "FOCUSCAST")
+        lua_pushstring(L, "ALT");
+    else
+        lua_pushstring(L, "SHIFT");
+    return 1;
+}
+static int lua_SetModifiedClick(lua_State* L) { (void)L; return 0; }
+
 // Frame methods: SetPoint, SetSize, SetWidth, SetHeight, GetWidth, GetHeight, GetCenter, SetAlpha, GetAlpha
 static int lua_Frame_SetPoint(lua_State* L) {
     luaL_checktype(L, 1, LUA_TTABLE);
@@ -4527,6 +4582,12 @@ void LuaEngine::registerCoreAPI() {
         {"GetPlayerFacing",     lua_GetPlayerFacing},
         {"GetCVar",             lua_GetCVar},
         {"SetCVar",             lua_SetCVar},
+        {"IsShiftKeyDown",      lua_IsShiftKeyDown},
+        {"IsControlKeyDown",    lua_IsControlKeyDown},
+        {"IsAltKeyDown",        lua_IsAltKeyDown},
+        {"IsModifiedClick",     lua_IsModifiedClick},
+        {"GetModifiedClick",    lua_GetModifiedClick},
+        {"SetModifiedClick",    lua_SetModifiedClick},
         {"SendChatMessage",   lua_SendChatMessage},
         {"SendAddonMessage",  lua_SendAddonMessage},
         {"RegisterAddonMessagePrefix", lua_RegisterAddonMessagePrefix},
