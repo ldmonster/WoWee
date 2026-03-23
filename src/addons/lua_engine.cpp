@@ -5182,6 +5182,25 @@ void LuaEngine::registerCoreAPI() {
             if (gh) gh->requestPvpLog();
             return 0;
         }},
+        // --- Titles ---
+        {"GetCurrentTitle", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            lua_pushnumber(L, gh ? gh->getChosenTitleBit() : -1);
+            return 1;
+        }},
+        {"GetTitleName", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            int bit = static_cast<int>(luaL_checknumber(L, 1));
+            if (!gh || bit < 0) { lua_pushnil(L); return 1; }
+            std::string title = gh->getFormattedTitle(static_cast<uint32_t>(bit));
+            if (title.empty()) { lua_pushnil(L); return 1; }
+            lua_pushstring(L, title.c_str());
+            return 1;
+        }},
+        {"SetCurrentTitle", [](lua_State* L) -> int {
+            (void)L; // Title changes require CMSG_SET_TITLE which we don't expose yet
+            return 0;
+        }},
         // --- Inspect ---
         {"GetInspectSpecialization", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
