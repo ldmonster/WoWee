@@ -2100,6 +2100,29 @@ static int lua_GetItemTooltipData(lua_State* L) {
     if (info->frostRes != 0) { lua_pushnumber(L, info->frostRes); lua_setfield(L, -2, "frostRes"); }
     if (info->shadowRes != 0) { lua_pushnumber(L, info->shadowRes); lua_setfield(L, -2, "shadowRes"); }
     if (info->arcaneRes != 0) { lua_pushnumber(L, info->arcaneRes); lua_setfield(L, -2, "arcaneRes"); }
+    // Item spell effects (Use: / Equip: / Chance on Hit:)
+    {
+        lua_newtable(L);
+        int spellCount = 0;
+        for (int i = 0; i < 5; ++i) {
+            if (info->spells[i].spellId == 0) continue;
+            ++spellCount;
+            lua_newtable(L);
+            lua_pushnumber(L, info->spells[i].spellId);
+            lua_setfield(L, -2, "spellId");
+            lua_pushnumber(L, info->spells[i].spellTrigger);
+            lua_setfield(L, -2, "trigger");
+            // Get spell name for display
+            const std::string& sName = gh->getSpellName(info->spells[i].spellId);
+            if (!sName.empty()) { lua_pushstring(L, sName.c_str()); lua_setfield(L, -2, "name"); }
+            // Get description
+            const std::string& sDesc = gh->getSpellDescription(info->spells[i].spellId);
+            if (!sDesc.empty()) { lua_pushstring(L, sDesc.c_str()); lua_setfield(L, -2, "description"); }
+            lua_rawseti(L, -2, spellCount);
+        }
+        if (spellCount > 0) lua_setfield(L, -2, "itemSpells");
+        else lua_pop(L, 1);
+    }
     // Gem sockets (WotLK/TBC)
     int numSockets = 0;
     for (int i = 0; i < 3; ++i) {
@@ -5533,6 +5556,17 @@ void LuaEngine::registerCoreAPI() {
         "        if data.frostRes and data.frostRes ~= 0 then self:AddLine('+'..data.frostRes..' Frost Resistance', 0, 1, 0) end\n"
         "        if data.shadowRes and data.shadowRes ~= 0 then self:AddLine('+'..data.shadowRes..' Shadow Resistance', 0, 1, 0) end\n"
         "        if data.arcaneRes and data.arcaneRes ~= 0 then self:AddLine('+'..data.arcaneRes..' Arcane Resistance', 0, 1, 0) end\n"
+        "        -- Item spell effects (Use: / Equip: / Chance on Hit:)\n"
+        "        if data.itemSpells then\n"
+        "            local triggerLabels = {[0]='Use: ',[1]='Equip: ',[2]='Chance on hit: ',[5]=''}\n"
+        "            for _, sp in ipairs(data.itemSpells) do\n"
+        "                local label = triggerLabels[sp.trigger] or ''\n"
+        "                local text = sp.description or sp.name or ''\n"
+        "                if text ~= '' then\n"
+        "                    self:AddLine(label .. text, 0, 1, 0)\n"
+        "                end\n"
+        "            end\n"
+        "        end\n"
         "        -- Gem sockets\n"
         "        if data.sockets then\n"
         "            local socketNames = {[1]='Meta',[2]='Red',[4]='Yellow',[8]='Blue'}\n"
