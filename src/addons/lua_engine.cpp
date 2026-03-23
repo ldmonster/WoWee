@@ -4787,6 +4787,32 @@ void LuaEngine::registerCoreAPI() {
         {"GetMerchantItemLink",  lua_GetMerchantItemLink},
         {"CanMerchantRepair",    lua_CanMerchantRepair},
         {"UnitStat",      lua_UnitStat},
+        {"UnitArmor",     [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            int32_t armor = gh ? gh->getArmorRating() : 0;
+            if (armor < 0) armor = 0;
+            lua_pushnumber(L, armor); // base
+            lua_pushnumber(L, armor); // effective
+            lua_pushnumber(L, armor); // armor (again for compat)
+            lua_pushnumber(L, 0);     // posBuff
+            lua_pushnumber(L, 0);     // negBuff
+            return 5;
+        }},
+        {"UnitResistance", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            int school = static_cast<int>(luaL_optnumber(L, 2, 0));
+            int32_t val = 0;
+            if (gh) {
+                if (school == 0) val = gh->getArmorRating(); // physical = armor
+                else if (school >= 1 && school <= 6) val = gh->getResistance(school);
+            }
+            if (val < 0) val = 0;
+            lua_pushnumber(L, val); // base
+            lua_pushnumber(L, val); // effective
+            lua_pushnumber(L, 0);   // posBuff
+            lua_pushnumber(L, 0);   // negBuff
+            return 4;
+        }},
         {"GetDodgeChance",    lua_GetDodgeChance},
         {"GetParryChance",    lua_GetParryChance},
         {"GetBlockChance",    lua_GetBlockChance},
