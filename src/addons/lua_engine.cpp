@@ -5062,6 +5062,15 @@ void LuaEngine::registerCoreAPI() {
             lua_pushboolean(L, 1);                               // isCastable
             return 4;
         }},
+        // --- Repair ---
+        {"RepairAllItems", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            if (gh && gh->getVendorItems().canRepair) {
+                bool useGuildBank = lua_toboolean(L, 1) != 0;
+                gh->repairAll(gh->getVendorGuid(), useGuildBank);
+            }
+            return 0;
+        }},
         // --- Trade API ---
         {"AcceptTrade", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
