@@ -5182,6 +5182,21 @@ void LuaEngine::registerCoreAPI() {
             if (gh) gh->requestPvpLog();
             return 0;
         }},
+        // --- Inspect ---
+        {"GetInspectSpecialization", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            const auto* ir = gh ? gh->getInspectResult() : nullptr;
+            lua_pushnumber(L, ir ? ir->activeTalentGroup : 0);
+            return 1;
+        }},
+        {"NotifyInspect", [](lua_State* L) -> int {
+            (void)L; // Inspect is auto-triggered by the C++ side when targeting a player
+            return 0;
+        }},
+        {"ClearInspectPlayer", [](lua_State* L) -> int {
+            (void)L;
+            return 0;
+        }},
         // --- Player Info ---
         {"GetHonorCurrency", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
