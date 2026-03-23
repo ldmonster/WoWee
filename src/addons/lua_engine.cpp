@@ -4858,6 +4858,20 @@ void LuaEngine::registerCoreAPI() {
     // Unit API
     static const struct { const char* name; lua_CFunction func; } unitAPI[] = {
         {"UnitName",      lua_UnitName},
+        {"UnitFullName",  lua_UnitName},
+        {"GetUnitName",   lua_UnitName},
+        {"SpellStopCasting", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            if (gh) gh->cancelCast();
+            return 0;
+        }},
+        {"SpellStopTargeting", [](lua_State* L) -> int {
+            (void)L; return 0; // No targeting reticle in this client
+        }},
+        {"SpellIsTargeting", [](lua_State* L) -> int {
+            lua_pushboolean(L, 0); // No AoE targeting reticle
+            return 1;
+        }},
         {"UnitHealth",    lua_UnitHealth},
         {"UnitHealthMax", lua_UnitHealthMax},
         {"UnitPower",     lua_UnitPower},
