@@ -7,6 +7,7 @@
 #include "core/application.hpp"
 #include "rendering/renderer.hpp"
 #include "audio/ui_sound_manager.hpp"
+#include "game/expansion_profile.hpp"
 #include <imgui.h>
 #include <cstring>
 #include <fstream>
@@ -4935,6 +4936,22 @@ void LuaEngine::registerCoreAPI() {
         {"IsInRaid",      lua_IsInRaid},
         {"GetPlayerMapPosition", lua_GetPlayerMapPosition},
         {"GetPlayerFacing",     lua_GetPlayerFacing},
+        {"GetMaxPlayerLevel", [](lua_State* L) -> int {
+            auto* reg = core::Application::getInstance().getExpansionRegistry();
+            auto* prof = reg ? reg->getActive() : nullptr;
+            if (prof && prof->id == "wotlk") lua_pushnumber(L, 80);
+            else if (prof && prof->id == "tbc") lua_pushnumber(L, 70);
+            else lua_pushnumber(L, 60);
+            return 1;
+        }},
+        {"GetAccountExpansionLevel", [](lua_State* L) -> int {
+            auto* reg = core::Application::getInstance().getExpansionRegistry();
+            auto* prof = reg ? reg->getActive() : nullptr;
+            if (prof && prof->id == "wotlk") lua_pushnumber(L, 3);
+            else if (prof && prof->id == "tbc") lua_pushnumber(L, 2);
+            else lua_pushnumber(L, 1);
+            return 1;
+        }},
         {"PlaySound",           lua_PlaySound},
         {"PlaySoundFile",       lua_PlaySoundFile},
         {"GetCVar",             lua_GetCVar},
