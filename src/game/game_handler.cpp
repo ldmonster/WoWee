@@ -12546,7 +12546,17 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                         // (Classic packs maxHealth/level/faction adjacent to power indices)
                         } else if (key == ufMaxHealth) { unit->setMaxHealth(val); healthChanged = true; }
                         else if (key == ufBytes0) {
+                            uint8_t oldPT = unit->getPowerType();
                             unit->setPowerType(static_cast<uint8_t>((val >> 24) & 0xFF));
+                            if (unit->getPowerType() != oldPT && addonEventCallback_) {
+                                std::string uid;
+                                if (block.guid == playerGuid) uid = "player";
+                                else if (block.guid == targetGuid) uid = "target";
+                                else if (block.guid == focusGuid) uid = "focus";
+                                else if (block.guid == petGuid_) uid = "pet";
+                                if (!uid.empty())
+                                    addonEventCallback_("UNIT_DISPLAYPOWER", {uid});
+                            }
                         } else if (key == ufFlags) { unit->setUnitFlags(val); }
                         else if (key == ufDynFlags) {
                             uint32_t oldDyn = unit->getDynamicFlags();
