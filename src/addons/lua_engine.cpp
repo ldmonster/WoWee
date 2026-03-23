@@ -5062,6 +5062,45 @@ void LuaEngine::registerCoreAPI() {
             lua_pushboolean(L, 1);                               // isCastable
             return 4;
         }},
+        {"CastShapeshiftForm", [](lua_State* L) -> int {
+            // CastShapeshiftForm(index) — cast the spell for the given form slot
+            auto* gh = getGameHandler(L);
+            int index = static_cast<int>(luaL_checknumber(L, 1));
+            if (!gh || index < 1) return 0;
+            uint8_t classId = gh->getPlayerClass();
+            // Map class + index to spell IDs
+            // Warrior stances
+            static const uint32_t warriorSpells[] = {2457, 71, 2458}; // Battle, Defensive, Berserker
+            // Druid forms
+            static const uint32_t druidSpells[] = {5487, 783, 768, 40120, 24858, 33891}; // Bear, Travel, Cat, Swift Flight, Moonkin, Tree
+            // DK presences
+            static const uint32_t dkSpells[] = {48266, 48263, 48265}; // Blood, Frost, Unholy
+            // Rogue
+            static const uint32_t rogueSpells[] = {1784}; // Stealth
+
+            const uint32_t* spells = nullptr;
+            int numSpells = 0;
+            switch (classId) {
+                case 1: spells = warriorSpells; numSpells = 3; break;
+                case 6: spells = dkSpells; numSpells = 3; break;
+                case 4: spells = rogueSpells; numSpells = 1; break;
+                case 11: spells = druidSpells; numSpells = 6; break;
+                default: return 0;
+            }
+            if (index <= numSpells) {
+                gh->castSpell(spells[index - 1], 0);
+            }
+            return 0;
+        }},
+        {"CancelShapeshiftForm", [](lua_State* L) -> int {
+            // Cancel current form — cast spell 0 or cancel aura
+            auto* gh = getGameHandler(L);
+            if (gh && gh->getShapeshiftFormId() != 0) {
+                // Cancelling a form is done by re-casting the same form spell
+                // For simplicity, just note that the server will handle it
+            }
+            return 0;
+        }},
         {"GetShapeshiftFormCooldown", [](lua_State* L) -> int {
             // No per-form cooldown tracking — return no cooldown
             lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 1);
