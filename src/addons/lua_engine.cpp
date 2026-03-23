@@ -1538,19 +1538,32 @@ static int lua_GetSpellCooldown(lua_State* L) {
         }
     }
     float cd = gh->getSpellCooldown(spellId);
+    // Also check GCD — if spell has no individual cooldown but GCD is active,
+    // return the GCD timing (this is how WoW handles it)
+    float gcdRem = gh->getGCDRemaining();
+    float gcdTotal = gh->getGCDTotal();
+
     // WoW returns (start, duration, enabled) where remaining = start + duration - GetTime()
-    // Compute start = GetTime() - elapsed, duration = total cooldown
     static auto sStart = std::chrono::steady_clock::now();
     double nowSec = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - sStart).count();
+
     if (cd > 0.01f) {
-        lua_pushnumber(L, nowSec);  // start (approximate — we don't track exact start)
-        lua_pushnumber(L, cd);      // duration (remaining, used as total for simplicity)
+        // Spell-specific cooldown (longer than GCD)
+        double start = nowSec - 0.01; // approximate start as "just now" minus epsilon
+        lua_pushnumber(L, start);
+        lua_pushnumber(L, cd);
+    } else if (gcdRem > 0.01f) {
+        // GCD is active — return GCD timing
+        double elapsed = gcdTotal - gcdRem;
+        double start = nowSec - elapsed;
+        lua_pushnumber(L, start);
+        lua_pushnumber(L, gcdTotal);
     } else {
         lua_pushnumber(L, 0);       // not on cooldown
         lua_pushnumber(L, 0);
     }
-    lua_pushnumber(L, 1);           // enabled (always 1 — spell is usable)
+    lua_pushnumber(L, 1);           // enabled
     return 3;
 }
 
@@ -3750,6 +3763,18 @@ static int lua_GetActionCooldown(lua_State* L) {
         double start = now - (action.cooldownTotal - action.cooldownRemaining);
         lua_pushnumber(L, start);
         lua_pushnumber(L, action.cooldownTotal);
+        lua_pushnumber(L, 1);
+    } else if (action.type == game::ActionBarSlot::SPELL && gh->isGCDActive()) {
+        // No individual cooldown but GCD is active — show GCD sweep
+        float gcdRem = gh->getGCDRemaining();
+        float gcdTotal = gh->getGCDTotal();
+        double now = 0;
+        lua_getglobal(L, "GetTime");
+        if (lua_isfunction(L, -1)) { lua_call(L, 0, 1); now = lua_tonumber(L, -1); lua_pop(L, 1); }
+        else lua_pop(L, 1);
+        double elapsed = gcdTotal - gcdRem;
+        lua_pushnumber(L, now - elapsed);
+        lua_pushnumber(L, gcdTotal);
         lua_pushnumber(L, 1);
     } else {
         lua_pushnumber(L, 0);
