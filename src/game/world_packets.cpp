@@ -2931,7 +2931,7 @@ network::Packet ItemQueryPacket::build(uint32_t entry, uint64_t guid) {
     return packet;
 }
 
-static const char* getItemSubclassName(uint32_t itemClass, uint32_t subClass) {
+const char* getItemSubclassName(uint32_t itemClass, uint32_t subClass) {
     if (itemClass == 2) { // Weapon
         switch (subClass) {
             case 0: return "Axe"; case 1: return "Axe";

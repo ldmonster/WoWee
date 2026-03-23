@@ -992,7 +992,7 @@ bool TbcPacketParsers::parseItemQueryResponse(network::Packet& packet, ItemQuery
     data.itemClass = itemClass;
     data.subClass  = subClass;
     packet.readUInt32(); // SoundOverrideSubclass (int32, -1 = no override)
-    data.subclassName = "";
+    data.subclassName = getItemSubclassName(itemClass, subClass);
 
     // Name strings
     data.name = packet.readString();
