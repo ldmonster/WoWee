@@ -12586,6 +12586,15 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                         } else if (key == ufLevel) {
                             uint32_t oldLvl = unit->getLevel();
                             unit->setLevel(val);
+                            if (val != oldLvl && addonEventCallback_) {
+                                std::string uid;
+                                if (block.guid == playerGuid) uid = "player";
+                                else if (block.guid == targetGuid) uid = "target";
+                                else if (block.guid == focusGuid) uid = "focus";
+                                else if (block.guid == petGuid_) uid = "pet";
+                                if (!uid.empty())
+                                    addonEventCallback_("UNIT_LEVEL", {uid});
+                            }
                             if (block.guid != playerGuid &&
                                 entity->getType() == ObjectType::PLAYER &&
                                 val > oldLvl && oldLvl > 0 &&
@@ -20279,10 +20288,12 @@ void GameHandler::handleGroupList(network::Packet& packet) {
         const char* methodName = (partyData.lootMethod < 5) ? kLootMethods[partyData.lootMethod] : "Unknown";
         addSystemChatMessage(std::string("Loot method changed to ") + methodName + ".");
     }
-    // Fire GROUP_ROSTER_UPDATE / PARTY_MEMBERS_CHANGED for Lua addons
+    // Fire GROUP_ROSTER_UPDATE / PARTY_MEMBERS_CHANGED / RAID_ROSTER_UPDATE for Lua addons
     if (addonEventCallback_) {
         addonEventCallback_("GROUP_ROSTER_UPDATE", {});
         addonEventCallback_("PARTY_MEMBERS_CHANGED", {});
+        if (partyData.groupType == 1)
+            addonEventCallback_("RAID_ROSTER_UPDATE", {});
     }
 }
 
@@ -20294,6 +20305,7 @@ void GameHandler::handleGroupUninvite(network::Packet& packet) {
     if (addonEventCallback_) {
         addonEventCallback_("GROUP_ROSTER_UPDATE", {});
         addonEventCallback_("PARTY_MEMBERS_CHANGED", {});
+        addonEventCallback_("RAID_ROSTER_UPDATE", {});
     }
 
     MessageChatData msg;

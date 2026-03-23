@@ -955,7 +955,7 @@ static int lua_GetCVar(lua_State* L) {
     return 1;
 }
 
-// SetCVar(name, value) — no-op stub (log for debugging)
+// SetCVar(name, value) — no-op stub
 static int lua_SetCVar(lua_State* L) {
     (void)L;
     return 0;
