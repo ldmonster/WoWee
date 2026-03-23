@@ -1811,6 +1811,76 @@ static int lua_GetItemInfo(lua_State* L) {
     return 11;
 }
 
+// GetItemQualityColor(quality) → r, g, b, hex
+// Quality: 0=Poor(gray), 1=Common(white), 2=Uncommon(green), 3=Rare(blue),
+//          4=Epic(purple), 5=Legendary(orange), 6=Artifact(gold), 7=Heirloom(gold)
+static int lua_GetItemQualityColor(lua_State* L) {
+    int q = static_cast<int>(luaL_checknumber(L, 1));
+    struct QC { float r, g, b; const char* hex; };
+    static const QC colors[] = {
+        {0.62f, 0.62f, 0.62f, "ff9d9d9d"}, // 0 Poor
+        {1.00f, 1.00f, 1.00f, "ffffffff"}, // 1 Common
+        {0.12f, 1.00f, 0.00f, "ff1eff00"}, // 2 Uncommon
+        {0.00f, 0.44f, 0.87f, "ff0070dd"}, // 3 Rare
+        {0.64f, 0.21f, 0.93f, "ffa335ee"}, // 4 Epic
+        {1.00f, 0.50f, 0.00f, "ffff8000"}, // 5 Legendary
+        {0.90f, 0.80f, 0.50f, "ffe6cc80"}, // 6 Artifact
+        {0.00f, 0.80f, 1.00f, "ff00ccff"}, // 7 Heirloom
+    };
+    if (q < 0 || q > 7) q = 1;
+    lua_pushnumber(L, colors[q].r);
+    lua_pushnumber(L, colors[q].g);
+    lua_pushnumber(L, colors[q].b);
+    lua_pushstring(L, colors[q].hex);
+    return 4;
+}
+
+// GetItemCount(itemId [, includeBank]) → count
+static int lua_GetItemCount(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) { lua_pushnumber(L, 0); return 1; }
+    uint32_t itemId = static_cast<uint32_t>(luaL_checknumber(L, 1));
+    const auto& inv = gh->getInventory();
+    uint32_t count = 0;
+    // Backpack
+    for (int i = 0; i < inv.getBackpackSize(); ++i) {
+        const auto& s = inv.getBackpackSlot(i);
+        if (!s.empty() && s.item.itemId == itemId)
+            count += (s.item.stackCount > 0 ? s.item.stackCount : 1);
+    }
+    // Bags 1-4
+    for (int b = 0; b < game::Inventory::NUM_BAG_SLOTS; ++b) {
+        int sz = inv.getBagSize(b);
+        for (int i = 0; i < sz; ++i) {
+            const auto& s = inv.getBagSlot(b, i);
+            if (!s.empty() && s.item.itemId == itemId)
+                count += (s.item.stackCount > 0 ? s.item.stackCount : 1);
+        }
+    }
+    lua_pushnumber(L, count);
+    return 1;
+}
+
+// UseContainerItem(bag, slot) — use/equip an item from a bag
+static int lua_UseContainerItem(lua_State* L) {
+    auto* gh = getGameHandler(L);
+    if (!gh) return 0;
+    int bag = static_cast<int>(luaL_checknumber(L, 1));
+    int slot = static_cast<int>(luaL_checknumber(L, 2));
+    const auto& inv = gh->getInventory();
+    const game::ItemSlot* itemSlot = nullptr;
+    if (bag == 0 && slot >= 1 && slot <= inv.getBackpackSize())
+        itemSlot = &inv.getBackpackSlot(slot - 1);
+    else if (bag >= 1 && bag <= 4) {
+        int sz = inv.getBagSize(bag - 1);
+        if (slot >= 1 && slot <= sz)
+            itemSlot = &inv.getBagSlot(bag - 1, slot - 1);
+    }
+    if (itemSlot && !itemSlot->empty())
+        gh->useItemById(itemSlot->item.itemId);
+    return 0;
+}
+
 // --- Locale/Build/Realm info ---
 
 static int lua_GetLocale(lua_State* L) {
@@ -4433,6 +4503,9 @@ void LuaEngine::registerCoreAPI() {
         {"GetSpellInfo",      lua_GetSpellInfo},
         {"GetSpellTexture",   lua_GetSpellTexture},
         {"GetItemInfo",       lua_GetItemInfo},
+        {"GetItemQualityColor", lua_GetItemQualityColor},
+        {"GetItemCount",      lua_GetItemCount},
+        {"UseContainerItem",  lua_UseContainerItem},
         {"GetLocale",         lua_GetLocale},
         {"GetBuildInfo",      lua_GetBuildInfo},
         {"GetCurrentMapAreaID", lua_GetCurrentMapAreaID},
