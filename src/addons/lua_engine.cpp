@@ -5182,6 +5182,46 @@ void LuaEngine::registerCoreAPI() {
             if (gh) gh->requestPvpLog();
             return 0;
         }},
+        // --- Who ---
+        {"GetNumWhoResults", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            if (!gh) { lua_pushnumber(L, 0); lua_pushnumber(L, 0); return 2; }
+            lua_pushnumber(L, gh->getWhoResults().size());
+            lua_pushnumber(L, gh->getWhoOnlineCount());
+            return 2;
+        }},
+        {"GetWhoInfo", [](lua_State* L) -> int {
+            // GetWhoInfo(index) → name, guild, level, race, class, zone, classFileName
+            auto* gh = getGameHandler(L);
+            int index = static_cast<int>(luaL_checknumber(L, 1));
+            if (!gh || index < 1) { lua_pushnil(L); return 1; }
+            const auto& results = gh->getWhoResults();
+            if (index > static_cast<int>(results.size())) { lua_pushnil(L); return 1; }
+            const auto& w = results[index - 1];
+            static const char* kRaces[] = {"","Human","Orc","Dwarf","Night Elf","Undead","Tauren","Gnome","Troll","","Blood Elf","Draenei"};
+            static const char* kClasses[] = {"","Warrior","Paladin","Hunter","Rogue","Priest","Death Knight","Shaman","Mage","Warlock","","Druid"};
+            const char* raceName = (w.raceId < 12) ? kRaces[w.raceId] : "Unknown";
+            const char* className = (w.classId < 12) ? kClasses[w.classId] : "Unknown";
+            static const char* kClassFiles[] = {"","WARRIOR","PALADIN","HUNTER","ROGUE","PRIEST","DEATHKNIGHT","SHAMAN","MAGE","WARLOCK","","DRUID"};
+            const char* classFile = (w.classId < 12) ? kClassFiles[w.classId] : "WARRIOR";
+            lua_pushstring(L, w.name.c_str());
+            lua_pushstring(L, w.guildName.c_str());
+            lua_pushnumber(L, w.level);
+            lua_pushstring(L, raceName);
+            lua_pushstring(L, className);
+            lua_pushstring(L, ""); // zone name (would need area lookup)
+            lua_pushstring(L, classFile);
+            return 7;
+        }},
+        {"SendWho", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            const char* query = luaL_optstring(L, 1, "");
+            if (gh) gh->queryWho(query);
+            return 0;
+        }},
+        {"SetWhoToUI", [](lua_State* L) -> int {
+            (void)L; return 0; // Stub
+        }},
         // --- Spell Utility ---
         {"IsPlayerSpell", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
