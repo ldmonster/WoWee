@@ -5182,6 +5182,25 @@ void LuaEngine::registerCoreAPI() {
             if (gh) gh->requestPvpLog();
             return 0;
         }},
+        // --- Spell Utility ---
+        {"IsPlayerSpell", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            uint32_t spellId = static_cast<uint32_t>(luaL_checknumber(L, 1));
+            lua_pushboolean(L, gh && gh->getKnownSpells().count(spellId) ? 1 : 0);
+            return 1;
+        }},
+        {"IsSpellOverlayed", [](lua_State* L) -> int {
+            (void)L; lua_pushboolean(L, 0); return 1; // No proc overlay tracking
+        }},
+        {"IsCurrentSpell", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            uint32_t spellId = static_cast<uint32_t>(luaL_checknumber(L, 1));
+            lua_pushboolean(L, gh && gh->getCurrentCastSpellId() == spellId ? 1 : 0);
+            return 1;
+        }},
+        {"IsAutoRepeatSpell", [](lua_State* L) -> int {
+            (void)L; lua_pushboolean(L, 0); return 1; // Stub
+        }},
         // --- Titles ---
         {"GetCurrentTitle", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
