@@ -5062,6 +5062,41 @@ void LuaEngine::registerCoreAPI() {
             lua_pushboolean(L, 1);                               // isCastable
             return 4;
         }},
+        // --- Achievement API ---
+        {"GetNumCompletedAchievements", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            lua_pushnumber(L, gh ? gh->getEarnedAchievements().size() : 0);
+            return 1;
+        }},
+        {"GetAchievementInfo", [](lua_State* L) -> int {
+            // GetAchievementInfo(id) → id, name, points, completed, month, day, year, description, flags, icon, rewardText, isGuildAch
+            auto* gh = getGameHandler(L);
+            uint32_t id = static_cast<uint32_t>(luaL_checknumber(L, 1));
+            if (!gh) { lua_pushnil(L); return 1; }
+            const std::string& name = gh->getAchievementName(id);
+            if (name.empty()) { lua_pushnil(L); return 1; }
+            bool completed = gh->getEarnedAchievements().count(id) > 0;
+            uint32_t date = gh->getAchievementDate(id);
+            uint32_t points = gh->getAchievementPoints(id);
+            const std::string& desc = gh->getAchievementDescription(id);
+            // Parse date: packed as (month << 24 | day << 16 | year)
+            int month = completed ? static_cast<int>((date >> 24) & 0xFF) : 0;
+            int day = completed ? static_cast<int>((date >> 16) & 0xFF) : 0;
+            int year = completed ? static_cast<int>(date & 0xFFFF) : 0;
+            lua_pushnumber(L, id);                 // 1: id
+            lua_pushstring(L, name.c_str());       // 2: name
+            lua_pushnumber(L, points);             // 3: points
+            lua_pushboolean(L, completed ? 1 : 0); // 4: completed
+            lua_pushnumber(L, month);              // 5: month
+            lua_pushnumber(L, day);                // 6: day
+            lua_pushnumber(L, year);               // 7: year
+            lua_pushstring(L, desc.c_str());       // 8: description
+            lua_pushnumber(L, 0);                  // 9: flags
+            lua_pushstring(L, "Interface\\Icons\\Achievement_General"); // 10: icon
+            lua_pushstring(L, "");                 // 11: rewardText
+            lua_pushboolean(L, 0);                 // 12: isGuildAchievement
+            return 12;
+        }},
         // --- Pet Action Bar ---
         {"HasPetUI", [](lua_State* L) -> int {
             auto* gh = getGameHandler(L);
