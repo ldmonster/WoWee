@@ -2201,8 +2201,10 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 else if (guid == petGuid_) unitId = "pet";
                 if (!unitId.empty()) {
                     addonEventCallback_("UNIT_POWER", {unitId});
-                    if (guid == playerGuid)
+                    if (guid == playerGuid) {
                         addonEventCallback_("ACTIONBAR_UPDATE_USABLE", {});
+                        addonEventCallback_("SPELL_UPDATE_USABLE", {});
+                    }
                 }
             }
             break;
@@ -12681,8 +12683,10 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                             if (powerChanged) {
                                 addonEventCallback_("UNIT_POWER", {unitId});
                                 // When player power changes, action bar usability may change
-                                if (block.guid == playerGuid)
+                                if (block.guid == playerGuid) {
                                     addonEventCallback_("ACTIONBAR_UPDATE_USABLE", {});
+                                    addonEventCallback_("SPELL_UPDATE_USABLE", {});
+                                }
                             }
                         }
                     }
