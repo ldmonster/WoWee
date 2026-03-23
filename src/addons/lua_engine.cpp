@@ -5108,6 +5108,40 @@ void LuaEngine::registerCoreAPI() {
             lua_pushboolean(L, 1);                               // isCastable
             return 4;
         }},
+        // --- PvP ---
+        {"UnitIsPVP", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            const char* uid = luaL_optstring(L, 1, "player");
+            if (!gh) { lua_pushboolean(L, 0); return 1; }
+            uint64_t guid = resolveUnitGuid(gh, std::string(uid));
+            if (guid == 0) { lua_pushboolean(L, 0); return 1; }
+            auto entity = gh->getEntityManager().getEntity(guid);
+            if (!entity) { lua_pushboolean(L, 0); return 1; }
+            // UNIT_FLAG_PVP = 0x00001000
+            uint32_t flags = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS));
+            lua_pushboolean(L, (flags & 0x00001000) ? 1 : 0);
+            return 1;
+        }},
+        {"UnitIsPVPFreeForAll", [](lua_State* L) -> int {
+            auto* gh = getGameHandler(L);
+            const char* uid = luaL_optstring(L, 1, "player");
+            if (!gh) { lua_pushboolean(L, 0); return 1; }
+            uint64_t guid = resolveUnitGuid(gh, std::string(uid));
+            if (guid == 0) { lua_pushboolean(L, 0); return 1; }
+            auto entity = gh->getEntityManager().getEntity(guid);
+            if (!entity) { lua_pushboolean(L, 0); return 1; }
+            // UNIT_FLAG_FFA_PVP = 0x00000080 in UNIT_FIELD_BYTES_2 byte 1
+            uint32_t flags = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS));
+            lua_pushboolean(L, (flags & 0x00080000) ? 1 : 0); // PLAYER_FLAGS_FFA_PVP
+            return 1;
+        }},
+        {"GetBattlefieldStatus", [](lua_State* L) -> int {
+            // Stub: return "none" for slot 1
+            lua_pushstring(L, "none"); // status
+            lua_pushnumber(L, 0);      // mapName
+            lua_pushnumber(L, 0);      // instanceID
+            return 3;
+        }},
         // --- Calendar ---
         {"CalendarGetDate", [](lua_State* L) -> int {
             // CalendarGetDate() → weekday, month, day, year
