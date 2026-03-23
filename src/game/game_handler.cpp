@@ -13523,6 +13523,23 @@ void GameHandler::handleMessageChat(network::Packet& packet) {
 
     LOG_DEBUG("[", getChatTypeString(data.type), "] ", channelInfo, senderInfo, ": ", data.message);
 
+    // Detect addon messages: format is "prefix\ttext" in the message body.
+    // Fire CHAT_MSG_ADDON instead of the regular chat event for these.
+    if (addonEventCallback_) {
+        auto tabPos = data.message.find('\t');
+        if (tabPos != std::string::npos && tabPos > 0 && tabPos < data.message.size() - 1) {
+            std::string prefix = data.message.substr(0, tabPos);
+            std::string body = data.message.substr(tabPos + 1);
+            std::string channel = getChatTypeString(data.type);
+            char guidBuf2[32];
+            snprintf(guidBuf2, sizeof(guidBuf2), "0x%016llX", (unsigned long long)data.senderGuid);
+            // Fire CHAT_MSG_ADDON: prefix, message, channel, sender
+            addonEventCallback_("CHAT_MSG_ADDON", {prefix, body, channel, data.senderName});
+            // Also add to chat history but don't show the raw addon message in chat
+            return;
+        }
+    }
+
     // Fire CHAT_MSG_* addon events so Lua chat frames and addons receive messages.
     // WoW event args: message, senderName, language, channelName
     if (addonEventCallback_) {
