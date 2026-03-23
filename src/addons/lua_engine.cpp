@@ -1626,12 +1626,64 @@ static int lua_GetSpellBookItemName(lua_State* L) {
 }
 
 // GetSpellDescription(spellId) → description string
+// Clean spell description template variables for display
+static std::string cleanSpellDescription(const std::string& raw) {
+    if (raw.empty() || raw.find('$') == std::string::npos) return raw;
+    std::string result;
+    result.reserve(raw.size());
+    for (size_t i = 0; i < raw.size(); ++i) {
+        if (raw[i] == '$' && i + 1 < raw.size()) {
+            char next = raw[i + 1];
+            if (next == 's' || next == 'S' || next == 'o' || next == 'O' ||
+                next == 'e' || next == 'E' || next == 't' || next == 'T' ||
+                next == 'h' || next == 'H' || next == 'u' || next == 'U') {
+                // $s1, $o1, $e1 etc. — skip the variable, insert "X"
+                result += 'X';
+                i += 1; // skip letter
+                while (i + 1 < raw.size() && raw[i + 1] >= '0' && raw[i + 1] <= '9') ++i;
+            } else if (next == 'd' || next == 'D') {
+                // $d = duration — replace with "X sec"
+                result += "X sec";
+                ++i;
+                while (i + 1 < raw.size() && raw[i + 1] >= '0' && raw[i + 1] <= '9') ++i;
+            } else if (next == 'a' || next == 'A') {
+                // $a1 = radius
+                result += "X";
+                ++i;
+                while (i + 1 < raw.size() && raw[i + 1] >= '0' && raw[i + 1] <= '9') ++i;
+            } else if (next == 'b' || next == 'B' || next == 'n' || next == 'N' ||
+                       next == 'i' || next == 'I' || next == 'x' || next == 'X') {
+                // misc variables
+                result += "X";
+                ++i;
+                while (i + 1 < raw.size() && raw[i + 1] >= '0' && raw[i + 1] <= '9') ++i;
+            } else if (next == '$') {
+                // $$ = literal $
+                result += '$';
+                ++i;
+            } else if (next == '{' || next == '<') {
+                // ${...} or $<...> — skip entire block
+                char close = (next == '{') ? '}' : '>';
+                size_t end = raw.find(close, i + 2);
+                if (end != std::string::npos) i = end;
+                else result += raw[i]; // no closing — keep $
+            } else {
+                result += raw[i]; // unknown $ pattern — keep
+            }
+        } else {
+            result += raw[i];
+        }
+    }
+    return result;
+}
+
 static int lua_GetSpellDescription(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushstring(L, ""); return 1; }
     uint32_t spellId = static_cast<uint32_t>(luaL_checknumber(L, 1));
     const std::string& desc = gh->getSpellDescription(spellId);
-    lua_pushstring(L, desc.c_str());
+    std::string cleaned = cleanSpellDescription(desc);
+    lua_pushstring(L, cleaned.c_str());
     return 1;
 }
 
