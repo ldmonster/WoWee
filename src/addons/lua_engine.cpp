@@ -1649,8 +1649,24 @@ static std::string cleanSpellDescription(const std::string& raw, const int32_t e
                     result += 'X';
                 }
                 while (i + 1 < raw.size() && raw[i + 1] >= '0' && raw[i + 1] <= '9') ++i;
-            } else if (next == 'o' || next == 'O' ||
-                next == 'e' || next == 'E' || next == 't' || next == 'T' ||
+            } else if (next == 'o' || next == 'O') {
+                // $o1 = periodic total (base * ticks). Ticks = duration / 3sec for most spells
+                i += 1;
+                int idx = 0;
+                if (i + 1 < raw.size() && raw[i + 1] >= '1' && raw[i + 1] <= '3') {
+                    idx = raw[i + 1] - '1';
+                    ++i;
+                }
+                if (effectBase && effectBase[idx] != 0 && durationSec > 0.0f) {
+                    int32_t perTick = std::abs(effectBase[idx]) + 1;
+                    int ticks = static_cast<int>(durationSec / 3.0f);
+                    if (ticks < 1) ticks = 1;
+                    result += std::to_string(perTick * ticks);
+                } else {
+                    result += 'X';
+                }
+                while (i + 1 < raw.size() && raw[i + 1] >= '0' && raw[i + 1] <= '9') ++i;
+            } else if (next == 'e' || next == 'E' || next == 't' || next == 'T' ||
                 next == 'h' || next == 'H' || next == 'u' || next == 'U') {
                 // Other variables — insert "X" placeholder
                 result += 'X';
