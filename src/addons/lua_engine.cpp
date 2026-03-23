@@ -2054,6 +2054,9 @@ static int lua_GetItemTooltipData(lua_State* L) {
     if (!info) { lua_pushnil(L); return 1; }
 
     lua_newtable(L);
+    // Unique / Heroic flags
+    if (info->maxCount == 1) { lua_pushboolean(L, 1); lua_setfield(L, -2, "isUnique"); }
+    if (info->itemFlags & 0x8) { lua_pushboolean(L, 1); lua_setfield(L, -2, "isHeroic"); }
     // Bind type
     lua_pushnumber(L, info->bindType);
     lua_setfield(L, -2, "bindType");
@@ -5508,6 +5511,8 @@ void LuaEngine::registerCoreAPI() {
         "    local data = _GetItemTooltipData(itemId)\n"
         "    if data then\n"
         "        -- Bind type\n"
+        "        if data.isHeroic then self:AddLine('Heroic', 0, 1, 0) end\n"
+        "        if data.isUnique then self:AddLine('Unique', 1, 1, 1) end\n"
         "        if data.bindType == 1 then self:AddLine('Binds when picked up', 1, 1, 1)\n"
         "        elseif data.bindType == 2 then self:AddLine('Binds when equipped', 1, 1, 1)\n"
         "        elseif data.bindType == 3 then self:AddLine('Binds when used', 1, 1, 1) end\n"
