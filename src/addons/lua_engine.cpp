@@ -5,6 +5,8 @@
 #include "game/update_field_table.hpp"
 #include "core/logger.hpp"
 #include "core/application.hpp"
+#include "rendering/renderer.hpp"
+#include "audio/ui_sound_manager.hpp"
 #include <imgui.h>
 #include <cstring>
 #include <fstream>
@@ -960,6 +962,49 @@ static int lua_IsInRaid(lua_State* L) {
     lua_pushboolean(L, gh && gh->isInGroup() && gh->getPartyData().groupType == 1);
     return 1;
 }
+
+// PlaySound(soundId) — play a WoW UI sound by ID or name
+static int lua_PlaySound(lua_State* L) {
+    auto* renderer = core::Application::getInstance().getRenderer();
+    if (!renderer) return 0;
+    auto* sfx = renderer->getUiSoundManager();
+    if (!sfx) return 0;
+
+    // Accept numeric sound ID or string name
+    std::string sound;
+    if (lua_isnumber(L, 1)) {
+        uint32_t id = static_cast<uint32_t>(lua_tonumber(L, 1));
+        // Map common WoW sound IDs to named sounds
+        switch (id) {
+            case 856: case 1115: sfx->playButtonClick(); return 0; // igMainMenuOption
+            case 840: sfx->playQuestActivate(); return 0;          // igQuestListOpen
+            case 841: sfx->playQuestComplete(); return 0;           // igQuestListComplete
+            case 862: sfx->playBagOpen(); return 0;                // igBackPackOpen
+            case 863: sfx->playBagClose(); return 0;               // igBackPackClose
+            case 867: sfx->playError(); return 0;                  // igPlayerInvite
+            case 888: sfx->playLevelUp(); return 0;                // LEVELUPSOUND
+            default: return 0;
+        }
+    } else {
+        const char* name = luaL_optstring(L, 1, "");
+        sound = name;
+        for (char& c : sound) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        if (sound == "IGMAINMENUOPTION" || sound == "IGMAINMENUOPTIONCHECKBOXON")
+            sfx->playButtonClick();
+        else if (sound == "IGQUESTLISTOPEN") sfx->playQuestActivate();
+        else if (sound == "IGQUESTLISTCOMPLETE") sfx->playQuestComplete();
+        else if (sound == "IGBACKPACKOPEN") sfx->playBagOpen();
+        else if (sound == "IGBACKPACKCLOSE") sfx->playBagClose();
+        else if (sound == "LEVELUPSOUND") sfx->playLevelUp();
+        else if (sound == "IGPLAYERINVITEACCEPTED") sfx->playButtonClick();
+        else if (sound == "TALENTSCREENOPEN") sfx->playCharacterSheetOpen();
+        else if (sound == "TALENTSCREENCLOSE") sfx->playCharacterSheetClose();
+    }
+    return 0;
+}
+
+// PlaySoundFile(path) — stub (file-based sounds not loaded from Lua)
+static int lua_PlaySoundFile(lua_State* L) { (void)L; return 0; }
 
 static int lua_GetPlayerMapPosition(lua_State* L) {
     auto* gh = getGameHandler(L);
@@ -4828,6 +4873,8 @@ void LuaEngine::registerCoreAPI() {
         {"IsInRaid",      lua_IsInRaid},
         {"GetPlayerMapPosition", lua_GetPlayerMapPosition},
         {"GetPlayerFacing",     lua_GetPlayerFacing},
+        {"PlaySound",           lua_PlaySound},
+        {"PlaySoundFile",       lua_PlaySoundFile},
         {"GetCVar",             lua_GetCVar},
         {"SetCVar",             lua_SetCVar},
         {"IsShiftKeyDown",      lua_IsShiftKeyDown},
@@ -5304,8 +5351,6 @@ void LuaEngine::registerCoreAPI() {
     luaL_dostring(L_,
         "function SetDesaturation() end\n"
         "function SetPortraitTexture() end\n"
-        "function PlaySound() end\n"
-        "function PlaySoundFile() end\n"
         "function StopSound() end\n"
         "function UIParent_OnEvent() end\n"
         "UIParent = CreateFrame('Frame', 'UIParent')\n"
