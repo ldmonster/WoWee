@@ -987,11 +987,7 @@ void InventoryScreen::renderSeparateBags(game::Inventory& inventory, uint64_t mo
     constexpr int columns = 6;
     constexpr float baseWindowW = columns * (slotSize + 4.0f) + 30.0f;
 
-    bool anyBagOpen = std::any_of(bagOpen_.begin(), bagOpen_.end(), [](bool b) { return b; });
-    if (anyBagOpen && !backpackOpen_) {
-        // Enforce backpack as the bottom-most stack window when any bag is open.
-        backpackOpen_ = true;
-    }
+    // Each bag window is independently closable — no forced backpack constraint.
 
     // Anchor stack to the bag bar (bottom-right), opening upward.
     const float bagBarTop = screenH - (42.0f + 12.0f) - 10.0f;
@@ -1074,6 +1070,16 @@ void InventoryScreen::renderBagWindow(const char* title, bool& isOpen,
     if (!ImGui::Begin(title, &isOpen, flags)) {
         ImGui::End();
         return;
+    }
+
+    // Reset position if the window ended up outside the screen (resolution change)
+    ImVec2 winPos = ImGui::GetWindowPos();
+    ImVec2 winSize = ImGui::GetWindowSize();
+    float scrW = ImGui::GetIO().DisplaySize.x;
+    float scrH = ImGui::GetIO().DisplaySize.y;
+    if (winPos.x > scrW || winPos.y > scrH ||
+        winPos.x + winSize.x < 0 || winPos.y + winSize.y < 0) {
+        ImGui::SetWindowPos(ImVec2(defaultX, defaultY));
     }
 
     // Render item slots in 4-column grid
