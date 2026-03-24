@@ -8,6 +8,8 @@
 #include <vector>
 #include <functional>
 #include <cstdint>
+#include <unordered_map>
+#include <mutex>
 
 namespace wowee {
 namespace rendering {
@@ -118,6 +120,18 @@ public:
     VkFormat getDepthFormat() const { return depthFormat; }
     VkImageView getDepthResolveImageView() const { return depthResolveImageView; }
     VkImageView getDepthImageView() const { return depthImageView; }
+
+    // Sampler cache: returns a shared VkSampler matching the given create info.
+    // Callers must NOT destroy the returned sampler — it is owned by VkContext.
+    // Automatically clamps anisotropy if the device doesn't support it.
+    VkSampler getOrCreateSampler(const VkSamplerCreateInfo& info);
+
+    // Whether the physical device supports sampler anisotropy.
+    bool isSamplerAnisotropySupported() const { return samplerAnisotropySupported_; }
+
+    // Global sampler cache accessor (set during VkContext::initialize, cleared on shutdown).
+    // Used by VkTexture and other code that only has a VkDevice handle.
+    static VkContext* globalInstance() { return sInstance_; }
 
     // UI texture upload: creates a Vulkan texture from RGBA data and returns
     // a VkDescriptorSet suitable for use as ImTextureID.
@@ -238,6 +252,13 @@ private:
         VkImageView view;
     };
     std::vector<UiTexture> uiTextures_;
+
+    // Sampler cache — deduplicates VkSamplers by configuration hash.
+    std::mutex samplerCacheMutex_;
+    std::unordered_map<uint64_t, VkSampler> samplerCache_;
+    bool samplerAnisotropySupported_ = false;
+
+    static VkContext* sInstance_;
 
 #ifndef NDEBUG
     bool enableValidation = true;

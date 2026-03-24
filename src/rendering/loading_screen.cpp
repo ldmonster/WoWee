@@ -40,10 +40,7 @@ void LoadingScreen::shutdown() {
             // ImGui manages descriptor set lifetime
             bgDescriptorSet = VK_NULL_HANDLE;
         }
-        if (bgSampler) {
-            vkDestroySampler(device, bgSampler, nullptr);
-            bgSampler = VK_NULL_HANDLE;
-        }
+        bgSampler = VK_NULL_HANDLE; // Owned by VkContext sampler cache
         if (bgImageView) {
             vkDestroyImageView(device, bgImageView, nullptr);
             bgImageView = VK_NULL_HANDLE;
@@ -94,7 +91,7 @@ bool LoadingScreen::loadImage(const std::string& path) {
     if (bgImage) {
         VkDevice device = vkCtx->getDevice();
         vkDeviceWaitIdle(device);
-        if (bgSampler) { vkDestroySampler(device, bgSampler, nullptr); bgSampler = VK_NULL_HANDLE; }
+        bgSampler = VK_NULL_HANDLE; // Owned by VkContext sampler cache
         if (bgImageView) { vkDestroyImageView(device, bgImageView, nullptr); bgImageView = VK_NULL_HANDLE; }
         if (bgImage) { vkDestroyImage(device, bgImage, nullptr); bgImage = VK_NULL_HANDLE; }
         if (bgMemory) { vkFreeMemory(device, bgMemory, nullptr); bgMemory = VK_NULL_HANDLE; }
@@ -230,7 +227,7 @@ bool LoadingScreen::loadImage(const std::string& path) {
         samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        vkCreateSampler(device, &samplerInfo, nullptr, &bgSampler);
+        bgSampler = vkCtx->getOrCreateSampler(samplerInfo);
     }
 
     // Register with ImGui as a texture

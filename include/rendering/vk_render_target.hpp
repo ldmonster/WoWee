@@ -73,6 +73,7 @@ private:
     bool hasDepth_ = false;
     VkSampleCountFlagBits msaaSamples_ = VK_SAMPLE_COUNT_1_BIT;
     VkSampler sampler_ = VK_NULL_HANDLE;
+    bool ownsSampler_ = true;
     VkRenderPass renderPass_ = VK_NULL_HANDLE;
     VkFramebuffer framebuffer_ = VK_NULL_HANDLE;
 };

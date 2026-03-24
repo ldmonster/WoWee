@@ -49,7 +49,7 @@ bool VkRenderTarget::create(VkContext& ctx, uint32_t width, uint32_t height,
         }
     }
 
-    // Create sampler (linear filtering, clamp to edge)
+    // Create sampler (linear filtering, clamp to edge) via cache
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     samplerInfo.minFilter = VK_FILTER_LINEAR;
@@ -61,11 +61,13 @@ bool VkRenderTarget::create(VkContext& ctx, uint32_t width, uint32_t height,
     samplerInfo.minLod = 0.0f;
     samplerInfo.maxLod = 0.0f;
 
-    if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler_) != VK_SUCCESS) {
+    sampler_ = ctx.getOrCreateSampler(samplerInfo);
+    if (sampler_ == VK_NULL_HANDLE) {
         LOG_ERROR("VkRenderTarget: failed to create sampler");
         destroy(device, allocator);
         return false;
     }
+    ownsSampler_ = false;
 
     // Create render pass
     if (useMSAA) {
@@ -259,10 +261,11 @@ void VkRenderTarget::destroy(VkDevice device, VmaAllocator allocator) {
         vkDestroyRenderPass(device, renderPass_, nullptr);
         renderPass_ = VK_NULL_HANDLE;
     }
-    if (sampler_) {
+    if (sampler_ && ownsSampler_) {
         vkDestroySampler(device, sampler_, nullptr);
-        sampler_ = VK_NULL_HANDLE;
     }
+    sampler_ = VK_NULL_HANDLE;
+    ownsSampler_ = true;
     destroyImage(device, allocator, resolveImage_);
     destroyImage(device, allocator, depthImage_);
     destroyImage(device, allocator, colorImage_);

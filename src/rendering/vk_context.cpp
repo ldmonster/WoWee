@@ -13,6 +13,44 @@
 namespace wowee {
 namespace rendering {
 
+VkContext* VkContext::sInstance_ = nullptr;
+
+// Hash a VkSamplerCreateInfo into a 64-bit key for the sampler cache.
+static uint64_t hashSamplerCreateInfo(const VkSamplerCreateInfo& s) {
+    // Pack the relevant fields into a deterministic hash.
+    // FNV-1a 64-bit on the raw config values.
+    uint64_t h = 14695981039346656037ULL;
+    auto mix = [&](uint64_t v) {
+        h ^= v;
+        h *= 1099511628211ULL;
+    };
+    mix(static_cast<uint64_t>(s.minFilter));
+    mix(static_cast<uint64_t>(s.magFilter));
+    mix(static_cast<uint64_t>(s.mipmapMode));
+    mix(static_cast<uint64_t>(s.addressModeU));
+    mix(static_cast<uint64_t>(s.addressModeV));
+    mix(static_cast<uint64_t>(s.addressModeW));
+    mix(static_cast<uint64_t>(s.anisotropyEnable));
+    // Bit-cast floats to uint32_t for hashing
+    uint32_t aniso;
+    std::memcpy(&aniso, &s.maxAnisotropy, sizeof(aniso));
+    mix(static_cast<uint64_t>(aniso));
+    uint32_t maxLodBits;
+    std::memcpy(&maxLodBits, &s.maxLod, sizeof(maxLodBits));
+    mix(static_cast<uint64_t>(maxLodBits));
+    uint32_t minLodBits;
+    std::memcpy(&minLodBits, &s.minLod, sizeof(minLodBits));
+    mix(static_cast<uint64_t>(minLodBits));
+    mix(static_cast<uint64_t>(s.compareEnable));
+    mix(static_cast<uint64_t>(s.compareOp));
+    mix(static_cast<uint64_t>(s.borderColor));
+    uint32_t biasBits;
+    std::memcpy(&biasBits, &s.mipLodBias, sizeof(biasBits));
+    mix(static_cast<uint64_t>(biasBits));
+    mix(static_cast<uint64_t>(s.unnormalizedCoordinates));
+    return h;
+}
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     [[maybe_unused]] VkDebugUtilsMessageTypeFlagsEXT type,
@@ -51,6 +89,14 @@ bool VkContext::initialize(SDL_Window* window) {
     if (!createCommandPools()) return false;
     if (!createSyncObjects()) return false;
     if (!createImGuiResources()) return false;
+
+    // Query anisotropy support from the physical device.
+    VkPhysicalDeviceFeatures supportedFeatures{};
+    vkGetPhysicalDeviceFeatures(physicalDevice, &supportedFeatures);
+    samplerAnisotropySupported_ = (supportedFeatures.samplerAnisotropy == VK_TRUE);
+    LOG_INFO("Sampler anisotropy supported: ", samplerAnisotropySupported_ ? "YES" : "NO");
+
+    sInstance_ = this;
 
     LOG_INFO("Vulkan context initialized successfully");
     return true;
@@ -97,6 +143,15 @@ void VkContext::shutdown() {
         pipelineCache_ = VK_NULL_HANDLE;
     }
 
+    // Destroy all cached samplers.
+    for (auto& [key, sampler] : samplerCache_) {
+        if (sampler) vkDestroySampler(device, sampler, nullptr);
+    }
+    samplerCache_.clear();
+    LOG_INFO("Sampler cache cleared");
+
+    sInstance_ = nullptr;
+
     LOG_WARNING("VkContext::shutdown - destroySwapchain...");
     destroySwapchain();
 
@@ -133,6 +188,46 @@ void VkContext::runDeferredCleanup(uint32_t frameIndex) {
         if (fn) fn();
     }
     q.clear();
+}
+
+VkSampler VkContext::getOrCreateSampler(const VkSamplerCreateInfo& info) {
+    // Clamp anisotropy if the device doesn't support the feature.
+    VkSamplerCreateInfo adjusted = info;
+    if (!samplerAnisotropySupported_) {
+        adjusted.anisotropyEnable = VK_FALSE;
+        adjusted.maxAnisotropy = 1.0f;
+    }
+
+    uint64_t key = hashSamplerCreateInfo(adjusted);
+
+    {
+        std::lock_guard<std::mutex> lock(samplerCacheMutex_);
+        auto it = samplerCache_.find(key);
+        if (it != samplerCache_.end()) {
+            return it->second;
+        }
+    }
+
+    // Create a new sampler outside the lock (vkCreateSampler is thread-safe
+    // for distinct create infos, but we re-lock to insert).
+    VkSampler sampler = VK_NULL_HANDLE;
+    if (vkCreateSampler(device, &adjusted, nullptr, &sampler) != VK_SUCCESS) {
+        LOG_ERROR("getOrCreateSampler: vkCreateSampler failed");
+        return VK_NULL_HANDLE;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(samplerCacheMutex_);
+        // Double-check: another thread may have inserted while we were creating.
+        auto [it, inserted] = samplerCache_.emplace(key, sampler);
+        if (!inserted) {
+            // Another thread won the race — destroy our duplicate and use theirs.
+            vkDestroySampler(device, sampler, nullptr);
+            return it->second;
+        }
+    }
+
+    return sampler;
 }
 
 bool VkContext::createInstance(SDL_Window* window) {
@@ -980,10 +1075,7 @@ void VkContext::destroyImGuiResources() {
         if (tex.memory) vkFreeMemory(device, tex.memory, nullptr);
     }
     uiTextures_.clear();
-    if (uiTextureSampler_) {
-        vkDestroySampler(device, uiTextureSampler_, nullptr);
-        uiTextureSampler_ = VK_NULL_HANDLE;
-    }
+    uiTextureSampler_ = VK_NULL_HANDLE; // Owned by sampler cache
 
     if (imguiDescriptorPool) {
         vkDestroyDescriptorPool(device, imguiDescriptorPool, nullptr);
@@ -1015,7 +1107,7 @@ VkDescriptorSet VkContext::uploadImGuiTexture(const uint8_t* rgba, int width, in
 
     VkDeviceSize imageSize = static_cast<VkDeviceSize>(width) * height * 4;
 
-    // Create shared sampler on first call
+    // Create shared sampler on first call (via sampler cache)
     if (!uiTextureSampler_) {
         VkSamplerCreateInfo si{};
         si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -1024,7 +1116,8 @@ VkDescriptorSet VkContext::uploadImGuiTexture(const uint8_t* rgba, int width, in
         si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        if (vkCreateSampler(device, &si, nullptr, &uiTextureSampler_) != VK_SUCCESS) {
+        uiTextureSampler_ = getOrCreateSampler(si);
+        if (!uiTextureSampler_) {
             LOG_ERROR("Failed to create UI texture sampler");
             return VK_NULL_HANDLE;
         }

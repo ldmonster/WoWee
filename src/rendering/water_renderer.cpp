@@ -352,8 +352,8 @@ void WaterRenderer::destroySceneHistoryResources() {
         if (sh.depthImage) { vmaDestroyImage(vkCtx->getAllocator(), sh.depthImage, sh.depthAlloc); sh.depthImage = VK_NULL_HANDLE; sh.depthAlloc = VK_NULL_HANDLE; }
         sh.sceneSet = VK_NULL_HANDLE;
     }
-    if (sceneColorSampler) { vkDestroySampler(device, sceneColorSampler, nullptr); sceneColorSampler = VK_NULL_HANDLE; }
-    if (sceneDepthSampler) { vkDestroySampler(device, sceneDepthSampler, nullptr); sceneDepthSampler = VK_NULL_HANDLE; }
+    sceneColorSampler = VK_NULL_HANDLE; // Owned by VkContext sampler cache
+    sceneDepthSampler = VK_NULL_HANDLE; // Owned by VkContext sampler cache
     sceneHistoryExtent = {0, 0};
     sceneHistoryReady = false;
 }
@@ -374,13 +374,15 @@ void WaterRenderer::createSceneHistoryResources(VkExtent2D extent, VkFormat colo
     sampCI.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sampCI.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sampCI.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    if (vkCreateSampler(device, &sampCI, nullptr, &sceneColorSampler) != VK_SUCCESS) {
+    sceneColorSampler = vkCtx->getOrCreateSampler(sampCI);
+    if (sceneColorSampler == VK_NULL_HANDLE) {
         LOG_ERROR("WaterRenderer: failed to create scene color sampler");
         return;
     }
     sampCI.magFilter = VK_FILTER_NEAREST;
     sampCI.minFilter = VK_FILTER_NEAREST;
-    if (vkCreateSampler(device, &sampCI, nullptr, &sceneDepthSampler) != VK_SUCCESS) {
+    sceneDepthSampler = vkCtx->getOrCreateSampler(sampCI);
+    if (sceneDepthSampler == VK_NULL_HANDLE) {
         LOG_ERROR("WaterRenderer: failed to create scene depth sampler");
         return;
     }
@@ -1718,7 +1720,8 @@ void WaterRenderer::createReflectionResources() {
     sampCI.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sampCI.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sampCI.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    if (vkCreateSampler(device, &sampCI, nullptr, &reflectionSampler) != VK_SUCCESS) {
+    reflectionSampler = vkCtx->getOrCreateSampler(sampCI);
+    if (reflectionSampler == VK_NULL_HANDLE) {
         LOG_ERROR("WaterRenderer: failed to create reflection sampler");
         return;
     }
@@ -1848,7 +1851,7 @@ void WaterRenderer::destroyReflectionResources() {
     if (reflectionDepthView) { vkDestroyImageView(device, reflectionDepthView, nullptr); reflectionDepthView = VK_NULL_HANDLE; }
     if (reflectionColorImage) { vmaDestroyImage(allocator, reflectionColorImage, reflectionColorAlloc); reflectionColorImage = VK_NULL_HANDLE; }
     if (reflectionDepthImage) { vmaDestroyImage(allocator, reflectionDepthImage, reflectionDepthAlloc); reflectionDepthImage = VK_NULL_HANDLE; }
-    if (reflectionSampler) { vkDestroySampler(device, reflectionSampler, nullptr); reflectionSampler = VK_NULL_HANDLE; }
+    reflectionSampler = VK_NULL_HANDLE; // Owned by VkContext sampler cache
     if (reflectionUBO) {
         AllocatedBuffer ab{}; ab.buffer = reflectionUBO; ab.allocation = reflectionUBOAlloc;
         destroyBuffer(allocator, ab);
