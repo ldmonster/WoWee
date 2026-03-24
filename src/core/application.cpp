@@ -2895,10 +2895,12 @@ void Application::setupUICallbacks() {
 
         const uint32_t row = static_cast<uint32_t>(idx);
         std::string dir = dbc->getString(row, 23);
+        std::string soundName = dbc->getString(row, 2);
         for (uint32_t f = 3; f <= 12; ++f) {
             std::string name = dbc->getString(row, f);
             if (name.empty()) continue;
             std::string path = dir.empty() ? name : dir + "\\" + name;
+            LOG_WARNING("PLAY_SOUND: id=", soundId, " name='", soundName, "' path=", path);
             audio::AudioEngine::instance().playSound2D(path);
             return;
         }
@@ -2916,10 +2918,14 @@ void Application::setupUICallbacks() {
 
         const uint32_t row = static_cast<uint32_t>(idx);
         std::string dir = dbc->getString(row, 23);
+        std::string soundName = dbc->getString(row, 2);
         for (uint32_t f = 3; f <= 12; ++f) {
             std::string name = dbc->getString(row, f);
             if (name.empty()) continue;
             std::string path = dir.empty() ? name : dir + "\\" + name;
+
+            LOG_WARNING("PLAY_OBJECT_SOUND: id=", soundId, " name='", soundName, "' path=", path,
+                        " src=0x", std::hex, sourceGuid, std::dec);
 
             // Play as 3D sound if source entity position is available
             auto entity = gameHandler->getEntityManager().getEntity(sourceGuid);

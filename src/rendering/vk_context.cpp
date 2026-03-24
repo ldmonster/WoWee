@@ -196,6 +196,10 @@ bool VkContext::selectPhysicalDevice() {
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(physicalDevice, &props);
     uint32_t apiVersion = props.apiVersion;
+    gpuVendorId_ = props.vendorID;
+    std::strncpy(gpuName_, props.deviceName, sizeof(gpuName_) - 1);
+    gpuName_[sizeof(gpuName_) - 1] = '\0';
+    LOG_INFO("GPU: ", gpuName_, " (vendor 0x", std::hex, gpuVendorId_, std::dec, ")");
 
     VkPhysicalDeviceDepthStencilResolveProperties dsResolveProps{};
     dsResolveProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES;

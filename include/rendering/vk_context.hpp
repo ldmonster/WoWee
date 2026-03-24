@@ -70,6 +70,10 @@ public:
     VkInstance getInstance() const { return instance; }
     VkPhysicalDevice getPhysicalDevice() const { return physicalDevice; }
     VkDevice getDevice() const { return device; }
+    uint32_t getGpuVendorId() const { return gpuVendorId_; }
+    const char* getGpuName() const { return gpuName_; }
+    bool isAmdGpu() const { return gpuVendorId_ == 0x1002; }
+    bool isNvidiaGpu() const { return gpuVendorId_ == 0x10DE; }
     VkQueue getGraphicsQueue() const { return graphicsQueue; }
     uint32_t getGraphicsQueueFamily() const { return graphicsQueueFamily; }
     VmaAllocator getAllocator() const { return allocator; }
@@ -149,6 +153,8 @@ private:
 
     // Pipeline cache (persisted to disk for faster startup)
     VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
+    uint32_t gpuVendorId_ = 0;
+    char gpuName_[256] = {};
 
     VkQueue graphicsQueue = VK_NULL_HANDLE;
     VkQueue presentQueue = VK_NULL_HANDLE;
