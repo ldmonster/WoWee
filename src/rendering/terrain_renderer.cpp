@@ -143,7 +143,7 @@ bool TerrainRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameL
         .setLayout(pipelineLayout)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     if (!pipeline) {
         LOG_ERROR("TerrainRenderer: failed to create fill pipeline");
@@ -165,7 +165,7 @@ bool TerrainRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameL
         .setLayout(pipelineLayout)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     if (!wireframePipeline) {
         LOG_WARNING("TerrainRenderer: wireframe pipeline not available");
@@ -245,7 +245,7 @@ void TerrainRenderer::recreatePipelines() {
         .setLayout(pipelineLayout)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     if (!pipeline) {
         LOG_ERROR("TerrainRenderer::recreatePipelines: failed to create fill pipeline");
@@ -264,7 +264,7 @@ void TerrainRenderer::recreatePipelines() {
         .setLayout(pipelineLayout)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     if (!wireframePipeline) {
         LOG_WARNING("TerrainRenderer::recreatePipelines: wireframe pipeline not available");
@@ -932,7 +932,7 @@ bool TerrainRenderer::initializeShadow(VkRenderPass shadowRenderPass) {
         .setLayout(shadowPipelineLayout_)
         .setRenderPass(shadowRenderPass)
         .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     vertShader.destroy();
     fragShader.destroy();

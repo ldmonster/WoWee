@@ -114,7 +114,7 @@ bool QuestMarkerRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFr
         .setLayout(pipelineLayout_)
         .setRenderPass(vkCtx_->getImGuiRenderPass())
         .setDynamicStates(dynamicStates)
-        .build(device);
+        .build(device, vkCtx_->getPipelineCache());
 
     vertModule.destroy();
     fragModule.destroy();
@@ -233,7 +233,7 @@ void QuestMarkerRenderer::recreatePipelines() {
         .setLayout(pipelineLayout_)
         .setRenderPass(vkCtx_->getImGuiRenderPass())
         .setDynamicStates(dynamicStates)
-        .build(device);
+        .build(device, vkCtx_->getPipelineCache());
 
     vertModule.destroy();
     fragModule.destroy();

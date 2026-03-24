@@ -74,6 +74,7 @@ public:
     uint32_t getGraphicsQueueFamily() const { return graphicsQueueFamily; }
     VmaAllocator getAllocator() const { return allocator; }
     VkSurfaceKHR getSurface() const { return surface; }
+    VkPipelineCache getPipelineCache() const { return pipelineCache_; }
 
     VkSwapchainKHR getSwapchain() const { return swapchain; }
     VkFormat getSwapchainFormat() const { return swapchainFormat; }
@@ -130,6 +131,8 @@ private:
     void destroySwapchain();
     bool createCommandPools();
     bool createSyncObjects();
+    bool createPipelineCache();
+    void savePipelineCache();
     bool createImGuiResources();
     void destroyImGuiResources();
 
@@ -143,6 +146,9 @@ private:
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;
     VmaAllocator allocator = VK_NULL_HANDLE;
+
+    // Pipeline cache (persisted to disk for faster startup)
+    VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
 
     VkQueue graphicsQueue = VK_NULL_HANDLE;
     VkQueue presentQueue = VK_NULL_HANDLE;

@@ -6,6 +6,9 @@
 #include <imgui_impl_vulkan.h>
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
 
 namespace wowee {
 namespace rendering {
@@ -36,6 +39,10 @@ bool VkContext::initialize(SDL_Window* window) {
     if (!selectPhysicalDevice()) return false;
     if (!createLogicalDevice()) return false;
     if (!createAllocator()) return false;
+
+    // Pipeline cache: try to load from disk, fall back to empty cache.
+    // Not fatal — if it fails we just skip caching.
+    createPipelineCache();
 
     int w, h;
     SDL_Vulkan_GetDrawableSize(window, &w, &h);
@@ -82,6 +89,13 @@ void VkContext::shutdown() {
 
     if (immFence) { vkDestroyFence(device, immFence, nullptr); immFence = VK_NULL_HANDLE; }
     if (immCommandPool) { vkDestroyCommandPool(device, immCommandPool, nullptr); immCommandPool = VK_NULL_HANDLE; }
+
+    // Persist pipeline cache to disk before tearing down the device.
+    savePipelineCache();
+    if (pipelineCache_) {
+        vkDestroyPipelineCache(device, pipelineCache_, nullptr);
+        pipelineCache_ = VK_NULL_HANDLE;
+    }
 
     LOG_WARNING("VkContext::shutdown - destroySwapchain...");
     destroySwapchain();
@@ -265,6 +279,106 @@ bool VkContext::createAllocator() {
 
     LOG_INFO("VMA allocator created");
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline cache persistence
+// ---------------------------------------------------------------------------
+
+static std::string getPipelineCachePath() {
+#ifdef _WIN32
+    if (const char* appdata = std::getenv("APPDATA"))
+        return std::string(appdata) + "\\wowee\\pipeline_cache.bin";
+    return ".\\pipeline_cache.bin";
+#elif defined(__APPLE__)
+    if (const char* home = std::getenv("HOME"))
+        return std::string(home) + "/Library/Caches/wowee/pipeline_cache.bin";
+    return "./pipeline_cache.bin";
+#else
+    if (const char* home = std::getenv("HOME"))
+        return std::string(home) + "/.local/share/wowee/pipeline_cache.bin";
+    return "./pipeline_cache.bin";
+#endif
+}
+
+bool VkContext::createPipelineCache() {
+    std::string path = getPipelineCachePath();
+
+    // Try to load existing cache data from disk.
+    std::vector<char> cacheData;
+    {
+        std::ifstream file(path, std::ios::binary | std::ios::ate);
+        if (file.is_open()) {
+            auto size = file.tellg();
+            if (size > 0) {
+                cacheData.resize(static_cast<size_t>(size));
+                file.seekg(0);
+                file.read(cacheData.data(), size);
+                if (!file) {
+                    LOG_WARNING("Pipeline cache file read failed, starting with empty cache");
+                    cacheData.clear();
+                }
+            }
+        }
+    }
+
+    VkPipelineCacheCreateInfo cacheCI{};
+    cacheCI.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    cacheCI.initialDataSize = cacheData.size();
+    cacheCI.pInitialData = cacheData.empty() ? nullptr : cacheData.data();
+
+    VkResult result = vkCreatePipelineCache(device, &cacheCI, nullptr, &pipelineCache_);
+    if (result != VK_SUCCESS) {
+        // If loading stale/corrupt data caused failure, retry with empty cache.
+        if (!cacheData.empty()) {
+            LOG_WARNING("Pipeline cache creation failed with saved data, retrying empty");
+            cacheCI.initialDataSize = 0;
+            cacheCI.pInitialData = nullptr;
+            result = vkCreatePipelineCache(device, &cacheCI, nullptr, &pipelineCache_);
+        }
+        if (result != VK_SUCCESS) {
+            LOG_WARNING("Pipeline cache creation failed — pipelines will not be cached");
+            pipelineCache_ = VK_NULL_HANDLE;
+            return false;
+        }
+    }
+
+    if (!cacheData.empty()) {
+        LOG_INFO("Pipeline cache loaded from disk (", cacheData.size(), " bytes)");
+    } else {
+        LOG_INFO("Pipeline cache created (empty)");
+    }
+    return true;
+}
+
+void VkContext::savePipelineCache() {
+    if (!pipelineCache_ || !device) return;
+
+    size_t dataSize = 0;
+    if (vkGetPipelineCacheData(device, pipelineCache_, &dataSize, nullptr) != VK_SUCCESS || dataSize == 0) {
+        LOG_WARNING("Failed to query pipeline cache size");
+        return;
+    }
+
+    std::vector<char> data(dataSize);
+    if (vkGetPipelineCacheData(device, pipelineCache_, &dataSize, data.data()) != VK_SUCCESS) {
+        LOG_WARNING("Failed to retrieve pipeline cache data");
+        return;
+    }
+
+    std::string path = getPipelineCachePath();
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file.is_open()) {
+        LOG_WARNING("Failed to open pipeline cache file for writing: ", path);
+        return;
+    }
+
+    file.write(data.data(), static_cast<std::streamsize>(dataSize));
+    file.close();
+
+    LOG_INFO("Pipeline cache saved to disk (", dataSize, " bytes)");
 }
 
 bool VkContext::createSwapchain(int width, int height) {

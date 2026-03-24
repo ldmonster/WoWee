@@ -264,7 +264,7 @@ bool CharacterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFram
             .setLayout(pipelineLayout_)
             .setRenderPass(mainPass)
             .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-            .build(device);
+            .build(device, vkCtx_->getPipelineCache());
     };
 
     opaquePipeline_ = buildCharPipeline(PipelineBuilder::blendDisabled(), true);
@@ -2648,7 +2648,7 @@ bool CharacterRenderer::initializeShadow(VkRenderPass shadowRenderPass) {
         .setLayout(shadowPipelineLayout_)
         .setRenderPass(shadowRenderPass)
         .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-        .build(device);
+        .build(device, vkCtx_->getPipelineCache());
 
     vertShader.destroy();
     fragShader.destroy();
@@ -3315,7 +3315,7 @@ void CharacterRenderer::recreatePipelines() {
             .setLayout(pipelineLayout_)
             .setRenderPass(mainPass)
             .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-            .build(device);
+            .build(device, vkCtx_->getPipelineCache());
     };
 
     LOG_INFO("CharacterRenderer::recreatePipelines: renderPass=", (void*)mainPass,

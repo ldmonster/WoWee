@@ -107,7 +107,7 @@ bool Lightning::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout)
             .setLayout(boltPipelineLayout)
             .setRenderPass(vkCtx->getImGuiRenderPass())
             .setDynamicStates(dynamicStates)
-            .build(device);
+            .build(device, vkCtx->getPipelineCache());
 
         vertModule.destroy();
         fragModule.destroy();
@@ -169,7 +169,7 @@ bool Lightning::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout)
             .setLayout(flashPipelineLayout)
             .setRenderPass(vkCtx->getImGuiRenderPass())
             .setDynamicStates(dynamicStates)
-            .build(device);
+            .build(device, vkCtx->getPipelineCache());
 
         vertModule.destroy();
         fragModule.destroy();
@@ -306,7 +306,7 @@ void Lightning::recreatePipelines() {
             .setLayout(boltPipelineLayout)
             .setRenderPass(vkCtx->getImGuiRenderPass())
             .setDynamicStates(dynamicStates)
-            .build(device);
+            .build(device, vkCtx->getPipelineCache());
 
         vertModule.destroy();
         fragModule.destroy();
@@ -344,7 +344,7 @@ void Lightning::recreatePipelines() {
             .setLayout(flashPipelineLayout)
             .setRenderPass(vkCtx->getImGuiRenderPass())
             .setDynamicStates(dynamicStates)
-            .build(device);
+            .build(device, vkCtx->getPipelineCache());
 
         vertModule.destroy();
         fragModule.destroy();

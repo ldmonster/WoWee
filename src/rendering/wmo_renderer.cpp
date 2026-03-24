@@ -183,7 +183,7 @@ bool WMORenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx_->getPipelineCache());
 
     if (!opaquePipeline_) {
         core::Logger::getInstance().error("WMORenderer: failed to create opaque pipeline");
@@ -205,7 +205,7 @@ bool WMORenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx_->getPipelineCache());
 
     if (!transparentPipeline_) {
         core::Logger::getInstance().warning("WMORenderer: transparent pipeline not available");
@@ -224,7 +224,7 @@ bool WMORenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx_->getPipelineCache());
 
     // --- Build wireframe pipeline ---
     wireframePipeline_ = PipelineBuilder()
@@ -239,7 +239,7 @@ bool WMORenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx_->getPipelineCache());
 
     if (!wireframePipeline_) {
         core::Logger::getInstance().warning("WMORenderer: wireframe pipeline not available");
@@ -1679,7 +1679,7 @@ bool WMORenderer::initializeShadow(VkRenderPass shadowRenderPass) {
         .setLayout(shadowPipelineLayout_)
         .setRenderPass(shadowRenderPass)
         .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-        .build(device);
+        .build(device, vkCtx_->getPipelineCache());
 
     vertShader.destroy();
     fragShader.destroy();
@@ -3681,7 +3681,7 @@ void WMORenderer::recreatePipelines() {
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx_->getPipelineCache());
 
     transparentPipeline_ = PipelineBuilder()
         .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
@@ -3695,7 +3695,7 @@ void WMORenderer::recreatePipelines() {
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx_->getPipelineCache());
 
     glassPipeline_ = PipelineBuilder()
         .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
@@ -3709,7 +3709,7 @@ void WMORenderer::recreatePipelines() {
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx_->getPipelineCache());
 
     wireframePipeline_ = PipelineBuilder()
         .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
@@ -3723,7 +3723,7 @@ void WMORenderer::recreatePipelines() {
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx_->getPipelineCache());
 
     vertShader.destroy();
     fragShader.destroy();

@@ -165,7 +165,7 @@ bool WorldMap::initialize(VkContext* ctx, pipeline::AssetManager* am) {
             .setLayout(tilePipelineLayout)
             .setRenderPass(compositeTarget->getRenderPass())
             .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-            .build(device);
+            .build(device, vkCtx->getPipelineCache());
 
         vs.destroy();
         fs.destroy();

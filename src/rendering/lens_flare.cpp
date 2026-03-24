@@ -109,7 +109,7 @@ bool LensFlare::initialize(VkContext* ctx, VkDescriptorSetLayout /*perFrameLayou
         .setLayout(pipelineLayout)
         .setRenderPass(vkCtx->getImGuiRenderPass())
         .setDynamicStates(dynamicStates)
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     // Shader modules can be freed after pipeline creation
     vertModule.destroy();
@@ -198,7 +198,7 @@ void LensFlare::recreatePipelines() {
         .setLayout(pipelineLayout)
         .setRenderPass(vkCtx->getImGuiRenderPass())
         .setDynamicStates(dynamicStates)
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     vertModule.destroy();
     fragModule.destroy();

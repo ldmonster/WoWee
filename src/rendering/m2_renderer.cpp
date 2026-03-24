@@ -507,7 +507,7 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
             .setLayout(pipelineLayout_)
             .setRenderPass(mainPass)
             .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-            .build(device);
+            .build(device, vkCtx_->getPipelineCache());
     };
 
     opaquePipeline_ = buildM2Pipeline(PipelineBuilder::blendDisabled(), true);
@@ -542,7 +542,7 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
                 .setLayout(particlePipelineLayout_)
                 .setRenderPass(mainPass)
                 .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-                .build(device);
+                .build(device, vkCtx_->getPipelineCache());
         };
 
         particlePipeline_ = buildParticlePipeline(PipelineBuilder::blendAlpha());
@@ -575,7 +575,7 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
             .setLayout(smokePipelineLayout_)
             .setRenderPass(mainPass)
             .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-            .build(device);
+            .build(device, vkCtx_->getPipelineCache());
     }
 
     // --- Build ribbon pipelines ---
@@ -617,7 +617,7 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
                     .setLayout(ribbonPipelineLayout_)
                     .setRenderPass(mainPass)
                     .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-                    .build(device);
+                    .build(device, vkCtx_->getPipelineCache());
             };
 
             ribbonPipeline_         = buildRibbonPipeline(PipelineBuilder::blendAlpha());
@@ -3228,7 +3228,7 @@ bool M2Renderer::initializeShadow(VkRenderPass shadowRenderPass) {
         .setLayout(shadowPipelineLayout_)
         .setRenderPass(shadowRenderPass)
         .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-        .build(device);
+        .build(device, vkCtx_->getPipelineCache());
 
     vertShader.destroy();
     fragShader.destroy();
@@ -5076,7 +5076,7 @@ void M2Renderer::recreatePipelines() {
             .setLayout(pipelineLayout_)
             .setRenderPass(mainPass)
             .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-            .build(device);
+            .build(device, vkCtx_->getPipelineCache());
     };
 
     opaquePipeline_ = buildM2Pipeline(PipelineBuilder::blendDisabled(), true);
@@ -5111,7 +5111,7 @@ void M2Renderer::recreatePipelines() {
                 .setLayout(particlePipelineLayout_)
                 .setRenderPass(mainPass)
                 .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-                .build(device);
+                .build(device, vkCtx_->getPipelineCache());
         };
 
         particlePipeline_ = buildParticlePipeline(PipelineBuilder::blendAlpha());
@@ -5144,7 +5144,7 @@ void M2Renderer::recreatePipelines() {
             .setLayout(smokePipelineLayout_)
             .setRenderPass(mainPass)
             .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-            .build(device);
+            .build(device, vkCtx_->getPipelineCache());
     }
 
     // --- Ribbon pipelines ---
@@ -5178,7 +5178,7 @@ void M2Renderer::recreatePipelines() {
                     .setLayout(ribbonPipelineLayout_)
                     .setRenderPass(mainPass)
                     .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-                    .build(device);
+                    .build(device, vkCtx_->getPipelineCache());
             };
 
             ribbonPipeline_         = buildRibbonPipeline(PipelineBuilder::blendAlpha());

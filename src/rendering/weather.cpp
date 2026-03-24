@@ -85,7 +85,7 @@ bool Weather::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout) {
         .setLayout(pipelineLayout)
         .setRenderPass(vkCtx->getImGuiRenderPass())
         .setDynamicStates(dynamicStates)
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     vertModule.destroy();
     fragModule.destroy();
@@ -165,7 +165,7 @@ void Weather::recreatePipelines() {
         .setLayout(pipelineLayout)
         .setRenderPass(vkCtx->getImGuiRenderPass())
         .setDynamicStates(dynamicStates)
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     vertModule.destroy();
     fragModule.destroy();

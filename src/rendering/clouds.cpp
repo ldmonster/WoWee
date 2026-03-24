@@ -83,7 +83,7 @@ bool Clouds::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout) {
         .setLayout(pipelineLayout_)
         .setRenderPass(vkCtx_->getImGuiRenderPass())
         .setDynamicStates(dynamicStates)
-        .build(device);
+        .build(device, vkCtx_->getPipelineCache());
 
     vertModule.destroy();
     fragModule.destroy();
@@ -149,7 +149,7 @@ void Clouds::recreatePipelines() {
         .setLayout(pipelineLayout_)
         .setRenderPass(vkCtx_->getImGuiRenderPass())
         .setDynamicStates(dynamicStates)
-        .build(device);
+        .build(device, vkCtx_->getPipelineCache());
 
     vertModule.destroy();
     fragModule.destroy();

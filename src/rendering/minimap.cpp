@@ -165,7 +165,7 @@ bool Minimap::initialize(VkContext* ctx, VkDescriptorSetLayout /*perFrameLayout*
             .setLayout(tilePipelineLayout)
             .setRenderPass(compositeTarget->getRenderPass())
             .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-            .build(device);
+            .build(device, vkCtx->getPipelineCache());
 
         vs.destroy();
         fs.destroy();
@@ -192,7 +192,7 @@ bool Minimap::initialize(VkContext* ctx, VkDescriptorSetLayout /*perFrameLayout*
             .setLayout(displayPipelineLayout)
             .setRenderPass(vkCtx->getImGuiRenderPass())
             .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-            .build(device);
+            .build(device, vkCtx->getPipelineCache());
 
         vs.destroy();
         fs.destroy();
@@ -270,7 +270,7 @@ void Minimap::recreatePipelines() {
         .setLayout(displayPipelineLayout)
         .setRenderPass(vkCtx->getImGuiRenderPass())
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     vs.destroy();
     fs.destroy();

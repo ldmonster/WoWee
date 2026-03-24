@@ -101,7 +101,7 @@ bool ChargeEffect::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayo
             .setLayout(ribbonPipelineLayout_)
             .setRenderPass(vkCtx_->getImGuiRenderPass())
             .setDynamicStates(dynamicStates)
-            .build(device);
+            .build(device, vkCtx_->getPipelineCache());
 
         vertModule.destroy();
         fragModule.destroy();
@@ -165,7 +165,7 @@ bool ChargeEffect::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayo
             .setLayout(dustPipelineLayout_)
             .setRenderPass(vkCtx_->getImGuiRenderPass())
             .setDynamicStates(dynamicStates)
-            .build(device);
+            .build(device, vkCtx_->getPipelineCache());
 
         vertModule.destroy();
         fragModule.destroy();
@@ -314,7 +314,7 @@ void ChargeEffect::recreatePipelines() {
             .setLayout(ribbonPipelineLayout_)
             .setRenderPass(vkCtx_->getImGuiRenderPass())
             .setDynamicStates(dynamicStates)
-            .build(device);
+            .build(device, vkCtx_->getPipelineCache());
 
         vertModule.destroy();
         fragModule.destroy();
@@ -360,7 +360,7 @@ void ChargeEffect::recreatePipelines() {
             .setLayout(dustPipelineLayout_)
             .setRenderPass(vkCtx_->getImGuiRenderPass())
             .setDynamicStates(dynamicStates)
-            .build(device);
+            .build(device, vkCtx_->getPipelineCache());
 
         vertModule.destroy();
         fragModule.destroy();

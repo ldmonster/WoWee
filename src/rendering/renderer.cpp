@@ -3820,7 +3820,7 @@ void Renderer::initSelectionCircle() {
         .setLayout(selCirclePipelineLayout)
         .setRenderPass(vkCtx->getImGuiRenderPass())
         .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     vertShader.destroy();
     fragShader.destroy();
@@ -3932,7 +3932,7 @@ void Renderer::initOverlayPipeline() {
         .setLayout(overlayPipelineLayout)
         .setRenderPass(vkCtx->getImGuiRenderPass())
         .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     vertMod.destroy(); fragMod.destroy();
 
@@ -4144,7 +4144,7 @@ bool Renderer::initFSRResources() {
         .setLayout(fsr_.pipelineLayout)
         .setRenderPass(vkCtx->getImGuiRenderPass())
         .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     vertMod.destroy();
     fragMod.destroy();
@@ -4668,7 +4668,7 @@ bool Renderer::initFSR2Resources() {
             .setLayout(fsr2_.sharpenPipelineLayout)
             .setRenderPass(vkCtx->getImGuiRenderPass())
             .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-            .build(device);
+            .build(device, vkCtx->getPipelineCache());
 
         vertMod.destroy();
         fragMod.destroy();
@@ -5353,7 +5353,7 @@ bool Renderer::initFXAAResources() {
         .setLayout(fxaa_.pipelineLayout)
         .setRenderPass(vkCtx->getImGuiRenderPass())
         .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     vertMod.destroy();
     fragMod.destroy();

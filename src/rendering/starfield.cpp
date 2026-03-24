@@ -91,7 +91,7 @@ bool StarField::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout)
         .setMultisample(vkCtx->getMsaaSamples())
         .setLayout(pipelineLayout)
         .setRenderPass(vkCtx->getImGuiRenderPass())
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     vertModule.destroy();
     fragModule.destroy();
@@ -164,7 +164,7 @@ void StarField::recreatePipelines() {
         .setMultisample(vkCtx->getMsaaSamples())
         .setLayout(pipelineLayout)
         .setRenderPass(vkCtx->getImGuiRenderPass())
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     vertModule.destroy();
     fragModule.destroy();

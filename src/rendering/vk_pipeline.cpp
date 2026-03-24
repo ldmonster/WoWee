@@ -111,7 +111,7 @@ PipelineBuilder& PipelineBuilder::setDynamicStates(const std::vector<VkDynamicSt
     return *this;
 }
 
-VkPipeline PipelineBuilder::build(VkDevice device) const {
+VkPipeline PipelineBuilder::build(VkDevice device, VkPipelineCache cache) const {
     // Vertex input
     VkPipelineVertexInputStateCreateInfo vertexInput{};
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -192,7 +192,7 @@ VkPipeline PipelineBuilder::build(VkDevice device) const {
     pipelineInfo.subpass = subpass_;
 
     VkPipeline pipeline = VK_NULL_HANDLE;
-    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo,
+    if (vkCreateGraphicsPipelines(device, cache, 1, &pipelineInfo,
             nullptr, &pipeline) != VK_SUCCESS)
     {
         LOG_ERROR("Failed to create graphics pipeline");

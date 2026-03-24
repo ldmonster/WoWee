@@ -193,7 +193,7 @@ bool WaterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLay
         .setLayout(pipelineLayout)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     vertShader.destroy();
     fragShader.destroy();
@@ -257,7 +257,7 @@ void WaterRenderer::recreatePipelines() {
         .setLayout(pipelineLayout)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     vertShader.destroy();
     fragShader.destroy();
@@ -2092,7 +2092,7 @@ bool WaterRenderer::createWater1xPass(VkFormat colorFormat, VkFormat depthFormat
         .setLayout(pipelineLayout)
         .setRenderPass(water1xRenderPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
-        .build(device);
+        .build(device, vkCtx->getPipelineCache());
 
     vertShader.destroy();
     fragShader.destroy();

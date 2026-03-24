@@ -98,7 +98,7 @@ bool SwimEffects::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
             .setLayout(ripplePipelineLayout)
             .setRenderPass(vkCtx->getImGuiRenderPass())
             .setDynamicStates(dynamicStates)
-            .build(device);
+            .build(device, vkCtx->getPipelineCache());
 
         vertModule.destroy();
         fragModule.destroy();
@@ -142,7 +142,7 @@ bool SwimEffects::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
             .setLayout(bubblePipelineLayout)
             .setRenderPass(vkCtx->getImGuiRenderPass())
             .setDynamicStates(dynamicStates)
-            .build(device);
+            .build(device, vkCtx->getPipelineCache());
 
         vertModule.destroy();
         fragModule.destroy();
@@ -186,7 +186,7 @@ bool SwimEffects::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
             .setLayout(insectPipelineLayout)
             .setRenderPass(vkCtx->getImGuiRenderPass())
             .setDynamicStates(dynamicStates)
-            .build(device);
+            .build(device, vkCtx->getPipelineCache());
 
         vertModule.destroy();
         fragModule.destroy();
@@ -366,7 +366,7 @@ void SwimEffects::recreatePipelines() {
             .setLayout(ripplePipelineLayout)
             .setRenderPass(vkCtx->getImGuiRenderPass())
             .setDynamicStates(dynamicStates)
-            .build(device);
+            .build(device, vkCtx->getPipelineCache());
 
         vertModule.destroy();
         fragModule.destroy();
@@ -393,7 +393,7 @@ void SwimEffects::recreatePipelines() {
             .setLayout(bubblePipelineLayout)
             .setRenderPass(vkCtx->getImGuiRenderPass())
             .setDynamicStates(dynamicStates)
-            .build(device);
+            .build(device, vkCtx->getPipelineCache());
 
         vertModule.destroy();
         fragModule.destroy();
@@ -420,7 +420,7 @@ void SwimEffects::recreatePipelines() {
             .setLayout(insectPipelineLayout)
             .setRenderPass(vkCtx->getImGuiRenderPass())
             .setDynamicStates(dynamicStates)
-            .build(device);
+            .build(device, vkCtx->getPipelineCache());
 
         vertModule.destroy();
         fragModule.destroy();

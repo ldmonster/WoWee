@@ -75,8 +75,8 @@ public:
     // Dynamic state
     PipelineBuilder& setDynamicStates(const std::vector<VkDynamicState>& states);
 
-    // Build the pipeline
-    VkPipeline build(VkDevice device) const;
+    // Build the pipeline (pass a VkPipelineCache for faster creation)
+    VkPipeline build(VkDevice device, VkPipelineCache cache = VK_NULL_HANDLE) const;
 
     // Common blend states
     static VkPipelineColorBlendAttachmentState blendDisabled();
