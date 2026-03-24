@@ -2921,10 +2921,12 @@ void Application::setupUICallbacks() {
             if (name.empty()) continue;
             std::string path = dir.empty() ? name : dir + "\\" + name;
 
-            // Play as 3D sound if source entity position is available
+            // Play as 3D sound if source entity position is available.
+            // Entity stores canonical coords; listener uses render coords (camera).
             auto entity = gameHandler->getEntityManager().getEntity(sourceGuid);
             if (entity) {
-                glm::vec3 pos{entity->getLatestX(), entity->getLatestY(), entity->getLatestZ()};
+                glm::vec3 canonical{entity->getLatestX(), entity->getLatestY(), entity->getLatestZ()};
+                glm::vec3 pos = core::coords::canonicalToRender(canonical);
                 audio::AudioEngine::instance().playSound3D(path, pos);
             } else {
                 audio::AudioEngine::instance().playSound2D(path);
