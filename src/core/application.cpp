@@ -87,6 +87,17 @@ bool envFlagEnabled(const char* key, bool defaultValue = false) {
 } // namespace
 
 
+const char* Application::mapDisplayName(uint32_t mapId) {
+    // Friendly display names for the loading screen
+    switch (mapId) {
+        case 0: return "Eastern Kingdoms";
+        case 1: return "Kalimdor";
+        case 530: return "Outland";
+        case 571: return "Northrend";
+        default: return nullptr;
+    }
+}
+
 const char* Application::mapIdToName(uint32_t mapId) {
     // Fallback when Map.dbc is unavailable. Names must match WDT directory names
     // (case-insensitive — AssetManager lowercases all paths).
@@ -4468,13 +4479,18 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         window->swapBuffers();
     };
 
-    // Set zone name on loading screen from Map.dbc
-    if (gameHandler) {
-        std::string mapDisplayName = gameHandler->getMapName(mapId);
-        if (!mapDisplayName.empty())
-            loadingScreen.setZoneName(mapDisplayName);
-        else
-            loadingScreen.setZoneName("Loading...");
+    // Set zone name on loading screen — prefer friendly display name, then DBC
+    {
+        const char* friendly = mapDisplayName(mapId);
+        if (friendly) {
+            loadingScreen.setZoneName(friendly);
+        } else if (gameHandler) {
+            std::string dbcName = gameHandler->getMapName(mapId);
+            if (!dbcName.empty())
+                loadingScreen.setZoneName(dbcName);
+            else
+                loadingScreen.setZoneName("Loading...");
+        }
     }
 
     showProgress("Entering world...", 0.0f);

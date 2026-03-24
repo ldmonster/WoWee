@@ -97,6 +97,7 @@ private:
     void spawnPlayerCharacter();
     std::string getPlayerModelPath() const;
     static const char* mapIdToName(uint32_t mapId);
+    static const char* mapDisplayName(uint32_t mapId);
     void loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float z);
     void buildFactionHostilityMap(uint8_t playerRace);
     pipeline::M2Model loadCreatureM2Sync(const std::string& m2Path);
