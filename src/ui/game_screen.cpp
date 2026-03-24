@@ -17436,6 +17436,12 @@ void GameScreen::renderTrainerWindow(game::GameHandler& gameHandler) {
                                 gameHandler.startCraftQueue(selectedCraftSpell, craftQuantity);
                             }
                         }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Create All")) {
+                            // Queue a large count — server stops the queue automatically
+                            // when materials run out (sends SPELL_FAILED_REAGENTS).
+                            gameHandler.startCraftQueue(selectedCraftSpell, 999);
+                        }
                         if (!canCraft) ImGui::EndDisabled();
                     }
                 }

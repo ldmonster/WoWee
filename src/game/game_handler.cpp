@@ -19592,18 +19592,15 @@ void GameHandler::handleSpellStart(network::Packet& packet) {
         castTimeRemaining = castTimeTotal;
         if (addonEventCallback_) addonEventCallback_("CURRENT_SPELL_CAST_CHANGED", {});
 
-        // Play precast (channeling) sound with correct magic school
-        // Skip sound for profession/tradeskill spells (crafting should be silent)
-        if (!isProfessionSpell(data.spellId)) {
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                if (auto* ssm = renderer->getSpellSoundManager()) {
-                    loadSpellNameCache();
-                    auto it = spellNameCache_.find(data.spellId);
-                    auto school = (it != spellNameCache_.end() && it->second.schoolMask)
-                        ? schoolMaskToMagicSchool(it->second.schoolMask)
-                        : audio::SpellSoundManager::MagicSchool::ARCANE;
-                    ssm->playPrecast(school, audio::SpellSoundManager::SpellPower::MEDIUM);
-                }
+        // Play precast sound with correct magic school (including crafting spells)
+        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* ssm = renderer->getSpellSoundManager()) {
+                loadSpellNameCache();
+                auto it = spellNameCache_.find(data.spellId);
+                auto school = (it != spellNameCache_.end() && it->second.schoolMask)
+                    ? schoolMaskToMagicSchool(it->second.schoolMask)
+                    : audio::SpellSoundManager::MagicSchool::ARCANE;
+                ssm->playPrecast(school, audio::SpellSoundManager::SpellPower::MEDIUM);
             }
         }
 
@@ -19639,18 +19636,15 @@ void GameHandler::handleSpellGo(network::Packet& packet) {
 
     // Cast completed
     if (data.casterUnit == playerGuid) {
-        // Play cast-complete sound with correct magic school
-        // Skip sound for profession/tradeskill spells (crafting should be silent)
-        if (!isProfessionSpell(data.spellId)) {
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                if (auto* ssm = renderer->getSpellSoundManager()) {
-                    loadSpellNameCache();
-                    auto it = spellNameCache_.find(data.spellId);
-                    auto school = (it != spellNameCache_.end() && it->second.schoolMask)
-                        ? schoolMaskToMagicSchool(it->second.schoolMask)
-                        : audio::SpellSoundManager::MagicSchool::ARCANE;
-                    ssm->playCast(school);
-                }
+        // Play cast-complete sound with correct magic school (including crafting)
+        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* ssm = renderer->getSpellSoundManager()) {
+                loadSpellNameCache();
+                auto it = spellNameCache_.find(data.spellId);
+                auto school = (it != spellNameCache_.end() && it->second.schoolMask)
+                    ? schoolMaskToMagicSchool(it->second.schoolMask)
+                    : audio::SpellSoundManager::MagicSchool::ARCANE;
+                ssm->playCast(school);
             }
         }
 
