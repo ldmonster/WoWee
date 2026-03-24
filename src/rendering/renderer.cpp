@@ -4392,7 +4392,11 @@ bool Renderer::initFSR2Resources() {
                 fsr2_.useAmdBackend = true;
                 LOG_INFO("FSR2 AMD: context created successfully.");
 #if WOWEE_HAS_AMD_FSR3_FRAMEGEN
-                if (fsr2_.amdFsr3FramegenEnabled) {
+                // FSR3 frame generation runtime uses AMD FidelityFX SDK which can
+                // corrupt Vulkan driver state on NVIDIA GPUs when context creation
+                // fails, causing subsequent vkCmdBeginRenderPass to crash.
+                // Skip FSR3 frame gen entirely on non-AMD GPUs.
+                if (fsr2_.amdFsr3FramegenEnabled && vkCtx->isAmdGpu()) {
                     fsr2_.amdFsr3FramegenRuntimeActive = false;
                     if (!fsr2_.amdFsr3Runtime) fsr2_.amdFsr3Runtime = std::make_unique<AmdFsr3Runtime>();
                     AmdFsr3RuntimeInitDesc fgInit{};
