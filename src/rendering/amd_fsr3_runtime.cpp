@@ -341,7 +341,13 @@ bool AmdFsr3Runtime::initialize(const AmdFsr3RuntimeInitDesc& desc) {
             const std::string loadedPath = loadedLibraryPath_;
             lastError_ = "ffxCreateContext (upscale) failed rc=" + std::to_string(upCreateRc) +
                          " (" + ffxApiReturnCodeName(upCreateRc) + "), runtimeLib=" + loadedPath;
-            shutdown();
+            LOG_ERROR("FSR3 runtime/API: FSR3 Upscale create failed at ffxCreateContext: rc=", upCreateRc);
+            // Don't call full shutdown() here — dlclose() on the AMD runtime library
+            // can hang on some drivers (notably NVIDIA) when context creation failed.
+            // Just clean up local state; library stays loaded (harmless leak).
+            delete fns_; fns_ = nullptr;
+            ready_ = false;
+            apiMode_ = ApiMode::LegacyFsr3;
             return false;
         }
         genericUpscaleContext_ = upscaleCtx;
