@@ -668,6 +668,7 @@ private:
     VkCommandBuffer secondaryCmds_[NUM_SECONDARIES][MAX_FRAMES] = {};
 
     bool parallelRecordingEnabled_ = false;  // set true after pools/buffers created
+    bool endFrameInlineMode_ = false;       // true when endFrame switched to INLINE render pass
     bool createSecondaryCommandResources();
     void destroySecondaryCommandResources();
     VkCommandBuffer beginSecondary(uint32_t secondaryIndex);

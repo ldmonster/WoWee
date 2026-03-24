@@ -1215,6 +1215,11 @@ void Renderer::beginFrame() {
 void Renderer::endFrame() {
     if (!vkCtx || currentCmd == VK_NULL_HANDLE) return;
 
+    // Track whether a post-processing path switched to an INLINE render pass.
+    // beginFrame() may have started the scene pass with SECONDARY_COMMAND_BUFFERS;
+    // post-proc paths end it and begin a new INLINE pass for the swapchain output.
+    endFrameInlineMode_ = false;
+
     if (fsr2_.enabled && fsr2_.sceneFramebuffer) {
         // End the off-screen scene render pass
         vkCmdEndRenderPass(currentCmd);
@@ -1297,7 +1302,7 @@ void Renderer::endFrame() {
         rpInfo.clearValueCount = msaaOn ? (vkCtx->getDepthResolveImageView() ? 4u : 3u) : 2u;
         rpInfo.pClearValues = clearValues;
 
-        vkCmdBeginRenderPass(currentCmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
+        endFrameInlineMode_ = true; vkCmdBeginRenderPass(currentCmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
 
         VkExtent2D ext = vkCtx->getSwapchainExtent();
         VkViewport vp{};
@@ -1434,18 +1439,22 @@ void Renderer::endFrame() {
         renderFSRUpscale();
     }
 
-    // ImGui rendering — must respect subpass contents mode
-    // Parallel recording only applies when no post-process pass is active.
-    if (!fsr_.enabled && !fsr2_.enabled && !fxaa_.enabled && parallelRecordingEnabled_) {
-        // Scene pass was begun with VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS,
-        // so ImGui must be recorded into a secondary command buffer.
+    // ImGui rendering — must respect the subpass contents mode of the
+    // CURRENT render pass. Post-processing paths (FSR/FXAA) end the scene
+    // pass and begin a new INLINE pass; if none ran, we're still inside the
+    // scene pass which may be SECONDARY_COMMAND_BUFFERS when parallel recording
+    // is active. Track this via endFrameInlineMode_ (set true by any post-proc
+    // path that started an INLINE render pass).
+    if (parallelRecordingEnabled_ && !endFrameInlineMode_) {
+        // Still in the scene pass with SECONDARY_COMMAND_BUFFERS — record
+        // ImGui into a secondary command buffer.
         VkCommandBuffer imguiCmd = beginSecondary(SEC_IMGUI);
         setSecondaryViewportScissor(imguiCmd);
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), imguiCmd);
         vkEndCommandBuffer(imguiCmd);
         vkCmdExecuteCommands(currentCmd, 1, &imguiCmd);
     } else {
-        // FSR swapchain pass uses INLINE mode; non-parallel also uses INLINE.
+        // INLINE render pass (post-process pass or non-parallel mode).
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), currentCmd);
     }
 
