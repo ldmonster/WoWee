@@ -306,6 +306,14 @@ static std::string getPipelineCachePath() {
 }
 
 bool VkContext::createPipelineCache() {
+    // NVIDIA drivers have their own built-in pipeline/shader disk cache.
+    // Using VkPipelineCache on NVIDIA 590.x causes vkCmdBeginRenderPass to
+    // SIGSEGV inside libnvidia-glcore — skip entirely on NVIDIA GPUs.
+    if (gpuVendorId_ == 0x10DE) {
+        LOG_INFO("Pipeline cache: skipped (NVIDIA driver provides built-in caching)");
+        return true;
+    }
+
     std::string path = getPipelineCachePath();
 
     // Try to load existing cache data from disk.
