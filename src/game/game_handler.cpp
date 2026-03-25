@@ -169,12 +169,6 @@ float slowUpdateObjectBlockLogThresholdMs() {
 
 constexpr size_t kMaxQueuedInboundPackets = 4096;
 
-bool packetHasRemaining(const network::Packet& packet, size_t need) {
-    const size_t size = packet.getSize();
-    const size_t pos = packet.getReadPos();
-    return pos <= size && need <= (size - pos);
-}
-
 CombatTextEntry::Type combatTextTypeFromSpellMissInfo(uint8_t missInfo) {
     switch (missInfo) {
         case 0: return CombatTextEntry::MISS;
@@ -7587,7 +7581,7 @@ void GameHandler::registerOpcodeHandlers() {
     dispatchTable_[Opcode::SMSG_KICK_REASON] = [this](network::Packet& packet) {
         // uint64 kickerGuid + uint32 kickReasonType + null-terminated reason string
         // kickReasonType: 0=other, 1=afk, 2=vote kick
-        if (!packetHasRemaining(packet, 12)) {
+        if (!packet.hasRemaining(12)) {
             packet.setReadPos(packet.getSize());
             return;
         }
@@ -7613,7 +7607,7 @@ void GameHandler::registerOpcodeHandlers() {
     // uint32 throttleMs — rate-limited group action; notify the player
     dispatchTable_[Opcode::SMSG_GROUPACTION_THROTTLED] = [this](network::Packet& packet) {
         // uint32 throttleMs — rate-limited group action; notify the player
-        if (packetHasRemaining(packet, 4)) {
+        if (packet.hasRemaining(4)) {
             uint32_t throttleMs = packet.readUInt32();
             char buf[128];
             if (throttleMs > 0) {
@@ -7632,7 +7626,7 @@ void GameHandler::registerOpcodeHandlers() {
     dispatchTable_[Opcode::SMSG_GMRESPONSE_RECEIVED] = [this](network::Packet& packet) {
         // WotLK 3.3.5a: uint32 ticketId + string subject + string body + uint32 count
         //   per count: string responseText
-        if (!packetHasRemaining(packet, 4)) {
+        if (!packet.hasRemaining(4)) {
             packet.setReadPos(packet.getSize());
             return;
         }
@@ -7642,7 +7636,7 @@ void GameHandler::registerOpcodeHandlers() {
         if (packet.getReadPos() < packet.getSize()) subject = packet.readString();
         if (packet.getReadPos() < packet.getSize()) body    = packet.readString();
         uint32_t responseCount = 0;
-        if (packetHasRemaining(packet, 4))
+        if (packet.hasRemaining(4))
             responseCount = packet.readUInt32();
         std::string responseText;
         for (uint32_t i = 0; i < responseCount && i < 10; ++i) {
@@ -16562,7 +16556,7 @@ void GameHandler::handleLfgUpdatePlayer(network::Packet& packet) {
 }
 
 void GameHandler::handleLfgPlayerReward(network::Packet& packet) {
-    if (!packetHasRemaining(packet, 4 + 4 + 1 + 4 + 4 + 4)) return;
+    if (!packet.hasRemaining(4 + 4 + 1 + 4 + 4 + 4)) return;
 
     /*uint32_t randomDungeonEntry =*/ packet.readUInt32();
     /*uint32_t dungeonEntry       =*/ packet.readUInt32();
@@ -16585,9 +16579,9 @@ void GameHandler::handleLfgPlayerReward(network::Packet& packet) {
     std::string rewardMsg = std::string("Dungeon Finder reward: ") + moneyBuf +
                             ", " + std::to_string(xp) + " XP";
 
-    if (packetHasRemaining(packet, 4)) {
+    if (packet.hasRemaining(4)) {
         uint32_t rewardCount = packet.readUInt32();
-        for (uint32_t i = 0; i < rewardCount && packetHasRemaining(packet, 9); ++i) {
+        for (uint32_t i = 0; i < rewardCount && packet.hasRemaining(9); ++i) {
             uint32_t itemId    = packet.readUInt32();
             uint32_t itemCount = packet.readUInt32();
             packet.readUInt8();  // unk
@@ -16610,7 +16604,7 @@ void GameHandler::handleLfgPlayerReward(network::Packet& packet) {
 }
 
 void GameHandler::handleLfgBootProposalUpdate(network::Packet& packet) {
-    if (!packetHasRemaining(packet, 7 + 4 + 4 + 4 + 4)) return;
+    if (!packet.hasRemaining(7 + 4 + 4 + 4 + 4)) return;
 
     bool inProgress = packet.readUInt8() != 0;
     /*bool myVote   =*/ packet.readUInt8();   // whether local player has voted

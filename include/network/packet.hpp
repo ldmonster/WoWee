@@ -34,6 +34,7 @@ public:
     size_t getReadPos() const { return readPos; }
     size_t getSize() const { return data.size(); }
     size_t getRemainingSize() const { return data.size() - readPos; }
+    bool hasRemaining(size_t need) const { return readPos <= data.size() && need <= (data.size() - readPos); }
     bool hasFullPackedGuid() const {
         if (readPos >= data.size()) return false;
         uint8_t mask = data[readPos];
