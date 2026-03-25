@@ -662,6 +662,9 @@ GameHandler::GameHandler() {
     actionBar[0].id = 6603;   // Attack in slot 1
     actionBar[11].type = ActionBarSlot::SPELL;
     actionBar[11].id = 8690;  // Hearthstone in slot 12
+
+    // Build the opcode dispatch table (replaces switch(*logicalOp) in handlePacket)
+    registerOpcodeHandlers();
 }
 
 GameHandler::~GameHandler() {
@@ -1543,6 +1546,6448 @@ void GameHandler::update(float deltaTime) {
     }
 }
 
+void GameHandler::registerOpcodeHandlers() {
+    // -----------------------------------------------------------------------
+    // Auth / session / pre-world handshake
+    // -----------------------------------------------------------------------
+    dispatchTable_[Opcode::SMSG_AUTH_CHALLENGE] = [this](network::Packet& packet) {
+        if (state == WorldState::CONNECTED)
+            handleAuthChallenge(packet);
+        else
+            LOG_WARNING("Unexpected SMSG_AUTH_CHALLENGE in state: ", worldStateName(state));
+    };
+    dispatchTable_[Opcode::SMSG_AUTH_RESPONSE] = [this](network::Packet& packet) {
+        if (state == WorldState::AUTH_SENT)
+            handleAuthResponse(packet);
+        else
+            LOG_WARNING("Unexpected SMSG_AUTH_RESPONSE in state: ", worldStateName(state));
+    };
+    dispatchTable_[Opcode::SMSG_CHAR_CREATE] = [this](network::Packet& packet) {
+        handleCharCreateResponse(packet);
+    };
+    dispatchTable_[Opcode::SMSG_CHAR_DELETE] = [this](network::Packet& packet) {
+        uint8_t result = packet.readUInt8();
+        lastCharDeleteResult_ = result;
+        bool success = (result == 0x00 || result == 0x47);
+        LOG_INFO("SMSG_CHAR_DELETE result: ", (int)result, success ? " (success)" : " (failed)");
+        requestCharacterList();
+        if (charDeleteCallback_) charDeleteCallback_(success);
+    };
+    dispatchTable_[Opcode::SMSG_CHAR_ENUM] = [this](network::Packet& packet) {
+        if (state == WorldState::CHAR_LIST_REQUESTED)
+            handleCharEnum(packet);
+        else
+            LOG_WARNING("Unexpected SMSG_CHAR_ENUM in state: ", worldStateName(state));
+    };
+    dispatchTable_[Opcode::SMSG_CHARACTER_LOGIN_FAILED] = [this](network::Packet& packet) { handleCharLoginFailed(packet); };
+    dispatchTable_[Opcode::SMSG_LOGIN_VERIFY_WORLD] = [this](network::Packet& packet) {
+        if (state == WorldState::ENTERING_WORLD || state == WorldState::IN_WORLD)
+            handleLoginVerifyWorld(packet);
+        else
+            LOG_WARNING("Unexpected SMSG_LOGIN_VERIFY_WORLD in state: ", worldStateName(state));
+    };
+    dispatchTable_[Opcode::SMSG_LOGIN_SETTIMESPEED]  = [this](network::Packet& packet) { handleLoginSetTimeSpeed(packet); };
+    dispatchTable_[Opcode::SMSG_CLIENTCACHE_VERSION] = [this](network::Packet& packet) { handleClientCacheVersion(packet); };
+    dispatchTable_[Opcode::SMSG_TUTORIAL_FLAGS]      = [this](network::Packet& packet) { handleTutorialFlags(packet); };
+    dispatchTable_[Opcode::SMSG_WARDEN_DATA]         = [this](network::Packet& packet) { handleWardenData(packet); };
+    dispatchTable_[Opcode::SMSG_ACCOUNT_DATA_TIMES]  = [this](network::Packet& packet) { handleAccountDataTimes(packet); };
+    dispatchTable_[Opcode::SMSG_MOTD]                = [this](network::Packet& packet) { handleMotd(packet); };
+    dispatchTable_[Opcode::SMSG_NOTIFICATION]        = [this](network::Packet& packet) { handleNotification(packet); };
+    dispatchTable_[Opcode::SMSG_PONG]                = [this](network::Packet& packet) { handlePong(packet); };
+
+    // -----------------------------------------------------------------------
+    // World object updates
+    // -----------------------------------------------------------------------
+    dispatchTable_[Opcode::SMSG_UPDATE_OBJECT] = [this](network::Packet& packet) {
+        LOG_DEBUG("Received SMSG_UPDATE_OBJECT, state=", static_cast<int>(state), " size=", packet.getSize());
+        if (state == WorldState::IN_WORLD) handleUpdateObject(packet);
+    };
+    dispatchTable_[Opcode::SMSG_COMPRESSED_UPDATE_OBJECT] = [this](network::Packet& packet) {
+        LOG_DEBUG("Received SMSG_COMPRESSED_UPDATE_OBJECT, state=", static_cast<int>(state), " size=", packet.getSize());
+        if (state == WorldState::IN_WORLD) handleCompressedUpdateObject(packet);
+    };
+    dispatchTable_[Opcode::SMSG_DESTROY_OBJECT] = [this](network::Packet& packet) {
+        if (state == WorldState::IN_WORLD) handleDestroyObject(packet);
+    };
+
+    // -----------------------------------------------------------------------
+    // Chat
+    // -----------------------------------------------------------------------
+    dispatchTable_[Opcode::SMSG_MESSAGECHAT]    = [this](network::Packet& packet) { if (state == WorldState::IN_WORLD) handleMessageChat(packet); };
+    dispatchTable_[Opcode::SMSG_GM_MESSAGECHAT] = [this](network::Packet& packet) { if (state == WorldState::IN_WORLD) handleMessageChat(packet); };
+    dispatchTable_[Opcode::SMSG_TEXT_EMOTE]     = [this](network::Packet& packet) { if (state == WorldState::IN_WORLD) handleTextEmote(packet); };
+    dispatchTable_[Opcode::SMSG_EMOTE] = [this](network::Packet& packet) {
+        if (state != WorldState::IN_WORLD) return;
+        if (packet.getSize() - packet.getReadPos() < 12) return;
+        uint32_t emoteAnim  = packet.readUInt32();
+        uint64_t sourceGuid = packet.readUInt64();
+        if (emoteAnimCallback_ && sourceGuid != 0) emoteAnimCallback_(sourceGuid, emoteAnim);
+    };
+    dispatchTable_[Opcode::SMSG_CHANNEL_NOTIFY] = [this](network::Packet& packet) {
+        if (state == WorldState::IN_WORLD || state == WorldState::ENTERING_WORLD)
+            handleChannelNotify(packet);
+    };
+    dispatchTable_[Opcode::SMSG_CHAT_PLAYER_NOT_FOUND] = [this](network::Packet& packet) {
+        std::string name = packet.readString();
+        if (!name.empty()) addSystemChatMessage("No player named '" + name + "' is currently playing.");
+    };
+    dispatchTable_[Opcode::SMSG_CHAT_PLAYER_AMBIGUOUS] = [this](network::Packet& packet) {
+        std::string name = packet.readString();
+        if (!name.empty()) addSystemChatMessage("Player name '" + name + "' is ambiguous.");
+    };
+    dispatchTable_[Opcode::SMSG_CHAT_WRONG_FACTION] = [this](network::Packet& /*packet*/) {
+        addUIError("You cannot send messages to members of that faction.");
+        addSystemChatMessage("You cannot send messages to members of that faction.");
+    };
+    dispatchTable_[Opcode::SMSG_CHAT_NOT_IN_PARTY] = [this](network::Packet& /*packet*/) {
+        addUIError("You are not in a party.");
+        addSystemChatMessage("You are not in a party.");
+    };
+    dispatchTable_[Opcode::SMSG_CHAT_RESTRICTED] = [this](network::Packet& /*packet*/) {
+        addUIError("You cannot send chat messages in this area.");
+        addSystemChatMessage("You cannot send chat messages in this area.");
+    };
+
+    // -----------------------------------------------------------------------
+    // Player info queries / social
+    // -----------------------------------------------------------------------
+    dispatchTable_[Opcode::SMSG_QUERY_TIME_RESPONSE] = [this](network::Packet& packet) { if (state == WorldState::IN_WORLD) handleQueryTimeResponse(packet); };
+    dispatchTable_[Opcode::SMSG_PLAYED_TIME]         = [this](network::Packet& packet) { if (state == WorldState::IN_WORLD) handlePlayedTime(packet); };
+    dispatchTable_[Opcode::SMSG_WHO]                 = [this](network::Packet& packet) { if (state == WorldState::IN_WORLD) handleWho(packet); };
+    dispatchTable_[Opcode::SMSG_WHOIS] = [this](network::Packet& packet) {
+        if (packet.getReadPos() < packet.getSize()) {
+            std::string whoisText = packet.readString();
+            if (!whoisText.empty()) {
+                std::string line;
+                for (char c : whoisText) {
+                    if (c == '\n') { if (!line.empty()) addSystemChatMessage("[Whois] " + line); line.clear(); }
+                    else line += c;
+                }
+                if (!line.empty()) addSystemChatMessage("[Whois] " + line);
+                LOG_INFO("SMSG_WHOIS: ", whoisText);
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_FRIEND_STATUS] = [this](network::Packet& packet) { if (state == WorldState::IN_WORLD) handleFriendStatus(packet); };
+    dispatchTable_[Opcode::SMSG_CONTACT_LIST]  = [this](network::Packet& packet) { handleContactList(packet); };
+    dispatchTable_[Opcode::SMSG_FRIEND_LIST]   = [this](network::Packet& packet) { handleFriendList(packet); };
+    dispatchTable_[Opcode::SMSG_IGNORE_LIST] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 1) return;
+        uint8_t ignCount = packet.readUInt8();
+        for (uint8_t i = 0; i < ignCount; ++i) {
+            if (packet.getSize() - packet.getReadPos() < 8) break;
+            uint64_t ignGuid = packet.readUInt64();
+            std::string ignName = packet.readString();
+            if (!ignName.empty() && ignGuid != 0) ignoreCache[ignName] = ignGuid;
+        }
+        LOG_DEBUG("SMSG_IGNORE_LIST: loaded ", (int)ignCount, " ignored players");
+    };
+    dispatchTable_[Opcode::MSG_RANDOM_ROLL] = [this](network::Packet& packet) { if (state == WorldState::IN_WORLD) handleRandomRoll(packet); };
+
+    // -----------------------------------------------------------------------
+    // Item push / logout / entity queries
+    // -----------------------------------------------------------------------
+    dispatchTable_[Opcode::SMSG_ITEM_PUSH_RESULT] = [this](network::Packet& packet) {
+        constexpr size_t kMinSize = 8 + 1 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 4;
+        if (packet.getSize() - packet.getReadPos() >= kMinSize) {
+            /*uint64_t recipientGuid =*/ packet.readUInt64();
+            /*uint8_t received =*/  packet.readUInt8();
+            /*uint8_t created =*/   packet.readUInt8();
+            uint8_t  showInChat = packet.readUInt8();
+            /*uint8_t bagSlot =*/   packet.readUInt8();
+            /*uint32_t itemSlot =*/ packet.readUInt32();
+            uint32_t itemId     = packet.readUInt32();
+            /*uint32_t suffixFactor =*/ packet.readUInt32();
+            int32_t  randomProp = static_cast<int32_t>(packet.readUInt32());
+            uint32_t count      = packet.readUInt32();
+            /*uint32_t totalCount =*/ packet.readUInt32();
+            queryItemInfo(itemId, 0);
+            if (showInChat) {
+                if (const ItemQueryResponseData* info = getItemInfo(itemId)) {
+                    std::string itemName = info->name.empty() ? ("item #" + std::to_string(itemId)) : info->name;
+                    if (randomProp != 0) {
+                        std::string suffix = getRandomPropertyName(randomProp);
+                        if (!suffix.empty()) itemName += " " + suffix;
+                    }
+                    uint32_t quality = info->quality;
+                    std::string link = buildItemLink(itemId, quality, itemName);
+                    std::string msg = "Received: " + link;
+                    if (count > 1) msg += " x" + std::to_string(count);
+                    addSystemChatMessage(msg);
+                    if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                        if (auto* sfx = renderer->getUiSoundManager()) sfx->playLootItem();
+                    }
+                    if (itemLootCallback_) itemLootCallback_(itemId, count, quality, itemName);
+                    if (addonEventCallback_)
+                        addonEventCallback_("CHAT_MSG_LOOT", {msg, "", std::to_string(itemId), std::to_string(count)});
+                } else {
+                    pendingItemPushNotifs_.push_back({itemId, count});
+                }
+            }
+            if (addonEventCallback_) {
+                addonEventCallback_("BAG_UPDATE", {});
+                addonEventCallback_("UNIT_INVENTORY_CHANGED", {"player"});
+            }
+            LOG_INFO("Item push: itemId=", itemId, " count=", count, " showInChat=", static_cast<int>(showInChat));
+        }
+    };
+    dispatchTable_[Opcode::SMSG_LOGOUT_RESPONSE]   = [this](network::Packet& packet) { handleLogoutResponse(packet); };
+    dispatchTable_[Opcode::SMSG_LOGOUT_COMPLETE]   = [this](network::Packet& packet) { handleLogoutComplete(packet); };
+    dispatchTable_[Opcode::SMSG_NAME_QUERY_RESPONSE]        = [this](network::Packet& packet) { handleNameQueryResponse(packet); };
+    dispatchTable_[Opcode::SMSG_CREATURE_QUERY_RESPONSE]    = [this](network::Packet& packet) { handleCreatureQueryResponse(packet); };
+    dispatchTable_[Opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE] = [this](network::Packet& packet) { handleItemQueryResponse(packet); };
+    dispatchTable_[Opcode::SMSG_INSPECT_TALENT]             = [this](network::Packet& packet) { handleInspectResults(packet); };
+    dispatchTable_[Opcode::SMSG_ADDON_INFO]                 = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+    dispatchTable_[Opcode::SMSG_EXPECTED_SPAM_RECORDS]      = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+
+    // -----------------------------------------------------------------------
+    // XP / exploration
+    // -----------------------------------------------------------------------
+    dispatchTable_[Opcode::SMSG_LOG_XPGAIN] = [this](network::Packet& packet) { handleXpGain(packet); };
+    dispatchTable_[Opcode::SMSG_EXPLORATION_EXPERIENCE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint32_t areaId   = packet.readUInt32();
+            uint32_t xpGained = packet.readUInt32();
+            if (xpGained > 0) {
+                std::string areaName = getAreaName(areaId);
+                std::string msg;
+                if (!areaName.empty()) {
+                    msg = "Discovered " + areaName + "! Gained " + std::to_string(xpGained) + " experience.";
+                } else {
+                    char buf[128];
+                    std::snprintf(buf, sizeof(buf), "Discovered new area! Gained %u experience.", xpGained);
+                    msg = buf;
+                }
+                addSystemChatMessage(msg);
+                addCombatText(CombatTextEntry::XP_GAIN, static_cast<int32_t>(xpGained), 0, true);
+                if (areaDiscoveryCallback_) areaDiscoveryCallback_(areaName, xpGained);
+                if (addonEventCallback_)
+                    addonEventCallback_("CHAT_MSG_COMBAT_XP_GAIN", {msg, std::to_string(xpGained)});
+            }
+        }
+    };
+
+    // -----------------------------------------------------------------------
+    // Pet feedback (pre-main pet block)
+    // -----------------------------------------------------------------------
+    dispatchTable_[Opcode::SMSG_PET_TAME_FAILURE] = [this](network::Packet& packet) {
+        static const char* reasons[] = {
+            "Invalid creature", "Too many pets", "Already tamed",
+            "Wrong faction", "Level too low", "Creature not tameable",
+            "Can't control", "Can't command"
+        };
+        if (packet.getSize() - packet.getReadPos() >= 1) {
+            uint8_t reason = packet.readUInt8();
+            const char* msg = (reason < 8) ? reasons[reason] : "Unknown reason";
+            std::string s = std::string("Failed to tame: ") + msg;
+            addUIError(s);
+            addSystemChatMessage(s);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_PET_ACTION_FEEDBACK] = [this](network::Packet& packet) {
+        static const char* kPetFeedback[] = {
+            nullptr,
+            "Your pet is dead.", "Your pet has nothing to attack.",
+            "Your pet cannot attack that target.", "That target is too far away.",
+            "Your pet cannot find a path to the target.",
+            "Your pet cannot attack an immune target.",
+        };
+        if (packet.getSize() - packet.getReadPos() < 1) return;
+        uint8_t msg = packet.readUInt8();
+        if (msg > 0 && msg < 7 && kPetFeedback[msg]) addSystemChatMessage(kPetFeedback[msg]);
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_PET_NAME_QUERY_RESPONSE] = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+
+    // -----------------------------------------------------------------------
+    // Quest failures
+    // -----------------------------------------------------------------------
+    dispatchTable_[Opcode::SMSG_QUESTUPDATE_FAILED] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t questId = packet.readUInt32();
+            std::string questTitle;
+            for (const auto& q : questLog_)
+                if (q.questId == questId && !q.title.empty()) { questTitle = q.title; break; }
+            addSystemChatMessage(questTitle.empty() ? std::string("Quest failed!")
+                                                    : ('"' + questTitle + "\" failed!"));
+        }
+    };
+    dispatchTable_[Opcode::SMSG_QUESTUPDATE_FAILEDTIMER] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t questId = packet.readUInt32();
+            std::string questTitle;
+            for (const auto& q : questLog_)
+                if (q.questId == questId && !q.title.empty()) { questTitle = q.title; break; }
+            addSystemChatMessage(questTitle.empty() ? std::string("Quest timed out!")
+                                                    : ('"' + questTitle + "\" has timed out."));
+        }
+    };
+
+    // -----------------------------------------------------------------------
+    // Entity delta updates: health / power / world state / combo / timers / PvP
+    // -----------------------------------------------------------------------
+    dispatchTable_[Opcode::SMSG_HEALTH_UPDATE] = [this](network::Packet& packet) {
+        const bool huTbc = isActiveExpansion("tbc");
+        if (packet.getSize() - packet.getReadPos() < (huTbc ? 8u : 2u)) return;
+        uint64_t guid = huTbc ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        uint32_t hp = packet.readUInt32();
+        auto entity = entityManager.getEntity(guid);
+        if (auto* unit = dynamic_cast<Unit*>(entity.get())) unit->setHealth(hp);
+        if (addonEventCallback_ && guid != 0) {
+            std::string unitId;
+            if (guid == playerGuid)      unitId = "player";
+            else if (guid == targetGuid) unitId = "target";
+            else if (guid == focusGuid)  unitId = "focus";
+            else if (guid == petGuid_)   unitId = "pet";
+            if (!unitId.empty()) addonEventCallback_("UNIT_HEALTH", {unitId});
+        }
+    };
+    dispatchTable_[Opcode::SMSG_POWER_UPDATE] = [this](network::Packet& packet) {
+        const bool puTbc = isActiveExpansion("tbc");
+        if (packet.getSize() - packet.getReadPos() < (puTbc ? 8u : 2u)) return;
+        uint64_t guid = puTbc ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        uint8_t  powerType = packet.readUInt8();
+        uint32_t value     = packet.readUInt32();
+        auto entity = entityManager.getEntity(guid);
+        if (auto* unit = dynamic_cast<Unit*>(entity.get())) unit->setPowerByType(powerType, value);
+        if (addonEventCallback_ && guid != 0) {
+            std::string unitId;
+            if (guid == playerGuid)      unitId = "player";
+            else if (guid == targetGuid) unitId = "target";
+            else if (guid == focusGuid)  unitId = "focus";
+            else if (guid == petGuid_)   unitId = "pet";
+            if (!unitId.empty()) {
+                addonEventCallback_("UNIT_POWER", {unitId});
+                if (guid == playerGuid) {
+                    addonEventCallback_("ACTIONBAR_UPDATE_USABLE", {});
+                    addonEventCallback_("SPELL_UPDATE_USABLE", {});
+                }
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_UPDATE_WORLD_STATE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 8) return;
+        uint32_t field = packet.readUInt32();
+        uint32_t value = packet.readUInt32();
+        worldStates_[field] = value;
+        LOG_DEBUG("SMSG_UPDATE_WORLD_STATE: field=", field, " value=", value);
+        if (addonEventCallback_) addonEventCallback_("UPDATE_WORLD_STATES", {});
+    };
+    dispatchTable_[Opcode::SMSG_WORLD_STATE_UI_TIMER_UPDATE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t serverTime = packet.readUInt32();
+            LOG_DEBUG("SMSG_WORLD_STATE_UI_TIMER_UPDATE: serverTime=", serverTime);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_PVP_CREDIT] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 16) {
+            uint32_t honor      = packet.readUInt32();
+            uint64_t victimGuid = packet.readUInt64();
+            uint32_t rank       = packet.readUInt32();
+            LOG_INFO("SMSG_PVP_CREDIT: honor=", honor, " victim=0x", std::hex, victimGuid, std::dec, " rank=", rank);
+            std::string msg = "You gain " + std::to_string(honor) + " honor points.";
+            addSystemChatMessage(msg);
+            if (honor > 0) addCombatText(CombatTextEntry::HONOR_GAIN, static_cast<int32_t>(honor), 0, true);
+            if (pvpHonorCallback_) pvpHonorCallback_(honor, victimGuid, rank);
+            if (addonEventCallback_) addonEventCallback_("CHAT_MSG_COMBAT_HONOR_GAIN", {msg});
+        }
+    };
+    dispatchTable_[Opcode::SMSG_UPDATE_COMBO_POINTS] = [this](network::Packet& packet) {
+        const bool cpTbc = isActiveExpansion("tbc");
+        if (packet.getSize() - packet.getReadPos() < (cpTbc ? 8u : 2u)) return;
+        uint64_t target = cpTbc ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 1) return;
+        comboPoints_ = packet.readUInt8();
+        comboTarget_ = target;
+        LOG_DEBUG("SMSG_UPDATE_COMBO_POINTS: target=0x", std::hex, target,
+                  std::dec, " points=", static_cast<int>(comboPoints_));
+        if (addonEventCallback_) addonEventCallback_("PLAYER_COMBO_POINTS", {});
+    };
+    dispatchTable_[Opcode::SMSG_START_MIRROR_TIMER] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 21) return;
+        uint32_t type  = packet.readUInt32();
+        int32_t  value = static_cast<int32_t>(packet.readUInt32());
+        int32_t  maxV  = static_cast<int32_t>(packet.readUInt32());
+        int32_t  scale = static_cast<int32_t>(packet.readUInt32());
+        /*uint32_t tracker =*/ packet.readUInt32();
+        uint8_t  paused = packet.readUInt8();
+        if (type < 3) {
+            mirrorTimers_[type].value    = value;
+            mirrorTimers_[type].maxValue = maxV;
+            mirrorTimers_[type].scale    = scale;
+            mirrorTimers_[type].paused   = (paused != 0);
+            mirrorTimers_[type].active   = true;
+            if (addonEventCallback_)
+                addonEventCallback_("MIRROR_TIMER_START", {
+                    std::to_string(type), std::to_string(value),
+                    std::to_string(maxV), std::to_string(scale),
+                    paused ? "1" : "0"});
+        }
+    };
+    dispatchTable_[Opcode::SMSG_STOP_MIRROR_TIMER] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        uint32_t type = packet.readUInt32();
+        if (type < 3) {
+            mirrorTimers_[type].active = false;
+            mirrorTimers_[type].value  = 0;
+            if (addonEventCallback_) addonEventCallback_("MIRROR_TIMER_STOP", {std::to_string(type)});
+        }
+    };
+    dispatchTable_[Opcode::SMSG_PAUSE_MIRROR_TIMER] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        uint32_t type   = packet.readUInt32();
+        uint8_t  paused = packet.readUInt8();
+        if (type < 3) {
+            mirrorTimers_[type].paused = (paused != 0);
+            if (addonEventCallback_) addonEventCallback_("MIRROR_TIMER_PAUSE", {paused ? "1" : "0"});
+        }
+    };
+
+    // -----------------------------------------------------------------------
+    // Cast result / spell proc
+    // -----------------------------------------------------------------------
+    dispatchTable_[Opcode::SMSG_CAST_RESULT] = [this](network::Packet& packet) {
+        uint32_t castResultSpellId = 0;
+        uint8_t  castResult        = 0;
+        if (packetParsers_->parseCastResult(packet, castResultSpellId, castResult)) {
+            if (castResult != 0) {
+                casting = false; castIsChannel = false; currentCastSpellId = 0; castTimeRemaining = 0.0f;
+                lastInteractedGoGuid_ = 0;
+                craftQueueSpellId_ = 0; craftQueueRemaining_ = 0;
+                queuedSpellId_ = 0; queuedSpellTarget_ = 0;
+                int playerPowerType = -1;
+                if (auto pe = entityManager.getEntity(playerGuid)) {
+                    if (auto pu = std::dynamic_pointer_cast<Unit>(pe))
+                        playerPowerType = static_cast<int>(pu->getPowerType());
+                }
+                const char* reason = getSpellCastResultString(castResult, playerPowerType);
+                std::string errMsg = reason ? reason
+                                            : ("Spell cast failed (error " + std::to_string(castResult) + ")");
+                addUIError(errMsg);
+                if (spellCastFailedCallback_) spellCastFailedCallback_(castResultSpellId);
+                if (addonEventCallback_) {
+                    addonEventCallback_("UNIT_SPELLCAST_FAILED", {"player", std::to_string(castResultSpellId)});
+                    addonEventCallback_("UNIT_SPELLCAST_STOP",   {"player", std::to_string(castResultSpellId)});
+                }
+                MessageChatData msg;
+                msg.type     = ChatType::SYSTEM;
+                msg.language = ChatLanguage::UNIVERSAL;
+                msg.message  = errMsg;
+                addLocalChatMessage(msg);
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_SPELL_FAILED_OTHER] = [this](network::Packet& packet) {
+        const bool tbcLike2 = isClassicLikeExpansion() || isActiveExpansion("tbc");
+        uint64_t failOtherGuid = tbcLike2
+            ? (packet.getSize() - packet.getReadPos() >= 8 ? packet.readUInt64() : 0)
+            : UpdateObjectParser::readPackedGuid(packet);
+        if (failOtherGuid != 0 && failOtherGuid != playerGuid) {
+            unitCastStates_.erase(failOtherGuid);
+            if (addonEventCallback_) {
+                std::string unitId;
+                if (failOtherGuid == targetGuid)     unitId = "target";
+                else if (failOtherGuid == focusGuid) unitId = "focus";
+                if (!unitId.empty()) {
+                    addonEventCallback_("UNIT_SPELLCAST_FAILED", {unitId});
+                    addonEventCallback_("UNIT_SPELLCAST_STOP",   {unitId});
+                }
+            }
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_PROCRESIST] = [this](network::Packet& packet) {
+        const bool prUsesFullGuid = isActiveExpansion("tbc");
+        auto readPrGuid = [&]() -> uint64_t {
+            if (prUsesFullGuid)
+                return (packet.getSize() - packet.getReadPos() >= 8) ? packet.readUInt64() : 0;
+            return UpdateObjectParser::readPackedGuid(packet);
+        };
+        if (packet.getSize() - packet.getReadPos() < (prUsesFullGuid ? 8u : 1u)
+            || (!prUsesFullGuid && !hasFullPackedGuid(packet))) { packet.setReadPos(packet.getSize()); return; }
+        uint64_t caster = readPrGuid();
+        if (packet.getSize() - packet.getReadPos() < (prUsesFullGuid ? 8u : 1u)
+            || (!prUsesFullGuid && !hasFullPackedGuid(packet))) { packet.setReadPos(packet.getSize()); return; }
+        uint64_t victim = readPrGuid();
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        uint32_t spellId = packet.readUInt32();
+        if (victim == playerGuid)       addCombatText(CombatTextEntry::RESIST, 0, spellId, false, 0, caster, victim);
+        else if (caster == playerGuid)  addCombatText(CombatTextEntry::RESIST, 0, spellId, true,  0, caster, victim);
+        packet.setReadPos(packet.getSize());
+    };
+
+    // -----------------------------------------------------------------------
+    // Loot roll
+    // -----------------------------------------------------------------------
+    dispatchTable_[Opcode::SMSG_LOOT_START_ROLL] = [this](network::Packet& packet) {
+        const bool isWotLK = isActiveExpansion("wotlk");
+        const size_t minSize = isWotLK ? 33u : 25u;
+        if (packet.getSize() - packet.getReadPos() < minSize) return;
+        uint64_t objectGuid = packet.readUInt64();
+        /*uint32_t mapId =*/ packet.readUInt32();
+        uint32_t slot   = packet.readUInt32();
+        uint32_t itemId = packet.readUInt32();
+        int32_t rollRandProp = 0;
+        if (isWotLK) {
+            /*uint32_t randSuffix =*/ packet.readUInt32();
+            rollRandProp = static_cast<int32_t>(packet.readUInt32());
+        }
+        uint32_t countdown = packet.readUInt32();
+        uint8_t  voteMask  = packet.readUInt8();
+        pendingLootRollActive_      = true;
+        pendingLootRoll_.objectGuid = objectGuid;
+        pendingLootRoll_.slot       = slot;
+        pendingLootRoll_.itemId     = itemId;
+        queryItemInfo(itemId, 0);
+        auto* info = getItemInfo(itemId);
+        std::string rollItemName = info ? info->name : std::to_string(itemId);
+        if (rollRandProp != 0) {
+            std::string suffix = getRandomPropertyName(rollRandProp);
+            if (!suffix.empty()) rollItemName += " " + suffix;
+        }
+        pendingLootRoll_.itemName        = rollItemName;
+        pendingLootRoll_.itemQuality     = info ? static_cast<uint8_t>(info->quality) : 0;
+        pendingLootRoll_.rollCountdownMs = (countdown > 0 && countdown <= 120000) ? countdown : 60000;
+        pendingLootRoll_.voteMask        = voteMask;
+        pendingLootRoll_.rollStartedAt   = std::chrono::steady_clock::now();
+        LOG_INFO("SMSG_LOOT_START_ROLL: item=", itemId, " (", pendingLootRoll_.itemName,
+                 ") slot=", slot, " voteMask=0x", std::hex, (int)voteMask, std::dec);
+        if (addonEventCallback_)
+            addonEventCallback_("START_LOOT_ROLL", {std::to_string(slot), std::to_string(countdown)});
+    };
+
+    // -----------------------------------------------------------------------
+    // Pet stable
+    // -----------------------------------------------------------------------
+    dispatchTable_[Opcode::MSG_LIST_STABLED_PETS] = [this](network::Packet& packet) {
+        if (state == WorldState::IN_WORLD) handleListStabledPets(packet);
+    };
+    dispatchTable_[Opcode::SMSG_STABLE_RESULT] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 1) return;
+        uint8_t result = packet.readUInt8();
+        const char* msg = nullptr;
+        switch (result) {
+            case 0x01: msg = "Pet stored in stable."; break;
+            case 0x06: msg = "Pet retrieved from stable."; break;
+            case 0x07: msg = "Stable slot purchased."; break;
+            case 0x08: msg = "Stable list updated."; break;
+            case 0x09: msg = "Stable failed: not enough money or other error."; addUIError(msg); break;
+            default: break;
+        }
+        if (msg) addSystemChatMessage(msg);
+        LOG_INFO("SMSG_STABLE_RESULT: result=", static_cast<int>(result));
+        if (stableWindowOpen_ && stableMasterGuid_ != 0 && socket && result <= 0x08) {
+            auto refreshPkt = ListStabledPetsPacket::build(stableMasterGuid_);
+            socket->send(refreshPkt);
+        }
+    };
+
+    // -----------------------------------------------------------------------
+    // Titles / achievements / character services
+    // -----------------------------------------------------------------------
+    dispatchTable_[Opcode::SMSG_TITLE_EARNED] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 8) return;
+        uint32_t titleBit = packet.readUInt32();
+        uint32_t isLost   = packet.readUInt32();
+        loadTitleNameCache();
+        std::string titleStr;
+        auto tit = titleNameCache_.find(titleBit);
+        if (tit != titleNameCache_.end() && !tit->second.empty()) {
+            auto nameIt = playerNameCache.find(playerGuid);
+            const std::string& pName = (nameIt != playerNameCache.end()) ? nameIt->second : "you";
+            const std::string& fmt = tit->second;
+            size_t pos = fmt.find("%s");
+            if (pos != std::string::npos)
+                titleStr = fmt.substr(0, pos) + pName + fmt.substr(pos + 2);
+            else
+                titleStr = fmt;
+        }
+        std::string msg;
+        if (!titleStr.empty()) {
+            msg = isLost ? ("Title removed: " + titleStr + ".") : ("Title earned: " + titleStr + "!");
+        } else {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), isLost ? "Title removed (bit %u)." : "Title earned (bit %u)!", titleBit);
+            msg = buf;
+        }
+        if (isLost) knownTitleBits_.erase(titleBit);
+        else        knownTitleBits_.insert(titleBit);
+        addSystemChatMessage(msg);
+        LOG_INFO("SMSG_TITLE_EARNED: bit=", titleBit, " lost=", isLost, " title='", titleStr, "'");
+    };
+    dispatchTable_[Opcode::SMSG_LEARNED_DANCE_MOVES] = [this](network::Packet& packet) {
+        LOG_DEBUG("SMSG_LEARNED_DANCE_MOVES: ignored (size=", packet.getSize(), ")");
+    };
+    dispatchTable_[Opcode::SMSG_CHAR_RENAME] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 13) {
+            uint32_t result = packet.readUInt32();
+            /*uint64_t guid =*/ packet.readUInt64();
+            std::string newName = packet.readString();
+            if (result == 0) {
+                addSystemChatMessage("Character name changed to: " + newName);
+            } else {
+                static const char* kRenameErrors[] = {
+                    nullptr, "Name already in use.", "Name too short.", "Name too long.",
+                    "Name contains invalid characters.", "Name contains a profanity.",
+                    "Name is reserved.", "Character name does not meet requirements.",
+                };
+                const char* errMsg = (result < 8) ? kRenameErrors[result] : nullptr;
+                std::string renameErr = errMsg ? std::string("Rename failed: ") + errMsg : "Character rename failed.";
+                addUIError(renameErr); addSystemChatMessage(renameErr);
+            }
+            LOG_INFO("SMSG_CHAR_RENAME: result=", result, " newName=", newName);
+        }
+    };
+
+    // -----------------------------------------------------------------------
+    // Bind / heartstone / phase / barber / corpse
+    // -----------------------------------------------------------------------
+    dispatchTable_[Opcode::SMSG_PLAYERBOUND] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 16) return;
+        /*uint64_t binderGuid =*/ packet.readUInt64();
+        uint32_t mapId  = packet.readUInt32();
+        uint32_t zoneId = packet.readUInt32();
+        homeBindMapId_  = mapId;
+        homeBindZoneId_ = zoneId;
+        std::string pbMsg = "Your home location has been set";
+        std::string zoneName = getAreaName(zoneId);
+        if (!zoneName.empty()) pbMsg += " to " + zoneName;
+        pbMsg += '.';
+        addSystemChatMessage(pbMsg);
+    };
+    dispatchTable_[Opcode::SMSG_BINDER_CONFIRM] = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+    dispatchTable_[Opcode::SMSG_SET_PHASE_SHIFT] = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+    dispatchTable_[Opcode::SMSG_TOGGLE_XP_GAIN] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 1) return;
+        uint8_t enabled = packet.readUInt8();
+        addSystemChatMessage(enabled ? "XP gain enabled." : "XP gain disabled.");
+    };
+    dispatchTable_[Opcode::SMSG_GOSSIP_POI] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 20) return;
+        /*uint32_t flags =*/ packet.readUInt32();
+        float poiX = packet.readFloat();
+        float poiY = packet.readFloat();
+        uint32_t icon = packet.readUInt32();
+        uint32_t data = packet.readUInt32();
+        std::string name = packet.readString();
+        GossipPoi poi; poi.x = poiX; poi.y = poiY; poi.icon = icon; poi.data = data; poi.name = std::move(name);
+        if (gossipPois_.size() >= 200) gossipPois_.erase(gossipPois_.begin());
+        gossipPois_.push_back(std::move(poi));
+        LOG_DEBUG("SMSG_GOSSIP_POI: x=", poiX, " y=", poiY, " icon=", icon);
+    };
+    dispatchTable_[Opcode::SMSG_BINDZONEREPLY] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t result = packet.readUInt32();
+            if (result == 0) addSystemChatMessage("Your home is now set to this location.");
+            else { addUIError("You are too far from the innkeeper."); addSystemChatMessage("You are too far from the innkeeper."); }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_CHANGEPLAYER_DIFFICULTY_RESULT] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t result = packet.readUInt32();
+            if (result == 0) {
+                addSystemChatMessage("Difficulty changed.");
+            } else {
+                static const char* reasons[] = {
+                    "", "Error", "Too many members", "Already in dungeon",
+                    "You are in a battleground", "Raid not allowed in heroic",
+                    "You must be in a raid group", "Player not in group"
+                };
+                const char* msg = (result < 8) ? reasons[result] : "Difficulty change failed.";
+                addUIError(std::string("Cannot change difficulty: ") + msg);
+                addSystemChatMessage(std::string("Cannot change difficulty: ") + msg);
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_CORPSE_NOT_IN_INSTANCE] = [this](network::Packet& /*packet*/) {
+        addUIError("Your corpse is outside this instance.");
+        addSystemChatMessage("Your corpse is outside this instance. Release spirit to retrieve it.");
+    };
+    dispatchTable_[Opcode::SMSG_CROSSED_INEBRIATION_THRESHOLD] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 12) {
+            uint64_t guid      = packet.readUInt64();
+            uint32_t threshold = packet.readUInt32();
+            if (guid == playerGuid && threshold > 0) addSystemChatMessage("You feel rather drunk.");
+            LOG_DEBUG("SMSG_CROSSED_INEBRIATION_THRESHOLD: guid=0x", std::hex, guid, std::dec, " threshold=", threshold);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_CLEAR_FAR_SIGHT_IMMEDIATE] = [this](network::Packet& /*packet*/) {
+        LOG_DEBUG("SMSG_CLEAR_FAR_SIGHT_IMMEDIATE");
+    };
+    dispatchTable_[Opcode::SMSG_COMBAT_EVENT_FAILED] = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+    dispatchTable_[Opcode::SMSG_FORCE_ANIM] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 1) {
+            uint64_t animGuid = UpdateObjectParser::readPackedGuid(packet);
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                uint32_t animId = packet.readUInt32();
+                if (emoteAnimCallback_) emoteAnimCallback_(animGuid, animId);
+            }
+        }
+    };
+    // Multi-case group: consume silently
+    for (auto op : {
+        Opcode::SMSG_GAMEOBJECT_DESPAWN_ANIM, Opcode::SMSG_GAMEOBJECT_RESET_STATE,
+        Opcode::SMSG_FLIGHT_SPLINE_SYNC, Opcode::SMSG_FORCE_DISPLAY_UPDATE,
+        Opcode::SMSG_FORCE_SEND_QUEUED_PACKETS, Opcode::SMSG_FORCE_SET_VEHICLE_REC_ID,
+        Opcode::SMSG_CORPSE_MAP_POSITION_QUERY_RESPONSE, Opcode::SMSG_DAMAGE_CALC_LOG,
+        Opcode::SMSG_DYNAMIC_DROP_ROLL_RESULT, Opcode::SMSG_DESTRUCTIBLE_BUILDING_DAMAGE,
+    }) { dispatchTable_[op] = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); }; }
+    dispatchTable_[Opcode::SMSG_FORCED_DEATH_UPDATE] = [this](network::Packet& packet) {
+        playerDead_ = true;
+        if (ghostStateCallback_) ghostStateCallback_(false);
+        if (addonEventCallback_) addonEventCallback_("PLAYER_DEAD", {});
+        addSystemChatMessage("You have been killed.");
+        LOG_INFO("SMSG_FORCED_DEATH_UPDATE: player force-killed");
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_DEFENSE_MESSAGE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 5) {
+            /*uint32_t zoneId =*/ packet.readUInt32();
+            std::string defMsg = packet.readString();
+            if (!defMsg.empty()) addSystemChatMessage("[Defense] " + defMsg);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_CORPSE_RECLAIM_DELAY] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t delayMs = packet.readUInt32();
+            auto nowMs = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count());
+            corpseReclaimAvailableMs_ = nowMs + delayMs;
+            LOG_INFO("SMSG_CORPSE_RECLAIM_DELAY: ", delayMs, "ms");
+        }
+    };
+    dispatchTable_[Opcode::SMSG_DEATH_RELEASE_LOC] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 16) {
+            uint32_t relMapId = packet.readUInt32();
+            float relX = packet.readFloat(), relY = packet.readFloat(), relZ = packet.readFloat();
+            LOG_INFO("SMSG_DEATH_RELEASE_LOC (graveyard spawn): map=", relMapId, " x=", relX, " y=", relY, " z=", relZ);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_ENABLE_BARBER_SHOP] = [this](network::Packet& /*packet*/) {
+        LOG_INFO("SMSG_ENABLE_BARBER_SHOP: barber shop available");
+        barberShopOpen_ = true;
+        if (addonEventCallback_) addonEventCallback_("BARBER_SHOP_OPEN", {});
+    };
+
+    // ---- Batch 3: Corpse/gametime, combat clearing, mount, loot notify,
+    //                movement/speed/flags, attack, spells, group ----
+
+    dispatchTable_[Opcode::MSG_CORPSE_QUERY] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 1) return;
+        uint8_t found = packet.readUInt8();
+        if (found && packet.getSize() - packet.getReadPos() >= 20) {
+            /*uint32_t mapId =*/ packet.readUInt32();
+            float cx = packet.readFloat();
+            float cy = packet.readFloat();
+            float cz = packet.readFloat();
+            uint32_t corpseMapId = packet.readUInt32();
+            corpseX_ = cx;
+            corpseY_ = cy;
+            corpseZ_ = cz;
+            corpseMapId_ = corpseMapId;
+            LOG_INFO("MSG_CORPSE_QUERY: corpse at (", cx, ",", cy, ",", cz, ") map=", corpseMapId);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_FEIGN_DEATH_RESISTED] = [this](network::Packet& /*packet*/) {
+        addUIError("Your Feign Death was resisted.");
+        addSystemChatMessage("Your Feign Death attempt was resisted.");
+    };
+    dispatchTable_[Opcode::SMSG_CHANNEL_MEMBER_COUNT] = [this](network::Packet& packet) {
+        std::string chanName = packet.readString();
+        if (packet.getSize() - packet.getReadPos() >= 5) {
+            /*uint8_t flags =*/ packet.readUInt8();
+            uint32_t count = packet.readUInt32();
+            LOG_DEBUG("SMSG_CHANNEL_MEMBER_COUNT: channel=", chanName, " members=", count);
+        }
+    };
+    for (auto op : { Opcode::SMSG_GAMETIME_SET, Opcode::SMSG_GAMETIME_UPDATE }) {
+        dispatchTable_[op] = [this](network::Packet& packet) {
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                uint32_t gameTimePacked = packet.readUInt32();
+                gameTime_ = static_cast<float>(gameTimePacked);
+            }
+            packet.setReadPos(packet.getSize());
+        };
+    }
+    dispatchTable_[Opcode::SMSG_GAMESPEED_SET] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint32_t gameTimePacked = packet.readUInt32();
+            float timeSpeed = packet.readFloat();
+            gameTime_ = static_cast<float>(gameTimePacked);
+            timeSpeed_ = timeSpeed;
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_GAMETIMEBIAS_SET] = [this](network::Packet& packet) {
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_ACHIEVEMENT_DELETED] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t achId = packet.readUInt32();
+            earnedAchievements_.erase(achId);
+            achievementDates_.erase(achId);
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_CRITERIA_DELETED] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t critId = packet.readUInt32();
+            criteriaProgress_.erase(critId);
+        }
+        packet.setReadPos(packet.getSize());
+    };
+
+    // Combat clearing
+    dispatchTable_[Opcode::SMSG_ATTACKSWING_DEADTARGET] = [this](network::Packet& /*packet*/) {
+        autoAttacking = false;
+        autoAttackTarget = 0;
+    };
+    dispatchTable_[Opcode::SMSG_THREAT_CLEAR] = [this](network::Packet& /*packet*/) {
+        threatLists_.clear();
+        if (addonEventCallback_) addonEventCallback_("UNIT_THREAT_LIST_UPDATE", {});
+    };
+    dispatchTable_[Opcode::SMSG_THREAT_REMOVE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 1) return;
+        uint64_t unitGuid   = UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 1) return;
+        uint64_t victimGuid = UpdateObjectParser::readPackedGuid(packet);
+        auto it = threatLists_.find(unitGuid);
+        if (it != threatLists_.end()) {
+            auto& list = it->second;
+            list.erase(std::remove_if(list.begin(), list.end(),
+                [victimGuid](const ThreatEntry& e){ return e.victimGuid == victimGuid; }),
+                list.end());
+            if (list.empty()) threatLists_.erase(it);
+        }
+    };
+    for (auto op : { Opcode::SMSG_HIGHEST_THREAT_UPDATE, Opcode::SMSG_THREAT_UPDATE }) {
+        dispatchTable_[op] = [this](network::Packet& packet) {
+            if (packet.getSize() - packet.getReadPos() < 1) return;
+            uint64_t unitGuid = UpdateObjectParser::readPackedGuid(packet);
+            if (packet.getSize() - packet.getReadPos() < 1) return;
+            (void)UpdateObjectParser::readPackedGuid(packet);
+            if (packet.getSize() - packet.getReadPos() < 4) return;
+            uint32_t cnt = packet.readUInt32();
+            if (cnt > 100) { packet.setReadPos(packet.getSize()); return; }
+            std::vector<ThreatEntry> list;
+            list.reserve(cnt);
+            for (uint32_t i = 0; i < cnt; ++i) {
+                if (packet.getSize() - packet.getReadPos() < 1) break;
+                ThreatEntry entry;
+                entry.victimGuid = UpdateObjectParser::readPackedGuid(packet);
+                if (packet.getSize() - packet.getReadPos() < 4) break;
+                entry.threat = packet.readUInt32();
+                list.push_back(entry);
+            }
+            std::sort(list.begin(), list.end(),
+                [](const ThreatEntry& a, const ThreatEntry& b){ return a.threat > b.threat; });
+            threatLists_[unitGuid] = std::move(list);
+            if (addonEventCallback_)
+                addonEventCallback_("UNIT_THREAT_LIST_UPDATE", {});
+        };
+    }
+    dispatchTable_[Opcode::SMSG_CANCEL_COMBAT] = [this](network::Packet& /*packet*/) {
+        autoAttacking = false;
+        autoAttackTarget = 0;
+        autoAttackRequested_ = false;
+    };
+    dispatchTable_[Opcode::SMSG_BREAK_TARGET] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint64_t bGuid = packet.readUInt64();
+            if (bGuid == targetGuid) targetGuid = 0;
+        }
+    };
+    dispatchTable_[Opcode::SMSG_CLEAR_TARGET] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint64_t cGuid = packet.readUInt64();
+            if (cGuid == 0 || cGuid == targetGuid) targetGuid = 0;
+        }
+    };
+
+    // Mount/dismount
+    dispatchTable_[Opcode::SMSG_DISMOUNT] = [this](network::Packet& /*packet*/) {
+        currentMountDisplayId_ = 0;
+        if (mountCallback_) mountCallback_(0);
+    };
+    dispatchTable_[Opcode::SMSG_MOUNTRESULT] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        uint32_t result = packet.readUInt32();
+        if (result != 4) {
+            const char* msgs[] = { "Cannot mount here.", "Invalid mount spell.",
+                                   "Too far away to mount.", "Already mounted." };
+            std::string mountErr = result < 4 ? msgs[result] : "Cannot mount.";
+            addUIError(mountErr);
+            addSystemChatMessage(mountErr);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_DISMOUNTRESULT] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        uint32_t result = packet.readUInt32();
+        if (result != 0) {
+            addUIError("Cannot dismount here.");
+            addSystemChatMessage("Cannot dismount here.");
+        }
+    };
+
+    // Loot notifications
+    dispatchTable_[Opcode::SMSG_LOOT_ALL_PASSED] = [this](network::Packet& packet) {
+        const bool isWotLK = isActiveExpansion("wotlk");
+        const size_t minSize = isWotLK ? 24u : 16u;
+        if (packet.getSize() - packet.getReadPos() < minSize) return;
+        /*uint64_t objGuid =*/ packet.readUInt64();
+        /*uint32_t slot    =*/ packet.readUInt32();
+        uint32_t itemId  = packet.readUInt32();
+        if (isWotLK) {
+            /*uint32_t randSuffix =*/ packet.readUInt32();
+            /*uint32_t randProp   =*/ packet.readUInt32();
+        }
+        auto* info = getItemInfo(itemId);
+        std::string allPassName = info && !info->name.empty() ? info->name : std::to_string(itemId);
+        uint32_t allPassQuality = info ? info->quality : 1u;
+        addSystemChatMessage("Everyone passed on " + buildItemLink(itemId, allPassQuality, allPassName) + ".");
+        pendingLootRollActive_ = false;
+    };
+    dispatchTable_[Opcode::SMSG_LOOT_ITEM_NOTIFY] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 24) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t looterGuid = packet.readUInt64();
+        /*uint64_t lootGuid =*/ packet.readUInt64();
+        uint32_t itemId  = packet.readUInt32();
+        uint32_t count   = packet.readUInt32();
+        if (isInGroup() && looterGuid != playerGuid) {
+            auto nit = playerNameCache.find(looterGuid);
+            std::string looterName = (nit != playerNameCache.end()) ? nit->second : "";
+            if (!looterName.empty()) {
+                queryItemInfo(itemId, 0);
+                std::string itemName = "item #" + std::to_string(itemId);
+                uint32_t notifyQuality = 1;
+                if (const ItemQueryResponseData* info = getItemInfo(itemId)) {
+                    if (!info->name.empty()) itemName = info->name;
+                    notifyQuality = info->quality;
+                }
+                std::string itemLink2 = buildItemLink(itemId, notifyQuality, itemName);
+                std::string lootMsg = looterName + " loots " + itemLink2;
+                if (count > 1) lootMsg += " x" + std::to_string(count);
+                lootMsg += ".";
+                addSystemChatMessage(lootMsg);
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_LOOT_SLOT_CHANGED] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 1) {
+            uint8_t slotIndex = packet.readUInt8();
+            for (auto it = currentLoot.items.begin(); it != currentLoot.items.end(); ++it) {
+                if (it->slotIndex == slotIndex) {
+                    currentLoot.items.erase(it);
+                    break;
+                }
+            }
+        }
+    };
+
+    // Creature movement
+    dispatchTable_[Opcode::SMSG_MONSTER_MOVE] = [this](network::Packet& packet) { handleMonsterMove(packet); };
+    dispatchTable_[Opcode::SMSG_COMPRESSED_MOVES] = [this](network::Packet& packet) { handleCompressedMoves(packet); };
+    dispatchTable_[Opcode::SMSG_MONSTER_MOVE_TRANSPORT] = [this](network::Packet& packet) { handleMonsterMoveTransport(packet); };
+
+    // Spline move: consume-only (no state change)
+    for (auto op : { Opcode::SMSG_SPLINE_MOVE_FEATHER_FALL,
+                     Opcode::SMSG_SPLINE_MOVE_GRAVITY_DISABLE,
+                     Opcode::SMSG_SPLINE_MOVE_GRAVITY_ENABLE,
+                     Opcode::SMSG_SPLINE_MOVE_LAND_WALK,
+                     Opcode::SMSG_SPLINE_MOVE_NORMAL_FALL,
+                     Opcode::SMSG_SPLINE_MOVE_ROOT,
+                     Opcode::SMSG_SPLINE_MOVE_SET_HOVER }) {
+        dispatchTable_[op] = [this](network::Packet& packet) {
+            if (packet.getSize() - packet.getReadPos() >= 1)
+                (void)UpdateObjectParser::readPackedGuid(packet);
+        };
+    }
+
+    // Spline move: synth flags (each opcode produces different flags)
+    {
+        auto makeSynthHandler = [this](uint32_t synthFlags) {
+            return [this, synthFlags](network::Packet& packet) {
+                if (packet.getSize() - packet.getReadPos() < 1) return;
+                uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
+                if (guid == 0 || guid == playerGuid || !unitMoveFlagsCallback_) return;
+                unitMoveFlagsCallback_(guid, synthFlags);
+            };
+        };
+        dispatchTable_[Opcode::SMSG_SPLINE_MOVE_SET_WALK_MODE] = makeSynthHandler(0x00000100u);
+        dispatchTable_[Opcode::SMSG_SPLINE_MOVE_SET_RUN_MODE]  = makeSynthHandler(0u);
+        dispatchTable_[Opcode::SMSG_SPLINE_MOVE_SET_FLYING]    = makeSynthHandler(0x01000000u | 0x00800000u);
+        dispatchTable_[Opcode::SMSG_SPLINE_MOVE_START_SWIM]    = makeSynthHandler(0x00200000u);
+        dispatchTable_[Opcode::SMSG_SPLINE_MOVE_STOP_SWIM]     = makeSynthHandler(0u);
+    }
+
+    // Spline speed: each opcode updates a different speed member
+    dispatchTable_[Opcode::SMSG_SPLINE_SET_RUN_SPEED] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        float speed = packet.readFloat();
+        if (guid == playerGuid && std::isfinite(speed) && speed > 0.01f && speed < 200.0f)
+            serverRunSpeed_ = speed;
+    };
+    dispatchTable_[Opcode::SMSG_SPLINE_SET_RUN_BACK_SPEED] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        float speed = packet.readFloat();
+        if (guid == playerGuid && std::isfinite(speed) && speed > 0.01f && speed < 200.0f)
+            serverRunBackSpeed_ = speed;
+    };
+    dispatchTable_[Opcode::SMSG_SPLINE_SET_SWIM_SPEED] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        float speed = packet.readFloat();
+        if (guid == playerGuid && std::isfinite(speed) && speed > 0.01f && speed < 200.0f)
+            serverSwimSpeed_ = speed;
+    };
+
+    // Force speed changes
+    dispatchTable_[Opcode::SMSG_FORCE_RUN_SPEED_CHANGE] = [this](network::Packet& packet) { handleForceRunSpeedChange(packet); };
+    dispatchTable_[Opcode::SMSG_FORCE_MOVE_ROOT] = [this](network::Packet& packet) { handleForceMoveRootState(packet, true); };
+    dispatchTable_[Opcode::SMSG_FORCE_MOVE_UNROOT] = [this](network::Packet& packet) { handleForceMoveRootState(packet, false); };
+    dispatchTable_[Opcode::SMSG_FORCE_WALK_SPEED_CHANGE] = [this](network::Packet& packet) {
+        handleForceSpeedChange(packet, "WALK_SPEED", Opcode::CMSG_FORCE_WALK_SPEED_CHANGE_ACK, &serverWalkSpeed_);
+    };
+    dispatchTable_[Opcode::SMSG_FORCE_RUN_BACK_SPEED_CHANGE] = [this](network::Packet& packet) {
+        handleForceSpeedChange(packet, "RUN_BACK_SPEED", Opcode::CMSG_FORCE_RUN_BACK_SPEED_CHANGE_ACK, &serverRunBackSpeed_);
+    };
+    dispatchTable_[Opcode::SMSG_FORCE_SWIM_SPEED_CHANGE] = [this](network::Packet& packet) {
+        handleForceSpeedChange(packet, "SWIM_SPEED", Opcode::CMSG_FORCE_SWIM_SPEED_CHANGE_ACK, &serverSwimSpeed_);
+    };
+    dispatchTable_[Opcode::SMSG_FORCE_SWIM_BACK_SPEED_CHANGE] = [this](network::Packet& packet) {
+        handleForceSpeedChange(packet, "SWIM_BACK_SPEED", Opcode::CMSG_FORCE_SWIM_BACK_SPEED_CHANGE_ACK, &serverSwimBackSpeed_);
+    };
+    dispatchTable_[Opcode::SMSG_FORCE_FLIGHT_SPEED_CHANGE] = [this](network::Packet& packet) {
+        handleForceSpeedChange(packet, "FLIGHT_SPEED", Opcode::CMSG_FORCE_FLIGHT_SPEED_CHANGE_ACK, &serverFlightSpeed_);
+    };
+    dispatchTable_[Opcode::SMSG_FORCE_FLIGHT_BACK_SPEED_CHANGE] = [this](network::Packet& packet) {
+        handleForceSpeedChange(packet, "FLIGHT_BACK_SPEED", Opcode::CMSG_FORCE_FLIGHT_BACK_SPEED_CHANGE_ACK, &serverFlightBackSpeed_);
+    };
+    dispatchTable_[Opcode::SMSG_FORCE_TURN_RATE_CHANGE] = [this](network::Packet& packet) {
+        handleForceSpeedChange(packet, "TURN_RATE", Opcode::CMSG_FORCE_TURN_RATE_CHANGE_ACK, &serverTurnRate_);
+    };
+    dispatchTable_[Opcode::SMSG_FORCE_PITCH_RATE_CHANGE] = [this](network::Packet& packet) {
+        handleForceSpeedChange(packet, "PITCH_RATE", Opcode::CMSG_FORCE_PITCH_RATE_CHANGE_ACK, &serverPitchRate_);
+    };
+
+    // Movement flag toggles
+    dispatchTable_[Opcode::SMSG_MOVE_SET_CAN_FLY] = [this](network::Packet& packet) {
+        handleForceMoveFlagChange(packet, "SET_CAN_FLY", Opcode::CMSG_MOVE_SET_CAN_FLY_ACK,
+            static_cast<uint32_t>(MovementFlags::CAN_FLY), true);
+    };
+    dispatchTable_[Opcode::SMSG_MOVE_UNSET_CAN_FLY] = [this](network::Packet& packet) {
+        handleForceMoveFlagChange(packet, "UNSET_CAN_FLY", Opcode::CMSG_MOVE_SET_CAN_FLY_ACK,
+            static_cast<uint32_t>(MovementFlags::CAN_FLY), false);
+    };
+    dispatchTable_[Opcode::SMSG_MOVE_FEATHER_FALL] = [this](network::Packet& packet) {
+        handleForceMoveFlagChange(packet, "FEATHER_FALL", Opcode::CMSG_MOVE_FEATHER_FALL_ACK,
+            static_cast<uint32_t>(MovementFlags::FEATHER_FALL), true);
+    };
+    dispatchTable_[Opcode::SMSG_MOVE_WATER_WALK] = [this](network::Packet& packet) {
+        handleForceMoveFlagChange(packet, "WATER_WALK", Opcode::CMSG_MOVE_WATER_WALK_ACK,
+            static_cast<uint32_t>(MovementFlags::WATER_WALK), true);
+    };
+    dispatchTable_[Opcode::SMSG_MOVE_SET_HOVER] = [this](network::Packet& packet) {
+        handleForceMoveFlagChange(packet, "SET_HOVER", Opcode::CMSG_MOVE_HOVER_ACK,
+            static_cast<uint32_t>(MovementFlags::HOVER), true);
+    };
+    dispatchTable_[Opcode::SMSG_MOVE_UNSET_HOVER] = [this](network::Packet& packet) {
+        handleForceMoveFlagChange(packet, "UNSET_HOVER", Opcode::CMSG_MOVE_HOVER_ACK,
+            static_cast<uint32_t>(MovementFlags::HOVER), false);
+    };
+    dispatchTable_[Opcode::SMSG_MOVE_KNOCK_BACK] = [this](network::Packet& packet) { handleMoveKnockBack(packet); };
+
+    // Camera shake
+    dispatchTable_[Opcode::SMSG_CAMERA_SHAKE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint32_t shakeId   = packet.readUInt32();
+            uint32_t shakeType = packet.readUInt32();
+            (void)shakeType;
+            float magnitude = (shakeId < 50) ? 0.04f : 0.08f;
+            if (cameraShakeCallback_)
+                cameraShakeCallback_(magnitude, 18.0f, 0.5f);
+        }
+    };
+
+    // Attack/combat delegates
+    dispatchTable_[Opcode::SMSG_ATTACKSTART] = [this](network::Packet& packet) { handleAttackStart(packet); };
+    dispatchTable_[Opcode::SMSG_ATTACKSTOP] = [this](network::Packet& packet) { handleAttackStop(packet); };
+    dispatchTable_[Opcode::SMSG_ATTACKSWING_NOTINRANGE] = [this](network::Packet& /*packet*/) {
+        autoAttackOutOfRange_ = true;
+        if (autoAttackRangeWarnCooldown_ <= 0.0f) {
+            addSystemChatMessage("Target is too far away.");
+            autoAttackRangeWarnCooldown_ = 1.25f;
+        }
+    };
+    dispatchTable_[Opcode::SMSG_ATTACKSWING_BADFACING] = [this](network::Packet& /*packet*/) {
+        if (autoAttackRequested_ && autoAttackTarget != 0) {
+            auto targetEntity = entityManager.getEntity(autoAttackTarget);
+            if (targetEntity) {
+                float toTargetX = targetEntity->getX() - movementInfo.x;
+                float toTargetY = targetEntity->getY() - movementInfo.y;
+                if (std::abs(toTargetX) > 0.01f || std::abs(toTargetY) > 0.01f) {
+                    movementInfo.orientation = std::atan2(-toTargetY, toTargetX);
+                    sendMovement(Opcode::MSG_MOVE_SET_FACING);
+                }
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_ATTACKSWING_NOTSTANDING] = [this](network::Packet& /*packet*/) {
+        autoAttackOutOfRange_ = false;
+        autoAttackOutOfRangeTime_ = 0.0f;
+        if (autoAttackRangeWarnCooldown_ <= 0.0f) {
+            addSystemChatMessage("You need to stand up to fight.");
+            autoAttackRangeWarnCooldown_ = 1.25f;
+        }
+    };
+    dispatchTable_[Opcode::SMSG_ATTACKSWING_CANT_ATTACK] = [this](network::Packet& /*packet*/) {
+        stopAutoAttack();
+        if (autoAttackRangeWarnCooldown_ <= 0.0f) {
+            addSystemChatMessage("You can't attack that.");
+            autoAttackRangeWarnCooldown_ = 1.25f;
+        }
+    };
+    dispatchTable_[Opcode::SMSG_ATTACKERSTATEUPDATE] = [this](network::Packet& packet) { handleAttackerStateUpdate(packet); };
+    dispatchTable_[Opcode::SMSG_AI_REACTION] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 12) return;
+        uint64_t guid = packet.readUInt64();
+        uint32_t reaction = packet.readUInt32();
+        if (reaction == 2 && npcAggroCallback_) {
+            auto entity = entityManager.getEntity(guid);
+            if (entity)
+                npcAggroCallback_(guid, glm::vec3(entity->getX(), entity->getY(), entity->getZ()));
+        }
+    };
+    dispatchTable_[Opcode::SMSG_SPELLNONMELEEDAMAGELOG] = [this](network::Packet& packet) { handleSpellDamageLog(packet); };
+    dispatchTable_[Opcode::SMSG_PLAY_SPELL_VISUAL] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 12) return;
+        uint64_t casterGuid = packet.readUInt64();
+        uint32_t visualId   = packet.readUInt32();
+        if (visualId == 0) return;
+        auto* renderer = core::Application::getInstance().getRenderer();
+        if (!renderer) return;
+        glm::vec3 spawnPos;
+        if (casterGuid == playerGuid) {
+            spawnPos = renderer->getCharacterPosition();
+        } else {
+            auto entity = entityManager.getEntity(casterGuid);
+            if (!entity) return;
+            glm::vec3 canonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());
+            spawnPos = core::coords::canonicalToRender(canonical);
+        }
+        renderer->playSpellVisual(visualId, spawnPos);
+    };
+    dispatchTable_[Opcode::SMSG_SPELLHEALLOG] = [this](network::Packet& packet) { handleSpellHealLog(packet); };
+
+    // Spell delegates
+    dispatchTable_[Opcode::SMSG_INITIAL_SPELLS] = [this](network::Packet& packet) { handleInitialSpells(packet); };
+    dispatchTable_[Opcode::SMSG_CAST_FAILED] = [this](network::Packet& packet) { handleCastFailed(packet); };
+    dispatchTable_[Opcode::SMSG_SPELL_START] = [this](network::Packet& packet) { handleSpellStart(packet); };
+    dispatchTable_[Opcode::SMSG_SPELL_GO] = [this](network::Packet& packet) { handleSpellGo(packet); };
+    dispatchTable_[Opcode::SMSG_SPELL_COOLDOWN] = [this](network::Packet& packet) { handleSpellCooldown(packet); };
+    dispatchTable_[Opcode::SMSG_COOLDOWN_EVENT] = [this](network::Packet& packet) { handleCooldownEvent(packet); };
+    dispatchTable_[Opcode::SMSG_CLEAR_COOLDOWN] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t spellId = packet.readUInt32();
+            spellCooldowns.erase(spellId);
+            for (auto& slot : actionBar) {
+                if (slot.type == ActionBarSlot::SPELL && slot.id == spellId)
+                    slot.cooldownRemaining = 0.0f;
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_MODIFY_COOLDOWN] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint32_t spellId = packet.readUInt32();
+            int32_t  diffMs  = static_cast<int32_t>(packet.readUInt32());
+            float diffSec = diffMs / 1000.0f;
+            auto it = spellCooldowns.find(spellId);
+            if (it != spellCooldowns.end()) {
+                it->second = std::max(0.0f, it->second + diffSec);
+                for (auto& slot : actionBar) {
+                    if (slot.type == ActionBarSlot::SPELL && slot.id == spellId)
+                        slot.cooldownRemaining = std::max(0.0f, slot.cooldownRemaining + diffSec);
+                }
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_ACHIEVEMENT_EARNED] = [this](network::Packet& packet) { handleAchievementEarned(packet); };
+    dispatchTable_[Opcode::SMSG_ALL_ACHIEVEMENT_DATA] = [this](network::Packet& packet) { handleAllAchievementData(packet); };
+    dispatchTable_[Opcode::SMSG_CANCEL_AUTO_REPEAT] = [this](network::Packet& /*packet*/) {};
+    dispatchTable_[Opcode::SMSG_AURA_UPDATE] = [this](network::Packet& packet) { handleAuraUpdate(packet, false); };
+    dispatchTable_[Opcode::SMSG_AURA_UPDATE_ALL] = [this](network::Packet& packet) { handleAuraUpdate(packet, true); };
+    dispatchTable_[Opcode::SMSG_FISH_NOT_HOOKED] = [this](network::Packet& /*packet*/) {
+        addSystemChatMessage("Your fish got away.");
+    };
+    dispatchTable_[Opcode::SMSG_FISH_ESCAPED] = [this](network::Packet& /*packet*/) {
+        addSystemChatMessage("Your fish escaped!");
+    };
+    dispatchTable_[Opcode::SMSG_LEARNED_SPELL] = [this](network::Packet& packet) { handleLearnedSpell(packet); };
+    dispatchTable_[Opcode::SMSG_SUPERCEDED_SPELL] = [this](network::Packet& packet) { handleSupercededSpell(packet); };
+    dispatchTable_[Opcode::SMSG_REMOVED_SPELL] = [this](network::Packet& packet) { handleRemovedSpell(packet); };
+    dispatchTable_[Opcode::SMSG_SEND_UNLEARN_SPELLS] = [this](network::Packet& packet) { handleUnlearnSpells(packet); };
+    dispatchTable_[Opcode::SMSG_TALENTS_INFO] = [this](network::Packet& packet) { handleTalentsInfo(packet); };
+
+    // Group
+    dispatchTable_[Opcode::SMSG_GROUP_INVITE] = [this](network::Packet& packet) { handleGroupInvite(packet); };
+    dispatchTable_[Opcode::SMSG_GROUP_DECLINE] = [this](network::Packet& packet) { handleGroupDecline(packet); };
+    dispatchTable_[Opcode::SMSG_GROUP_LIST] = [this](network::Packet& packet) { handleGroupList(packet); };
+    dispatchTable_[Opcode::SMSG_GROUP_DESTROYED] = [this](network::Packet& /*packet*/) {
+        partyData.members.clear();
+        partyData.memberCount = 0;
+        partyData.leaderGuid = 0;
+        addUIError("Your party has been disbanded.");
+        addSystemChatMessage("Your party has been disbanded.");
+        if (addonEventCallback_) {
+            addonEventCallback_("GROUP_ROSTER_UPDATE", {});
+            addonEventCallback_("PARTY_MEMBERS_CHANGED", {});
+        }
+    };
+    dispatchTable_[Opcode::SMSG_GROUP_CANCEL] = [this](network::Packet& /*packet*/) {
+        addSystemChatMessage("Group invite cancelled.");
+    };
+    dispatchTable_[Opcode::SMSG_GROUP_UNINVITE] = [this](network::Packet& packet) { handleGroupUninvite(packet); };
+    dispatchTable_[Opcode::SMSG_PARTY_COMMAND_RESULT] = [this](network::Packet& packet) { handlePartyCommandResult(packet); };
+    dispatchTable_[Opcode::SMSG_PARTY_MEMBER_STATS] = [this](network::Packet& packet) { handlePartyMemberStats(packet, false); };
+    dispatchTable_[Opcode::SMSG_PARTY_MEMBER_STATS_FULL] = [this](network::Packet& packet) { handlePartyMemberStats(packet, true); };
+
+    // ---- Batch 4: Ready check, duels, guild, loot/gossip/vendor, factions, spell mods ----
+
+    // Ready check
+    dispatchTable_[Opcode::MSG_RAID_READY_CHECK] = [this](network::Packet& packet) {
+        pendingReadyCheck_ = true;
+        readyCheckReadyCount_ = 0;
+        readyCheckNotReadyCount_ = 0;
+        readyCheckInitiator_.clear();
+        readyCheckResults_.clear();
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint64_t initiatorGuid = packet.readUInt64();
+            auto entity = entityManager.getEntity(initiatorGuid);
+            if (auto* unit = dynamic_cast<Unit*>(entity.get()))
+                readyCheckInitiator_ = unit->getName();
+        }
+        if (readyCheckInitiator_.empty() && partyData.leaderGuid != 0) {
+            for (const auto& member : partyData.members) {
+                if (member.guid == partyData.leaderGuid) { readyCheckInitiator_ = member.name; break; }
+            }
+        }
+        addSystemChatMessage(readyCheckInitiator_.empty()
+            ? "Ready check initiated!"
+            : readyCheckInitiator_ + " initiated a ready check!");
+        if (addonEventCallback_)
+            addonEventCallback_("READY_CHECK", {readyCheckInitiator_});
+    };
+    dispatchTable_[Opcode::MSG_RAID_READY_CHECK_CONFIRM] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 9) { packet.setReadPos(packet.getSize()); return; }
+        uint64_t respGuid = packet.readUInt64();
+        uint8_t  isReady  = packet.readUInt8();
+        if (isReady) ++readyCheckReadyCount_; else ++readyCheckNotReadyCount_;
+        auto nit = playerNameCache.find(respGuid);
+        std::string rname;
+        if (nit != playerNameCache.end()) rname = nit->second;
+        else {
+            auto ent = entityManager.getEntity(respGuid);
+            if (ent) rname = std::static_pointer_cast<game::Unit>(ent)->getName();
+        }
+        if (!rname.empty()) {
+            bool found = false;
+            for (auto& r : readyCheckResults_) {
+                if (r.name == rname) { r.ready = (isReady != 0); found = true; break; }
+            }
+            if (!found) readyCheckResults_.push_back({ rname, isReady != 0 });
+            char rbuf[128];
+            std::snprintf(rbuf, sizeof(rbuf), "%s is %s.", rname.c_str(), isReady ? "Ready" : "Not Ready");
+            addSystemChatMessage(rbuf);
+        }
+        if (addonEventCallback_) {
+            char guidBuf[32];
+            snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", (unsigned long long)respGuid);
+            addonEventCallback_("READY_CHECK_CONFIRM", {guidBuf, isReady ? "1" : "0"});
+        }
+    };
+    dispatchTable_[Opcode::MSG_RAID_READY_CHECK_FINISHED] = [this](network::Packet& /*packet*/) {
+        char fbuf[128];
+        std::snprintf(fbuf, sizeof(fbuf), "Ready check complete: %u ready, %u not ready.",
+                     readyCheckReadyCount_, readyCheckNotReadyCount_);
+        addSystemChatMessage(fbuf);
+        pendingReadyCheck_ = false;
+        readyCheckReadyCount_ = 0;
+        readyCheckNotReadyCount_ = 0;
+        readyCheckResults_.clear();
+        if (addonEventCallback_) addonEventCallback_("READY_CHECK_FINISHED", {});
+    };
+    dispatchTable_[Opcode::SMSG_RAID_INSTANCE_INFO] = [this](network::Packet& packet) { handleRaidInstanceInfo(packet); };
+
+    // Duels
+    dispatchTable_[Opcode::SMSG_DUEL_REQUESTED] = [this](network::Packet& packet) { handleDuelRequested(packet); };
+    dispatchTable_[Opcode::SMSG_DUEL_COMPLETE] = [this](network::Packet& packet) { handleDuelComplete(packet); };
+    dispatchTable_[Opcode::SMSG_DUEL_WINNER] = [this](network::Packet& packet) { handleDuelWinner(packet); };
+    dispatchTable_[Opcode::SMSG_DUEL_OUTOFBOUNDS] = [this](network::Packet& /*packet*/) {
+        addUIError("You are out of the duel area!");
+        addSystemChatMessage("You are out of the duel area!");
+    };
+    dispatchTable_[Opcode::SMSG_DUEL_INBOUNDS] = [this](network::Packet& /*packet*/) {};
+    dispatchTable_[Opcode::SMSG_DUEL_COUNTDOWN] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t ms = packet.readUInt32();
+            duelCountdownMs_ = (ms > 0 && ms <= 30000) ? ms : 3000;
+            duelCountdownStartedAt_ = std::chrono::steady_clock::now();
+        }
+    };
+    dispatchTable_[Opcode::SMSG_PARTYKILLLOG] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 16) return;
+        uint64_t killerGuid = packet.readUInt64();
+        uint64_t victimGuid = packet.readUInt64();
+        auto nameFor = [this](uint64_t g) -> std::string {
+            auto nit = playerNameCache.find(g);
+            if (nit != playerNameCache.end()) return nit->second;
+            auto ent = entityManager.getEntity(g);
+            if (ent && (ent->getType() == game::ObjectType::UNIT ||
+                        ent->getType() == game::ObjectType::PLAYER))
+                return std::static_pointer_cast<game::Unit>(ent)->getName();
+            return {};
+        };
+        std::string killerName = nameFor(killerGuid);
+        std::string victimName = nameFor(victimGuid);
+        if (!killerName.empty() && !victimName.empty()) {
+            char buf[256];
+            std::snprintf(buf, sizeof(buf), "%s killed %s.", killerName.c_str(), victimName.c_str());
+            addSystemChatMessage(buf);
+        }
+    };
+
+    // Guild
+    dispatchTable_[Opcode::SMSG_GUILD_INFO] = [this](network::Packet& packet) { handleGuildInfo(packet); };
+    dispatchTable_[Opcode::SMSG_GUILD_ROSTER] = [this](network::Packet& packet) { handleGuildRoster(packet); };
+    dispatchTable_[Opcode::SMSG_GUILD_QUERY_RESPONSE] = [this](network::Packet& packet) { handleGuildQueryResponse(packet); };
+    dispatchTable_[Opcode::SMSG_GUILD_EVENT] = [this](network::Packet& packet) { handleGuildEvent(packet); };
+    dispatchTable_[Opcode::SMSG_GUILD_INVITE] = [this](network::Packet& packet) { handleGuildInvite(packet); };
+    dispatchTable_[Opcode::SMSG_GUILD_COMMAND_RESULT] = [this](network::Packet& packet) { handleGuildCommandResult(packet); };
+    dispatchTable_[Opcode::SMSG_PET_SPELLS] = [this](network::Packet& packet) { handlePetSpells(packet); };
+    dispatchTable_[Opcode::SMSG_PETITION_SHOWLIST] = [this](network::Packet& packet) { handlePetitionShowlist(packet); };
+    dispatchTable_[Opcode::SMSG_TURN_IN_PETITION_RESULTS] = [this](network::Packet& packet) { handleTurnInPetitionResults(packet); };
+
+    // Loot/gossip/vendor delegates
+    dispatchTable_[Opcode::SMSG_LOOT_RESPONSE] = [this](network::Packet& packet) { handleLootResponse(packet); };
+    dispatchTable_[Opcode::SMSG_LOOT_RELEASE_RESPONSE] = [this](network::Packet& packet) { handleLootReleaseResponse(packet); };
+    dispatchTable_[Opcode::SMSG_LOOT_REMOVED] = [this](network::Packet& packet) { handleLootRemoved(packet); };
+    dispatchTable_[Opcode::SMSG_QUEST_CONFIRM_ACCEPT] = [this](network::Packet& packet) { handleQuestConfirmAccept(packet); };
+    dispatchTable_[Opcode::SMSG_ITEM_TEXT_QUERY_RESPONSE] = [this](network::Packet& packet) { handleItemTextQueryResponse(packet); };
+    dispatchTable_[Opcode::SMSG_SUMMON_REQUEST] = [this](network::Packet& packet) { handleSummonRequest(packet); };
+    dispatchTable_[Opcode::SMSG_SUMMON_CANCEL] = [this](network::Packet& /*packet*/) {
+        pendingSummonRequest_ = false;
+        addSystemChatMessage("Summon cancelled.");
+    };
+    dispatchTable_[Opcode::SMSG_TRADE_STATUS] = [this](network::Packet& packet) { handleTradeStatus(packet); };
+    dispatchTable_[Opcode::SMSG_TRADE_STATUS_EXTENDED] = [this](network::Packet& packet) { handleTradeStatusExtended(packet); };
+    dispatchTable_[Opcode::SMSG_LOOT_ROLL] = [this](network::Packet& packet) { handleLootRoll(packet); };
+    dispatchTable_[Opcode::SMSG_LOOT_ROLL_WON] = [this](network::Packet& packet) { handleLootRollWon(packet); };
+    dispatchTable_[Opcode::SMSG_LOOT_MASTER_LIST] = [this](network::Packet& packet) {
+        masterLootCandidates_.clear();
+        if (packet.getSize() - packet.getReadPos() < 1) return;
+        uint8_t mlCount = packet.readUInt8();
+        masterLootCandidates_.reserve(mlCount);
+        for (uint8_t i = 0; i < mlCount; ++i) {
+            if (packet.getSize() - packet.getReadPos() < 8) break;
+            masterLootCandidates_.push_back(packet.readUInt64());
+        }
+    };
+    dispatchTable_[Opcode::SMSG_GOSSIP_MESSAGE] = [this](network::Packet& packet) { handleGossipMessage(packet); };
+    dispatchTable_[Opcode::SMSG_QUESTGIVER_QUEST_LIST] = [this](network::Packet& packet) { handleQuestgiverQuestList(packet); };
+    dispatchTable_[Opcode::SMSG_GOSSIP_COMPLETE] = [this](network::Packet& packet) { handleGossipComplete(packet); };
+
+    // Bind point
+    dispatchTable_[Opcode::SMSG_BINDPOINTUPDATE] = [this](network::Packet& packet) {
+        BindPointUpdateData data;
+        if (BindPointUpdateParser::parse(packet, data)) {
+            glm::vec3 canonical = core::coords::serverToCanonical(
+                glm::vec3(data.x, data.y, data.z));
+            bool wasSet = hasHomeBind_;
+            hasHomeBind_ = true;
+            homeBindMapId_ = data.mapId;
+            homeBindZoneId_ = data.zoneId;
+            homeBindPos_ = canonical;
+            if (bindPointCallback_)
+                bindPointCallback_(data.mapId, canonical.x, canonical.y, canonical.z);
+            if (wasSet) {
+                std::string bindMsg = "Your home has been set";
+                std::string zoneName = getAreaName(data.zoneId);
+                if (!zoneName.empty()) bindMsg += " to " + zoneName;
+                bindMsg += '.';
+                addSystemChatMessage(bindMsg);
+            }
+        }
+    };
+
+    // Spirit healer / resurrect
+    dispatchTable_[Opcode::SMSG_SPIRIT_HEALER_CONFIRM] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 8) return;
+        uint64_t npcGuid = packet.readUInt64();
+        if (npcGuid) {
+            resurrectCasterGuid_ = npcGuid;
+            resurrectCasterName_ = "";
+            resurrectIsSpiritHealer_ = true;
+            resurrectRequestPending_ = true;
+        }
+    };
+    dispatchTable_[Opcode::SMSG_RESURRECT_REQUEST] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 8) return;
+        uint64_t casterGuid = packet.readUInt64();
+        std::string casterName;
+        if (packet.getReadPos() < packet.getSize())
+            casterName = packet.readString();
+        if (casterGuid) {
+            resurrectCasterGuid_ = casterGuid;
+            resurrectIsSpiritHealer_ = false;
+            if (!casterName.empty()) {
+                resurrectCasterName_ = casterName;
+            } else {
+                auto nit = playerNameCache.find(casterGuid);
+                resurrectCasterName_ = (nit != playerNameCache.end()) ? nit->second : "";
+            }
+            resurrectRequestPending_ = true;
+            if (addonEventCallback_)
+                addonEventCallback_("RESURRECT_REQUEST", {resurrectCasterName_});
+        }
+    };
+
+    // Time sync
+    dispatchTable_[Opcode::SMSG_TIME_SYNC_REQ] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        uint32_t counter = packet.readUInt32();
+        if (socket) {
+            network::Packet resp(wireOpcode(Opcode::CMSG_TIME_SYNC_RESP));
+            resp.writeUInt32(counter);
+            resp.writeUInt32(nextMovementTimestampMs());
+            socket->send(resp);
+        }
+    };
+
+    // Vendor/trainer
+    dispatchTable_[Opcode::SMSG_LIST_INVENTORY] = [this](network::Packet& packet) { handleListInventory(packet); };
+    dispatchTable_[Opcode::SMSG_TRAINER_LIST] = [this](network::Packet& packet) { handleTrainerList(packet); };
+    dispatchTable_[Opcode::SMSG_TRAINER_BUY_SUCCEEDED] = [this](network::Packet& packet) {
+        /*uint64_t guid =*/ packet.readUInt64();
+        uint32_t spellId = packet.readUInt32();
+        if (!knownSpells.count(spellId)) {
+            knownSpells.insert(spellId);
+        }
+        const std::string& name = getSpellName(spellId);
+        if (!name.empty())
+            addSystemChatMessage("You have learned " + name + ".");
+        else
+            addSystemChatMessage("Spell learned.");
+        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* sfx = renderer->getUiSoundManager()) sfx->playQuestActivate();
+        }
+        if (addonEventCallback_) {
+            addonEventCallback_("TRAINER_UPDATE", {});
+            addonEventCallback_("SPELLS_CHANGED", {});
+        }
+    };
+    dispatchTable_[Opcode::SMSG_TRAINER_BUY_FAILED] = [this](network::Packet& packet) {
+        /*uint64_t trainerGuid =*/ packet.readUInt64();
+        uint32_t spellId = packet.readUInt32();
+        uint32_t errorCode = 0;
+        if (packet.getSize() - packet.getReadPos() >= 4)
+            errorCode = packet.readUInt32();
+        const std::string& spellName = getSpellName(spellId);
+        std::string msg = "Cannot learn ";
+        if (!spellName.empty()) msg += spellName;
+        else msg += "spell #" + std::to_string(spellId);
+        if (errorCode == 0) msg += " (not enough money)";
+        else if (errorCode == 1) msg += " (not enough skill)";
+        else if (errorCode == 2) msg += " (already known)";
+        else if (errorCode != 0) msg += " (error " + std::to_string(errorCode) + ")";
+        addUIError(msg);
+        addSystemChatMessage(msg);
+        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* sfx = renderer->getUiSoundManager()) sfx->playError();
+        }
+    };
+
+    // Item cooldown
+    dispatchTable_[Opcode::SMSG_ITEM_COOLDOWN] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 16) return;
+        uint64_t itemGuid = packet.readUInt64();
+        uint32_t spellId  = packet.readUInt32();
+        uint32_t cdMs     = packet.readUInt32();
+        float cdSec = cdMs / 1000.0f;
+        if (cdSec > 0.0f) {
+            if (spellId != 0) {
+                auto it = spellCooldowns.find(spellId);
+                if (it == spellCooldowns.end())
+                    spellCooldowns[spellId] = cdSec;
+                else
+                    it->second = mergeCooldownSeconds(it->second, cdSec);
+            }
+            uint32_t itemId = 0;
+            auto iit = onlineItems_.find(itemGuid);
+            if (iit != onlineItems_.end()) itemId = iit->second.entry;
+            for (auto& slot : actionBar) {
+                bool match = (spellId != 0 && slot.type == ActionBarSlot::SPELL && slot.id == spellId)
+                          || (itemId  != 0 && slot.type == ActionBarSlot::ITEM  && slot.id == itemId);
+                if (match) {
+                    float prevRemaining = slot.cooldownRemaining;
+                    float merged = mergeCooldownSeconds(slot.cooldownRemaining, cdSec);
+                    slot.cooldownRemaining = merged;
+                    if (slot.cooldownTotal <= 0.0f || prevRemaining <= 0.0f)
+                        slot.cooldownTotal = cdSec;
+                    else
+                        slot.cooldownTotal = std::max(slot.cooldownTotal, merged);
+                }
+            }
+        }
+    };
+
+    // Minimap ping
+    dispatchTable_[Opcode::MSG_MINIMAP_PING] = [this](network::Packet& packet) {
+        const bool mmTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+        if (packet.getSize() - packet.getReadPos() < (mmTbcLike ? 8u : 1u)) return;
+        uint64_t senderGuid = mmTbcLike
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 8) return;
+        float pingX = packet.readFloat();
+        float pingY = packet.readFloat();
+        MinimapPing ping;
+        ping.senderGuid = senderGuid;
+        ping.wowX = pingY;
+        ping.wowY = pingX;
+        ping.age  = 0.0f;
+        minimapPings_.push_back(ping);
+        if (senderGuid != playerGuid) {
+            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* sfx = renderer->getUiSoundManager()) sfx->playMinimapPing();
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_ZONE_UNDER_ATTACK] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t areaId = packet.readUInt32();
+            std::string areaName = getAreaName(areaId);
+            std::string msg = areaName.empty()
+                ? std::string("A zone is under attack!")
+                : (areaName + " is under attack!");
+            addUIError(msg);
+            addSystemChatMessage(msg);
+        }
+    };
+
+    // Dispel / totem / spirit healer time / durability
+    dispatchTable_[Opcode::SMSG_DISPEL_FAILED] = [this](network::Packet& packet) {
+        const bool dispelUsesFullGuid = isActiveExpansion("tbc");
+        uint32_t dispelSpellId = 0;
+        uint64_t dispelCasterGuid = 0;
+        if (dispelUsesFullGuid) {
+            if (packet.getSize() - packet.getReadPos() < 20) return;
+            dispelCasterGuid = packet.readUInt64();
+            /*uint64_t victim =*/ packet.readUInt64();
+            dispelSpellId = packet.readUInt32();
+        } else {
+            if (packet.getSize() - packet.getReadPos() < 4) return;
+            dispelSpellId = packet.readUInt32();
+            if (!hasFullPackedGuid(packet)) { packet.setReadPos(packet.getSize()); return; }
+            dispelCasterGuid = UpdateObjectParser::readPackedGuid(packet);
+            if (!hasFullPackedGuid(packet)) { packet.setReadPos(packet.getSize()); return; }
+            /*uint64_t victim =*/ UpdateObjectParser::readPackedGuid(packet);
+        }
+        if (dispelCasterGuid == playerGuid) {
+            loadSpellNameCache();
+            auto it = spellNameCache_.find(dispelSpellId);
+            char buf[128];
+            if (it != spellNameCache_.end() && !it->second.name.empty())
+                std::snprintf(buf, sizeof(buf), "%s failed to dispel.", it->second.name.c_str());
+            else
+                std::snprintf(buf, sizeof(buf), "Dispel failed! (spell %u)", dispelSpellId);
+            addSystemChatMessage(buf);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_TOTEM_CREATED] = [this](network::Packet& packet) {
+        const bool totemTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+        if (packet.getSize() - packet.getReadPos() < (totemTbcLike ? 17u : 9u)) return;
+        uint8_t slot = packet.readUInt8();
+        if (totemTbcLike) packet.readUInt64(); else UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 8) return;
+        uint32_t duration = packet.readUInt32();
+        uint32_t spellId  = packet.readUInt32();
+        if (slot < NUM_TOTEM_SLOTS) {
+            activeTotemSlots_[slot].spellId    = spellId;
+            activeTotemSlots_[slot].durationMs = duration;
+            activeTotemSlots_[slot].placedAt   = std::chrono::steady_clock::now();
+        }
+    };
+    dispatchTable_[Opcode::SMSG_AREA_SPIRIT_HEALER_TIME] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 12) {
+            /*uint64_t guid =*/ packet.readUInt64();
+            uint32_t timeMs = packet.readUInt32();
+            uint32_t secs = timeMs / 1000;
+            char buf[128];
+            std::snprintf(buf, sizeof(buf), "You will be able to resurrect in %u seconds.", secs);
+            addSystemChatMessage(buf);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_DURABILITY_DAMAGE_DEATH] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t pct = packet.readUInt32();
+            char buf[80];
+            std::snprintf(buf, sizeof(buf),
+                "You have lost %u%% of your gear's durability due to death.", pct);
+            addUIError(buf);
+            addSystemChatMessage(buf);
+        }
+    };
+
+    // Factions
+    dispatchTable_[Opcode::SMSG_INITIALIZE_FACTIONS] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        uint32_t count = packet.readUInt32();
+        size_t needed = static_cast<size_t>(count) * 5;
+        if (packet.getSize() - packet.getReadPos() < needed) { packet.setReadPos(packet.getSize()); return; }
+        initialFactions_.clear();
+        initialFactions_.reserve(count);
+        for (uint32_t i = 0; i < count; ++i) {
+            FactionStandingInit fs{};
+            fs.flags = packet.readUInt8();
+            fs.standing = static_cast<int32_t>(packet.readUInt32());
+            initialFactions_.push_back(fs);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_SET_FACTION_STANDING] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        /*uint8_t showVisual =*/ packet.readUInt8();
+        uint32_t count = packet.readUInt32();
+        count = std::min(count, 128u);
+        loadFactionNameCache();
+        for (uint32_t i = 0; i < count && packet.getSize() - packet.getReadPos() >= 8; ++i) {
+            uint32_t factionId = packet.readUInt32();
+            int32_t  standing  = static_cast<int32_t>(packet.readUInt32());
+            int32_t  oldStanding = 0;
+            auto it = factionStandings_.find(factionId);
+            if (it != factionStandings_.end()) oldStanding = it->second;
+            factionStandings_[factionId] = standing;
+            int32_t delta = standing - oldStanding;
+            if (delta != 0) {
+                std::string name = getFactionName(factionId);
+                char buf[256];
+                std::snprintf(buf, sizeof(buf), "Reputation with %s %s by %d.",
+                              name.c_str(), delta > 0 ? "increased" : "decreased", std::abs(delta));
+                addSystemChatMessage(buf);
+                watchedFactionId_ = factionId;
+                if (repChangeCallback_) repChangeCallback_(name, delta, standing);
+                if (addonEventCallback_) {
+                    addonEventCallback_("UPDATE_FACTION", {});
+                    addonEventCallback_("CHAT_MSG_COMBAT_FACTION_CHANGE", {std::string(buf)});
+                }
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_SET_FACTION_ATWAR] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 5) { packet.setReadPos(packet.getSize()); return; }
+        uint32_t repListId = packet.readUInt32();
+        uint8_t  setAtWar  = packet.readUInt8();
+        if (repListId < initialFactions_.size()) {
+            if (setAtWar)
+                initialFactions_[repListId].flags |=  FACTION_FLAG_AT_WAR;
+            else
+                initialFactions_[repListId].flags &= ~FACTION_FLAG_AT_WAR;
+        }
+    };
+    dispatchTable_[Opcode::SMSG_SET_FACTION_VISIBLE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 5) { packet.setReadPos(packet.getSize()); return; }
+        uint32_t repListId = packet.readUInt32();
+        uint8_t  visible   = packet.readUInt8();
+        if (repListId < initialFactions_.size()) {
+            if (visible)
+                initialFactions_[repListId].flags |=  FACTION_FLAG_VISIBLE;
+            else
+                initialFactions_[repListId].flags &= ~FACTION_FLAG_VISIBLE;
+        }
+    };
+    dispatchTable_[Opcode::SMSG_FEATURE_SYSTEM_STATUS] = [this](network::Packet& packet) {
+        packet.setReadPos(packet.getSize());
+    };
+
+    // Spell modifiers (separate lambdas: *logicalOp was used to determine isFlat)
+    {
+        auto makeSpellModHandler = [this](bool isFlat) {
+            return [this, isFlat](network::Packet& packet) {
+                auto& modMap = isFlat ? spellFlatMods_ : spellPctMods_;
+                while (packet.getSize() - packet.getReadPos() >= 6) {
+                    uint8_t groupIndex = packet.readUInt8();
+                    uint8_t modOpRaw   = packet.readUInt8();
+                    int32_t value      = static_cast<int32_t>(packet.readUInt32());
+                    if (groupIndex > 5 || modOpRaw >= SPELL_MOD_OP_COUNT) continue;
+                    SpellModKey key{ static_cast<SpellModOp>(modOpRaw), groupIndex };
+                    modMap[key] = value;
+                }
+                packet.setReadPos(packet.getSize());
+            };
+        };
+        dispatchTable_[Opcode::SMSG_SET_FLAT_SPELL_MODIFIER] = makeSpellModHandler(true);
+        dispatchTable_[Opcode::SMSG_SET_PCT_SPELL_MODIFIER]  = makeSpellModHandler(false);
+    }
+
+    // Spell delayed
+    dispatchTable_[Opcode::SMSG_SPELL_DELAYED] = [this](network::Packet& packet) {
+        const bool spellDelayTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+        if (packet.getSize() - packet.getReadPos() < (spellDelayTbcLike ? 8u : 1u)) return;
+        uint64_t caster = spellDelayTbcLike
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        uint32_t delayMs = packet.readUInt32();
+        if (delayMs == 0) return;
+        float delaySec = delayMs / 1000.0f;
+        if (caster == playerGuid) {
+            if (casting) {
+                castTimeRemaining += delaySec;
+                castTimeTotal     += delaySec;
+            }
+        } else {
+            auto it = unitCastStates_.find(caster);
+            if (it != unitCastStates_.end() && it->second.casting) {
+                it->second.timeRemaining += delaySec;
+                it->second.timeTotal     += delaySec;
+            }
+        }
+    };
+
+    // Proficiency
+    dispatchTable_[Opcode::SMSG_SET_PROFICIENCY] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        uint8_t  itemClass = packet.readUInt8();
+        uint32_t mask      = packet.readUInt32();
+        if (itemClass == 2) weaponProficiency_ = mask;
+        else if (itemClass == 4) armorProficiency_ = mask;
+    };
+
+    // Loot money / misc consume
+    dispatchTable_[Opcode::SMSG_LOOT_MONEY_NOTIFY] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        uint32_t amount = packet.readUInt32();
+        if (packet.getSize() - packet.getReadPos() >= 1)
+            /*uint8_t soleLooter =*/ packet.readUInt8();
+        playerMoneyCopper_ += amount;
+        pendingMoneyDelta_ = amount;
+        pendingMoneyDeltaTimer_ = 2.0f;
+        uint64_t notifyGuid = pendingLootMoneyGuid_ != 0 ? pendingLootMoneyGuid_ : currentLoot.lootGuid;
+        pendingLootMoneyGuid_ = 0;
+        pendingLootMoneyAmount_ = 0;
+        pendingLootMoneyNotifyTimer_ = 0.0f;
+        bool alreadyAnnounced = false;
+        auto it = localLootState_.find(notifyGuid);
+        if (it != localLootState_.end()) {
+            alreadyAnnounced = it->second.moneyTaken;
+            it->second.moneyTaken = true;
+        }
+        if (!alreadyAnnounced) {
+            addSystemChatMessage("Looted: " + formatCopperAmount(amount));
+            auto* renderer = core::Application::getInstance().getRenderer();
+            if (renderer) {
+                if (auto* sfx = renderer->getUiSoundManager()) {
+                    if (amount >= 10000) sfx->playLootCoinLarge();
+                    else sfx->playLootCoinSmall();
+                }
+            }
+            if (notifyGuid != 0)
+                recentLootMoneyAnnounceCooldowns_[notifyGuid] = 1.5f;
+        }
+        if (addonEventCallback_) addonEventCallback_("PLAYER_MONEY", {});
+    };
+    for (auto op : { Opcode::SMSG_LOOT_CLEAR_MONEY, Opcode::SMSG_NPC_TEXT_UPDATE }) {
+        dispatchTable_[op] = [](network::Packet& /*packet*/) {};
+    }
+
+    // Play sound
+    dispatchTable_[Opcode::SMSG_PLAY_SOUND] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t soundId = packet.readUInt32();
+            if (playSoundCallback_) playSoundCallback_(soundId);
+        }
+    };
+
+    // Server messages
+    dispatchTable_[Opcode::SMSG_SERVER_MESSAGE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t msgType = packet.readUInt32();
+            std::string msg = packet.readString();
+            if (!msg.empty()) {
+                std::string prefix;
+                switch (msgType) {
+                    case 1: prefix = "[Shutdown] ";   addUIError("Server shutdown: " + msg);  break;
+                    case 2: prefix = "[Restart] ";    addUIError("Server restart: " + msg);   break;
+                    case 4: prefix = "[Shutdown cancelled] "; break;
+                    case 5: prefix = "[Restart cancelled] ";  break;
+                    default: prefix = "[Server] "; break;
+                }
+                addSystemChatMessage(prefix + msg);
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_CHAT_SERVER_MESSAGE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            /*uint32_t msgType =*/ packet.readUInt32();
+            std::string msg = packet.readString();
+            if (!msg.empty()) addSystemChatMessage("[Announcement] " + msg);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_AREA_TRIGGER_MESSAGE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            /*uint32_t len =*/ packet.readUInt32();
+            std::string msg = packet.readString();
+            if (!msg.empty()) {
+                addUIError(msg);
+                addSystemChatMessage(msg);
+                areaTriggerMsgs_.push_back(msg);
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_TRIGGER_CINEMATIC] = [this](network::Packet& packet) {
+        packet.setReadPos(packet.getSize());
+        network::Packet ack(wireOpcode(Opcode::CMSG_NEXT_CINEMATIC_CAMERA));
+        socket->send(ack);
+    };
+
+    // ---- Batch 5: Teleport, taxi, BG, LFG, arena, movement relay, mail, bank, auction, quests ----
+
+    // Teleport
+    for (auto op : { Opcode::MSG_MOVE_TELEPORT, Opcode::MSG_MOVE_TELEPORT_ACK }) {
+        dispatchTable_[op] = [this](network::Packet& packet) { handleTeleportAck(packet); };
+    }
+    dispatchTable_[Opcode::SMSG_TRANSFER_PENDING] = [this](network::Packet& packet) {
+        uint32_t pendingMapId = packet.readUInt32();
+        if (packet.getReadPos() + 8 <= packet.getSize()) {
+            packet.readUInt32(); // transportEntry
+            packet.readUInt32(); // transportMapId
+        }
+        (void)pendingMapId;
+    };
+    dispatchTable_[Opcode::SMSG_NEW_WORLD] = [this](network::Packet& packet) { handleNewWorld(packet); };
+    dispatchTable_[Opcode::SMSG_TRANSFER_ABORTED] = [this](network::Packet& packet) {
+        uint32_t mapId = packet.readUInt32();
+        uint8_t reason = (packet.getReadPos() < packet.getSize()) ? packet.readUInt8() : 0;
+        (void)mapId;
+        const char* abortMsg = nullptr;
+        switch (reason) {
+            case 0x01: abortMsg = "Transfer aborted: difficulty unavailable."; break;
+            case 0x02: abortMsg = "Transfer aborted: expansion required."; break;
+            case 0x03: abortMsg = "Transfer aborted: instance not found."; break;
+            case 0x04: abortMsg = "Transfer aborted: too many instances. Please wait before entering a new instance."; break;
+            case 0x06: abortMsg = "Transfer aborted: instance is full."; break;
+            case 0x07: abortMsg = "Transfer aborted: zone is in combat."; break;
+            case 0x08: abortMsg = "Transfer aborted: you are already in this instance."; break;
+            case 0x09: abortMsg = "Transfer aborted: not enough players."; break;
+            default:   abortMsg = "Transfer aborted."; break;
+        }
+        addUIError(abortMsg);
+        addSystemChatMessage(abortMsg);
+    };
+
+    // Taxi
+    dispatchTable_[Opcode::SMSG_SHOWTAXINODES] = [this](network::Packet& packet) { handleShowTaxiNodes(packet); };
+    dispatchTable_[Opcode::SMSG_ACTIVATETAXIREPLY] = [this](network::Packet& packet) { handleActivateTaxiReply(packet); };
+    dispatchTable_[Opcode::SMSG_STANDSTATE_UPDATE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 1) {
+            standState_ = packet.readUInt8();
+            if (standStateCallback_) standStateCallback_(standState_);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_NEW_TAXI_PATH] = [this](network::Packet& /*packet*/) {
+        addSystemChatMessage("New flight path discovered!");
+    };
+
+    // Battlefield / BG
+    dispatchTable_[Opcode::SMSG_BATTLEFIELD_STATUS] = [this](network::Packet& packet) { handleBattlefieldStatus(packet); };
+    dispatchTable_[Opcode::SMSG_BATTLEFIELD_LIST] = [this](network::Packet& packet) { handleBattlefieldList(packet); };
+    dispatchTable_[Opcode::SMSG_BATTLEFIELD_PORT_DENIED] = [this](network::Packet& /*packet*/) {
+        addUIError("Battlefield port denied.");
+        addSystemChatMessage("Battlefield port denied.");
+    };
+    dispatchTable_[Opcode::MSG_BATTLEGROUND_PLAYER_POSITIONS] = [this](network::Packet& packet) {
+        bgPlayerPositions_.clear();
+        for (int grp = 0; grp < 2; ++grp) {
+            if (packet.getSize() - packet.getReadPos() < 4) break;
+            uint32_t count = packet.readUInt32();
+            for (uint32_t i = 0; i < count && packet.getSize() - packet.getReadPos() >= 16; ++i) {
+                BgPlayerPosition pos;
+                pos.guid = packet.readUInt64();
+                pos.wowX = packet.readFloat();
+                pos.wowY = packet.readFloat();
+                pos.group = grp;
+                bgPlayerPositions_.push_back(pos);
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_REMOVED_FROM_PVP_QUEUE] = [this](network::Packet& /*packet*/) {
+        addSystemChatMessage("You have been removed from the PvP queue.");
+    };
+    dispatchTable_[Opcode::SMSG_GROUP_JOINED_BATTLEGROUND] = [this](network::Packet& /*packet*/) {
+        addSystemChatMessage("Your group has joined the battleground.");
+    };
+    dispatchTable_[Opcode::SMSG_JOINED_BATTLEGROUND_QUEUE] = [this](network::Packet& /*packet*/) {
+        addSystemChatMessage("You have joined the battleground queue.");
+    };
+    dispatchTable_[Opcode::SMSG_BATTLEGROUND_PLAYER_JOINED] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint64_t guid = packet.readUInt64();
+            auto it = playerNameCache.find(guid);
+            if (it != playerNameCache.end() && !it->second.empty())
+                addSystemChatMessage(it->second + " has entered the battleground.");
+        }
+    };
+    dispatchTable_[Opcode::SMSG_BATTLEGROUND_PLAYER_LEFT] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint64_t guid = packet.readUInt64();
+            auto it = playerNameCache.find(guid);
+            if (it != playerNameCache.end() && !it->second.empty())
+                addSystemChatMessage(it->second + " has left the battleground.");
+        }
+    };
+
+    // Instance
+    for (auto op : { Opcode::SMSG_INSTANCE_DIFFICULTY, Opcode::MSG_SET_DUNGEON_DIFFICULTY }) {
+        dispatchTable_[op] = [this](network::Packet& packet) { handleInstanceDifficulty(packet); };
+    }
+    dispatchTable_[Opcode::SMSG_INSTANCE_SAVE_CREATED] = [this](network::Packet& /*packet*/) {
+        addSystemChatMessage("You are now saved to this instance.");
+    };
+    dispatchTable_[Opcode::SMSG_RAID_INSTANCE_MESSAGE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 12) return;
+        uint32_t msgType = packet.readUInt32();
+        uint32_t mapId   = packet.readUInt32();
+        packet.readUInt32(); // diff
+        std::string mapLabel = getMapName(mapId);
+        if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
+        if (msgType == 1 && packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t timeLeft = packet.readUInt32();
+            addSystemChatMessage(mapLabel + " will reset in " + std::to_string(timeLeft / 60) + " minute(s).");
+        } else if (msgType == 2) {
+            addSystemChatMessage("You have been saved to " + mapLabel + ".");
+        } else if (msgType == 3) {
+            addSystemChatMessage("Welcome to " + mapLabel + ".");
+        }
+    };
+    dispatchTable_[Opcode::SMSG_INSTANCE_RESET] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        uint32_t mapId = packet.readUInt32();
+        auto it = std::remove_if(instanceLockouts_.begin(), instanceLockouts_.end(),
+            [mapId](const InstanceLockout& lo){ return lo.mapId == mapId; });
+        instanceLockouts_.erase(it, instanceLockouts_.end());
+        std::string mapLabel = getMapName(mapId);
+        if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
+        addSystemChatMessage(mapLabel + " has been reset.");
+    };
+    dispatchTable_[Opcode::SMSG_INSTANCE_RESET_FAILED] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 8) return;
+        uint32_t mapId  = packet.readUInt32();
+        uint32_t reason = packet.readUInt32();
+        static const char* resetFailReasons[] = {
+            "Not max level.", "Offline party members.", "Party members inside.",
+            "Party members changing zone.", "Heroic difficulty only."
+        };
+        const char* reasonMsg = (reason < 5) ? resetFailReasons[reason] : "Unknown reason.";
+        std::string mapLabel = getMapName(mapId);
+        if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
+        addUIError("Cannot reset " + mapLabel + ": " + reasonMsg);
+        addSystemChatMessage("Cannot reset " + mapLabel + ": " + reasonMsg);
+    };
+    dispatchTable_[Opcode::SMSG_INSTANCE_LOCK_WARNING_QUERY] = [this](network::Packet& packet) {
+        if (!socket || packet.getSize() - packet.getReadPos() < 17) return;
+        uint32_t ilMapId    = packet.readUInt32();
+        uint32_t ilDiff     = packet.readUInt32();
+        uint32_t ilTimeLeft = packet.readUInt32();
+        packet.readUInt32(); // unk
+        uint8_t  ilLocked   = packet.readUInt8();
+        std::string ilName = getMapName(ilMapId);
+        if (ilName.empty()) ilName = "instance #" + std::to_string(ilMapId);
+        static const char* kDiff[] = {"Normal","Heroic","25-Man","25-Man Heroic"};
+        std::string ilMsg = "Entering " + ilName;
+        if (ilDiff < 4) ilMsg += std::string(" (") + kDiff[ilDiff] + ")";
+        if (ilLocked && ilTimeLeft > 0)
+            ilMsg += " — " + std::to_string(ilTimeLeft / 60) + " min remaining.";
+        else
+            ilMsg += ".";
+        addSystemChatMessage(ilMsg);
+        network::Packet resp(wireOpcode(Opcode::CMSG_INSTANCE_LOCK_RESPONSE));
+        resp.writeUInt8(1);
+        socket->send(resp);
+    };
+
+    // LFG
+    dispatchTable_[Opcode::SMSG_LFG_JOIN_RESULT] = [this](network::Packet& packet) { handleLfgJoinResult(packet); };
+    dispatchTable_[Opcode::SMSG_LFG_QUEUE_STATUS] = [this](network::Packet& packet) { handleLfgQueueStatus(packet); };
+    dispatchTable_[Opcode::SMSG_LFG_PROPOSAL_UPDATE] = [this](network::Packet& packet) { handleLfgProposalUpdate(packet); };
+    dispatchTable_[Opcode::SMSG_LFG_ROLE_CHECK_UPDATE] = [this](network::Packet& packet) { handleLfgRoleCheckUpdate(packet); };
+    for (auto op : { Opcode::SMSG_LFG_UPDATE_PLAYER, Opcode::SMSG_LFG_UPDATE_PARTY }) {
+        dispatchTable_[op] = [this](network::Packet& packet) { handleLfgUpdatePlayer(packet); };
+    }
+    dispatchTable_[Opcode::SMSG_LFG_PLAYER_REWARD] = [this](network::Packet& packet) { handleLfgPlayerReward(packet); };
+    dispatchTable_[Opcode::SMSG_LFG_BOOT_PROPOSAL_UPDATE] = [this](network::Packet& packet) { handleLfgBootProposalUpdate(packet); };
+    dispatchTable_[Opcode::SMSG_LFG_TELEPORT_DENIED] = [this](network::Packet& packet) { handleLfgTeleportDenied(packet); };
+    dispatchTable_[Opcode::SMSG_LFG_DISABLED] = [this](network::Packet& /*packet*/) {
+        addSystemChatMessage("The Dungeon Finder is currently disabled.");
+    };
+    dispatchTable_[Opcode::SMSG_LFG_OFFER_CONTINUE] = [this](network::Packet& /*packet*/) {
+        addSystemChatMessage("Dungeon Finder: You may continue your dungeon.");
+    };
+    dispatchTable_[Opcode::SMSG_LFG_ROLE_CHOSEN] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 13) { packet.setReadPos(packet.getSize()); return; }
+        uint64_t roleGuid = packet.readUInt64();
+        uint8_t  ready    = packet.readUInt8();
+        uint32_t roles    = packet.readUInt32();
+        std::string roleName;
+        if (roles & 0x02) roleName += "Tank ";
+        if (roles & 0x04) roleName += "Healer ";
+        if (roles & 0x08) roleName += "DPS ";
+        if (roleName.empty()) roleName = "None";
+        std::string pName = "A player";
+        if (auto e = entityManager.getEntity(roleGuid))
+            if (auto u = std::dynamic_pointer_cast<Unit>(e))
+                pName = u->getName();
+        if (ready) addSystemChatMessage(pName + " has chosen: " + roleName);
+        packet.setReadPos(packet.getSize());
+    };
+    for (auto op : { Opcode::SMSG_LFG_UPDATE_SEARCH, Opcode::SMSG_UPDATE_LFG_LIST,
+                     Opcode::SMSG_LFG_PLAYER_INFO, Opcode::SMSG_LFG_PARTY_INFO }) {
+        dispatchTable_[op] = [](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+    }
+    dispatchTable_[Opcode::SMSG_OPEN_LFG_DUNGEON_FINDER] = [this](network::Packet& packet) {
+        packet.setReadPos(packet.getSize());
+        if (openLfgCallback_) openLfgCallback_();
+    };
+
+    // Arena
+    dispatchTable_[Opcode::SMSG_ARENA_TEAM_COMMAND_RESULT] = [this](network::Packet& packet) { handleArenaTeamCommandResult(packet); };
+    dispatchTable_[Opcode::SMSG_ARENA_TEAM_QUERY_RESPONSE] = [this](network::Packet& packet) { handleArenaTeamQueryResponse(packet); };
+    dispatchTable_[Opcode::SMSG_ARENA_TEAM_ROSTER] = [this](network::Packet& packet) { handleArenaTeamRoster(packet); };
+    dispatchTable_[Opcode::SMSG_ARENA_TEAM_INVITE] = [this](network::Packet& packet) { handleArenaTeamInvite(packet); };
+    dispatchTable_[Opcode::SMSG_ARENA_TEAM_EVENT] = [this](network::Packet& packet) { handleArenaTeamEvent(packet); };
+    dispatchTable_[Opcode::SMSG_ARENA_TEAM_STATS] = [this](network::Packet& packet) { handleArenaTeamStats(packet); };
+    dispatchTable_[Opcode::SMSG_ARENA_ERROR] = [this](network::Packet& packet) { handleArenaError(packet); };
+    dispatchTable_[Opcode::MSG_PVP_LOG_DATA] = [this](network::Packet& packet) { handlePvpLogData(packet); };
+    dispatchTable_[Opcode::MSG_TALENT_WIPE_CONFIRM] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 12) { packet.setReadPos(packet.getSize()); return; }
+        talentWipeNpcGuid_ = packet.readUInt64();
+        talentWipeCost_    = packet.readUInt32();
+        talentWipePending_ = true;
+        if (addonEventCallback_)
+            addonEventCallback_("CONFIRM_TALENT_WIPE", {std::to_string(talentWipeCost_)});
+    };
+
+    // MSG_MOVE_* relay (26 opcodes → handleOtherPlayerMovement)
+    for (auto op : { Opcode::MSG_MOVE_START_FORWARD, Opcode::MSG_MOVE_START_BACKWARD,
+                     Opcode::MSG_MOVE_STOP, Opcode::MSG_MOVE_START_STRAFE_LEFT,
+                     Opcode::MSG_MOVE_START_STRAFE_RIGHT, Opcode::MSG_MOVE_STOP_STRAFE,
+                     Opcode::MSG_MOVE_JUMP, Opcode::MSG_MOVE_START_TURN_LEFT,
+                     Opcode::MSG_MOVE_START_TURN_RIGHT, Opcode::MSG_MOVE_STOP_TURN,
+                     Opcode::MSG_MOVE_SET_FACING, Opcode::MSG_MOVE_FALL_LAND,
+                     Opcode::MSG_MOVE_HEARTBEAT, Opcode::MSG_MOVE_START_SWIM,
+                     Opcode::MSG_MOVE_STOP_SWIM, Opcode::MSG_MOVE_SET_WALK_MODE,
+                     Opcode::MSG_MOVE_SET_RUN_MODE, Opcode::MSG_MOVE_START_PITCH_UP,
+                     Opcode::MSG_MOVE_START_PITCH_DOWN, Opcode::MSG_MOVE_STOP_PITCH,
+                     Opcode::MSG_MOVE_START_ASCEND, Opcode::MSG_MOVE_STOP_ASCEND,
+                     Opcode::MSG_MOVE_START_DESCEND, Opcode::MSG_MOVE_SET_PITCH,
+                     Opcode::MSG_MOVE_GRAVITY_CHNG, Opcode::MSG_MOVE_UPDATE_CAN_FLY,
+                     Opcode::MSG_MOVE_UPDATE_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY,
+                     Opcode::MSG_MOVE_ROOT, Opcode::MSG_MOVE_UNROOT }) {
+        dispatchTable_[op] = [this](network::Packet& packet) {
+            if (state == WorldState::IN_WORLD) handleOtherPlayerMovement(packet);
+        };
+    }
+
+    // MSG_MOVE_SET_*_SPEED relay (7 opcodes → handleMoveSetSpeed)
+    for (auto op : { Opcode::MSG_MOVE_SET_RUN_SPEED, Opcode::MSG_MOVE_SET_RUN_BACK_SPEED,
+                     Opcode::MSG_MOVE_SET_WALK_SPEED, Opcode::MSG_MOVE_SET_SWIM_SPEED,
+                     Opcode::MSG_MOVE_SET_SWIM_BACK_SPEED, Opcode::MSG_MOVE_SET_FLIGHT_SPEED,
+                     Opcode::MSG_MOVE_SET_FLIGHT_BACK_SPEED }) {
+        dispatchTable_[op] = [this](network::Packet& packet) {
+            if (state == WorldState::IN_WORLD) handleMoveSetSpeed(packet);
+        };
+    }
+
+    // Mail
+    dispatchTable_[Opcode::SMSG_SHOW_MAILBOX] = [this](network::Packet& packet) { handleShowMailbox(packet); };
+    dispatchTable_[Opcode::SMSG_MAIL_LIST_RESULT] = [this](network::Packet& packet) { handleMailListResult(packet); };
+    dispatchTable_[Opcode::SMSG_SEND_MAIL_RESULT] = [this](network::Packet& packet) { handleSendMailResult(packet); };
+    dispatchTable_[Opcode::SMSG_RECEIVED_MAIL] = [this](network::Packet& packet) { handleReceivedMail(packet); };
+    dispatchTable_[Opcode::MSG_QUERY_NEXT_MAIL_TIME] = [this](network::Packet& packet) { handleQueryNextMailTime(packet); };
+
+    // Inspect / channel list
+    dispatchTable_[Opcode::SMSG_INSPECT_RESULTS_UPDATE] = [this](network::Packet& packet) { handleInspectResults(packet); };
+    dispatchTable_[Opcode::SMSG_CHANNEL_LIST] = [this](network::Packet& packet) {
+        std::string chanName = packet.readString();
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        /*uint8_t chanFlags =*/ packet.readUInt8();
+        uint32_t memberCount = packet.readUInt32();
+        memberCount = std::min(memberCount, 200u);
+        addSystemChatMessage(chanName + " has " + std::to_string(memberCount) + " member(s):");
+        for (uint32_t i = 0; i < memberCount; ++i) {
+            if (packet.getSize() - packet.getReadPos() < 9) break;
+            uint64_t memberGuid = packet.readUInt64();
+            uint8_t memberFlags = packet.readUInt8();
+            std::string name;
+            auto entity = entityManager.getEntity(memberGuid);
+            if (entity) {
+                auto player = std::dynamic_pointer_cast<Player>(entity);
+                if (player && !player->getName().empty()) name = player->getName();
+            }
+            if (name.empty()) {
+                auto nit = playerNameCache.find(memberGuid);
+                if (nit != playerNameCache.end()) name = nit->second;
+            }
+            if (name.empty()) name = "(unknown)";
+            std::string entry = "  " + name;
+            if (memberFlags & 0x01) entry += " [Moderator]";
+            if (memberFlags & 0x02) entry += " [Muted]";
+            addSystemChatMessage(entry);
+        }
+    };
+
+    // Bank
+    dispatchTable_[Opcode::SMSG_SHOW_BANK] = [this](network::Packet& packet) { handleShowBank(packet); };
+    dispatchTable_[Opcode::SMSG_BUY_BANK_SLOT_RESULT] = [this](network::Packet& packet) { handleBuyBankSlotResult(packet); };
+
+    // Guild bank
+    dispatchTable_[Opcode::SMSG_GUILD_BANK_LIST] = [this](network::Packet& packet) { handleGuildBankList(packet); };
+
+    // Auction house
+    dispatchTable_[Opcode::MSG_AUCTION_HELLO] = [this](network::Packet& packet) { handleAuctionHello(packet); };
+    dispatchTable_[Opcode::SMSG_AUCTION_LIST_RESULT] = [this](network::Packet& packet) { handleAuctionListResult(packet); };
+    dispatchTable_[Opcode::SMSG_AUCTION_OWNER_LIST_RESULT] = [this](network::Packet& packet) { handleAuctionOwnerListResult(packet); };
+    dispatchTable_[Opcode::SMSG_AUCTION_BIDDER_LIST_RESULT] = [this](network::Packet& packet) { handleAuctionBidderListResult(packet); };
+    dispatchTable_[Opcode::SMSG_AUCTION_COMMAND_RESULT] = [this](network::Packet& packet) { handleAuctionCommandResult(packet); };
+
+    // Questgiver status
+    dispatchTable_[Opcode::SMSG_QUESTGIVER_STATUS] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 9) {
+            uint64_t npcGuid = packet.readUInt64();
+            uint8_t status = packetParsers_->readQuestGiverStatus(packet);
+            npcQuestStatus_[npcGuid] = static_cast<QuestGiverStatus>(status);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_QUESTGIVER_STATUS_MULTIPLE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        uint32_t count = packet.readUInt32();
+        for (uint32_t i = 0; i < count; ++i) {
+            if (packet.getSize() - packet.getReadPos() < 9) break;
+            uint64_t npcGuid = packet.readUInt64();
+            uint8_t status = packetParsers_->readQuestGiverStatus(packet);
+            npcQuestStatus_[npcGuid] = static_cast<QuestGiverStatus>(status);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_QUESTGIVER_QUEST_DETAILS] = [this](network::Packet& packet) { handleQuestDetails(packet); };
+    dispatchTable_[Opcode::SMSG_QUESTLOG_FULL] = [this](network::Packet& /*packet*/) {
+        addUIError("Your quest log is full.");
+        addSystemChatMessage("Your quest log is full.");
+    };
+    dispatchTable_[Opcode::SMSG_QUESTGIVER_REQUEST_ITEMS] = [this](network::Packet& packet) { handleQuestRequestItems(packet); };
+    dispatchTable_[Opcode::SMSG_QUESTGIVER_OFFER_REWARD] = [this](network::Packet& packet) { handleQuestOfferReward(packet); };
+
+    // Group set leader
+    dispatchTable_[Opcode::SMSG_GROUP_SET_LEADER] = [this](network::Packet& packet) {
+        if (packet.getSize() <= packet.getReadPos()) return;
+        std::string leaderName = packet.readString();
+        for (const auto& m : partyData.members) {
+            if (m.name == leaderName) { partyData.leaderGuid = m.guid; break; }
+        }
+        if (!leaderName.empty())
+            addSystemChatMessage(leaderName + " is now the group leader.");
+        if (addonEventCallback_) {
+            addonEventCallback_("PARTY_LEADER_CHANGED", {});
+            addonEventCallback_("GROUP_ROSTER_UPDATE", {});
+        }
+    };
+
+    // Gameobject / page text
+    dispatchTable_[Opcode::SMSG_GAMEOBJECT_QUERY_RESPONSE] = [this](network::Packet& packet) { handleGameObjectQueryResponse(packet); };
+    dispatchTable_[Opcode::SMSG_GAMEOBJECT_PAGETEXT] = [this](network::Packet& packet) { handleGameObjectPageText(packet); };
+    dispatchTable_[Opcode::SMSG_PAGE_TEXT_QUERY_RESPONSE] = [this](network::Packet& packet) { handlePageTextQueryResponse(packet); };
+    dispatchTable_[Opcode::SMSG_GAMEOBJECT_CUSTOM_ANIM] = [this](network::Packet& packet) {
+        if (packet.getSize() < 12) return;
+        uint64_t guid = packet.readUInt64();
+        uint32_t animId = packet.readUInt32();
+        if (gameObjectCustomAnimCallback_)
+            gameObjectCustomAnimCallback_(guid, animId);
+        if (animId == 0) {
+            auto goEnt = entityManager.getEntity(guid);
+            if (goEnt && goEnt->getType() == ObjectType::GAMEOBJECT) {
+                auto go = std::static_pointer_cast<GameObject>(goEnt);
+                auto* info = getCachedGameObjectInfo(go->getEntry());
+                if (info && info->type == 17) {
+                    addUIError("A fish is on your line!");
+                    addSystemChatMessage("A fish is on your line!");
+                    if (auto* renderer = core::Application::getInstance().getRenderer())
+                        if (auto* sfx = renderer->getUiSoundManager())
+                            sfx->playQuestUpdate();
+                }
+            }
+        }
+    };
+
+    // Resurrect failed / item refund / socket gems / item time
+    dispatchTable_[Opcode::SMSG_RESURRECT_FAILED] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t reason = packet.readUInt32();
+            const char* msg = (reason == 1) ? "The target cannot be resurrected right now."
+                            : (reason == 2) ? "Cannot resurrect in this area."
+                            : "Resurrection failed.";
+            addUIError(msg);
+            addSystemChatMessage(msg);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_ITEM_REFUND_RESULT] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 12) {
+            packet.readUInt64(); // itemGuid
+            uint32_t result = packet.readUInt32();
+            addSystemChatMessage(result == 0 ? "Item returned. Refund processed."
+                                             : "Could not return item for refund.");
+        }
+    };
+    dispatchTable_[Opcode::SMSG_SOCKET_GEMS_RESULT] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t result = packet.readUInt32();
+            if (result == 0) addSystemChatMessage("Gems socketed successfully.");
+            else addSystemChatMessage("Failed to socket gems.");
+        }
+    };
+    dispatchTable_[Opcode::SMSG_ITEM_TIME_UPDATE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 12) {
+            packet.readUInt64(); // itemGuid
+            packet.readUInt32(); // durationMs
+        }
+    };
+
+    // ---- Batch 6: Spell miss / env damage / control / spell failure ----
+
+    // ---- SMSG_SPELLLOGMISS ----
+    dispatchTable_[Opcode::SMSG_SPELLLOGMISS] = [this](network::Packet& packet) {
+        // All expansions: uint32 spellId first.
+        // WotLK/Classic: spellId(4) + packed_guid caster + uint8 unk + uint32 count
+        //                 + count × (packed_guid victim + uint8 missInfo)
+        // TBC:            spellId(4) + uint64 caster + uint8 unk + uint32 count
+        //                 + count × (uint64 victim + uint8 missInfo)
+        // All expansions append uint32 reflectSpellId + uint8 reflectResult when
+        // missInfo==11 (REFLECT).
+        const bool spellMissUsesFullGuid = isActiveExpansion("tbc");
+        auto readSpellMissGuid = [&]() -> uint64_t {
+            if (spellMissUsesFullGuid)
+                return (packet.getSize() - packet.getReadPos() >= 8) ? packet.readUInt64() : 0;
+            return UpdateObjectParser::readPackedGuid(packet);
+        };
+        // spellId prefix present in all expansions
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        uint32_t spellId = packet.readUInt32();
+        if (packet.getSize() - packet.getReadPos() < (spellMissUsesFullGuid ? 8u : 1u)
+            || (!spellMissUsesFullGuid && !hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t casterGuid = readSpellMissGuid();
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        /*uint8_t unk =*/ packet.readUInt8();
+        const uint32_t rawCount = packet.readUInt32();
+        if (rawCount > 128) {
+            LOG_WARNING("SMSG_SPELLLOGMISS: miss count capped (requested=", rawCount, ")");
+        }
+        const uint32_t storedLimit = std::min<uint32_t>(rawCount, 128u);
+
+        struct SpellMissLogEntry {
+            uint64_t victimGuid = 0;
+            uint8_t missInfo = 0;
+            uint32_t reflectSpellId = 0;  // Only valid when missInfo==11 (REFLECT)
+        };
+        std::vector<SpellMissLogEntry> parsedMisses;
+        parsedMisses.reserve(storedLimit);
+
+        bool truncated = false;
+        for (uint32_t i = 0; i < rawCount; ++i) {
+            if (packet.getSize() - packet.getReadPos() < (spellMissUsesFullGuid ? 9u : 2u)
+                || (!spellMissUsesFullGuid && !hasFullPackedGuid(packet))) {
+                truncated = true;
+                return;
+            }
+            const uint64_t victimGuid = readSpellMissGuid();
+            if (packet.getSize() - packet.getReadPos() < 1) {
+                truncated = true;
+                return;
+            }
+            const uint8_t missInfo = packet.readUInt8();
+            // REFLECT (11): extra uint32 reflectSpellId + uint8 reflectResult
+            uint32_t reflectSpellId = 0;
+            if (missInfo == 11) {
+                if (packet.getSize() - packet.getReadPos() >= 5) {
+                    reflectSpellId = packet.readUInt32();
+                    /*uint8_t reflectResult =*/ packet.readUInt8();
+                } else {
+                    truncated = true;
+                    return;
+                }
+            }
+            if (i < storedLimit) {
+                parsedMisses.push_back({victimGuid, missInfo, reflectSpellId});
+            }
+        }
+
+        if (truncated) {
+            packet.setReadPos(packet.getSize());
+            return;
+        }
+
+        for (const auto& miss : parsedMisses) {
+            const uint64_t victimGuid = miss.victimGuid;
+            const uint8_t missInfo = miss.missInfo;
+            CombatTextEntry::Type ct = combatTextTypeFromSpellMissInfo(missInfo);
+            // For REFLECT, use the reflected spell ID so combat text shows the spell name
+            uint32_t combatSpellId = (ct == CombatTextEntry::REFLECT && miss.reflectSpellId != 0)
+                                     ? miss.reflectSpellId : spellId;
+            if (casterGuid == playerGuid) {
+                // We cast a spell and it missed the target
+                addCombatText(ct, 0, combatSpellId, true, 0, casterGuid, victimGuid);
+            } else if (victimGuid == playerGuid) {
+                // Enemy spell missed us (we dodged/parried/blocked/resisted/etc.)
+                addCombatText(ct, 0, combatSpellId, false, 0, casterGuid, victimGuid);
+            }
+        }
+    };
+
+    // ---- Environmental damage log ----
+    dispatchTable_[Opcode::SMSG_ENVIRONMENTALDAMAGELOG] = [this](network::Packet& packet) {
+        // uint64 victimGuid + uint8 envDamageType + uint32 damage + uint32 absorb + uint32 resist
+        if (packet.getSize() - packet.getReadPos() < 21) return;
+        uint64_t victimGuid = packet.readUInt64();
+        /*uint8_t  envType =*/ packet.readUInt8();
+        uint32_t damage   = packet.readUInt32();
+        uint32_t absorb   = packet.readUInt32();
+        uint32_t resist   = packet.readUInt32();
+        if (victimGuid == playerGuid) {
+            // Environmental damage: no caster GUID, victim = player
+            if (damage > 0)
+                addCombatText(CombatTextEntry::ENVIRONMENTAL, static_cast<int32_t>(damage), 0, false, 0, 0, victimGuid);
+            if (absorb > 0)
+                addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(absorb), 0, false, 0, 0, victimGuid);
+            if (resist > 0)
+                addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(resist), 0, false, 0, 0, victimGuid);
+        }
+    };
+
+    // ---- Client control update ----
+    dispatchTable_[Opcode::SMSG_CLIENT_CONTROL_UPDATE] = [this](network::Packet& packet) {
+        // Minimal parse: PackedGuid + uint8 allowMovement.
+        if (packet.getSize() - packet.getReadPos() < 2) {
+            LOG_WARNING("SMSG_CLIENT_CONTROL_UPDATE too short: ", packet.getSize(), " bytes");
+            return;
+        }
+        uint8_t guidMask = packet.readUInt8();
+        size_t guidBytes = 0;
+        uint64_t controlGuid = 0;
+        for (int i = 0; i < 8; ++i) {
+            if (guidMask & (1u << i)) ++guidBytes;
+        }
+        if (packet.getSize() - packet.getReadPos() < guidBytes + 1) {
+            LOG_WARNING("SMSG_CLIENT_CONTROL_UPDATE malformed (truncated packed guid)");
+            packet.setReadPos(packet.getSize());
+            return;
+        }
+        for (int i = 0; i < 8; ++i) {
+            if (guidMask & (1u << i)) {
+                uint8_t b = packet.readUInt8();
+                controlGuid |= (static_cast<uint64_t>(b) << (i * 8));
+            }
+        }
+        bool allowMovement = (packet.readUInt8() != 0);
+        if (controlGuid == 0 || controlGuid == playerGuid) {
+            bool changed = (serverMovementAllowed_ != allowMovement);
+            serverMovementAllowed_ = allowMovement;
+            if (changed && !allowMovement) {
+                // Force-stop local movement immediately when server revokes control.
+                movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::FORWARD) |
+                                        static_cast<uint32_t>(MovementFlags::BACKWARD) |
+                                        static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
+                                        static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) |
+                                        static_cast<uint32_t>(MovementFlags::TURN_LEFT) |
+                                        static_cast<uint32_t>(MovementFlags::TURN_RIGHT));
+                sendMovement(Opcode::MSG_MOVE_STOP);
+                sendMovement(Opcode::MSG_MOVE_STOP_STRAFE);
+                sendMovement(Opcode::MSG_MOVE_STOP_TURN);
+                sendMovement(Opcode::MSG_MOVE_STOP_SWIM);
+                addSystemChatMessage("Movement disabled by server.");
+                if (addonEventCallback_) addonEventCallback_("PLAYER_CONTROL_LOST", {});
+            } else if (changed && allowMovement) {
+                addSystemChatMessage("Movement re-enabled.");
+                if (addonEventCallback_) addonEventCallback_("PLAYER_CONTROL_GAINED", {});
+            }
+        }
+    };
+
+    // ---- Spell failure ----
+    dispatchTable_[Opcode::SMSG_SPELL_FAILURE] = [this](network::Packet& packet) {
+        // WotLK: packed_guid + uint8 castCount + uint32 spellId + uint8 failReason
+        // TBC:   full uint64 + uint8 castCount + uint32 spellId + uint8 failReason
+        // Classic: full uint64 + uint32 spellId + uint8 failReason  (NO castCount)
+        const bool isClassic = isClassicLikeExpansion();
+        const bool isTbc     = isActiveExpansion("tbc");
+        uint64_t failGuid = (isClassic || isTbc)
+            ? (packet.getSize() - packet.getReadPos() >= 8 ? packet.readUInt64() : 0)
+            : UpdateObjectParser::readPackedGuid(packet);
+        // Classic omits the castCount byte; TBC and WotLK include it
+        const size_t remainingFields = isClassic ? 5u : 6u;  // spellId(4)+reason(1) [+castCount(1)]
+        if (packet.getSize() - packet.getReadPos() >= remainingFields) {
+            if (!isClassic) /*uint8_t castCount =*/ packet.readUInt8();
+            uint32_t failSpellId = packet.readUInt32();
+            uint8_t rawFailReason = packet.readUInt8();
+            // Classic result enum starts at 0=AFFECTING_COMBAT; shift +1 for WotLK table
+            uint8_t failReason = isClassic ? static_cast<uint8_t>(rawFailReason + 1) : rawFailReason;
+            if (failGuid == playerGuid && failReason != 0) {
+                // Show interruption/failure reason in chat and error overlay for player
+                int pt = -1;
+                if (auto pe = entityManager.getEntity(playerGuid))
+                    if (auto pu = std::dynamic_pointer_cast<Unit>(pe))
+                        pt = static_cast<int>(pu->getPowerType());
+                const char* reason = getSpellCastResultString(failReason, pt);
+                if (reason) {
+                    // Prefix with spell name for context, e.g. "Fireball: Not in range"
+                    const std::string& sName = getSpellName(failSpellId);
+                    std::string fullMsg = sName.empty() ? reason
+                                                        : sName + ": " + reason;
+                    addUIError(fullMsg);
+                    MessageChatData emsg;
+                    emsg.type = ChatType::SYSTEM;
+                    emsg.language = ChatLanguage::UNIVERSAL;
+                    emsg.message = std::move(fullMsg);
+                    addLocalChatMessage(emsg);
+                }
+            }
+        }
+        // Fire UNIT_SPELLCAST_INTERRUPTED for Lua addons
+        if (addonEventCallback_) {
+            std::string unitId;
+            if (failGuid == playerGuid || failGuid == 0) unitId = "player";
+            else if (failGuid == targetGuid) unitId = "target";
+            else if (failGuid == focusGuid) unitId = "focus";
+            else if (failGuid == petGuid_) unitId = "pet";
+            if (!unitId.empty()) {
+                addonEventCallback_("UNIT_SPELLCAST_INTERRUPTED", {unitId});
+                addonEventCallback_("UNIT_SPELLCAST_STOP", {unitId});
+            }
+        }
+        if (failGuid == playerGuid || failGuid == 0) {
+            // Player's own cast failed — clear gather-node loot target so the
+            // next timed cast doesn't try to loot a stale interrupted gather node.
+            casting = false;
+            castIsChannel = false;
+            currentCastSpellId = 0;
+            lastInteractedGoGuid_ = 0;
+            craftQueueSpellId_ = 0;
+            craftQueueRemaining_ = 0;
+            queuedSpellId_ = 0;
+            queuedSpellTarget_ = 0;
+            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* ssm = renderer->getSpellSoundManager()) {
+                    ssm->stopPrecast();
+                }
+            }
+            if (spellCastAnimCallback_) {
+                spellCastAnimCallback_(playerGuid, false, false);
+            }
+        } else {
+            // Another unit's cast failed — clear their tracked cast bar
+            unitCastStates_.erase(failGuid);
+            if (spellCastAnimCallback_) {
+                spellCastAnimCallback_(failGuid, false, false);
+            }
+        }
+    };
+
+    // ---- Achievement / fishing delegates ----
+    dispatchTable_[Opcode::SMSG_ACHIEVEMENT_EARNED] = [this](network::Packet& packet) {
+        handleAchievementEarned(packet);
+    };
+    dispatchTable_[Opcode::SMSG_ALL_ACHIEVEMENT_DATA] = [this](network::Packet& packet) {
+        handleAllAchievementData(packet);
+    };
+    dispatchTable_[Opcode::SMSG_ITEM_COOLDOWN] = [this](network::Packet& packet) {
+        // uint64 itemGuid + uint32 spellId + uint32 cooldownMs
+        size_t rem = packet.getSize() - packet.getReadPos();
+        if (rem >= 16) {
+            uint64_t itemGuid = packet.readUInt64();
+            uint32_t spellId  = packet.readUInt32();
+            uint32_t cdMs     = packet.readUInt32();
+            float cdSec = cdMs / 1000.0f;
+            if (cdSec > 0.0f) {
+                if (spellId != 0) {
+                    auto it = spellCooldowns.find(spellId);
+                    if (it == spellCooldowns.end()) {
+                        spellCooldowns[spellId] = cdSec;
+                    } else {
+                        it->second = mergeCooldownSeconds(it->second, cdSec);
+                    }
+                }
+                // Resolve itemId from the GUID so item-type slots are also updated
+                uint32_t itemId = 0;
+                auto iit = onlineItems_.find(itemGuid);
+                if (iit != onlineItems_.end()) itemId = iit->second.entry;
+                for (auto& slot : actionBar) {
+                    bool match = (spellId != 0 && slot.type == ActionBarSlot::SPELL && slot.id == spellId)
+                              || (itemId  != 0 && slot.type == ActionBarSlot::ITEM  && slot.id == itemId);
+                    if (match) {
+                        float prevRemaining = slot.cooldownRemaining;
+                        float merged = mergeCooldownSeconds(slot.cooldownRemaining, cdSec);
+                        slot.cooldownRemaining = merged;
+                        if (slot.cooldownTotal <= 0.0f || prevRemaining <= 0.0f) {
+                            slot.cooldownTotal = cdSec;
+                        } else {
+                            slot.cooldownTotal = std::max(slot.cooldownTotal, merged);
+                        }
+                    }
+                }
+                LOG_DEBUG("SMSG_ITEM_COOLDOWN: itemGuid=0x", std::hex, itemGuid, std::dec,
+                          " spellId=", spellId, " itemId=", itemId, " cd=", cdSec, "s");
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_FISH_NOT_HOOKED] = [this](network::Packet& packet) {
+        addSystemChatMessage("Your fish got away.");
+    };
+    dispatchTable_[Opcode::SMSG_FISH_ESCAPED] = [this](network::Packet& packet) {
+        addSystemChatMessage("Your fish escaped!");
+    };
+
+    // ---- Auto-repeat / auras / dispel / totem ----
+    dispatchTable_[Opcode::SMSG_CANCEL_AUTO_REPEAT] = [this](network::Packet& packet) {
+        // Server signals to stop a repeating spell (wand/shoot); no client action needed
+    };
+    dispatchTable_[Opcode::SMSG_AURA_UPDATE] = [this](network::Packet& packet) {
+        handleAuraUpdate(packet, false);
+    };
+    dispatchTable_[Opcode::SMSG_AURA_UPDATE_ALL] = [this](network::Packet& packet) {
+        handleAuraUpdate(packet, true);
+    };
+    dispatchTable_[Opcode::SMSG_DISPEL_FAILED] = [this](network::Packet& packet) {
+        // WotLK:       uint32 dispelSpellId + packed_guid caster + packed_guid victim
+        //              [+ count × uint32 failedSpellId]
+        // Classic:     uint32 dispelSpellId + packed_guid caster + packed_guid victim
+        //              [+ count × uint32 failedSpellId]
+        // TBC:         uint64 caster + uint64 victim + uint32 spellId
+        //              [+ count × uint32 failedSpellId]
+        const bool dispelUsesFullGuid = isActiveExpansion("tbc");
+        uint32_t dispelSpellId = 0;
+        uint64_t dispelCasterGuid = 0;
+        if (dispelUsesFullGuid) {
+            if (packet.getSize() - packet.getReadPos() < 20) return;
+            dispelCasterGuid = packet.readUInt64();
+            /*uint64_t victim =*/ packet.readUInt64();
+            dispelSpellId = packet.readUInt32();
+        } else {
+            if (packet.getSize() - packet.getReadPos() < 4) return;
+            dispelSpellId = packet.readUInt32();
+            if (!hasFullPackedGuid(packet)) {
+                packet.setReadPos(packet.getSize()); return;
+            }
+            dispelCasterGuid = UpdateObjectParser::readPackedGuid(packet);
+            if (!hasFullPackedGuid(packet)) {
+                packet.setReadPos(packet.getSize()); return;
+            }
+            /*uint64_t victim =*/ UpdateObjectParser::readPackedGuid(packet);
+        }
+        // Only show failure to the player who attempted the dispel
+        if (dispelCasterGuid == playerGuid) {
+            loadSpellNameCache();
+            auto it = spellNameCache_.find(dispelSpellId);
+            char buf[128];
+            if (it != spellNameCache_.end() && !it->second.name.empty())
+                std::snprintf(buf, sizeof(buf), "%s failed to dispel.", it->second.name.c_str());
+            else
+                std::snprintf(buf, sizeof(buf), "Dispel failed! (spell %u)", dispelSpellId);
+            addSystemChatMessage(buf);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_TOTEM_CREATED] = [this](network::Packet& packet) {
+        // WotLK:       uint8 slot + packed_guid + uint32 duration + uint32 spellId
+        // TBC/Classic: uint8 slot + uint64 guid  + uint32 duration + uint32 spellId
+        const bool totemTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+        if (packet.getSize() - packet.getReadPos() < (totemTbcLike ? 17u : 9u)) return;
+        uint8_t slot = packet.readUInt8();
+        if (totemTbcLike)
+            /*uint64_t guid =*/ packet.readUInt64();
+        else
+            /*uint64_t guid =*/ UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 8) return;
+        uint32_t duration = packet.readUInt32();
+        uint32_t spellId  = packet.readUInt32();
+        LOG_DEBUG("SMSG_TOTEM_CREATED: slot=", (int)slot,
+                  " spellId=", spellId, " duration=", duration, "ms");
+        if (slot < NUM_TOTEM_SLOTS) {
+            activeTotemSlots_[slot].spellId    = spellId;
+            activeTotemSlots_[slot].durationMs = duration;
+            activeTotemSlots_[slot].placedAt   = std::chrono::steady_clock::now();
+        }
+    };
+
+    // ---- SMSG_ENVIRONMENTAL_DAMAGE_LOG (distinct from SMSG_ENVIRONMENTALDAMAGELOG) ----
+    dispatchTable_[Opcode::SMSG_ENVIRONMENTAL_DAMAGE_LOG] = [this](network::Packet& packet) {
+        // uint64 victimGuid + uint8 envDmgType + uint32 damage + uint32 absorbed + uint32 resisted
+        // envDmgType: 0=Exhausted(fatigue), 1=Drowning, 2=Fall, 3=Lava, 4=Slime, 5=Fire
+        if (packet.getSize() - packet.getReadPos() < 21) { packet.setReadPos(packet.getSize()); return; }
+        uint64_t victimGuid  = packet.readUInt64();
+        uint8_t envType      = packet.readUInt8();
+        uint32_t dmg         = packet.readUInt32();
+        uint32_t envAbs      = packet.readUInt32();
+        uint32_t envRes      = packet.readUInt32();
+        if (victimGuid == playerGuid) {
+            // Environmental damage: pass envType via powerType field for display differentiation
+            if (dmg > 0)
+                addCombatText(CombatTextEntry::ENVIRONMENTAL, static_cast<int32_t>(dmg), 0, false, envType, 0, victimGuid);
+            if (envAbs > 0)
+                addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(envAbs), 0, false, 0, 0, victimGuid);
+            if (envRes > 0)
+                addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(envRes), 0, false, 0, 0, victimGuid);
+        }
+        packet.setReadPos(packet.getSize());
+    };
+
+    // ---- Spline move flag changes for other units (unroot/unset_hover/water_walk) ----
+    for (auto op : {Opcode::SMSG_SPLINE_MOVE_UNROOT,
+                    Opcode::SMSG_SPLINE_MOVE_UNSET_HOVER,
+                    Opcode::SMSG_SPLINE_MOVE_WATER_WALK}) {
+        dispatchTable_[op] = [this](network::Packet& packet) {
+            // Minimal parse: PackedGuid only — no animation-relevant state change.
+            if (packet.getSize() - packet.getReadPos() >= 1) {
+                (void)UpdateObjectParser::readPackedGuid(packet);
+            }
+        };
+    }
+
+    dispatchTable_[Opcode::SMSG_SPLINE_MOVE_UNSET_FLYING] = [this](network::Packet& packet) {
+        // PackedGuid + synthesised move-flags=0 → clears flying animation.
+        if (packet.getSize() - packet.getReadPos() < 1) return;
+        uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
+        if (guid == 0 || guid == playerGuid || !unitMoveFlagsCallback_) return;
+        unitMoveFlagsCallback_(guid, 0u); // clear flying/CAN_FLY
+    };
+
+    // ---- Spline speed changes for other units ----
+    // These use *logicalOp to distinguish which speed to set, so each gets a separate lambda.
+    dispatchTable_[Opcode::SMSG_SPLINE_SET_FLIGHT_SPEED] = [this](network::Packet& packet) {
+        // Minimal parse: PackedGuid + float speed
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        uint64_t sGuid = UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        float sSpeed = packet.readFloat();
+        if (sGuid == playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
+            serverFlightSpeed_ = sSpeed;
+        }
+    };
+    dispatchTable_[Opcode::SMSG_SPLINE_SET_FLIGHT_BACK_SPEED] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        uint64_t sGuid = UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        float sSpeed = packet.readFloat();
+        if (sGuid == playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
+            serverFlightBackSpeed_ = sSpeed;
+        }
+    };
+    dispatchTable_[Opcode::SMSG_SPLINE_SET_SWIM_BACK_SPEED] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        uint64_t sGuid = UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        float sSpeed = packet.readFloat();
+        if (sGuid == playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
+            serverSwimBackSpeed_ = sSpeed;
+        }
+    };
+    dispatchTable_[Opcode::SMSG_SPLINE_SET_WALK_SPEED] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        uint64_t sGuid = UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        float sSpeed = packet.readFloat();
+        if (sGuid == playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
+            serverWalkSpeed_ = sSpeed;
+        }
+    };
+    dispatchTable_[Opcode::SMSG_SPLINE_SET_TURN_RATE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        uint64_t sGuid = UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        float sSpeed = packet.readFloat();
+        if (sGuid == playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
+            serverTurnRate_ = sSpeed;  // rad/s
+        }
+    };
+    dispatchTable_[Opcode::SMSG_SPLINE_SET_PITCH_RATE] = [this](network::Packet& packet) {
+        // Minimal parse: PackedGuid + float speed — pitch rate not stored locally
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        (void)UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        (void)packet.readFloat();
+    };
+
+    // ---- Threat updates ----
+    for (auto op : {Opcode::SMSG_HIGHEST_THREAT_UPDATE,
+                    Opcode::SMSG_THREAT_UPDATE}) {
+        dispatchTable_[op] = [this](network::Packet& packet) {
+            // Both packets share the same format:
+            // packed_guid (unit) + packed_guid (highest-threat target or target, unused here)
+            // + uint32 count + count × (packed_guid victim + uint32 threat)
+            if (packet.getSize() - packet.getReadPos() < 1) return;
+            uint64_t unitGuid = UpdateObjectParser::readPackedGuid(packet);
+            if (packet.getSize() - packet.getReadPos() < 1) return;
+            (void)UpdateObjectParser::readPackedGuid(packet); // highest-threat / current target
+            if (packet.getSize() - packet.getReadPos() < 4) return;
+            uint32_t cnt = packet.readUInt32();
+            if (cnt > 100) { packet.setReadPos(packet.getSize()); return; } // sanity
+            std::vector<ThreatEntry> list;
+            list.reserve(cnt);
+            for (uint32_t i = 0; i < cnt; ++i) {
+                if (packet.getSize() - packet.getReadPos() < 1) return;
+                ThreatEntry entry;
+                entry.victimGuid = UpdateObjectParser::readPackedGuid(packet);
+                if (packet.getSize() - packet.getReadPos() < 4) return;
+                entry.threat = packet.readUInt32();
+                list.push_back(entry);
+            }
+            // Sort descending by threat so highest is first
+            std::sort(list.begin(), list.end(),
+                [](const ThreatEntry& a, const ThreatEntry& b){ return a.threat > b.threat; });
+            threatLists_[unitGuid] = std::move(list);
+            if (addonEventCallback_)
+                addonEventCallback_("UNIT_THREAT_LIST_UPDATE", {});
+        };
+    }
+
+    // ---- Player movement flag changes (server-pushed) ----
+    dispatchTable_[Opcode::SMSG_MOVE_GRAVITY_DISABLE] = [this](network::Packet& packet) {
+        handleForceMoveFlagChange(packet, "GRAVITY_DISABLE", Opcode::CMSG_MOVE_GRAVITY_DISABLE_ACK,
+            static_cast<uint32_t>(MovementFlags::LEVITATING), true);
+    };
+    dispatchTable_[Opcode::SMSG_MOVE_GRAVITY_ENABLE] = [this](network::Packet& packet) {
+        handleForceMoveFlagChange(packet, "GRAVITY_ENABLE", Opcode::CMSG_MOVE_GRAVITY_ENABLE_ACK,
+            static_cast<uint32_t>(MovementFlags::LEVITATING), false);
+    };
+    dispatchTable_[Opcode::SMSG_MOVE_LAND_WALK] = [this](network::Packet& packet) {
+        handleForceMoveFlagChange(packet, "LAND_WALK", Opcode::CMSG_MOVE_WATER_WALK_ACK,
+            static_cast<uint32_t>(MovementFlags::WATER_WALK), false);
+    };
+    dispatchTable_[Opcode::SMSG_MOVE_NORMAL_FALL] = [this](network::Packet& packet) {
+        handleForceMoveFlagChange(packet, "NORMAL_FALL", Opcode::CMSG_MOVE_FEATHER_FALL_ACK,
+            static_cast<uint32_t>(MovementFlags::FEATHER_FALL), false);
+    };
+    dispatchTable_[Opcode::SMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY] = [this](network::Packet& packet) {
+        handleForceMoveFlagChange(packet, "SET_CAN_TRANSITION_SWIM_FLY",
+            Opcode::CMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY_ACK, 0, true);
+    };
+    dispatchTable_[Opcode::SMSG_MOVE_UNSET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY] = [this](network::Packet& packet) {
+        handleForceMoveFlagChange(packet, "UNSET_CAN_TRANSITION_SWIM_FLY",
+            Opcode::CMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY_ACK, 0, false);
+    };
+    dispatchTable_[Opcode::SMSG_MOVE_SET_COLLISION_HGT] = [this](network::Packet& packet) {
+        handleMoveSetCollisionHeight(packet);
+    };
+    dispatchTable_[Opcode::SMSG_MOVE_SET_FLIGHT] = [this](network::Packet& packet) {
+        handleForceMoveFlagChange(packet, "SET_FLIGHT", Opcode::CMSG_MOVE_FLIGHT_ACK,
+            static_cast<uint32_t>(MovementFlags::FLYING), true);
+    };
+    dispatchTable_[Opcode::SMSG_MOVE_UNSET_FLIGHT] = [this](network::Packet& packet) {
+        handleForceMoveFlagChange(packet, "UNSET_FLIGHT", Opcode::CMSG_MOVE_FLIGHT_ACK,
+            static_cast<uint32_t>(MovementFlags::FLYING), false);
+    };
+
+    // ---- Batch 7: World states, action buttons, level-up, vendor, inventory ----
+
+    // ---- SMSG_INIT_WORLD_STATES ----
+    dispatchTable_[Opcode::SMSG_INIT_WORLD_STATES] = [this](network::Packet& packet) {
+        // WotLK format: uint32 mapId, uint32 zoneId, uint32 areaId, uint16 count, N*(uint32 key, uint32 val)
+        // Classic/TBC format: uint32 mapId, uint32 zoneId, uint16 count, N*(uint32 key, uint32 val)
+        if (packet.getSize() - packet.getReadPos() < 10) {
+            LOG_WARNING("SMSG_INIT_WORLD_STATES too short: ", packet.getSize(), " bytes");
+            return;
+        }
+        worldStateMapId_ = packet.readUInt32();
+        {
+            uint32_t newZoneId = packet.readUInt32();
+            if (newZoneId != worldStateZoneId_ && newZoneId != 0) {
+                worldStateZoneId_ = newZoneId;
+                if (addonEventCallback_) {
+                    addonEventCallback_("ZONE_CHANGED_NEW_AREA", {});
+                    addonEventCallback_("ZONE_CHANGED", {});
+                }
+            } else {
+                worldStateZoneId_ = newZoneId;
+            }
+        }
+        // WotLK adds areaId (uint32) before count; Classic/TBC/Turtle use the shorter format
+        size_t remaining = packet.getSize() - packet.getReadPos();
+        bool isWotLKFormat = isActiveExpansion("wotlk");
+        if (isWotLKFormat && remaining >= 6) {
+            packet.readUInt32(); // areaId (WotLK only)
+        }
+        uint16_t count = packet.readUInt16();
+        size_t needed = static_cast<size_t>(count) * 8;
+        size_t available = packet.getSize() - packet.getReadPos();
+        if (available < needed) {
+            // Be tolerant across expansion/private-core variants: if packet shape
+            // still looks like N*(key,val) dwords, parse what is present.
+            if ((available % 8) == 0) {
+                uint16_t adjustedCount = static_cast<uint16_t>(available / 8);
+                LOG_WARNING("SMSG_INIT_WORLD_STATES count mismatch: header=", count,
+                            " adjusted=", adjustedCount, " (available=", available, ")");
+                count = adjustedCount;
+                needed = available;
+            } else {
+                LOG_WARNING("SMSG_INIT_WORLD_STATES truncated: expected ", needed,
+                            " bytes of state pairs, got ", available);
+                packet.setReadPos(packet.getSize());
+                return;
+            }
+        }
+        worldStates_.clear();
+        worldStates_.reserve(count);
+        for (uint16_t i = 0; i < count; ++i) {
+            uint32_t key = packet.readUInt32();
+            uint32_t val = packet.readUInt32();
+            worldStates_[key] = val;
+        }
+    };
+
+    // ---- SMSG_ACTION_BUTTONS ----
+    dispatchTable_[Opcode::SMSG_ACTION_BUTTONS] = [this](network::Packet& packet) {
+        // Slot encoding differs by expansion:
+        //   Classic/Turtle: uint16 actionId + uint8 type + uint8 misc
+        //     type: 0=spell, 1=item, 64=macro
+        //   TBC/WotLK: uint32 packed = actionId | (type << 24)
+        //     type: 0x00=spell, 0x80=item, 0x40=macro
+        // Format differences:
+        //   Classic 1.12: no mode byte, 120 slots (480 bytes)
+        //   TBC 2.4.3:    no mode byte, 132 slots (528 bytes)
+        //   WotLK 3.3.5a: uint8 mode + 144 slots (577 bytes)
+        size_t rem = packet.getSize() - packet.getReadPos();
+        const bool hasModeByteExp = isActiveExpansion("wotlk");
+        int serverBarSlots;
+        if (isClassicLikeExpansion()) {
+            serverBarSlots = 120;
+        } else if (isActiveExpansion("tbc")) {
+            serverBarSlots = 132;
+        } else {
+            serverBarSlots = 144;
+        }
+        if (hasModeByteExp) {
+            if (rem < 1) return;
+            /*uint8_t mode =*/ packet.readUInt8();
+            rem--;
+        }
+        for (int i = 0; i < serverBarSlots; ++i) {
+            if (rem < 4) return;
+            uint32_t packed = packet.readUInt32();
+            rem -= 4;
+            if (i >= ACTION_BAR_SLOTS) continue;  // only load bars 1 and 2
+            if (packed == 0) {
+                // Empty slot — only clear if not already set to Attack/Hearthstone defaults
+                // so we don't wipe hardcoded fallbacks when the server sends zeros.
+                continue;
+            }
+            uint8_t type = 0;
+            uint32_t id = 0;
+            if (isClassicLikeExpansion()) {
+                id = packed & 0x0000FFFFu;
+                type = static_cast<uint8_t>((packed >> 16) & 0xFF);
+            } else {
+                type = static_cast<uint8_t>((packed >> 24) & 0xFF);
+                id = packed & 0x00FFFFFFu;
+            }
+            if (id == 0) continue;
+            ActionBarSlot slot;
+            switch (type) {
+                case 0x00: slot.type = ActionBarSlot::SPELL; slot.id = id; break;
+                case 0x01: slot.type = ActionBarSlot::ITEM;  slot.id = id; break;  // Classic item
+                case 0x80: slot.type = ActionBarSlot::ITEM;  slot.id = id; break;  // TBC/WotLK item
+                case 0x40: slot.type = ActionBarSlot::MACRO; slot.id = id; break;  // macro (all expansions)
+                default:   continue;  // unknown — leave as-is
+            }
+            actionBar[i] = slot;
+        }
+        // Apply any pending cooldowns from spellCooldowns to newly populated slots.
+        // SMSG_SPELL_COOLDOWN often arrives before SMSG_ACTION_BUTTONS during login,
+        // so the per-slot cooldownRemaining would be 0 without this sync.
+        for (auto& slot : actionBar) {
+            if (slot.type == ActionBarSlot::SPELL && slot.id != 0) {
+                auto cdIt = spellCooldowns.find(slot.id);
+                if (cdIt != spellCooldowns.end() && cdIt->second > 0.0f) {
+                    slot.cooldownRemaining = cdIt->second;
+                    slot.cooldownTotal     = cdIt->second;
+                }
+            } else if (slot.type == ActionBarSlot::ITEM && slot.id != 0) {
+                // Items (potions, trinkets): look up the item's on-use spell
+                // and check if that spell has a pending cooldown.
+                const auto* qi = getItemInfo(slot.id);
+                if (qi && qi->valid) {
+                    for (const auto& sp : qi->spells) {
+                        if (sp.spellId == 0) continue;
+                        auto cdIt = spellCooldowns.find(sp.spellId);
+                        if (cdIt != spellCooldowns.end() && cdIt->second > 0.0f) {
+                            slot.cooldownRemaining = cdIt->second;
+                            slot.cooldownTotal     = cdIt->second;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        LOG_INFO("SMSG_ACTION_BUTTONS: populated action bar from server");
+        if (addonEventCallback_) addonEventCallback_("ACTIONBAR_SLOT_CHANGED", {});
+        packet.setReadPos(packet.getSize());
+    };
+
+    // ---- SMSG_LEVELUP_INFO / SMSG_LEVELUP_INFO_ALT (shared body) ----
+    for (auto op : {Opcode::SMSG_LEVELUP_INFO, Opcode::SMSG_LEVELUP_INFO_ALT}) {
+        dispatchTable_[op] = [this](network::Packet& packet) {
+            // Server-authoritative level-up event.
+            // WotLK layout: uint32 newLevel + uint32 hpDelta + uint32 manaDelta + 5x uint32 statDeltas
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                uint32_t newLevel = packet.readUInt32();
+                if (newLevel > 0) {
+                    // Parse stat deltas (WotLK layout has 7 more uint32s)
+                    lastLevelUpDeltas_ = {};
+                    if (packet.getSize() - packet.getReadPos() >= 28) {
+                        lastLevelUpDeltas_.hp    = packet.readUInt32();
+                        lastLevelUpDeltas_.mana  = packet.readUInt32();
+                        lastLevelUpDeltas_.str   = packet.readUInt32();
+                        lastLevelUpDeltas_.agi   = packet.readUInt32();
+                        lastLevelUpDeltas_.sta   = packet.readUInt32();
+                        lastLevelUpDeltas_.intel = packet.readUInt32();
+                        lastLevelUpDeltas_.spi   = packet.readUInt32();
+                    }
+                    uint32_t oldLevel = serverPlayerLevel_;
+                    serverPlayerLevel_ = std::max(serverPlayerLevel_, newLevel);
+                    for (auto& ch : characters) {
+                        if (ch.guid == playerGuid) {
+                            ch.level = serverPlayerLevel_;
+                            return;
+                        }
+                    }
+                    if (newLevel > oldLevel) {
+                        addSystemChatMessage("You have reached level " + std::to_string(newLevel) + "!");
+                        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                            if (auto* sfx = renderer->getUiSoundManager())
+                                sfx->playLevelUp();
+                        }
+                        if (levelUpCallback_) levelUpCallback_(newLevel);
+                        if (addonEventCallback_) addonEventCallback_("PLAYER_LEVEL_UP", {std::to_string(newLevel)});
+                    }
+                }
+            }
+            packet.setReadPos(packet.getSize());
+        };
+    }
+
+    // ---- SMSG_SELL_ITEM ----
+    dispatchTable_[Opcode::SMSG_SELL_ITEM] = [this](network::Packet& packet) {
+        // uint64 vendorGuid, uint64 itemGuid, uint8 result
+        if ((packet.getSize() - packet.getReadPos()) >= 17) {
+            uint64_t vendorGuid = packet.readUInt64();
+            uint64_t itemGuid = packet.readUInt64();
+            uint8_t result = packet.readUInt8();
+            LOG_INFO("SMSG_SELL_ITEM: vendorGuid=0x", std::hex, vendorGuid,
+                     " itemGuid=0x", itemGuid, std::dec,
+                     " result=", static_cast<int>(result));
+            if (result == 0) {
+                pendingSellToBuyback_.erase(itemGuid);
+                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                    if (auto* sfx = renderer->getUiSoundManager())
+                        sfx->playDropOnGround();
+                }
+                if (addonEventCallback_) {
+                    addonEventCallback_("BAG_UPDATE", {});
+                    addonEventCallback_("PLAYER_MONEY", {});
+                }
+            } else {
+                bool removedPending = false;
+                auto it = pendingSellToBuyback_.find(itemGuid);
+                if (it != pendingSellToBuyback_.end()) {
+                    for (auto bit = buybackItems_.begin(); bit != buybackItems_.end(); ++bit) {
+                        if (bit->itemGuid == itemGuid) {
+                            buybackItems_.erase(bit);
+                            return;
+                        }
+                    }
+                    pendingSellToBuyback_.erase(it);
+                    removedPending = true;
+                }
+                if (!removedPending) {
+                    // Some cores return a non-item GUID on sell failure; drop the newest
+                    // optimistic entry if it is still pending so stale rows don't block buyback.
+                    if (!buybackItems_.empty()) {
+                        uint64_t frontGuid = buybackItems_.front().itemGuid;
+                        if (pendingSellToBuyback_.erase(frontGuid) > 0) {
+                            buybackItems_.pop_front();
+                            removedPending = true;
+                        }
+                    }
+                }
+                if (!removedPending && !pendingSellToBuyback_.empty()) {
+                    // Last-resort desync recovery.
+                    pendingSellToBuyback_.clear();
+                    buybackItems_.clear();
+                }
+                static const char* sellErrors[] = {
+                    "OK", "Can't find item", "Can't sell item",
+                    "Can't find vendor", "You don't own that item",
+                    "Unknown error", "Only empty bag"
+                };
+                const char* msg = (result < 7) ? sellErrors[result] : "Unknown sell error";
+                addUIError(std::string("Sell failed: ") + msg);
+                addSystemChatMessage(std::string("Sell failed: ") + msg);
+                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                    if (auto* sfx = renderer->getUiSoundManager())
+                        sfx->playError();
+                }
+                LOG_WARNING("SMSG_SELL_ITEM error: ", (int)result, " (", msg, ")");
+            }
+        }
+    };
+
+    // ---- SMSG_INVENTORY_CHANGE_FAILURE ----
+    dispatchTable_[Opcode::SMSG_INVENTORY_CHANGE_FAILURE] = [this](network::Packet& packet) {
+        if ((packet.getSize() - packet.getReadPos()) >= 1) {
+            uint8_t error = packet.readUInt8();
+            if (error != 0) {
+                LOG_WARNING("SMSG_INVENTORY_CHANGE_FAILURE: error=", (int)error);
+                // After error byte: item_guid1(8) + item_guid2(8) + bag_slot(1) = 17 bytes
+                uint32_t requiredLevel = 0;
+                if (packet.getSize() - packet.getReadPos() >= 17) {
+                    packet.readUInt64(); // item_guid1
+                    packet.readUInt64(); // item_guid2
+                    packet.readUInt8();  // bag_slot
+                    // Error 1 = EQUIP_ERR_LEVEL_REQ: server appends required level as uint32
+                    if (error == 1 && packet.getSize() - packet.getReadPos() >= 4)
+                        requiredLevel = packet.readUInt32();
+                }
+                // InventoryResult enum (AzerothCore 3.3.5a)
+                const char* errMsg = nullptr;
+                char levelBuf[64];
+                switch (error) {
+                    case 1:
+                        if (requiredLevel > 0) {
+                            std::snprintf(levelBuf, sizeof(levelBuf),
+                                          "You must reach level %u to use that item.", requiredLevel);
+                            addUIError(levelBuf);
+                            addSystemChatMessage(levelBuf);
+                        } else {
+                            addUIError("You must reach a higher level to use that item.");
+                            addSystemChatMessage("You must reach a higher level to use that item.");
+                        }
+                        return;
+                    case 2:  errMsg = "You don't have the required skill."; break;
+                    case 3:  errMsg = "That item doesn't go in that slot."; break;
+                    case 4:  errMsg = "That bag is full."; break;
+                    case 5:  errMsg = "Can't put bags in bags."; break;
+                    case 6:  errMsg = "Can't trade equipped bags."; break;
+                    case 7:  errMsg = "That slot only holds ammo."; break;
+                    case 8:  errMsg = "You can't use that item."; break;
+                    case 9:  errMsg = "No equipment slot available."; break;
+                    case 10: errMsg = "You can never use that item."; break;
+                    case 11: errMsg = "You can never use that item."; break;
+                    case 12: errMsg = "No equipment slot available."; break;
+                    case 13: errMsg = "Can't equip with a two-handed weapon."; break;
+                    case 14: errMsg = "Can't dual-wield."; break;
+                    case 15: errMsg = "That item doesn't go in that bag."; break;
+                    case 16: errMsg = "That item doesn't go in that bag."; break;
+                    case 17: errMsg = "You can't carry any more of those."; break;
+                    case 18: errMsg = "No equipment slot available."; break;
+                    case 19: errMsg = "Can't stack those items."; break;
+                    case 20: errMsg = "That item can't be equipped."; break;
+                    case 21: errMsg = "Can't swap items."; break;
+                    case 22: errMsg = "That slot is empty."; break;
+                    case 23: errMsg = "Item not found."; break;
+                    case 24: errMsg = "Can't drop soulbound items."; break;
+                    case 25: errMsg = "Out of range."; break;
+                    case 26: errMsg = "Need to split more than 1."; break;
+                    case 27: errMsg = "Split failed."; break;
+                    case 28: errMsg = "Not enough reagents."; break;
+                    case 29: errMsg = "Not enough money."; break;
+                    case 30: errMsg = "Not a bag."; break;
+                    case 31: errMsg = "Can't destroy non-empty bag."; break;
+                    case 32: errMsg = "You don't own that item."; break;
+                    case 33: errMsg = "You can only have one quiver."; break;
+                    case 34: errMsg = "No free bank slots."; break;
+                    case 35: errMsg = "No bank here."; break;
+                    case 36: errMsg = "Item is locked."; break;
+                    case 37: errMsg = "You are stunned."; break;
+                    case 38: errMsg = "You are dead."; break;
+                    case 39: errMsg = "Can't do that right now."; break;
+                    case 40: errMsg = "Internal bag error."; break;
+                    case 49: errMsg = "Loot is gone."; break;
+                    case 50: errMsg = "Inventory is full."; break;
+                    case 51: errMsg = "Bank is full."; break;
+                    case 52: errMsg = "That item is sold out."; break;
+                    case 58: errMsg = "That object is busy."; break;
+                    case 60: errMsg = "Can't do that in combat."; break;
+                    case 61: errMsg = "Can't do that while disarmed."; break;
+                    case 63: errMsg = "Requires a higher rank."; break;
+                    case 64: errMsg = "Requires higher reputation."; break;
+                    case 67: errMsg = "That item is unique-equipped."; break;
+                    case 69: errMsg = "Not enough honor points."; break;
+                    case 70: errMsg = "Not enough arena points."; break;
+                    case 77: errMsg = "Too much gold."; break;
+                    case 78: errMsg = "Can't do that during arena match."; break;
+                    case 80: errMsg = "Requires a personal arena rating."; break;
+                    case 87: errMsg = "Requires a higher level."; break;
+                    case 88: errMsg = "Requires the right talent."; break;
+                    default: break;
+                }
+                std::string msg = errMsg ? errMsg : "Inventory error (" + std::to_string(error) + ").";
+                addUIError(msg);
+                addSystemChatMessage(msg);
+                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                    if (auto* sfx = renderer->getUiSoundManager())
+                        sfx->playError();
+                }
+            }
+        }
+    };
+
+    // ---- SMSG_BUY_FAILED ----
+    dispatchTable_[Opcode::SMSG_BUY_FAILED] = [this](network::Packet& packet) {
+        // vendorGuid(8) + itemId(4) + errorCode(1)
+        if (packet.getSize() - packet.getReadPos() >= 13) {
+            uint64_t vendorGuid = packet.readUInt64();
+            uint32_t itemIdOrSlot = packet.readUInt32();
+            uint8_t errCode = packet.readUInt8();
+            LOG_INFO("SMSG_BUY_FAILED: vendorGuid=0x", std::hex, vendorGuid, std::dec,
+                     " item/slot=", itemIdOrSlot,
+                     " err=", static_cast<int>(errCode),
+                     " pendingBuybackSlot=", pendingBuybackSlot_,
+                     " pendingBuybackWireSlot=", pendingBuybackWireSlot_,
+                     " pendingBuyItemId=", pendingBuyItemId_,
+                     " pendingBuyItemSlot=", pendingBuyItemSlot_);
+            if (pendingBuybackSlot_ >= 0) {
+                // Some cores require probing absolute buyback slots until a live entry is found.
+                if (errCode == 0) {
+                    constexpr uint16_t kWotlkCmsgBuybackItemOpcode = 0x290;
+                    constexpr uint32_t kBuybackSlotEnd = 85;
+                    if (pendingBuybackWireSlot_ >= 74 && pendingBuybackWireSlot_ < kBuybackSlotEnd &&
+                        socket && state == WorldState::IN_WORLD && currentVendorItems.vendorGuid != 0) {
+                        ++pendingBuybackWireSlot_;
+                        LOG_INFO("Buyback retry: vendorGuid=0x", std::hex, currentVendorItems.vendorGuid,
+                                 std::dec, " uiSlot=", pendingBuybackSlot_,
+                                 " wireSlot=", pendingBuybackWireSlot_);
+                        network::Packet retry(kWotlkCmsgBuybackItemOpcode);
+                        retry.writeUInt64(currentVendorItems.vendorGuid);
+                        retry.writeUInt32(pendingBuybackWireSlot_);
+                        socket->send(retry);
+                        return;
+                    }
+                    // Exhausted slot probe: drop stale local row and advance.
+                    if (pendingBuybackSlot_ < static_cast<int>(buybackItems_.size())) {
+                        buybackItems_.erase(buybackItems_.begin() + pendingBuybackSlot_);
+                    }
+                    pendingBuybackSlot_ = -1;
+                    pendingBuybackWireSlot_ = 0;
+                    if (currentVendorItems.vendorGuid != 0 && socket && state == WorldState::IN_WORLD) {
+                        auto pkt = ListInventoryPacket::build(currentVendorItems.vendorGuid);
+                        socket->send(pkt);
+                    }
+                    return;
+                }
+                pendingBuybackSlot_ = -1;
+                pendingBuybackWireSlot_ = 0;
+            }
+
+            const char* msg = "Purchase failed.";
+            switch (errCode) {
+                case 0: msg = "Purchase failed: item not found."; break;
+                case 2: msg = "You don't have enough money."; break;
+                case 4: msg = "Seller is too far away."; break;
+                case 5: msg = "That item is sold out."; break;
+                case 6: msg = "You can't carry any more items."; break;
+                default: break;
+            }
+            addUIError(msg);
+            addSystemChatMessage(msg);
+            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* sfx = renderer->getUiSoundManager())
+                    sfx->playError();
+            }
+        }
+    };
+
+    // ---- SMSG_BUY_ITEM ----
+    dispatchTable_[Opcode::SMSG_BUY_ITEM] = [this](network::Packet& packet) {
+        // uint64 vendorGuid + uint32 vendorSlot + int32 newCount + uint32 itemCount
+        // Confirms a successful CMSG_BUY_ITEM. The inventory update arrives via SMSG_UPDATE_OBJECT.
+        if (packet.getSize() - packet.getReadPos() >= 20) {
+            /*uint64_t vendorGuid =*/ packet.readUInt64();
+            /*uint32_t vendorSlot =*/ packet.readUInt32();
+            /*int32_t  newCount   =*/ static_cast<int32_t>(packet.readUInt32());
+            uint32_t itemCount  = packet.readUInt32();
+            // Show purchase confirmation with item name if available
+            if (pendingBuyItemId_ != 0) {
+                std::string itemLabel;
+                uint32_t buyQuality = 1;
+                if (const ItemQueryResponseData* info = getItemInfo(pendingBuyItemId_)) {
+                    if (!info->name.empty()) itemLabel = info->name;
+                    buyQuality = info->quality;
+                }
+                if (itemLabel.empty()) itemLabel = "item #" + std::to_string(pendingBuyItemId_);
+                std::string msg = "Purchased: " + buildItemLink(pendingBuyItemId_, buyQuality, itemLabel);
+                if (itemCount > 1) msg += " x" + std::to_string(itemCount);
+                addSystemChatMessage(msg);
+                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                    if (auto* sfx = renderer->getUiSoundManager())
+                        sfx->playPickupBag();
+                }
+            }
+            pendingBuyItemId_   = 0;
+            pendingBuyItemSlot_ = 0;
+            if (addonEventCallback_) {
+                addonEventCallback_("MERCHANT_UPDATE", {});
+                addonEventCallback_("BAG_UPDATE", {});
+            }
+        }
+    };
+
+    // ---- MSG_RAID_TARGET_UPDATE ----
+    dispatchTable_[Opcode::MSG_RAID_TARGET_UPDATE] = [this](network::Packet& packet) {
+        // uint8 type: 0 = full update (8 × (uint8 icon + uint64 guid)),
+        //             1 = single update (uint8 icon + uint64 guid)
+        size_t remRTU = packet.getSize() - packet.getReadPos();
+        if (remRTU < 1) return;
+        uint8_t rtuType = packet.readUInt8();
+        if (rtuType == 0) {
+            // Full update: always 8 entries
+            for (uint32_t i = 0; i < kRaidMarkCount; ++i) {
+                if (packet.getSize() - packet.getReadPos() < 9) return;
+                uint8_t  icon = packet.readUInt8();
+                uint64_t guid = packet.readUInt64();
+                if (icon < kRaidMarkCount)
+                    raidTargetGuids_[icon] = guid;
+            }
+        } else {
+            // Single update
+            if (packet.getSize() - packet.getReadPos() >= 9) {
+                uint8_t  icon = packet.readUInt8();
+                uint64_t guid = packet.readUInt64();
+                if (icon < kRaidMarkCount)
+                    raidTargetGuids_[icon] = guid;
+            }
+        }
+        LOG_DEBUG("MSG_RAID_TARGET_UPDATE: type=", static_cast<int>(rtuType));
+        if (addonEventCallback_)
+            addonEventCallback_("RAID_TARGET_UPDATE", {});
+    };
+
+    // ---- SMSG_CRITERIA_UPDATE ----
+    dispatchTable_[Opcode::SMSG_CRITERIA_UPDATE] = [this](network::Packet& packet) {
+        // uint32 criteriaId + uint64 progress + uint32 elapsedTime + uint32 creationTime
+        if (packet.getSize() - packet.getReadPos() >= 20) {
+            uint32_t criteriaId    = packet.readUInt32();
+            uint64_t progress      = packet.readUInt64();
+            packet.readUInt32(); // elapsedTime
+            packet.readUInt32(); // creationTime
+            uint64_t oldProgress = 0;
+            auto cpit = criteriaProgress_.find(criteriaId);
+            if (cpit != criteriaProgress_.end()) oldProgress = cpit->second;
+            criteriaProgress_[criteriaId] = progress;
+            LOG_DEBUG("SMSG_CRITERIA_UPDATE: id=", criteriaId, " progress=", progress);
+            // Fire addon event for achievement tracking addons
+            if (addonEventCallback_ && progress != oldProgress)
+                addonEventCallback_("CRITERIA_UPDATE", {std::to_string(criteriaId), std::to_string(progress)});
+        }
+    };
+
+    // ---- SMSG_BARBER_SHOP_RESULT ----
+    dispatchTable_[Opcode::SMSG_BARBER_SHOP_RESULT] = [this](network::Packet& packet) {
+        // uint32 result (0 = success, 1 = no money, 2 = not barber, 3 = sitting)
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t result = packet.readUInt32();
+            if (result == 0) {
+                addSystemChatMessage("Hairstyle changed.");
+                barberShopOpen_ = false;
+                if (addonEventCallback_) addonEventCallback_("BARBER_SHOP_CLOSE", {});
+            } else {
+                const char* msg = (result == 1) ? "Not enough money for new hairstyle."
+                                : (result == 2) ? "You are not at a barber shop."
+                                : (result == 3) ? "You must stand up to use the barber shop."
+                                : "Barber shop unavailable.";
+                addUIError(msg);
+                addSystemChatMessage(msg);
+            }
+            LOG_DEBUG("SMSG_BARBER_SHOP_RESULT: result=", result);
+        }
+    };
+
+    // ---- SMSG_QUESTGIVER_QUEST_FAILED ----
+    dispatchTable_[Opcode::SMSG_QUESTGIVER_QUEST_FAILED] = [this](network::Packet& packet) {
+        // uint32 questId + uint32 reason
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint32_t questId = packet.readUInt32();
+            uint32_t reason = packet.readUInt32();
+            std::string questTitle;
+            for (const auto& q : questLog_)
+                if (q.questId == questId && !q.title.empty()) { questTitle = q.title; break; }
+            const char* reasonStr = nullptr;
+            switch (reason) {
+                case 1: reasonStr = "failed conditions"; break;
+                case 2: reasonStr = "inventory full"; break;
+                case 3: reasonStr = "too far away"; break;
+                case 4: reasonStr = "another quest is blocking"; break;
+                case 5: reasonStr = "wrong time of day"; break;
+                case 6: reasonStr = "wrong race"; break;
+                case 7: reasonStr = "wrong class"; break;
+            }
+            std::string msg = questTitle.empty() ? "Quest" : ('"' + questTitle + '"');
+            msg += " failed";
+            if (reasonStr) msg += std::string(": ") + reasonStr;
+            msg += '.';
+            addSystemChatMessage(msg);
+        }
+    };
+
+
+    // -----------------------------------------------------------------------
+    // Batch 8-12: Remaining opcodes (inspects, quests, auctions, spells,
+    //             calendars, battlefields, voice, misc consume-only)
+    // -----------------------------------------------------------------------
+    // uint32 setIndex + uint64 guid — equipment set was successfully saved
+    dispatchTable_[Opcode::SMSG_EQUIPMENT_SET_SAVED] = [this](network::Packet& packet) {
+        // uint32 setIndex + uint64 guid — equipment set was successfully saved
+        std::string setName;
+        if (packet.getSize() - packet.getReadPos() >= 12) {
+            uint32_t setIndex = packet.readUInt32();
+            uint64_t setGuid  = packet.readUInt64();
+            // Update the local set's GUID so subsequent "Update" calls
+            // use the server-assigned GUID instead of 0 (which would
+            // create a duplicate instead of updating).
+            bool found = false;
+            for (auto& es : equipmentSets_) {
+                if (es.setGuid == setGuid || es.setId == setIndex) {
+                    es.setGuid = setGuid;
+                    setName = es.name;
+                    found = true;
+                    break;
+                }
+            }
+            // Also update public-facing info
+            for (auto& info : equipmentSetInfo_) {
+                if (info.setGuid == setGuid || info.setId == setIndex) {
+                    info.setGuid = setGuid;
+                    break;
+                }
+            }
+            // If the set doesn't exist locally yet (new save), add a
+            // placeholder entry so it shows up in the UI immediately.
+            if (!found && setGuid != 0) {
+                EquipmentSet newEs;
+                newEs.setGuid = setGuid;
+                newEs.setId   = setIndex;
+                newEs.name    = pendingSaveSetName_;
+                newEs.iconName = pendingSaveSetIcon_;
+                for (int s = 0; s < 19; ++s)
+                    newEs.itemGuids[s] = getEquipSlotGuid(s);
+                equipmentSets_.push_back(std::move(newEs));
+                EquipmentSetInfo newInfo;
+                newInfo.setGuid = setGuid;
+                newInfo.setId   = setIndex;
+                newInfo.name    = pendingSaveSetName_;
+                newInfo.iconName = pendingSaveSetIcon_;
+                equipmentSetInfo_.push_back(std::move(newInfo));
+                setName = pendingSaveSetName_;
+            }
+            pendingSaveSetName_.clear();
+            pendingSaveSetIcon_.clear();
+            LOG_INFO("SMSG_EQUIPMENT_SET_SAVED: index=", setIndex,
+                     " guid=", setGuid, " name=", setName);
+        }
+        addSystemChatMessage(setName.empty()
+            ? std::string("Equipment set saved.")
+            : "Equipment set \"" + setName + "\" saved.");
+    };
+    // WotLK: packed_guid victim + packed_guid caster + uint32 spellId + uint32 count + effects
+    // TBC: full uint64 victim + uint64 caster + uint32 spellId + uint32 count + effects
+    // Classic/Vanilla: packed_guid (same as WotLK)
+    dispatchTable_[Opcode::SMSG_PERIODICAURALOG] = [this](network::Packet& packet) {
+        // WotLK: packed_guid victim + packed_guid caster + uint32 spellId + uint32 count + effects
+        // TBC: full uint64 victim + uint64 caster + uint32 spellId + uint32 count + effects
+        // Classic/Vanilla: packed_guid (same as WotLK)
+        const bool periodicTbc = isActiveExpansion("tbc");
+        const size_t guidMinSz = periodicTbc ? 8u : 2u;
+        if (packet.getSize() - packet.getReadPos() < guidMinSz) return;
+        uint64_t victimGuid = periodicTbc
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < guidMinSz) return;
+        uint64_t casterGuid = periodicTbc
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 8) return;
+        uint32_t spellId = packet.readUInt32();
+        uint32_t count   = packet.readUInt32();
+        bool isPlayerVictim = (victimGuid == playerGuid);
+        bool isPlayerCaster = (casterGuid == playerGuid);
+        if (!isPlayerVictim && !isPlayerCaster) {
+            packet.setReadPos(packet.getSize());
+            return;
+        }
+        for (uint32_t i = 0; i < count && packet.getSize() - packet.getReadPos() >= 1; ++i) {
+            uint8_t auraType = packet.readUInt8();
+            if (auraType == 3 || auraType == 89) {
+                // Classic/TBC: damage(4)+school(4)+absorbed(4)+resisted(4)  = 16 bytes
+                // WotLK 3.3.5a: damage(4)+overkill(4)+school(4)+absorbed(4)+resisted(4)+isCrit(1) = 21 bytes
+                const bool periodicWotlk = isActiveExpansion("wotlk");
+                const size_t dotSz = periodicWotlk ? 21u : 16u;
+                if (packet.getSize() - packet.getReadPos() < dotSz) break;
+                uint32_t dmg      = packet.readUInt32();
+                if (periodicWotlk) /*uint32_t overkill=*/ packet.readUInt32();
+                /*uint32_t school=*/ packet.readUInt32();
+                uint32_t abs      = packet.readUInt32();
+                uint32_t res      = packet.readUInt32();
+                bool dotCrit = false;
+                if (periodicWotlk) dotCrit = (packet.readUInt8() != 0);
+                if (dmg > 0)
+                    addCombatText(dotCrit ? CombatTextEntry::CRIT_DAMAGE : CombatTextEntry::PERIODIC_DAMAGE,
+                                  static_cast<int32_t>(dmg),
+                                  spellId, isPlayerCaster, 0, casterGuid, victimGuid);
+                if (abs > 0)
+                    addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(abs),
+                                  spellId, isPlayerCaster, 0, casterGuid, victimGuid);
+                if (res > 0)
+                    addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(res),
+                                  spellId, isPlayerCaster, 0, casterGuid, victimGuid);
+            } else if (auraType == 8 || auraType == 124 || auraType == 45) {
+                // Classic/TBC: heal(4)+maxHeal(4)+overHeal(4)                  = 12 bytes
+                // WotLK 3.3.5a: heal(4)+maxHeal(4)+overHeal(4)+absorbed(4)+isCrit(1) = 17 bytes
+                const bool healWotlk = isActiveExpansion("wotlk");
+                const size_t hotSz = healWotlk ? 17u : 12u;
+                if (packet.getSize() - packet.getReadPos() < hotSz) break;
+                uint32_t heal    = packet.readUInt32();
+                /*uint32_t max=*/  packet.readUInt32();
+                /*uint32_t over=*/ packet.readUInt32();
+                uint32_t hotAbs  = 0;
+                bool hotCrit = false;
+                if (healWotlk) {
+                    hotAbs = packet.readUInt32();
+                    hotCrit = (packet.readUInt8() != 0);
+                }
+                addCombatText(hotCrit ? CombatTextEntry::CRIT_HEAL : CombatTextEntry::PERIODIC_HEAL,
+                              static_cast<int32_t>(heal),
+                              spellId, isPlayerCaster, 0, casterGuid, victimGuid);
+                if (hotAbs > 0)
+                    addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(hotAbs),
+                                  spellId, isPlayerCaster, 0, casterGuid, victimGuid);
+            } else if (auraType == 46 || auraType == 91) {
+                // OBS_MOD_POWER / PERIODIC_ENERGIZE: miscValue(powerType) + amount
+                // Common in WotLK: Replenishment, Mana Spring Totem, Divine Plea, etc.
+                if (packet.getSize() - packet.getReadPos() < 8) break;
+                uint8_t periodicPowerType = static_cast<uint8_t>(packet.readUInt32());
+                uint32_t amount = packet.readUInt32();
+                if ((isPlayerVictim || isPlayerCaster) && amount > 0)
+                    addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(amount),
+                                  spellId, isPlayerCaster, periodicPowerType, casterGuid, victimGuid);
+            } else if (auraType == 98) {
+                // PERIODIC_MANA_LEECH: miscValue(powerType) + amount + float multiplier
+                if (packet.getSize() - packet.getReadPos() < 12) break;
+                uint8_t powerType = static_cast<uint8_t>(packet.readUInt32());
+                uint32_t amount = packet.readUInt32();
+                float multiplier = packet.readFloat();
+                if (isPlayerVictim && amount > 0)
+                    addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(amount),
+                                  spellId, false, powerType, casterGuid, victimGuid);
+                if (isPlayerCaster && amount > 0 && multiplier > 0.0f && std::isfinite(multiplier)) {
+                    const uint32_t gainedAmount = static_cast<uint32_t>(
+                        std::lround(static_cast<double>(amount) * static_cast<double>(multiplier)));
+                    if (gainedAmount > 0) {
+                        addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(gainedAmount),
+                                      spellId, true, powerType, casterGuid, casterGuid);
+                    }
+                }
+            } else {
+                // Unknown/untracked aura type — stop parsing this event safely
+                packet.setReadPos(packet.getSize());
+                break;
+            }
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // WotLK: packed_guid victim + packed_guid caster + uint32 spellId + uint8 powerType + int32 amount
+    // TBC: full uint64 victim + uint64 caster + uint32 spellId + uint8 powerType + int32 amount
+    // Classic/Vanilla: packed_guid (same as WotLK)
+    dispatchTable_[Opcode::SMSG_SPELLENERGIZELOG] = [this](network::Packet& packet) {
+        // WotLK: packed_guid victim + packed_guid caster + uint32 spellId + uint8 powerType + int32 amount
+        // TBC: full uint64 victim + uint64 caster + uint32 spellId + uint8 powerType + int32 amount
+        // Classic/Vanilla: packed_guid (same as WotLK)
+        const bool energizeTbc = isActiveExpansion("tbc");
+        auto readEnergizeGuid = [&]() -> uint64_t {
+            if (energizeTbc)
+                return (packet.getSize() - packet.getReadPos() >= 8) ? packet.readUInt64() : 0;
+            return UpdateObjectParser::readPackedGuid(packet);
+        };
+        if (packet.getSize() - packet.getReadPos() < (energizeTbc ? 8u : 1u)
+            || (!energizeTbc && !hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t victimGuid = readEnergizeGuid();
+        if (packet.getSize() - packet.getReadPos() < (energizeTbc ? 8u : 1u)
+            || (!energizeTbc && !hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t casterGuid = readEnergizeGuid();
+        if (packet.getSize() - packet.getReadPos() < 9) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint32_t spellId       = packet.readUInt32();
+        uint8_t  energizePowerType = packet.readUInt8();
+        int32_t  amount        = static_cast<int32_t>(packet.readUInt32());
+        bool isPlayerVictim = (victimGuid == playerGuid);
+        bool isPlayerCaster = (casterGuid == playerGuid);
+        if ((isPlayerVictim || isPlayerCaster) && amount > 0)
+            addCombatText(CombatTextEntry::ENERGIZE, amount, spellId, isPlayerCaster, energizePowerType, casterGuid, victimGuid);
+        packet.setReadPos(packet.getSize());
+    };
+    // uint32 currentZoneLightId + uint32 overrideLightId + uint32 transitionMs
+    dispatchTable_[Opcode::SMSG_OVERRIDE_LIGHT] = [this](network::Packet& packet) {
+        // uint32 currentZoneLightId + uint32 overrideLightId + uint32 transitionMs
+        if (packet.getSize() - packet.getReadPos() >= 12) {
+            uint32_t zoneLightId     = packet.readUInt32();
+            uint32_t overrideLightId = packet.readUInt32();
+            uint32_t transitionMs    = packet.readUInt32();
+            overrideLightId_      = overrideLightId;
+            overrideLightTransMs_ = transitionMs;
+            LOG_DEBUG("SMSG_OVERRIDE_LIGHT: zone=", zoneLightId,
+                      " override=", overrideLightId, " transition=", transitionMs, "ms");
+        }
+    };
+    // Classic 1.12: uint32 weatherType + float intensity (8 bytes, no isAbrupt)
+    // TBC 2.4.3 / WotLK 3.3.5a: uint32 weatherType + float intensity + uint8 isAbrupt (9 bytes)
+    dispatchTable_[Opcode::SMSG_WEATHER] = [this](network::Packet& packet) {
+        // Classic 1.12: uint32 weatherType + float intensity (8 bytes, no isAbrupt)
+        // TBC 2.4.3 / WotLK 3.3.5a: uint32 weatherType + float intensity + uint8 isAbrupt (9 bytes)
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint32_t wType = packet.readUInt32();
+            float wIntensity = packet.readFloat();
+            if (packet.getSize() - packet.getReadPos() >= 1)
+                /*uint8_t isAbrupt =*/ packet.readUInt8();
+            uint32_t prevWeatherType = weatherType_;
+            weatherType_ = wType;
+            weatherIntensity_ = wIntensity;
+            const char* typeName = (wType == 1) ? "Rain" : (wType == 2) ? "Snow" : (wType == 3) ? "Storm" : "Clear";
+            LOG_INFO("Weather changed: type=", wType, " (", typeName, "), intensity=", wIntensity);
+            // Announce weather changes (including initial zone weather)
+            if (wType != prevWeatherType) {
+                const char* weatherMsg = nullptr;
+                if (wIntensity < 0.05f || wType == 0) {
+                    if (prevWeatherType != 0)
+                        weatherMsg = "The weather clears.";
+                } else if (wType == 1) {
+                    weatherMsg = "It begins to rain.";
+                } else if (wType == 2) {
+                    weatherMsg = "It begins to snow.";
+                } else if (wType == 3) {
+                    weatherMsg = "A storm rolls in.";
+                }
+                if (weatherMsg) addSystemChatMessage(weatherMsg);
+            }
+            // Notify addons of weather change
+            if (addonEventCallback_)
+                addonEventCallback_("WEATHER_CHANGED", {std::to_string(wType), std::to_string(wIntensity)});
+            // Storm transition: trigger a low-frequency thunder rumble shake
+            if (wType == 3 && wIntensity > 0.3f && cameraShakeCallback_) {
+                float mag = 0.03f + wIntensity * 0.04f; // 0.03–0.07 units
+                cameraShakeCallback_(mag, 6.0f, 0.6f);
+            }
+        }
+    };
+    // Server-script text message — display in system chat
+    dispatchTable_[Opcode::SMSG_SCRIPT_MESSAGE] = [this](network::Packet& packet) {
+        // Server-script text message — display in system chat
+        std::string msg = packet.readString();
+        if (!msg.empty()) {
+            addSystemChatMessage(msg);
+            LOG_INFO("SMSG_SCRIPT_MESSAGE: ", msg);
+        }
+    };
+    // uint64 targetGuid + uint64 casterGuid + uint32 spellId + uint32 displayId + uint32 animType
+    dispatchTable_[Opcode::SMSG_ENCHANTMENTLOG] = [this](network::Packet& packet) {
+        // uint64 targetGuid + uint64 casterGuid + uint32 spellId + uint32 displayId + uint32 animType
+        if (packet.getSize() - packet.getReadPos() >= 28) {
+            uint64_t enchTargetGuid = packet.readUInt64();
+            uint64_t enchCasterGuid = packet.readUInt64();
+            uint32_t enchSpellId = packet.readUInt32();
+            /*uint32_t displayId =*/ packet.readUInt32();
+            /*uint32_t animType =*/ packet.readUInt32();
+            LOG_DEBUG("SMSG_ENCHANTMENTLOG: spellId=", enchSpellId);
+            // Show enchant message if the player is involved
+            if (enchTargetGuid == playerGuid || enchCasterGuid == playerGuid) {
+                const std::string& enchName = getSpellName(enchSpellId);
+                std::string casterName = lookupName(enchCasterGuid);
+                if (!enchName.empty()) {
+                    std::string msg;
+                    if (enchCasterGuid == playerGuid)
+                        msg = "You enchant with " + enchName + ".";
+                    else if (!casterName.empty())
+                        msg = casterName + " enchants your item with " + enchName + ".";
+                    else
+                        msg = "Your item has been enchanted with " + enchName + ".";
+                    addSystemChatMessage(msg);
+                }
+            }
+        }
+    };
+    // Quest query failed - parse failure reason
+    dispatchTable_[Opcode::SMSG_QUESTGIVER_QUEST_INVALID] = [this](network::Packet& packet) {
+        // Quest query failed - parse failure reason
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t failReason = packet.readUInt32();
+            pendingTurnInRewardRequest_ = false;
+            const char* reasonStr = "Unknown";
+            switch (failReason) {
+                case 0: reasonStr = "Don't have quest"; break;
+                case 1: reasonStr = "Quest level too low"; break;
+                case 4: reasonStr = "Insufficient money"; break;
+                case 5: reasonStr = "Inventory full"; break;
+                case 13: reasonStr = "Already on that quest"; break;
+                case 18: reasonStr = "Already completed quest"; break;
+                case 19: reasonStr = "Can't take any more quests"; break;
+            }
+            LOG_WARNING("Quest invalid: reason=", failReason, " (", reasonStr, ")");
+            if (!pendingQuestAcceptTimeouts_.empty()) {
+                std::vector<uint32_t> pendingQuestIds;
+                pendingQuestIds.reserve(pendingQuestAcceptTimeouts_.size());
+                for (const auto& pending : pendingQuestAcceptTimeouts_) {
+                    pendingQuestIds.push_back(pending.first);
+                }
+                for (uint32_t questId : pendingQuestIds) {
+                    const uint64_t npcGuid = pendingQuestAcceptNpcGuids_.count(questId) != 0
+                        ? pendingQuestAcceptNpcGuids_[questId] : 0;
+                    if (failReason == 13) {
+                        std::string fallbackTitle = "Quest #" + std::to_string(questId);
+                        std::string fallbackObjectives;
+                        if (currentQuestDetails.questId == questId) {
+                            if (!currentQuestDetails.title.empty()) fallbackTitle = currentQuestDetails.title;
+                            fallbackObjectives = currentQuestDetails.objectives;
+                        }
+                        addQuestToLocalLogIfMissing(questId, fallbackTitle, fallbackObjectives);
+                        triggerQuestAcceptResync(questId, npcGuid, "already-on-quest");
+                    } else if (failReason == 18) {
+                        triggerQuestAcceptResync(questId, npcGuid, "already-completed");
+                    }
+                    clearPendingQuestAccept(questId);
+                }
+            }
+            // Only show error to user for real errors (not informational messages)
+            if (failReason != 13 && failReason != 18) {  // Don't spam "already on/completed"
+                addSystemChatMessage(std::string("Quest unavailable: ") + reasonStr);
+            }
+        }
+    };
+    // Mark quest as complete in local log
+    dispatchTable_[Opcode::SMSG_QUESTGIVER_QUEST_COMPLETE] = [this](network::Packet& packet) {
+        // Mark quest as complete in local log
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t questId = packet.readUInt32();
+            LOG_INFO("Quest completed: questId=", questId);
+            if (pendingTurnInQuestId_ == questId) {
+                pendingTurnInQuestId_ = 0;
+                pendingTurnInNpcGuid_ = 0;
+                pendingTurnInRewardRequest_ = false;
+            }
+            for (auto it = questLog_.begin(); it != questLog_.end(); ++it) {
+                if (it->questId == questId) {
+                    // Fire toast callback before erasing
+                    if (questCompleteCallback_) {
+                        questCompleteCallback_(questId, it->title);
+                    }
+                    // Play quest-complete sound
+                    if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                        if (auto* sfx = renderer->getUiSoundManager())
+                            sfx->playQuestComplete();
+                    }
+                    questLog_.erase(it);
+                    LOG_INFO("  Removed quest ", questId, " from quest log");
+                    if (addonEventCallback_)
+                        addonEventCallback_("QUEST_TURNED_IN", {std::to_string(questId)});
+                    break;
+                }
+            }
+        }
+        if (addonEventCallback_)
+            addonEventCallback_("QUEST_LOG_UPDATE", {});
+                addonEventCallback_("UNIT_QUEST_LOG_CHANGED", {"player"});
+        // Re-query all nearby quest giver NPCs so markers refresh
+        if (socket) {
+            for (const auto& [guid, entity] : entityManager.getEntities()) {
+                if (entity->getType() != ObjectType::UNIT) continue;
+                auto unit = std::static_pointer_cast<Unit>(entity);
+                if (unit->getNpcFlags() & 0x02) {
+                    network::Packet qsPkt(wireOpcode(Opcode::CMSG_QUESTGIVER_STATUS_QUERY));
+                    qsPkt.writeUInt64(guid);
+                    socket->send(qsPkt);
+                }
+            }
+        }
+    };
+    // Quest kill count update
+    // Compatibility: some classic-family opcode tables swap ADD_KILL and COMPLETE.
+    dispatchTable_[Opcode::SMSG_QUESTUPDATE_ADD_KILL] = [this](network::Packet& packet) {
+        // Quest kill count update
+        // Compatibility: some classic-family opcode tables swap ADD_KILL and COMPLETE.
+        size_t rem = packet.getSize() - packet.getReadPos();
+        if (rem >= 12) {
+            uint32_t questId = packet.readUInt32();
+            clearPendingQuestAccept(questId);
+            uint32_t entry = packet.readUInt32();   // Creature entry
+            uint32_t count = packet.readUInt32();   // Current kills
+            uint32_t reqCount = 0;
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                reqCount = packet.readUInt32();     // Required kills (if present)
+            }
+
+            LOG_INFO("Quest kill update: questId=", questId, " entry=", entry,
+                     " count=", count, "/", reqCount);
+
+            // Update quest log with kill count
+            for (auto& quest : questLog_) {
+                if (quest.questId == questId) {
+                    // Preserve prior required count if this packet variant omits it.
+                    if (reqCount == 0) {
+                        auto it = quest.killCounts.find(entry);
+                        if (it != quest.killCounts.end()) reqCount = it->second.second;
+                    }
+                    // Fall back to killObjectives (parsed from SMSG_QUEST_QUERY_RESPONSE).
+                    // Note: npcOrGoId < 0 means game object; server always sends entry as uint32
+                    // in QUESTUPDATE_ADD_KILL regardless of type, so match by absolute value.
+                    if (reqCount == 0) {
+                        for (const auto& obj : quest.killObjectives) {
+                            if (obj.npcOrGoId == 0 || obj.required == 0) continue;
+                            uint32_t objEntry = static_cast<uint32_t>(
+                                obj.npcOrGoId > 0 ? obj.npcOrGoId : -obj.npcOrGoId);
+                            if (objEntry == entry) {
+                                reqCount = obj.required;
+                                break;
+                            }
+                        }
+                    }
+                    if (reqCount == 0) reqCount = count;  // last-resort: avoid 0/0 display
+                    quest.killCounts[entry] = {count, reqCount};
+
+                    std::string creatureName = getCachedCreatureName(entry);
+                    std::string progressMsg = quest.title + ": ";
+                    if (!creatureName.empty()) {
+                        progressMsg += creatureName + " ";
+                    }
+                    progressMsg += std::to_string(count) + "/" + std::to_string(reqCount);
+                    addSystemChatMessage(progressMsg);
+
+                    if (questProgressCallback_) {
+                        questProgressCallback_(quest.title, creatureName, count, reqCount);
+                    }
+                    if (addonEventCallback_) {
+                        addonEventCallback_("QUEST_WATCH_UPDATE", {std::to_string(questId)});
+                        addonEventCallback_("QUEST_LOG_UPDATE", {});
+                addonEventCallback_("UNIT_QUEST_LOG_CHANGED", {"player"});
+                    }
+
+                    LOG_INFO("Updated kill count for quest ", questId, ": ",
+                             count, "/", reqCount);
+                    break;
+                }
+            }
+        } else if (rem >= 4) {
+            // Swapped mapping fallback: treat as QUESTUPDATE_COMPLETE packet.
+            uint32_t questId = packet.readUInt32();
+            clearPendingQuestAccept(questId);
+            LOG_INFO("Quest objectives completed (compat via ADD_KILL): questId=", questId);
+            for (auto& quest : questLog_) {
+                if (quest.questId == questId) {
+                    quest.complete = true;
+                    addSystemChatMessage("Quest Complete: " + quest.title);
+                    break;
+                }
+            }
+        }
+    };
+    // Quest item count update: itemId + count
+    dispatchTable_[Opcode::SMSG_QUESTUPDATE_ADD_ITEM] = [this](network::Packet& packet) {
+        // Quest item count update: itemId + count
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint32_t itemId = packet.readUInt32();
+            uint32_t count = packet.readUInt32();
+            queryItemInfo(itemId, 0);
+
+            std::string itemLabel = "item #" + std::to_string(itemId);
+            uint32_t questItemQuality = 1;
+            if (const ItemQueryResponseData* info = getItemInfo(itemId)) {
+                if (!info->name.empty()) itemLabel = info->name;
+                questItemQuality = info->quality;
+            }
+
+            bool updatedAny = false;
+            for (auto& quest : questLog_) {
+                if (quest.complete) continue;
+                bool tracksItem =
+                    quest.requiredItemCounts.count(itemId) > 0 ||
+                    quest.itemCounts.count(itemId) > 0;
+                // Also check itemObjectives parsed from SMSG_QUEST_QUERY_RESPONSE in case
+                // requiredItemCounts hasn't been populated yet (race during quest accept).
+                if (!tracksItem) {
+                    for (const auto& obj : quest.itemObjectives) {
+                        if (obj.itemId == itemId && obj.required > 0) {
+                            quest.requiredItemCounts.emplace(itemId, obj.required);
+                            tracksItem = true;
+                            break;
+                        }
+                    }
+                }
+                if (!tracksItem) continue;
+                quest.itemCounts[itemId] = count;
+                updatedAny = true;
+            }
+            addSystemChatMessage("Quest item: " + buildItemLink(itemId, questItemQuality, itemLabel) + " (" + std::to_string(count) + ")");
+
+            if (questProgressCallback_ && updatedAny) {
+                // Find the quest that tracks this item to get title and required count
+                for (const auto& quest : questLog_) {
+                    if (quest.complete) continue;
+                    if (quest.itemCounts.count(itemId) == 0) continue;
+                    uint32_t required = 0;
+                    auto rIt = quest.requiredItemCounts.find(itemId);
+                    if (rIt != quest.requiredItemCounts.end()) required = rIt->second;
+                    if (required == 0) {
+                        for (const auto& obj : quest.itemObjectives) {
+                            if (obj.itemId == itemId) { required = obj.required; break; }
+                        }
+                    }
+                    if (required == 0) required = count;
+                    questProgressCallback_(quest.title, itemLabel, count, required);
+                    break;
+                }
+            }
+
+            if (addonEventCallback_ && updatedAny) {
+                addonEventCallback_("QUEST_WATCH_UPDATE", {});
+                addonEventCallback_("QUEST_LOG_UPDATE", {});
+                addonEventCallback_("UNIT_QUEST_LOG_CHANGED", {"player"});
+            }
+            LOG_INFO("Quest item update: itemId=", itemId, " count=", count,
+                     " trackedQuestsUpdated=", updatedAny);
+        }
+    };
+    // Quest objectives completed - mark as ready to turn in.
+    // Compatibility: some classic-family opcode tables swap COMPLETE and ADD_KILL.
+    dispatchTable_[Opcode::SMSG_QUESTUPDATE_COMPLETE] = [this](network::Packet& packet) {
+        // Quest objectives completed - mark as ready to turn in.
+        // Compatibility: some classic-family opcode tables swap COMPLETE and ADD_KILL.
+        size_t rem = packet.getSize() - packet.getReadPos();
+        if (rem >= 12) {
+            uint32_t questId = packet.readUInt32();
+            clearPendingQuestAccept(questId);
+            uint32_t entry = packet.readUInt32();
+            uint32_t count = packet.readUInt32();
+            uint32_t reqCount = 0;
+            if (packet.getSize() - packet.getReadPos() >= 4) reqCount = packet.readUInt32();
+            if (reqCount == 0) reqCount = count;
+            LOG_INFO("Quest kill update (compat via COMPLETE): questId=", questId,
+                     " entry=", entry, " count=", count, "/", reqCount);
+            for (auto& quest : questLog_) {
+                if (quest.questId == questId) {
+                    quest.killCounts[entry] = {count, reqCount};
+                    addSystemChatMessage(quest.title + ": " + std::to_string(count) +
+                                         "/" + std::to_string(reqCount));
+                    break;
+                }
+            }
+        } else if (rem >= 4) {
+            uint32_t questId = packet.readUInt32();
+            clearPendingQuestAccept(questId);
+            LOG_INFO("Quest objectives completed: questId=", questId);
+
+            for (auto& quest : questLog_) {
+                if (quest.questId == questId) {
+                    quest.complete = true;
+                    addSystemChatMessage("Quest Complete: " + quest.title);
+                    LOG_INFO("Marked quest ", questId, " as complete");
+                    break;
+                }
+            }
+        }
+    };
+    // This opcode is aliased to SMSG_SET_REST_START in the opcode table
+    // because both share opcode 0x21E in WotLK 3.3.5a.
+    // In WotLK: payload = uint32 areaId (entering rest) or 0 (leaving rest).
+    // In Classic/TBC: payload = uint32 questId (force-remove a quest).
+    dispatchTable_[Opcode::SMSG_QUEST_FORCE_REMOVE] = [this](network::Packet& packet) {
+        // This opcode is aliased to SMSG_SET_REST_START in the opcode table
+        // because both share opcode 0x21E in WotLK 3.3.5a.
+        // In WotLK: payload = uint32 areaId (entering rest) or 0 (leaving rest).
+        // In Classic/TBC: payload = uint32 questId (force-remove a quest).
+        if (packet.getSize() - packet.getReadPos() < 4) {
+            LOG_WARNING("SMSG_QUEST_FORCE_REMOVE/SET_REST_START too short");
+            return;
+        }
+        uint32_t value = packet.readUInt32();
+
+        // WotLK uses this opcode as SMSG_SET_REST_START: non-zero = entering
+        // a rest area (inn/city), zero = leaving. Classic/TBC use it for quest removal.
+        if (!isClassicLikeExpansion() && !isActiveExpansion("tbc")) {
+            // WotLK: treat as SET_REST_START
+            bool nowResting = (value != 0);
+            if (nowResting != isResting_) {
+                isResting_ = nowResting;
+                addSystemChatMessage(isResting_ ? "You are now resting."
+                                                : "You are no longer resting.");
+                if (addonEventCallback_)
+                    addonEventCallback_("PLAYER_UPDATE_RESTING", {});
+            }
+            return;
+        }
+
+        // Classic/TBC: treat as QUEST_FORCE_REMOVE (uint32 questId)
+        uint32_t questId = value;
+        clearPendingQuestAccept(questId);
+        pendingQuestQueryIds_.erase(questId);
+        if (questId == 0) {
+            // Some servers emit a zero-id variant during world bootstrap.
+            // Treat as no-op to avoid false "Quest removed" spam.
+            return;
+        }
+
+        bool removed = false;
+        std::string removedTitle;
+        for (auto it = questLog_.begin(); it != questLog_.end(); ++it) {
+            if (it->questId == questId) {
+                removedTitle = it->title;
+                questLog_.erase(it);
+                removed = true;
+                break;
+            }
+        }
+        if (currentQuestDetails.questId == questId) {
+            questDetailsOpen = false;
+            questDetailsOpenTime = std::chrono::steady_clock::time_point{};
+            currentQuestDetails = QuestDetailsData{};
+            removed = true;
+        }
+        if (currentQuestRequestItems_.questId == questId) {
+            questRequestItemsOpen_ = false;
+            currentQuestRequestItems_ = QuestRequestItemsData{};
+            removed = true;
+        }
+        if (currentQuestOfferReward_.questId == questId) {
+            questOfferRewardOpen_ = false;
+            currentQuestOfferReward_ = QuestOfferRewardData{};
+            removed = true;
+        }
+        if (removed) {
+            if (!removedTitle.empty()) {
+                addSystemChatMessage("Quest removed: " + removedTitle);
+            } else {
+                addSystemChatMessage("Quest removed (ID " + std::to_string(questId) + ").");
+            }
+            if (addonEventCallback_) {
+                addonEventCallback_("QUEST_LOG_UPDATE", {});
+                addonEventCallback_("UNIT_QUEST_LOG_CHANGED", {"player"});
+                addonEventCallback_("QUEST_REMOVED", {std::to_string(questId)});
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_QUEST_QUERY_RESPONSE] = [this](network::Packet& packet) {
+        if (packet.getSize() < 8) {
+            LOG_WARNING("SMSG_QUEST_QUERY_RESPONSE: packet too small (", packet.getSize(), " bytes)");
+            return;
+        }
+
+        uint32_t questId = packet.readUInt32();
+        packet.readUInt32(); // questMethod
+
+        // Classic/Turtle = stride 3, TBC = stride 4 — all use 40 fixed fields + 4 strings.
+        // WotLK = stride 5, uses 55 fixed fields + 5 strings.
+        const bool isClassicLayout = packetParsers_ && packetParsers_->questLogStride() <= 4;
+        const QuestQueryTextCandidate parsed = pickBestQuestQueryTexts(packet.getData(), isClassicLayout);
+        const QuestQueryObjectives objs = extractQuestQueryObjectives(packet.getData(), isClassicLayout);
+        const QuestQueryRewards rwds = tryParseQuestRewards(packet.getData(), isClassicLayout);
+
+        for (auto& q : questLog_) {
+            if (q.questId != questId) continue;
+
+            const int existingScore = scoreQuestTitle(q.title);
+            const bool parsedStrong = isStrongQuestTitle(parsed.title);
+            const bool parsedLongEnough = parsed.title.size() >= 6;
+            const bool notShorterThanExisting =
+                isPlaceholderQuestTitle(q.title) || q.title.empty() || parsed.title.size() + 2 >= q.title.size();
+            const bool shouldReplaceTitle =
+                parsed.score > -1000 &&
+                parsedStrong &&
+                parsedLongEnough &&
+                notShorterThanExisting &&
+                (isPlaceholderQuestTitle(q.title) || q.title.empty() || parsed.score >= existingScore + 12);
+
+            if (shouldReplaceTitle && !parsed.title.empty()) {
+                q.title = parsed.title;
+            }
+            if (!parsed.objectives.empty() &&
+                (q.objectives.empty() || q.objectives.size() < 16)) {
+                q.objectives = parsed.objectives;
+            }
+
+            // Store structured kill/item objectives for later kill-count restoration.
+            if (objs.valid) {
+                for (int i = 0; i < 4; ++i) {
+                    q.killObjectives[i].npcOrGoId = objs.kills[i].npcOrGoId;
+                    q.killObjectives[i].required  = objs.kills[i].required;
+                }
+                for (int i = 0; i < 6; ++i) {
+                    q.itemObjectives[i].itemId   = objs.items[i].itemId;
+                    q.itemObjectives[i].required = objs.items[i].required;
+                }
+                // Now that we have the objective creature IDs, apply any packed kill
+                // counts from the player update fields that arrived at login.
+                applyPackedKillCountsFromFields(q);
+                // Pre-fetch creature/GO names and item info so objective display is
+                // populated by the time the player opens the quest log.
+                for (int i = 0; i < 4; ++i) {
+                    int32_t id = objs.kills[i].npcOrGoId;
+                    if (id == 0 || objs.kills[i].required == 0) continue;
+                    if (id > 0) queryCreatureInfo(static_cast<uint32_t>(id), 0);
+                    else        queryGameObjectInfo(static_cast<uint32_t>(-id), 0);
+                }
+                for (int i = 0; i < 6; ++i) {
+                    if (objs.items[i].itemId != 0 && objs.items[i].required != 0)
+                        queryItemInfo(objs.items[i].itemId, 0);
+                }
+                LOG_DEBUG("Quest ", questId, " objectives parsed: kills=[",
+                          objs.kills[0].npcOrGoId, "/", objs.kills[0].required, ", ",
+                          objs.kills[1].npcOrGoId, "/", objs.kills[1].required, ", ",
+                          objs.kills[2].npcOrGoId, "/", objs.kills[2].required, ", ",
+                          objs.kills[3].npcOrGoId, "/", objs.kills[3].required, "]");
+            }
+
+            // Store reward data and pre-fetch item info for icons.
+            if (rwds.valid) {
+                q.rewardMoney = rwds.rewardMoney;
+                for (int i = 0; i < 4; ++i) {
+                    q.rewardItems[i].itemId = rwds.itemId[i];
+                    q.rewardItems[i].count  = (rwds.itemId[i] != 0) ? rwds.itemCount[i] : 0;
+                    if (rwds.itemId[i] != 0) queryItemInfo(rwds.itemId[i], 0);
+                }
+                for (int i = 0; i < 6; ++i) {
+                    q.rewardChoiceItems[i].itemId = rwds.choiceItemId[i];
+                    q.rewardChoiceItems[i].count  = (rwds.choiceItemId[i] != 0) ? rwds.choiceItemCount[i] : 0;
+                    if (rwds.choiceItemId[i] != 0) queryItemInfo(rwds.choiceItemId[i], 0);
+                }
+            }
+            break;
+        }
+
+        pendingQuestQueryIds_.erase(questId);
+    };
+    // WotLK: uint64 playerGuid + uint8 teamCount + per-team fields
+    dispatchTable_[Opcode::MSG_INSPECT_ARENA_TEAMS] = [this](network::Packet& packet) {
+        // WotLK: uint64 playerGuid + uint8 teamCount + per-team fields
+        if (packet.getSize() - packet.getReadPos() < 9) {
+            packet.setReadPos(packet.getSize());
+            return;
+        }
+        uint64_t inspGuid  = packet.readUInt64();
+        uint8_t  teamCount = packet.readUInt8();
+        if (teamCount > 3) teamCount = 3; // 2v2, 3v3, 5v5
+        if (inspGuid == inspectResult_.guid || inspectResult_.guid == 0) {
+            inspectResult_.guid = inspGuid;
+            inspectResult_.arenaTeams.clear();
+            for (uint8_t t = 0; t < teamCount; ++t) {
+                if (packet.getSize() - packet.getReadPos() < 21) break;
+                InspectArenaTeam team;
+                team.teamId         = packet.readUInt32();
+                team.type           = packet.readUInt8();
+                team.weekGames      = packet.readUInt32();
+                team.weekWins       = packet.readUInt32();
+                team.seasonGames    = packet.readUInt32();
+                team.seasonWins     = packet.readUInt32();
+                team.name           = packet.readString();
+                if (packet.getSize() - packet.getReadPos() < 4) break;
+                team.personalRating = packet.readUInt32();
+                inspectResult_.arenaTeams.push_back(std::move(team));
+            }
+        }
+        LOG_DEBUG("MSG_INSPECT_ARENA_TEAMS: guid=0x", std::hex, inspGuid, std::dec,
+                  " teams=", (int)teamCount);
+    };
+    // auctionId(u32) + action(u32) + error(u32) + itemEntry(u32) + randomPropertyId(u32) + ...
+    // action: 0=sold/won, 1=expired, 2=bid placed on your auction
+    dispatchTable_[Opcode::SMSG_AUCTION_OWNER_NOTIFICATION] = [this](network::Packet& packet) {
+        // auctionId(u32) + action(u32) + error(u32) + itemEntry(u32) + randomPropertyId(u32) + ...
+        // action: 0=sold/won, 1=expired, 2=bid placed on your auction
+        if (packet.getSize() - packet.getReadPos() >= 16) {
+            /*uint32_t auctionId =*/ packet.readUInt32();
+            uint32_t action    = packet.readUInt32();
+            /*uint32_t error   =*/ packet.readUInt32();
+            uint32_t itemEntry = packet.readUInt32();
+            int32_t ownerRandProp = 0;
+            if (packet.getSize() - packet.getReadPos() >= 4)
+                ownerRandProp = static_cast<int32_t>(packet.readUInt32());
+            ensureItemInfo(itemEntry);
+            auto* info = getItemInfo(itemEntry);
+            std::string rawName = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
+            if (ownerRandProp != 0) {
+                std::string suffix = getRandomPropertyName(ownerRandProp);
+                if (!suffix.empty()) rawName += " " + suffix;
+            }
+            uint32_t aucQuality = info ? info->quality : 1u;
+            std::string itemLink = buildItemLink(itemEntry, aucQuality, rawName);
+            if (action == 1)
+                addSystemChatMessage("Your auction of " + itemLink + " has expired.");
+            else if (action == 2)
+                addSystemChatMessage("A bid has been placed on your auction of " + itemLink + ".");
+            else
+                addSystemChatMessage("Your auction of " + itemLink + " has sold!");
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // auctionHouseId(u32) + auctionId(u32) + bidderGuid(u64) + bidAmount(u32) + outbidAmount(u32) + itemEntry(u32) + randomPropertyId(u32)
+    dispatchTable_[Opcode::SMSG_AUCTION_BIDDER_NOTIFICATION] = [this](network::Packet& packet) {
+        // auctionHouseId(u32) + auctionId(u32) + bidderGuid(u64) + bidAmount(u32) + outbidAmount(u32) + itemEntry(u32) + randomPropertyId(u32)
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            /*uint32_t auctionId =*/ packet.readUInt32();
+            uint32_t itemEntry = packet.readUInt32();
+            int32_t bidRandProp = 0;
+            // Try to read randomPropertyId if enough data remains
+            if (packet.getSize() - packet.getReadPos() >= 4)
+                bidRandProp = static_cast<int32_t>(packet.readUInt32());
+            ensureItemInfo(itemEntry);
+            auto* info = getItemInfo(itemEntry);
+            std::string rawName2 = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
+            if (bidRandProp != 0) {
+                std::string suffix = getRandomPropertyName(bidRandProp);
+                if (!suffix.empty()) rawName2 += " " + suffix;
+            }
+            uint32_t bidQuality = info ? info->quality : 1u;
+            std::string bidLink = buildItemLink(itemEntry, bidQuality, rawName2);
+            addSystemChatMessage("You have been outbid on " + bidLink + ".");
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // uint32 auctionId + uint32 itemEntry + uint32 itemRandom — auction expired/cancelled
+    dispatchTable_[Opcode::SMSG_AUCTION_REMOVED_NOTIFICATION] = [this](network::Packet& packet) {
+        // uint32 auctionId + uint32 itemEntry + uint32 itemRandom — auction expired/cancelled
+        if (packet.getSize() - packet.getReadPos() >= 12) {
+            /*uint32_t auctionId =*/ packet.readUInt32();
+            uint32_t itemEntry = packet.readUInt32();
+            int32_t itemRandom = static_cast<int32_t>(packet.readUInt32());
+            ensureItemInfo(itemEntry);
+            auto* info = getItemInfo(itemEntry);
+            std::string rawName3 = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
+            if (itemRandom != 0) {
+                std::string suffix = getRandomPropertyName(itemRandom);
+                if (!suffix.empty()) rawName3 += " " + suffix;
+            }
+            uint32_t remQuality = info ? info->quality : 1u;
+            std::string remLink = buildItemLink(itemEntry, remQuality, rawName3);
+            addSystemChatMessage("Your auction of " + remLink + " has expired.");
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // uint64 containerGuid — tells client to open this container
+    // The actual items come via update packets; we just log this.
+    dispatchTable_[Opcode::SMSG_OPEN_CONTAINER] = [this](network::Packet& packet) {
+        // uint64 containerGuid — tells client to open this container
+        // The actual items come via update packets; we just log this.
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint64_t containerGuid = packet.readUInt64();
+            LOG_DEBUG("SMSG_OPEN_CONTAINER: guid=0x", std::hex, containerGuid, std::dec);
+        }
+    };
+    // PackedGuid (player guid) + uint32 vehicleId
+    // vehicleId == 0 means the player left the vehicle
+    dispatchTable_[Opcode::SMSG_PLAYER_VEHICLE_DATA] = [this](network::Packet& packet) {
+        // PackedGuid (player guid) + uint32 vehicleId
+        // vehicleId == 0 means the player left the vehicle
+        if (packet.getSize() - packet.getReadPos() >= 1) {
+            (void)UpdateObjectParser::readPackedGuid(packet); // player guid (unused)
+        }
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            vehicleId_ = packet.readUInt32();
+        } else {
+            vehicleId_ = 0;
+        }
+    };
+    // guid(8) + status(1): status 1 = NPC has available/new routes for this player
+    dispatchTable_[Opcode::SMSG_TAXINODE_STATUS] = [this](network::Packet& packet) {
+        // guid(8) + status(1): status 1 = NPC has available/new routes for this player
+        if (packet.getSize() - packet.getReadPos() >= 9) {
+            uint64_t npcGuid = packet.readUInt64();
+            uint8_t  status  = packet.readUInt8();
+            taxiNpcHasRoutes_[npcGuid] = (status != 0);
+        }
+    };
+    // TBC 2.4.3 aura tracking: replaces SMSG_AURA_UPDATE which doesn't exist in TBC.
+    // Format: uint64 targetGuid + uint8 count + N×{uint8 slot, uint32 spellId,
+    //         uint8 effectIndex, uint8 flags, uint32 durationMs, uint32 maxDurationMs}
+    dispatchTable_[Opcode::SMSG_INIT_EXTRA_AURA_INFO_OBSOLETE] = [this](network::Packet& packet) {
+        // TBC 2.4.3 aura tracking: replaces SMSG_AURA_UPDATE which doesn't exist in TBC.
+        // Format: uint64 targetGuid + uint8 count + N×{uint8 slot, uint32 spellId,
+        //         uint8 effectIndex, uint8 flags, uint32 durationMs, uint32 maxDurationMs}
+        const bool isInit = true;
+        auto remaining = [&]() { return packet.getSize() - packet.getReadPos(); };
+        if (remaining() < 9) { packet.setReadPos(packet.getSize()); return; }
+        uint64_t auraTargetGuid = packet.readUInt64();
+        uint8_t count = packet.readUInt8();
+
+        std::vector<AuraSlot>* auraList = nullptr;
+        if (auraTargetGuid == playerGuid)       auraList = &playerAuras;
+        else if (auraTargetGuid == targetGuid)  auraList = &targetAuras;
+        else if (auraTargetGuid != 0)           auraList = &unitAurasCache_[auraTargetGuid];
+
+        if (auraList && isInit) auraList->clear();
+
+        uint64_t nowMs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+
+        for (uint8_t i = 0; i < count && remaining() >= 15; i++) {
+            uint8_t  slot        = packet.readUInt8();   // 1 byte
+            uint32_t spellId     = packet.readUInt32();  // 4 bytes
+            (void)               packet.readUInt8();     // effectIndex: 1 byte (unused for slot display)
+            uint8_t  flags       = packet.readUInt8();   // 1 byte
+            uint32_t durationMs  = packet.readUInt32();  // 4 bytes
+            uint32_t maxDurMs    = packet.readUInt32();  // 4 bytes — total 15 bytes per entry
+
+            if (auraList) {
+                while (auraList->size() <= slot) auraList->push_back(AuraSlot{});
+                AuraSlot& a = (*auraList)[slot];
+                a.spellId      = spellId;
+                // TBC uses same flag convention as Classic: 0x02=harmful, 0x04=beneficial.
+                // Normalize to WotLK SMSG_AURA_UPDATE convention: 0x80=debuff, 0=buff.
+                a.flags        = (flags & 0x02) ? 0x80u : 0u;
+                a.durationMs   = (durationMs == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(durationMs);
+                a.maxDurationMs= (maxDurMs   == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(maxDurMs);
+                a.receivedAtMs = nowMs;
+            }
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // TBC 2.4.3 aura tracking: replaces SMSG_AURA_UPDATE which doesn't exist in TBC.
+    // Format: uint64 targetGuid + uint8 count + N×{uint8 slot, uint32 spellId,
+    //         uint8 effectIndex, uint8 flags, uint32 durationMs, uint32 maxDurationMs}
+    dispatchTable_[Opcode::SMSG_SET_EXTRA_AURA_INFO_OBSOLETE] = [this](network::Packet& packet) {
+        // TBC 2.4.3 aura tracking: replaces SMSG_AURA_UPDATE which doesn't exist in TBC.
+        // Format: uint64 targetGuid + uint8 count + N×{uint8 slot, uint32 spellId,
+        //         uint8 effectIndex, uint8 flags, uint32 durationMs, uint32 maxDurationMs}
+        const bool isInit = false;
+        auto remaining = [&]() { return packet.getSize() - packet.getReadPos(); };
+        if (remaining() < 9) { packet.setReadPos(packet.getSize()); return; }
+        uint64_t auraTargetGuid = packet.readUInt64();
+        uint8_t count = packet.readUInt8();
+
+        std::vector<AuraSlot>* auraList = nullptr;
+        if (auraTargetGuid == playerGuid)       auraList = &playerAuras;
+        else if (auraTargetGuid == targetGuid)  auraList = &targetAuras;
+        else if (auraTargetGuid != 0)           auraList = &unitAurasCache_[auraTargetGuid];
+
+        if (auraList && isInit) auraList->clear();
+
+        uint64_t nowMs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+
+        for (uint8_t i = 0; i < count && remaining() >= 15; i++) {
+            uint8_t  slot        = packet.readUInt8();   // 1 byte
+            uint32_t spellId     = packet.readUInt32();  // 4 bytes
+            (void)               packet.readUInt8();     // effectIndex: 1 byte (unused for slot display)
+            uint8_t  flags       = packet.readUInt8();   // 1 byte
+            uint32_t durationMs  = packet.readUInt32();  // 4 bytes
+            uint32_t maxDurMs    = packet.readUInt32();  // 4 bytes — total 15 bytes per entry
+
+            if (auraList) {
+                while (auraList->size() <= slot) auraList->push_back(AuraSlot{});
+                AuraSlot& a = (*auraList)[slot];
+                a.spellId      = spellId;
+                // TBC uses same flag convention as Classic: 0x02=harmful, 0x04=beneficial.
+                // Normalize to WotLK SMSG_AURA_UPDATE convention: 0x80=debuff, 0=buff.
+                a.flags        = (flags & 0x02) ? 0x80u : 0u;
+                a.durationMs   = (durationMs == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(durationMs);
+                a.maxDurationMs= (maxDurMs   == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(maxDurMs);
+                a.receivedAtMs = nowMs;
+            }
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_GUILD_DECLINE] = [this](network::Packet& packet) {
+        if (packet.getReadPos() < packet.getSize()) {
+            std::string name = packet.readString();
+            addSystemChatMessage(name + " declined your guild invitation.");
+        }
+    };
+    // Clear cached talent data so the talent screen reflects the reset.
+    dispatchTable_[Opcode::SMSG_TALENTS_INVOLUNTARILY_RESET] = [this](network::Packet& packet) {
+        // Clear cached talent data so the talent screen reflects the reset.
+        learnedTalents_[0].clear();
+        learnedTalents_[1].clear();
+        addUIError("Your talents have been reset by the server.");
+        addSystemChatMessage("Your talents have been reset by the server.");
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_SET_REST_START] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t restTrigger = packet.readUInt32();
+            isResting_ = (restTrigger > 0);
+            addSystemChatMessage(isResting_ ? "You are now resting."
+                                            : "You are no longer resting.");
+            if (addonEventCallback_)
+                addonEventCallback_("PLAYER_UPDATE_RESTING", {});
+        }
+    };
+    dispatchTable_[Opcode::SMSG_UPDATE_AURA_DURATION] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 5) {
+            uint8_t slot       = packet.readUInt8();
+            uint32_t durationMs = packet.readUInt32();
+            handleUpdateAuraDuration(slot, durationMs);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_ITEM_NAME_QUERY_RESPONSE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t itemId = packet.readUInt32();
+            std::string name = packet.readString();
+            if (!itemInfoCache_.count(itemId) && !name.empty()) {
+                ItemQueryResponseData stub;
+                stub.entry = itemId;
+                stub.name  = std::move(name);
+                stub.valid = true;
+                itemInfoCache_[itemId] = std::move(stub);
+            }
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_MOUNTSPECIAL_ANIM] = [this](network::Packet& packet) { (void)UpdateObjectParser::readPackedGuid(packet); };
+    dispatchTable_[Opcode::SMSG_CHAR_CUSTOMIZE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 1) {
+            uint8_t result = packet.readUInt8();
+            addSystemChatMessage(result == 0 ? "Character customization complete."
+                                             : "Character customization failed.");
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_CHAR_FACTION_CHANGE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 1) {
+            uint8_t result = packet.readUInt8();
+            addSystemChatMessage(result == 0 ? "Faction change complete."
+                                             : "Faction change failed.");
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_INVALIDATE_PLAYER] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint64_t guid = packet.readUInt64();
+            playerNameCache.erase(guid);
+        }
+    };
+    // uint32 movieId — we don't play movies; acknowledge immediately.
+    dispatchTable_[Opcode::SMSG_TRIGGER_MOVIE] = [this](network::Packet& packet) {
+        // uint32 movieId — we don't play movies; acknowledge immediately.
+        packet.setReadPos(packet.getSize());
+        // WotLK servers expect CMSG_COMPLETE_MOVIE after the movie finishes;
+        // without it, the server may hang or disconnect the client.
+        uint16_t wire = wireOpcode(Opcode::CMSG_COMPLETE_MOVIE);
+        if (wire != 0xFFFF) {
+            network::Packet ack(wire);
+            socket->send(ack);
+            LOG_DEBUG("SMSG_TRIGGER_MOVIE: skipped, sent CMSG_COMPLETE_MOVIE");
+        }
+    };
+    dispatchTable_[Opcode::SMSG_EQUIPMENT_SET_LIST] = [this](network::Packet& packet) { handleEquipmentSetList(packet); };
+    dispatchTable_[Opcode::SMSG_EQUIPMENT_SET_USE_RESULT] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 1) {
+            uint8_t result = packet.readUInt8();
+            if (result != 0) { addUIError("Failed to equip item set."); addSystemChatMessage("Failed to equip item set."); }
+        }
+    };
+    // Server-side LFG invite timed out (no response within time limit)
+    dispatchTable_[Opcode::SMSG_LFG_TIMEDOUT] = [this](network::Packet& packet) {
+        // Server-side LFG invite timed out (no response within time limit)
+        addSystemChatMessage("Dungeon Finder: Invite timed out.");
+        if (openLfgCallback_) openLfgCallback_();
+        packet.setReadPos(packet.getSize());
+    };
+    // Another party member failed to respond to a LFG role-check in time
+    dispatchTable_[Opcode::SMSG_LFG_OTHER_TIMEDOUT] = [this](network::Packet& packet) {
+        // Another party member failed to respond to a LFG role-check in time
+        addSystemChatMessage("Dungeon Finder: Another player's invite timed out.");
+        if (openLfgCallback_) openLfgCallback_();
+        packet.setReadPos(packet.getSize());
+    };
+    // uint32 result — LFG auto-join attempt failed (player selected auto-join at queue time)
+    dispatchTable_[Opcode::SMSG_LFG_AUTOJOIN_FAILED] = [this](network::Packet& packet) {
+        // uint32 result — LFG auto-join attempt failed (player selected auto-join at queue time)
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t result = packet.readUInt32();
+            (void)result;
+        }
+        addUIError("Dungeon Finder: Auto-join failed.");
+        addSystemChatMessage("Dungeon Finder: Auto-join failed.");
+        packet.setReadPos(packet.getSize());
+    };
+    // No eligible players found for auto-join
+    dispatchTable_[Opcode::SMSG_LFG_AUTOJOIN_FAILED_NO_PLAYER] = [this](network::Packet& packet) {
+        // No eligible players found for auto-join
+        addUIError("Dungeon Finder: No players available for auto-join.");
+        addSystemChatMessage("Dungeon Finder: No players available for auto-join.");
+        packet.setReadPos(packet.getSize());
+    };
+    // Party leader is currently set to Looking for More (LFM) mode
+    dispatchTable_[Opcode::SMSG_LFG_LEADER_IS_LFM] = [this](network::Packet& packet) {
+        // Party leader is currently set to Looking for More (LFM) mode
+        addSystemChatMessage("Your party leader is currently Looking for More.");
+        packet.setReadPos(packet.getSize());
+    };
+    // uint32 zoneId + uint8 level_min + uint8 level_max — player queued for meeting stone
+    dispatchTable_[Opcode::SMSG_MEETINGSTONE_SETQUEUE] = [this](network::Packet& packet) {
+        // uint32 zoneId + uint8 level_min + uint8 level_max — player queued for meeting stone
+        if (packet.getSize() - packet.getReadPos() >= 6) {
+            uint32_t zoneId   = packet.readUInt32();
+            uint8_t  levelMin = packet.readUInt8();
+            uint8_t  levelMax = packet.readUInt8();
+            char buf[128];
+            std::string zoneName = getAreaName(zoneId);
+            if (!zoneName.empty())
+                std::snprintf(buf, sizeof(buf),
+                    "You are now in the Meeting Stone queue for %s (levels %u-%u).",
+                    zoneName.c_str(), levelMin, levelMax);
+            else
+                std::snprintf(buf, sizeof(buf),
+                    "You are now in the Meeting Stone queue for zone %u (levels %u-%u).",
+                    zoneId, levelMin, levelMax);
+            addSystemChatMessage(buf);
+            LOG_INFO("SMSG_MEETINGSTONE_SETQUEUE: zone=", zoneId,
+                     " levels=", (int)levelMin, "-", (int)levelMax);
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // Server confirms group found and teleport summon is ready
+    dispatchTable_[Opcode::SMSG_MEETINGSTONE_COMPLETE] = [this](network::Packet& packet) {
+        // Server confirms group found and teleport summon is ready
+        addSystemChatMessage("Meeting Stone: Your group is ready! Use the Meeting Stone to summon.");
+        LOG_INFO("SMSG_MEETINGSTONE_COMPLETE");
+        packet.setReadPos(packet.getSize());
+    };
+    // Meeting stone search is still ongoing
+    dispatchTable_[Opcode::SMSG_MEETINGSTONE_IN_PROGRESS] = [this](network::Packet& packet) {
+        // Meeting stone search is still ongoing
+        addSystemChatMessage("Meeting Stone: Searching for group members...");
+        LOG_DEBUG("SMSG_MEETINGSTONE_IN_PROGRESS");
+        packet.setReadPos(packet.getSize());
+    };
+    // uint64 memberGuid — a player was added to your group via meeting stone
+    dispatchTable_[Opcode::SMSG_MEETINGSTONE_MEMBER_ADDED] = [this](network::Packet& packet) {
+        // uint64 memberGuid — a player was added to your group via meeting stone
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint64_t memberGuid = packet.readUInt64();
+            auto nit = playerNameCache.find(memberGuid);
+            if (nit != playerNameCache.end() && !nit->second.empty()) {
+                addSystemChatMessage("Meeting Stone: " + nit->second +
+                                     " has been added to your group.");
+            } else {
+                addSystemChatMessage("Meeting Stone: A new player has been added to your group.");
+            }
+            LOG_INFO("SMSG_MEETINGSTONE_MEMBER_ADDED: guid=0x", std::hex, memberGuid, std::dec);
+        }
+    };
+    // uint8 reason — failed to join group via meeting stone
+    // 0=target_not_in_lfg, 1=target_in_party, 2=target_invalid_map, 3=target_not_available
+    dispatchTable_[Opcode::SMSG_MEETINGSTONE_JOINFAILED] = [this](network::Packet& packet) {
+        // uint8 reason — failed to join group via meeting stone
+        // 0=target_not_in_lfg, 1=target_in_party, 2=target_invalid_map, 3=target_not_available
+        static const char* kMeetingstoneErrors[] = {
+            "Target player is not using the Meeting Stone.",
+            "Target player is already in a group.",
+            "You are not in a valid zone for that Meeting Stone.",
+            "Target player is not available.",
+        };
+        if (packet.getSize() - packet.getReadPos() >= 1) {
+            uint8_t reason = packet.readUInt8();
+            const char* msg = (reason < 4) ? kMeetingstoneErrors[reason]
+                                           : "Meeting Stone: Could not join group.";
+            addSystemChatMessage(msg);
+            LOG_INFO("SMSG_MEETINGSTONE_JOINFAILED: reason=", (int)reason);
+        }
+    };
+    // Player was removed from the meeting stone queue (left, or group disbanded)
+    dispatchTable_[Opcode::SMSG_MEETINGSTONE_LEAVE] = [this](network::Packet& packet) {
+        // Player was removed from the meeting stone queue (left, or group disbanded)
+        addSystemChatMessage("You have left the Meeting Stone queue.");
+        LOG_DEBUG("SMSG_MEETINGSTONE_LEAVE");
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_GMTICKET_CREATE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 1) {
+            uint8_t res = packet.readUInt8();
+            addSystemChatMessage(res == 1 ? "GM ticket submitted."
+                                          : "Failed to submit GM ticket.");
+        }
+    };
+    dispatchTable_[Opcode::SMSG_GMTICKET_UPDATETEXT] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 1) {
+            uint8_t res = packet.readUInt8();
+            addSystemChatMessage(res == 1 ? "GM ticket updated."
+                                          : "Failed to update GM ticket.");
+        }
+    };
+    dispatchTable_[Opcode::SMSG_GMTICKET_DELETETICKET] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 1) {
+            uint8_t res = packet.readUInt8();
+            addSystemChatMessage(res == 9 ? "GM ticket deleted."
+                                          : "No ticket to delete.");
+        }
+    };
+    // WotLK 3.3.5a format:
+    //   uint8  status  — 1=no ticket, 6=has open ticket, 3=closed, 10=suspended
+    // If status == 6 (GMTICKET_STATUS_HASTEXT):
+    //   cstring ticketText
+    //   uint32  ticketAge       (seconds old)
+    //   uint32  daysUntilOld    (days remaining before escalation)
+    //   float   waitTimeHours   (estimated GM wait time)
+    dispatchTable_[Opcode::SMSG_GMTICKET_GETTICKET] = [this](network::Packet& packet) {
+        // WotLK 3.3.5a format:
+        //   uint8  status  — 1=no ticket, 6=has open ticket, 3=closed, 10=suspended
+        // If status == 6 (GMTICKET_STATUS_HASTEXT):
+        //   cstring ticketText
+        //   uint32  ticketAge       (seconds old)
+        //   uint32  daysUntilOld    (days remaining before escalation)
+        //   float   waitTimeHours   (estimated GM wait time)
+        if (packet.getSize() - packet.getReadPos() < 1) { packet.setReadPos(packet.getSize()); return; }
+        uint8_t gmStatus = packet.readUInt8();
+        // Status 6 = GMTICKET_STATUS_HASTEXT — open ticket with text
+        if (gmStatus == 6 && packet.getSize() - packet.getReadPos() >= 1) {
+            gmTicketText_    = packet.readString();
+            uint32_t ageSec  = (packet.getSize() - packet.getReadPos() >= 4) ? packet.readUInt32() : 0;
+            /*uint32_t daysLeft =*/ (packet.getSize() - packet.getReadPos() >= 4) ? packet.readUInt32() : 0;
+            gmTicketWaitHours_ = (packet.getSize() - packet.getReadPos() >= 4)
+                ? packet.readFloat() : 0.0f;
+            gmTicketActive_ = true;
+            char buf[256];
+            if (ageSec < 60) {
+                std::snprintf(buf, sizeof(buf),
+                    "You have an open GM ticket (submitted %us ago). Estimated wait: %.1f hours.",
+                    ageSec, gmTicketWaitHours_);
+            } else {
+                uint32_t ageMin = ageSec / 60;
+                std::snprintf(buf, sizeof(buf),
+                    "You have an open GM ticket (submitted %um ago). Estimated wait: %.1f hours.",
+                    ageMin, gmTicketWaitHours_);
+            }
+            addSystemChatMessage(buf);
+            LOG_INFO("SMSG_GMTICKET_GETTICKET: open ticket age=", ageSec,
+                     "s wait=", gmTicketWaitHours_, "h");
+        } else if (gmStatus == 3) {
+            gmTicketActive_ = false;
+            gmTicketText_.clear();
+            addSystemChatMessage("Your GM ticket has been closed.");
+            LOG_INFO("SMSG_GMTICKET_GETTICKET: ticket closed");
+        } else if (gmStatus == 10) {
+            gmTicketActive_ = false;
+            gmTicketText_.clear();
+            addSystemChatMessage("Your GM ticket has been suspended.");
+            LOG_INFO("SMSG_GMTICKET_GETTICKET: ticket suspended");
+        } else {
+            // Status 1 = no open ticket (default/no ticket)
+            gmTicketActive_ = false;
+            gmTicketText_.clear();
+            LOG_DEBUG("SMSG_GMTICKET_GETTICKET: no open ticket (status=", (int)gmStatus, ")");
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // uint32 status: 1 = GM support available, 0 = offline/unavailable
+    dispatchTable_[Opcode::SMSG_GMTICKET_SYSTEMSTATUS] = [this](network::Packet& packet) {
+        // uint32 status: 1 = GM support available, 0 = offline/unavailable
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t sysStatus = packet.readUInt32();
+            gmSupportAvailable_ = (sysStatus != 0);
+            addSystemChatMessage(gmSupportAvailable_
+                ? "GM support is currently available."
+                : "GM support is currently unavailable.");
+            LOG_INFO("SMSG_GMTICKET_SYSTEMSTATUS: available=", gmSupportAvailable_);
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // uint8 runeIndex + uint8 newRuneType (0=Blood,1=Unholy,2=Frost,3=Death)
+    dispatchTable_[Opcode::SMSG_CONVERT_RUNE] = [this](network::Packet& packet) {
+        // uint8 runeIndex + uint8 newRuneType (0=Blood,1=Unholy,2=Frost,3=Death)
+        if (packet.getSize() - packet.getReadPos() < 2) {
+            packet.setReadPos(packet.getSize());
+            return;
+        }
+        uint8_t idx  = packet.readUInt8();
+        uint8_t type = packet.readUInt8();
+        if (idx < 6) playerRunes_[idx].type = static_cast<RuneType>(type & 0x3);
+    };
+    // uint8 runeReadyMask (bit i=1 → rune i is ready)
+    // uint8[6] cooldowns (0=ready, 255=just used → readyFraction = 1 - val/255)
+    dispatchTable_[Opcode::SMSG_RESYNC_RUNES] = [this](network::Packet& packet) {
+        // uint8 runeReadyMask (bit i=1 → rune i is ready)
+        // uint8[6] cooldowns (0=ready, 255=just used → readyFraction = 1 - val/255)
+        if (packet.getSize() - packet.getReadPos() < 7) {
+            packet.setReadPos(packet.getSize());
+            return;
+        }
+        uint8_t readyMask = packet.readUInt8();
+        for (int i = 0; i < 6; i++) {
+            uint8_t cd = packet.readUInt8();
+            playerRunes_[i].ready = (readyMask & (1u << i)) != 0;
+            playerRunes_[i].readyFraction = 1.0f - cd / 255.0f;
+            if (playerRunes_[i].ready) playerRunes_[i].readyFraction = 1.0f;
+        }
+    };
+    // uint32 runeMask (bit i=1 → rune i just became ready)
+    dispatchTable_[Opcode::SMSG_ADD_RUNE_POWER] = [this](network::Packet& packet) {
+        // uint32 runeMask (bit i=1 → rune i just became ready)
+        if (packet.getSize() - packet.getReadPos() < 4) {
+            packet.setReadPos(packet.getSize());
+            return;
+        }
+        uint32_t runeMask = packet.readUInt32();
+        for (int i = 0; i < 6; i++) {
+            if (runeMask & (1u << i)) {
+                playerRunes_[i].ready = true;
+                playerRunes_[i].readyFraction = 1.0f;
+            }
+        }
+    };
+    // Classic: packed_guid victim + packed_guid caster + spellId(4) + damage(4) + schoolMask(4)
+    // TBC:     uint64 victim + uint64 caster + spellId(4) + damage(4) + schoolMask(4)
+    // WotLK:   packed_guid victim + packed_guid caster + spellId(4) + damage(4) + absorbed(4) + schoolMask(4)
+    dispatchTable_[Opcode::SMSG_SPELLDAMAGESHIELD] = [this](network::Packet& packet) {
+        // Classic: packed_guid victim + packed_guid caster + spellId(4) + damage(4) + schoolMask(4)
+        // TBC:     uint64 victim + uint64 caster + spellId(4) + damage(4) + schoolMask(4)
+        // WotLK:   packed_guid victim + packed_guid caster + spellId(4) + damage(4) + absorbed(4) + schoolMask(4)
+        const bool shieldTbc = isActiveExpansion("tbc");
+        const bool shieldWotlkLike = !isClassicLikeExpansion() && !shieldTbc;
+        const auto shieldRem = [&]() { return packet.getSize() - packet.getReadPos(); };
+        const size_t shieldMinSz = shieldTbc ? 24u : 2u;
+        if (packet.getSize() - packet.getReadPos() < shieldMinSz) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        if (!shieldTbc && (!hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t victimGuid = shieldTbc
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < (shieldTbc ? 8u : 1u)
+            || (!shieldTbc && !hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t casterGuid = shieldTbc
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        const size_t shieldTailSize = shieldWotlkLike ? 16u : 12u;
+        if (shieldRem() < shieldTailSize) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint32_t shieldSpellId = packet.readUInt32();
+        uint32_t damage        = packet.readUInt32();
+        if (shieldWotlkLike)
+            /*uint32_t absorbed =*/ packet.readUInt32();
+        /*uint32_t school =*/  packet.readUInt32();
+        // Show combat text: damage shield reflect
+        if (casterGuid == playerGuid) {
+            // We have a damage shield that reflected damage
+            addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(damage), shieldSpellId, true, 0, casterGuid, victimGuid);
+        } else if (victimGuid == playerGuid) {
+            // A damage shield hit us (e.g. target's Thorns)
+            addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(damage), shieldSpellId, false, 0, casterGuid, victimGuid);
+        }
+    };
+    // WotLK/Classic/Turtle: packed casterGuid + packed victimGuid + uint32 spellId + uint8 saveType
+    // TBC:                  full uint64 casterGuid + full uint64 victimGuid + uint32 + uint8
+    dispatchTable_[Opcode::SMSG_SPELLORDAMAGE_IMMUNE] = [this](network::Packet& packet) {
+        // WotLK/Classic/Turtle: packed casterGuid + packed victimGuid + uint32 spellId + uint8 saveType
+        // TBC:                  full uint64 casterGuid + full uint64 victimGuid + uint32 + uint8
+        const bool immuneUsesFullGuid = isActiveExpansion("tbc");
+        const size_t minSz = immuneUsesFullGuid ? 21u : 2u;
+        if (packet.getSize() - packet.getReadPos() < minSz) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        if (!immuneUsesFullGuid && !hasFullPackedGuid(packet)) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t casterGuid = immuneUsesFullGuid
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < (immuneUsesFullGuid ? 8u : 2u)
+            || (!immuneUsesFullGuid && !hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t victimGuid = immuneUsesFullGuid
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 5) return;
+        uint32_t immuneSpellId = packet.readUInt32();
+        /*uint8_t saveType =*/ packet.readUInt8();
+        // Show IMMUNE text when the player is the caster (we hit an immune target)
+        // or the victim (we are immune)
+        if (casterGuid == playerGuid || victimGuid == playerGuid) {
+            addCombatText(CombatTextEntry::IMMUNE, 0, immuneSpellId,
+                          casterGuid == playerGuid, 0, casterGuid, victimGuid);
+        }
+    };
+    // WotLK/Classic/Turtle: packed casterGuid + packed victimGuid + uint32 dispelSpell + uint8 isStolen
+    // TBC:                  full uint64 casterGuid + full uint64 victimGuid + ...
+    // + uint32 count + count × (uint32 dispelled_spellId + uint32 unk)
+    dispatchTable_[Opcode::SMSG_SPELLDISPELLOG] = [this](network::Packet& packet) {
+        // WotLK/Classic/Turtle: packed casterGuid + packed victimGuid + uint32 dispelSpell + uint8 isStolen
+        // TBC:                  full uint64 casterGuid + full uint64 victimGuid + ...
+        // + uint32 count + count × (uint32 dispelled_spellId + uint32 unk)
+        const bool dispelUsesFullGuid = isActiveExpansion("tbc");
+        if (packet.getSize() - packet.getReadPos() < (dispelUsesFullGuid ? 8u : 1u)
+            || (!dispelUsesFullGuid && !hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t casterGuid = dispelUsesFullGuid
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < (dispelUsesFullGuid ? 8u : 1u)
+            || (!dispelUsesFullGuid && !hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t victimGuid = dispelUsesFullGuid
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 9) return;
+        /*uint32_t dispelSpell =*/ packet.readUInt32();
+        uint8_t isStolen = packet.readUInt8();
+        uint32_t count   = packet.readUInt32();
+        // Preserve every dispelled aura in the combat log instead of collapsing
+        // multi-aura packets down to the first entry only.
+        const size_t dispelEntrySize = dispelUsesFullGuid ? 8u : 5u;
+        std::vector<uint32_t> dispelledIds;
+        dispelledIds.reserve(count);
+        for (uint32_t i = 0; i < count && packet.getSize() - packet.getReadPos() >= dispelEntrySize; ++i) {
+            uint32_t dispelledId = packet.readUInt32();
+            if (dispelUsesFullGuid) {
+                /*uint32_t unk =*/ packet.readUInt32();
+            } else {
+                /*uint8_t isPositive =*/ packet.readUInt8();
+            }
+            if (dispelledId != 0) {
+                dispelledIds.push_back(dispelledId);
+            }
+        }
+        // Show system message if player was victim or caster
+        if (victimGuid == playerGuid || casterGuid == playerGuid) {
+            std::vector<uint32_t> loggedIds;
+            if (isStolen) {
+                loggedIds.reserve(dispelledIds.size());
+                for (uint32_t dispelledId : dispelledIds) {
+                    if (shouldLogSpellstealAura(casterGuid, victimGuid, dispelledId))
+                        loggedIds.push_back(dispelledId);
+                }
+            } else {
+                loggedIds = dispelledIds;
+            }
+
+            const std::string displaySpellNames = formatSpellNameList(*this, loggedIds);
+            if (!displaySpellNames.empty()) {
+                char buf[256];
+                const char* passiveVerb = loggedIds.size() == 1 ? "was" : "were";
+                if (isStolen) {
+                    if (victimGuid == playerGuid && casterGuid != playerGuid)
+                        std::snprintf(buf, sizeof(buf), "%s %s stolen.",
+                                      displaySpellNames.c_str(), passiveVerb);
+                    else if (casterGuid == playerGuid)
+                        std::snprintf(buf, sizeof(buf), "You steal %s.", displaySpellNames.c_str());
+                    else
+                        std::snprintf(buf, sizeof(buf), "%s %s stolen.",
+                                      displaySpellNames.c_str(), passiveVerb);
+                } else {
+                    if (victimGuid == playerGuid && casterGuid != playerGuid)
+                        std::snprintf(buf, sizeof(buf), "%s %s dispelled.",
+                                      displaySpellNames.c_str(), passiveVerb);
+                    else if (casterGuid == playerGuid)
+                        std::snprintf(buf, sizeof(buf), "You dispel %s.", displaySpellNames.c_str());
+                    else
+                        std::snprintf(buf, sizeof(buf), "%s %s dispelled.",
+                                      displaySpellNames.c_str(), passiveVerb);
+                }
+                addSystemChatMessage(buf);
+            }
+            // Preserve stolen auras as spellsteal events so the log wording stays accurate.
+            if (!loggedIds.empty()) {
+                bool isPlayerCaster = (casterGuid == playerGuid);
+                for (uint32_t dispelledId : loggedIds) {
+                    addCombatText(isStolen ? CombatTextEntry::STEAL : CombatTextEntry::DISPEL,
+                                  0, dispelledId, isPlayerCaster, 0,
+                                  casterGuid, victimGuid);
+                }
+            }
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // Sent to the CASTER (Mage) when Spellsteal succeeds.
+    // Wire format mirrors SPELLDISPELLOG:
+    // WotLK/Classic/Turtle: packed victim + packed caster + uint32 spellId + uint8 isStolen + uint32 count
+    //                        + count × (uint32 stolenSpellId + uint8 isPositive)
+    // TBC:                   full uint64 victim + full uint64 caster + same tail
+    dispatchTable_[Opcode::SMSG_SPELLSTEALLOG] = [this](network::Packet& packet) {
+        // Sent to the CASTER (Mage) when Spellsteal succeeds.
+        // Wire format mirrors SPELLDISPELLOG:
+        // WotLK/Classic/Turtle: packed victim + packed caster + uint32 spellId + uint8 isStolen + uint32 count
+        //                        + count × (uint32 stolenSpellId + uint8 isPositive)
+        // TBC:                   full uint64 victim + full uint64 caster + same tail
+        const bool stealUsesFullGuid = isActiveExpansion("tbc");
+        if (packet.getSize() - packet.getReadPos() < (stealUsesFullGuid ? 8u : 1u)
+            || (!stealUsesFullGuid && !hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t stealVictim = stealUsesFullGuid
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < (stealUsesFullGuid ? 8u : 1u)
+            || (!stealUsesFullGuid && !hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t stealCaster = stealUsesFullGuid
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 9) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        /*uint32_t stealSpellId =*/ packet.readUInt32();
+        /*uint8_t  isStolen    =*/ packet.readUInt8();
+        uint32_t stealCount   = packet.readUInt32();
+        // Preserve every stolen aura in the combat log instead of only the first.
+        const size_t stealEntrySize = stealUsesFullGuid ? 8u : 5u;
+        std::vector<uint32_t> stolenIds;
+        stolenIds.reserve(stealCount);
+        for (uint32_t i = 0; i < stealCount && packet.getSize() - packet.getReadPos() >= stealEntrySize; ++i) {
+            uint32_t stolenId = packet.readUInt32();
+            if (stealUsesFullGuid) {
+                /*uint32_t unk =*/ packet.readUInt32();
+            } else {
+                /*uint8_t isPos  =*/ packet.readUInt8();
+            }
+            if (stolenId != 0) {
+                stolenIds.push_back(stolenId);
+            }
+        }
+        if (stealCaster == playerGuid || stealVictim == playerGuid) {
+            std::vector<uint32_t> loggedIds;
+            loggedIds.reserve(stolenIds.size());
+            for (uint32_t stolenId : stolenIds) {
+                if (shouldLogSpellstealAura(stealCaster, stealVictim, stolenId))
+                    loggedIds.push_back(stolenId);
+            }
+
+            const std::string displaySpellNames = formatSpellNameList(*this, loggedIds);
+            if (!displaySpellNames.empty()) {
+                char buf[256];
+                if (stealCaster == playerGuid)
+                    std::snprintf(buf, sizeof(buf), "You stole %s.", displaySpellNames.c_str());
+                else
+                    std::snprintf(buf, sizeof(buf), "%s %s stolen.", displaySpellNames.c_str(),
+                                  loggedIds.size() == 1 ? "was" : "were");
+                addSystemChatMessage(buf);
+            }
+            // Some servers emit both SPELLDISPELLOG(isStolen=1) and SPELLSTEALLOG
+            // for the same aura. Keep the first event and suppress the duplicate.
+            if (!loggedIds.empty()) {
+                bool isPlayerCaster = (stealCaster == playerGuid);
+                for (uint32_t stolenId : loggedIds) {
+                    addCombatText(CombatTextEntry::STEAL, 0, stolenId, isPlayerCaster, 0,
+                                  stealCaster, stealVictim);
+                }
+            }
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // WotLK/Classic/Turtle: packed_guid target + packed_guid caster + uint32 spellId + ...
+    // TBC:                  uint64 target + uint64 caster + uint32 spellId + ...
+    dispatchTable_[Opcode::SMSG_SPELL_CHANCE_PROC_LOG] = [this](network::Packet& packet) {
+        // WotLK/Classic/Turtle: packed_guid target + packed_guid caster + uint32 spellId + ...
+        // TBC:                  uint64 target + uint64 caster + uint32 spellId + ...
+        const bool procChanceUsesFullGuid = isActiveExpansion("tbc");
+        auto readProcChanceGuid = [&]() -> uint64_t {
+            if (procChanceUsesFullGuid)
+                return (packet.getSize() - packet.getReadPos() >= 8) ? packet.readUInt64() : 0;
+            return UpdateObjectParser::readPackedGuid(packet);
+        };
+        if (packet.getSize() - packet.getReadPos() < (procChanceUsesFullGuid ? 8u : 1u)
+            || (!procChanceUsesFullGuid && !hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t procTargetGuid = readProcChanceGuid();
+        if (packet.getSize() - packet.getReadPos() < (procChanceUsesFullGuid ? 8u : 1u)
+            || (!procChanceUsesFullGuid && !hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t procCasterGuid = readProcChanceGuid();
+        if (packet.getSize() - packet.getReadPos() < 4) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint32_t procSpellId = packet.readUInt32();
+        // Show a "PROC!" floating text when the player triggers the proc
+        if (procCasterGuid == playerGuid && procSpellId > 0)
+            addCombatText(CombatTextEntry::PROC_TRIGGER, 0, procSpellId, true, 0,
+                          procCasterGuid, procTargetGuid);
+        packet.setReadPos(packet.getSize());
+    };
+    // Sent when a unit is killed by a spell with SPELL_ATTR_EX2_INSTAKILL (e.g. Execute, Obliterate, etc.)
+    // WotLK/Classic/Turtle: packed_guid caster + packed_guid victim + uint32 spellId
+    // TBC:                  full uint64 caster + full uint64 victim + uint32 spellId
+    dispatchTable_[Opcode::SMSG_SPELLINSTAKILLLOG] = [this](network::Packet& packet) {
+        // Sent when a unit is killed by a spell with SPELL_ATTR_EX2_INSTAKILL (e.g. Execute, Obliterate, etc.)
+        // WotLK/Classic/Turtle: packed_guid caster + packed_guid victim + uint32 spellId
+        // TBC:                  full uint64 caster + full uint64 victim + uint32 spellId
+        const bool ikUsesFullGuid = isActiveExpansion("tbc");
+        auto ik_rem = [&]() { return packet.getSize() - packet.getReadPos(); };
+        if (ik_rem() < (ikUsesFullGuid ? 8u : 1u)
+            || (!ikUsesFullGuid && !hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t ikCaster = ikUsesFullGuid
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (ik_rem() < (ikUsesFullGuid ? 8u : 1u)
+            || (!ikUsesFullGuid && !hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t ikVictim = ikUsesFullGuid
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (ik_rem() < 4) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint32_t ikSpell = packet.readUInt32();
+        // Show kill/death feedback for the local player
+        if (ikCaster == playerGuid) {
+            addCombatText(CombatTextEntry::INSTAKILL, 0, ikSpell, true, 0, ikCaster, ikVictim);
+        } else if (ikVictim == playerGuid) {
+            addCombatText(CombatTextEntry::INSTAKILL, 0, ikSpell, false, 0, ikCaster, ikVictim);
+            addUIError("You were killed by an instant-kill effect.");
+            addSystemChatMessage("You were killed by an instant-kill effect.");
+        }
+        LOG_DEBUG("SMSG_SPELLINSTAKILLLOG: caster=0x", std::hex, ikCaster,
+                  " victim=0x", ikVictim, std::dec, " spell=", ikSpell);
+        packet.setReadPos(packet.getSize());
+    };
+    // WotLK/Classic/Turtle: packed_guid caster + uint32 spellId + uint32 effectCount
+    // TBC:                  uint64 caster + uint32 spellId + uint32 effectCount
+    // Per-effect: uint8 effectType + uint32 effectLogCount + effect-specific data
+    // Effect 10 = POWER_DRAIN:   packed_guid target + uint32 amount + uint32 powerType + float multiplier
+    // Effect 11 = HEALTH_LEECH:  packed_guid target + uint32 amount + float multiplier
+    // Effect 24 = CREATE_ITEM:   uint32 itemEntry
+    // Effect 26 = INTERRUPT_CAST: packed_guid target + uint32 interrupted_spell_id
+    // Effect 49 = FEED_PET:      uint32 itemEntry
+    // Effect 114= CREATE_ITEM2:  uint32 itemEntry (same layout as CREATE_ITEM)
+    dispatchTable_[Opcode::SMSG_SPELLLOGEXECUTE] = [this](network::Packet& packet) {
+        // WotLK/Classic/Turtle: packed_guid caster + uint32 spellId + uint32 effectCount
+        // TBC:                  uint64 caster + uint32 spellId + uint32 effectCount
+        // Per-effect: uint8 effectType + uint32 effectLogCount + effect-specific data
+        // Effect 10 = POWER_DRAIN:   packed_guid target + uint32 amount + uint32 powerType + float multiplier
+        // Effect 11 = HEALTH_LEECH:  packed_guid target + uint32 amount + float multiplier
+        // Effect 24 = CREATE_ITEM:   uint32 itemEntry
+        // Effect 26 = INTERRUPT_CAST: packed_guid target + uint32 interrupted_spell_id
+        // Effect 49 = FEED_PET:      uint32 itemEntry
+        // Effect 114= CREATE_ITEM2:  uint32 itemEntry (same layout as CREATE_ITEM)
+        const bool exeUsesFullGuid = isActiveExpansion("tbc");
+        if (packet.getSize() - packet.getReadPos() < (exeUsesFullGuid ? 8u : 1u)) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        if (!exeUsesFullGuid && !hasFullPackedGuid(packet)) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t exeCaster = exeUsesFullGuid
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 8) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint32_t exeSpellId = packet.readUInt32();
+        uint32_t exeEffectCount = packet.readUInt32();
+        exeEffectCount = std::min(exeEffectCount, 32u); // sanity
+
+        const bool isPlayerCaster = (exeCaster == playerGuid);
+        for (uint32_t ei = 0; ei < exeEffectCount; ++ei) {
+            if (packet.getSize() - packet.getReadPos() < 5) break;
+            uint8_t  effectType     = packet.readUInt8();
+            uint32_t effectLogCount = packet.readUInt32();
+            effectLogCount = std::min(effectLogCount, 64u); // sanity
+            if (effectType == 10) {
+                // SPELL_EFFECT_POWER_DRAIN: packed_guid target + uint32 amount + uint32 powerType + float multiplier
+                for (uint32_t li = 0; li < effectLogCount; ++li) {
+                    if (packet.getSize() - packet.getReadPos() < (exeUsesFullGuid ? 8u : 1u)
+                        || (!exeUsesFullGuid && !hasFullPackedGuid(packet))) {
+                        packet.setReadPos(packet.getSize()); break;
+                    }
+                    uint64_t drainTarget = exeUsesFullGuid
+                        ? packet.readUInt64()
+                        : UpdateObjectParser::readPackedGuid(packet);
+                    if (packet.getSize() - packet.getReadPos() < 12) { packet.setReadPos(packet.getSize()); break; }
+                    uint32_t drainAmount = packet.readUInt32();
+                    uint32_t drainPower  = packet.readUInt32(); // 0=mana,1=rage,3=energy,6=runic
+                    float drainMult = packet.readFloat();
+                    if (drainAmount > 0) {
+                        if (drainTarget == playerGuid)
+                            addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(drainAmount), exeSpellId, false,
+                                          static_cast<uint8_t>(drainPower),
+                                          exeCaster, drainTarget);
+                        if (isPlayerCaster) {
+                            if (drainTarget != playerGuid) {
+                                addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(drainAmount), exeSpellId, true,
+                                              static_cast<uint8_t>(drainPower), exeCaster, drainTarget);
+                            }
+                            if (drainMult > 0.0f && std::isfinite(drainMult)) {
+                                const uint32_t gainedAmount = static_cast<uint32_t>(
+                                    std::lround(static_cast<double>(drainAmount) * static_cast<double>(drainMult)));
+                                if (gainedAmount > 0) {
+                                    addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(gainedAmount), exeSpellId, true,
+                                                  static_cast<uint8_t>(drainPower), exeCaster, exeCaster);
+                                }
+                            }
+                        }
+                    }
+                    LOG_DEBUG("SMSG_SPELLLOGEXECUTE POWER_DRAIN: spell=", exeSpellId,
+                              " power=", drainPower, " amount=", drainAmount,
+                              " multiplier=", drainMult);
+                }
+            } else if (effectType == 11) {
+                // SPELL_EFFECT_HEALTH_LEECH: packed_guid target + uint32 amount + float multiplier
+                for (uint32_t li = 0; li < effectLogCount; ++li) {
+                    if (packet.getSize() - packet.getReadPos() < (exeUsesFullGuid ? 8u : 1u)
+                        || (!exeUsesFullGuid && !hasFullPackedGuid(packet))) {
+                        packet.setReadPos(packet.getSize()); break;
+                    }
+                    uint64_t leechTarget = exeUsesFullGuid
+                        ? packet.readUInt64()
+                        : UpdateObjectParser::readPackedGuid(packet);
+                    if (packet.getSize() - packet.getReadPos() < 8) { packet.setReadPos(packet.getSize()); break; }
+                    uint32_t leechAmount = packet.readUInt32();
+                    float leechMult = packet.readFloat();
+                    if (leechAmount > 0) {
+                        if (leechTarget == playerGuid) {
+                            addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(leechAmount), exeSpellId, false, 0,
+                                          exeCaster, leechTarget);
+                        } else if (isPlayerCaster) {
+                            addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(leechAmount), exeSpellId, true, 0,
+                                          exeCaster, leechTarget);
+                        }
+                        if (isPlayerCaster && leechMult > 0.0f && std::isfinite(leechMult)) {
+                            const uint32_t gainedAmount = static_cast<uint32_t>(
+                                std::lround(static_cast<double>(leechAmount) * static_cast<double>(leechMult)));
+                            if (gainedAmount > 0) {
+                                addCombatText(CombatTextEntry::HEAL, static_cast<int32_t>(gainedAmount), exeSpellId, true, 0,
+                                              exeCaster, exeCaster);
+                            }
+                        }
+                    }
+                    LOG_DEBUG("SMSG_SPELLLOGEXECUTE HEALTH_LEECH: spell=", exeSpellId,
+                              " amount=", leechAmount, " multiplier=", leechMult);
+                }
+            } else if (effectType == 24 || effectType == 114) {
+                // SPELL_EFFECT_CREATE_ITEM / CREATE_ITEM2: uint32 itemEntry per log entry
+                for (uint32_t li = 0; li < effectLogCount; ++li) {
+                    if (packet.getSize() - packet.getReadPos() < 4) break;
+                    uint32_t itemEntry = packet.readUInt32();
+                    if (isPlayerCaster && itemEntry != 0) {
+                        ensureItemInfo(itemEntry);
+                        const ItemQueryResponseData* info = getItemInfo(itemEntry);
+                        std::string itemName = info && !info->name.empty()
+                            ? info->name : ("item #" + std::to_string(itemEntry));
+                        loadSpellNameCache();
+                        auto spellIt = spellNameCache_.find(exeSpellId);
+                        std::string spellName = (spellIt != spellNameCache_.end() && !spellIt->second.name.empty())
+                            ? spellIt->second.name : "";
+                        std::string msg = spellName.empty()
+                            ? ("You create: " + itemName + ".")
+                            : ("You create " + itemName + " using " + spellName + ".");
+                        addSystemChatMessage(msg);
+                        LOG_DEBUG("SMSG_SPELLLOGEXECUTE CREATE_ITEM: spell=", exeSpellId,
+                                  " item=", itemEntry, " name=", itemName);
+
+                        // Repeat-craft queue: re-cast if more crafts remaining
+                        if (craftQueueRemaining_ > 0 && craftQueueSpellId_ == exeSpellId) {
+                            --craftQueueRemaining_;
+                            if (craftQueueRemaining_ > 0) {
+                                castSpell(craftQueueSpellId_, 0);
+                            } else {
+                                craftQueueSpellId_ = 0;
+                            }
+                        }
+                    }
+                }
+            } else if (effectType == 26) {
+                // SPELL_EFFECT_INTERRUPT_CAST: packed_guid target + uint32 interrupted_spell_id
+                for (uint32_t li = 0; li < effectLogCount; ++li) {
+                    if (packet.getSize() - packet.getReadPos() < (exeUsesFullGuid ? 8u : 1u)
+                        || (!exeUsesFullGuid && !hasFullPackedGuid(packet))) {
+                        packet.setReadPos(packet.getSize()); break;
+                    }
+                    uint64_t icTarget = exeUsesFullGuid
+                        ? packet.readUInt64()
+                        : UpdateObjectParser::readPackedGuid(packet);
+                    if (packet.getSize() - packet.getReadPos() < 4) { packet.setReadPos(packet.getSize()); break; }
+                    uint32_t icSpellId = packet.readUInt32();
+                    // Clear the interrupted unit's cast bar immediately
+                    unitCastStates_.erase(icTarget);
+                    // Record interrupt in combat log when player is involved
+                    if (isPlayerCaster || icTarget == playerGuid)
+                        addCombatText(CombatTextEntry::INTERRUPT, 0, icSpellId, isPlayerCaster, 0,
+                                      exeCaster, icTarget);
+                    LOG_DEBUG("SMSG_SPELLLOGEXECUTE INTERRUPT_CAST: spell=", exeSpellId,
+                              " interrupted=", icSpellId, " target=0x", std::hex, icTarget, std::dec);
+                }
+            } else if (effectType == 49) {
+                // SPELL_EFFECT_FEED_PET: uint32 itemEntry per log entry
+                for (uint32_t li = 0; li < effectLogCount; ++li) {
+                    if (packet.getSize() - packet.getReadPos() < 4) break;
+                    uint32_t feedItem = packet.readUInt32();
+                    if (isPlayerCaster && feedItem != 0) {
+                        ensureItemInfo(feedItem);
+                        const ItemQueryResponseData* info = getItemInfo(feedItem);
+                        std::string itemName = info && !info->name.empty()
+                            ? info->name : ("item #" + std::to_string(feedItem));
+                        uint32_t feedQuality = info ? info->quality : 1u;
+                        addSystemChatMessage("You feed your pet " + buildItemLink(feedItem, feedQuality, itemName) + ".");
+                        LOG_DEBUG("SMSG_SPELLLOGEXECUTE FEED_PET: item=", feedItem, " name=", itemName);
+                    }
+                }
+            } else {
+                // Unknown effect type — stop parsing to avoid misalignment
+                packet.setReadPos(packet.getSize());
+                break;
+            }
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // TBC 2.4.3: clear a single aura slot for a unit
+    // Format: uint64 targetGuid + uint8 slot
+    dispatchTable_[Opcode::SMSG_CLEAR_EXTRA_AURA_INFO] = [this](network::Packet& packet) {
+        // TBC 2.4.3: clear a single aura slot for a unit
+        // Format: uint64 targetGuid + uint8 slot
+        if (packet.getSize() - packet.getReadPos() >= 9) {
+            uint64_t clearGuid  = packet.readUInt64();
+            uint8_t  slot       = packet.readUInt8();
+            std::vector<AuraSlot>* auraList = nullptr;
+            if (clearGuid == playerGuid)      auraList = &playerAuras;
+            else if (clearGuid == targetGuid) auraList = &targetAuras;
+            if (auraList && slot < auraList->size()) {
+                (*auraList)[slot] = AuraSlot{};
+            }
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // Format: uint64 itemGuid + uint32 slot + uint32 durationSec + uint64 playerGuid
+    // slot: 0=main-hand, 1=off-hand, 2=ranged
+    dispatchTable_[Opcode::SMSG_ITEM_ENCHANT_TIME_UPDATE] = [this](network::Packet& packet) {
+        // Format: uint64 itemGuid + uint32 slot + uint32 durationSec + uint64 playerGuid
+        // slot: 0=main-hand, 1=off-hand, 2=ranged
+        if (packet.getSize() - packet.getReadPos() < 24) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        /*uint64_t itemGuid =*/ packet.readUInt64();
+        uint32_t enchSlot    = packet.readUInt32();
+        uint32_t durationSec = packet.readUInt32();
+        /*uint64_t playerGuid =*/ packet.readUInt64();
+
+        // Clamp to known slots (0-2)
+        if (enchSlot > 2) { return; }
+
+        uint64_t nowMs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+
+        if (durationSec == 0) {
+            // Enchant expired / removed — erase the slot entry
+            tempEnchantTimers_.erase(
+                std::remove_if(tempEnchantTimers_.begin(), tempEnchantTimers_.end(),
+                               [enchSlot](const TempEnchantTimer& t) { return t.slot == enchSlot; }),
+                tempEnchantTimers_.end());
+        } else {
+            uint64_t expireMs = nowMs + static_cast<uint64_t>(durationSec) * 1000u;
+            bool found = false;
+            for (auto& t : tempEnchantTimers_) {
+                if (t.slot == enchSlot) { t.expireMs = expireMs; found = true; break; }
+            }
+            if (!found) tempEnchantTimers_.push_back({enchSlot, expireMs});
+
+            // Warn at important thresholds
+            if (durationSec <= 60 && durationSec > 55) {
+                const char* slotName = (enchSlot < 3) ? kTempEnchantSlotNames[enchSlot] : "weapon";
+                char buf[80];
+                std::snprintf(buf, sizeof(buf), "Weapon enchant (%s) expires in 1 minute!", slotName);
+                addSystemChatMessage(buf);
+            } else if (durationSec <= 300 && durationSec > 295) {
+                const char* slotName = (enchSlot < 3) ? kTempEnchantSlotNames[enchSlot] : "weapon";
+                char buf[80];
+                std::snprintf(buf, sizeof(buf), "Weapon enchant (%s) expires in 5 minutes.", slotName);
+                addSystemChatMessage(buf);
+            }
+        }
+        LOG_DEBUG("SMSG_ITEM_ENCHANT_TIME_UPDATE: slot=", enchSlot, " dur=", durationSec, "s");
+    };
+    // uint8 result: 0=success, 1=failed, 2=disabled
+    dispatchTable_[Opcode::SMSG_COMPLAIN_RESULT] = [this](network::Packet& packet) {
+        // uint8 result: 0=success, 1=failed, 2=disabled
+        if (packet.getSize() - packet.getReadPos() >= 1) {
+            uint8_t result = packet.readUInt8();
+            if (result == 0)
+                addSystemChatMessage("Your complaint has been submitted.");
+            else if (result == 2)
+                addUIError("Report a Player is currently disabled.");
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // WotLK: packed_guid caster + packed_guid target + uint32 spellId + uint32 remainingMs + uint32 totalMs + uint8 schoolMask
+    // TBC/Classic: uint64 caster + uint64 target + ...
+    dispatchTable_[Opcode::SMSG_RESUME_CAST_BAR] = [this](network::Packet& packet) {
+        // WotLK: packed_guid caster + packed_guid target + uint32 spellId + uint32 remainingMs + uint32 totalMs + uint8 schoolMask
+        // TBC/Classic: uint64 caster + uint64 target + ...
+        const bool rcbTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
+        auto remaining = [&]() { return packet.getSize() - packet.getReadPos(); };
+        if (remaining() < (rcbTbc ? 8u : 1u)) return;
+        uint64_t caster = rcbTbc
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (remaining() < (rcbTbc ? 8u : 1u)) return;
+        if (rcbTbc) packet.readUInt64(); // target (discard)
+        else (void)UpdateObjectParser::readPackedGuid(packet); // target
+        if (remaining() < 12) return;
+        uint32_t spellId   = packet.readUInt32();
+        uint32_t remainMs  = packet.readUInt32();
+        uint32_t totalMs   = packet.readUInt32();
+        if (totalMs > 0) {
+            if (caster == playerGuid) {
+                casting            = true;
+                castIsChannel      = false;
+                currentCastSpellId = spellId;
+                castTimeTotal      = totalMs  / 1000.0f;
+                castTimeRemaining  = remainMs / 1000.0f;
+            } else {
+                auto& s = unitCastStates_[caster];
+                s.casting       = true;
+                s.spellId       = spellId;
+                s.timeTotal     = totalMs  / 1000.0f;
+                s.timeRemaining = remainMs / 1000.0f;
+            }
+            LOG_DEBUG("SMSG_RESUME_CAST_BAR: caster=0x", std::hex, caster, std::dec,
+                      " spell=", spellId, " remaining=", remainMs, "ms total=", totalMs, "ms");
+        }
+    };
+    // casterGuid + uint32 spellId + uint32 totalDurationMs
+    dispatchTable_[Opcode::MSG_CHANNEL_START] = [this](network::Packet& packet) {
+        // casterGuid + uint32 spellId + uint32 totalDurationMs
+        const bool tbcOrClassic = isClassicLikeExpansion() || isActiveExpansion("tbc");
+        uint64_t chanCaster = tbcOrClassic
+            ? (packet.getSize() - packet.getReadPos() >= 8 ? packet.readUInt64() : 0)
+            : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 8) return;
+        uint32_t chanSpellId = packet.readUInt32();
+        uint32_t chanTotalMs = packet.readUInt32();
+        if (chanTotalMs > 0 && chanCaster != 0) {
+            if (chanCaster == playerGuid) {
+                casting            = true;
+                castIsChannel      = true;
+                currentCastSpellId = chanSpellId;
+                castTimeTotal      = chanTotalMs / 1000.0f;
+                castTimeRemaining  = castTimeTotal;
+            } else {
+                auto& s = unitCastStates_[chanCaster];
+                s.casting        = true;
+                s.isChannel      = true;
+                s.spellId        = chanSpellId;
+                s.timeTotal      = chanTotalMs / 1000.0f;
+                s.timeRemaining  = s.timeTotal;
+                s.interruptible  = isSpellInterruptible(chanSpellId);
+            }
+            LOG_DEBUG("MSG_CHANNEL_START: caster=0x", std::hex, chanCaster, std::dec,
+                      " spell=", chanSpellId, " total=", chanTotalMs, "ms");
+            // Fire UNIT_SPELLCAST_CHANNEL_START for Lua addons
+            if (addonEventCallback_) {
+                std::string unitId;
+                if (chanCaster == playerGuid) unitId = "player";
+                else if (chanCaster == targetGuid) unitId = "target";
+                else if (chanCaster == focusGuid) unitId = "focus";
+                else if (chanCaster == petGuid_) unitId = "pet";
+                if (!unitId.empty())
+                    addonEventCallback_("UNIT_SPELLCAST_CHANNEL_START", {unitId, std::to_string(chanSpellId)});
+            }
+        }
+    };
+    // casterGuid + uint32 remainingMs
+    dispatchTable_[Opcode::MSG_CHANNEL_UPDATE] = [this](network::Packet& packet) {
+        // casterGuid + uint32 remainingMs
+        const bool tbcOrClassic2 = isClassicLikeExpansion() || isActiveExpansion("tbc");
+        uint64_t chanCaster2 = tbcOrClassic2
+            ? (packet.getSize() - packet.getReadPos() >= 8 ? packet.readUInt64() : 0)
+            : UpdateObjectParser::readPackedGuid(packet);
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        uint32_t chanRemainMs = packet.readUInt32();
+        if (chanCaster2 == playerGuid) {
+            castTimeRemaining = chanRemainMs / 1000.0f;
+            if (chanRemainMs == 0) {
+                casting = false;
+                castIsChannel = false;
+                currentCastSpellId = 0;
+            }
+        } else if (chanCaster2 != 0) {
+            auto it = unitCastStates_.find(chanCaster2);
+            if (it != unitCastStates_.end()) {
+                it->second.timeRemaining = chanRemainMs / 1000.0f;
+                if (chanRemainMs == 0) unitCastStates_.erase(it);
+            }
+        }
+        LOG_DEBUG("MSG_CHANNEL_UPDATE: caster=0x", std::hex, chanCaster2, std::dec,
+                  " remaining=", chanRemainMs, "ms");
+        // Fire UNIT_SPELLCAST_CHANNEL_STOP when channel ends
+        if (chanRemainMs == 0 && addonEventCallback_) {
+            std::string unitId;
+            if (chanCaster2 == playerGuid) unitId = "player";
+            else if (chanCaster2 == targetGuid) unitId = "target";
+            else if (chanCaster2 == focusGuid) unitId = "focus";
+            else if (chanCaster2 == petGuid_) unitId = "pet";
+            if (!unitId.empty())
+                addonEventCallback_("UNIT_SPELLCAST_CHANNEL_STOP", {unitId});
+        }
+    };
+    // uint32 slot + packed_guid unit (0 packed = clear slot)
+    dispatchTable_[Opcode::SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT] = [this](network::Packet& packet) {
+        // uint32 slot + packed_guid unit (0 packed = clear slot)
+        if (packet.getSize() - packet.getReadPos() < 5) {
+            packet.setReadPos(packet.getSize());
+            return;
+        }
+        uint32_t slot = packet.readUInt32();
+        uint64_t unit = UpdateObjectParser::readPackedGuid(packet);
+        if (slot < kMaxEncounterSlots) {
+            encounterUnitGuids_[slot] = unit;
+            LOG_DEBUG("SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT: slot=", slot,
+                      " guid=0x", std::hex, unit, std::dec);
+        }
+    };
+    // charName (cstring) + guid (uint64) + achievementId (uint32) + ...
+    dispatchTable_[Opcode::SMSG_SERVER_FIRST_ACHIEVEMENT] = [this](network::Packet& packet) {
+        // charName (cstring) + guid (uint64) + achievementId (uint32) + ...
+        if (packet.getReadPos() < packet.getSize()) {
+            std::string charName = packet.readString();
+            if (packet.getSize() - packet.getReadPos() >= 12) {
+                /*uint64_t guid =*/ packet.readUInt64();
+                uint32_t achievementId = packet.readUInt32();
+                loadAchievementNameCache();
+                auto nit = achievementNameCache_.find(achievementId);
+                char buf[256];
+                if (nit != achievementNameCache_.end() && !nit->second.empty()) {
+                    std::snprintf(buf, sizeof(buf),
+                        "%s is the first on the realm to earn: %s!",
+                        charName.c_str(), nit->second.c_str());
+                } else {
+                    std::snprintf(buf, sizeof(buf),
+                        "%s is the first on the realm to earn achievement #%u!",
+                        charName.c_str(), achievementId);
+                }
+                addSystemChatMessage(buf);
+            }
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_SET_FORCED_REACTIONS] = [this](network::Packet& packet) { handleSetForcedReactions(packet); };
+    dispatchTable_[Opcode::SMSG_SUSPEND_COMMS] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t seqIdx = packet.readUInt32();
+            if (socket) {
+                network::Packet ack(wireOpcode(Opcode::CMSG_SUSPEND_COMMS_ACK));
+                ack.writeUInt32(seqIdx);
+                socket->send(ack);
+            }
+        }
+    };
+    // SMSG_PRE_RESURRECT: packed GUID of the player who can self-resurrect.
+    // Sent when the dead player has Reincarnation (Shaman), Twisting Nether (Warlock),
+    // or Deathpact (Death Knight passive). The client must send CMSG_SELF_RES to accept.
+    dispatchTable_[Opcode::SMSG_PRE_RESURRECT] = [this](network::Packet& packet) {
+        // SMSG_PRE_RESURRECT: packed GUID of the player who can self-resurrect.
+        // Sent when the dead player has Reincarnation (Shaman), Twisting Nether (Warlock),
+        // or Deathpact (Death Knight passive). The client must send CMSG_SELF_RES to accept.
+        uint64_t targetGuid = UpdateObjectParser::readPackedGuid(packet);
+        if (targetGuid == playerGuid || targetGuid == 0) {
+            selfResAvailable_ = true;
+            LOG_INFO("SMSG_PRE_RESURRECT: self-resurrection available (guid=0x",
+                     std::hex, targetGuid, std::dec, ")");
+        }
+    };
+    dispatchTable_[Opcode::SMSG_PLAYERBINDERROR] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t error = packet.readUInt32();
+            if (error == 0) {
+                addUIError("Your hearthstone is not bound.");
+                addSystemChatMessage("Your hearthstone is not bound.");
+            } else {
+                addUIError("Hearthstone bind failed.");
+                addSystemChatMessage("Hearthstone bind failed.");
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_RAID_GROUP_ONLY] = [this](network::Packet& packet) {
+        addUIError("You must be in a raid group to enter this instance.");
+        addSystemChatMessage("You must be in a raid group to enter this instance.");
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_RAID_READY_CHECK_ERROR] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 1) {
+            uint8_t err = packet.readUInt8();
+            if (err == 0) { addUIError("Ready check failed: not in a group."); addSystemChatMessage("Ready check failed: not in a group."); }
+            else if (err == 1) { addUIError("Ready check failed: in instance."); addSystemChatMessage("Ready check failed: in instance."); }
+            else { addUIError("Ready check failed."); addSystemChatMessage("Ready check failed."); }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_RESET_FAILED_NOTIFY] = [this](network::Packet& packet) {
+        addUIError("Cannot reset instance: another player is still inside.");
+        addSystemChatMessage("Cannot reset instance: another player is still inside.");
+        packet.setReadPos(packet.getSize());
+    };
+    // uint32 splitType + uint32 deferTime + string realmName
+    // Client must respond with CMSG_REALM_SPLIT to avoid session timeout on some servers.
+    dispatchTable_[Opcode::SMSG_REALM_SPLIT] = [this](network::Packet& packet) {
+        // uint32 splitType + uint32 deferTime + string realmName
+        // Client must respond with CMSG_REALM_SPLIT to avoid session timeout on some servers.
+        uint32_t splitType = 0;
+        if (packet.getSize() - packet.getReadPos() >= 4)
+            splitType = packet.readUInt32();
+        packet.setReadPos(packet.getSize());
+        if (socket) {
+            network::Packet resp(wireOpcode(Opcode::CMSG_REALM_SPLIT));
+            resp.writeUInt32(splitType);
+            resp.writeString("3.3.5");
+            socket->send(resp);
+            LOG_DEBUG("SMSG_REALM_SPLIT splitType=", splitType, " — sent CMSG_REALM_SPLIT ack");
+        }
+    };
+    dispatchTable_[Opcode::SMSG_REAL_GROUP_UPDATE] = [this](network::Packet& packet) {
+        auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
+        if (rem() < 1) return;
+        uint8_t newGroupType = packet.readUInt8();
+        if (rem() < 4) return;
+        uint32_t newMemberFlags = packet.readUInt32();
+        if (rem() < 8) return;
+        uint64_t newLeaderGuid = packet.readUInt64();
+
+        partyData.groupType = newGroupType;
+        partyData.leaderGuid = newLeaderGuid;
+
+        // Update local player's flags in the member list
+        uint64_t localGuid = playerGuid;
+        for (auto& m : partyData.members) {
+            if (m.guid == localGuid) {
+                m.flags = static_cast<uint8_t>(newMemberFlags & 0xFF);
+                break;
+            }
+        }
+        LOG_DEBUG("SMSG_REAL_GROUP_UPDATE groupType=", static_cast<int>(newGroupType),
+                  " memberFlags=0x", std::hex, newMemberFlags, std::dec,
+                  " leaderGuid=", newLeaderGuid);
+        if (addonEventCallback_) {
+            addonEventCallback_("PARTY_LEADER_CHANGED", {});
+            addonEventCallback_("GROUP_ROSTER_UPDATE", {});
+        }
+    };
+    dispatchTable_[Opcode::SMSG_PLAY_MUSIC] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t soundId = packet.readUInt32();
+            if (playMusicCallback_) playMusicCallback_(soundId);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_PLAY_OBJECT_SOUND] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 12) {
+            // uint32 soundId + uint64 sourceGuid
+            uint32_t soundId = packet.readUInt32();
+            uint64_t srcGuid = packet.readUInt64();
+            LOG_DEBUG("SMSG_PLAY_OBJECT_SOUND: id=", soundId, " src=0x", std::hex, srcGuid, std::dec);
+            if (playPositionalSoundCallback_) playPositionalSoundCallback_(soundId, srcGuid);
+            else if (playSoundCallback_) playSoundCallback_(soundId);
+        } else if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t soundId = packet.readUInt32();
+            if (playSoundCallback_) playSoundCallback_(soundId);
+        }
+    };
+    // uint64 targetGuid + uint32 visualId (same structure as SMSG_PLAY_SPELL_VISUAL)
+    dispatchTable_[Opcode::SMSG_PLAY_SPELL_IMPACT] = [this](network::Packet& packet) {
+        // uint64 targetGuid + uint32 visualId (same structure as SMSG_PLAY_SPELL_VISUAL)
+        if (packet.getSize() - packet.getReadPos() < 12) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t impTargetGuid = packet.readUInt64();
+        uint32_t impVisualId   = packet.readUInt32();
+        if (impVisualId == 0) return;
+        auto* renderer = core::Application::getInstance().getRenderer();
+        if (!renderer) return;
+        glm::vec3 spawnPos;
+        if (impTargetGuid == playerGuid) {
+            spawnPos = renderer->getCharacterPosition();
+        } else {
+            auto entity = entityManager.getEntity(impTargetGuid);
+            if (!entity) return;
+            glm::vec3 canonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());
+            spawnPos = core::coords::canonicalToRender(canonical);
+        }
+        renderer->playSpellVisual(impVisualId, spawnPos, /*useImpactKit=*/true);
+    };
+    // WotLK/Classic/Turtle: uint32 hitInfo + packed_guid attacker + packed_guid victim + uint32 spellId
+    //                      + float resistFactor + uint32 targetRes + uint32 resistedValue + ...
+    // TBC:                 same layout but full uint64 GUIDs
+    // Show RESIST combat text when player resists an incoming spell.
+    dispatchTable_[Opcode::SMSG_RESISTLOG] = [this](network::Packet& packet) {
+        // WotLK/Classic/Turtle: uint32 hitInfo + packed_guid attacker + packed_guid victim + uint32 spellId
+        //                      + float resistFactor + uint32 targetRes + uint32 resistedValue + ...
+        // TBC:                 same layout but full uint64 GUIDs
+        // Show RESIST combat text when player resists an incoming spell.
+        const bool rlUsesFullGuid = isActiveExpansion("tbc");
+        auto rl_rem = [&]() { return packet.getSize() - packet.getReadPos(); };
+        if (rl_rem() < 4) { packet.setReadPos(packet.getSize()); return; }
+        /*uint32_t hitInfo =*/ packet.readUInt32();
+        if (rl_rem() < (rlUsesFullGuid ? 8u : 1u)
+            || (!rlUsesFullGuid && !hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t attackerGuid = rlUsesFullGuid
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (rl_rem() < (rlUsesFullGuid ? 8u : 1u)
+            || (!rlUsesFullGuid && !hasFullPackedGuid(packet))) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t victimGuid = rlUsesFullGuid
+            ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
+        if (rl_rem() < 4) { packet.setReadPos(packet.getSize()); return; }
+        uint32_t spellId = packet.readUInt32();
+        // Resist payload includes:
+        // float resistFactor + uint32 targetResistance + uint32 resistedValue.
+        // Require the full payload so truncated packets cannot synthesize
+        // zero-value resist events.
+        if (rl_rem() < 12) { packet.setReadPos(packet.getSize()); return; }
+        /*float resistFactor =*/ packet.readFloat();
+        /*uint32_t targetRes =*/ packet.readUInt32();
+        int32_t resistedAmount = static_cast<int32_t>(packet.readUInt32());
+        // Show RESIST when the player is involved on either side.
+        if (resistedAmount > 0 && victimGuid == playerGuid) {
+            addCombatText(CombatTextEntry::RESIST, resistedAmount, spellId, false, 0, attackerGuid, victimGuid);
+        } else if (resistedAmount > 0 && attackerGuid == playerGuid) {
+            addCombatText(CombatTextEntry::RESIST, resistedAmount, spellId, true, 0, attackerGuid, victimGuid);
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_READ_ITEM_OK] = [this](network::Packet& packet) {
+        bookPages_.clear();  // fresh book for this item read
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_READ_ITEM_FAILED] = [this](network::Packet& packet) {
+        addUIError("You cannot read this item.");
+        addSystemChatMessage("You cannot read this item.");
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_QUERY_QUESTS_COMPLETED_RESPONSE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t count = packet.readUInt32();
+            if (count <= 4096) {
+                for (uint32_t i = 0; i < count; ++i) {
+                    if (packet.getSize() - packet.getReadPos() < 4) break;
+                    uint32_t questId = packet.readUInt32();
+                    completedQuests_.insert(questId);
+                }
+                LOG_DEBUG("SMSG_QUERY_QUESTS_COMPLETED_RESPONSE: ", count, " completed quests");
+            }
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // WotLK 3.3.5a format: uint64 guid + uint32 questId + uint32 count + uint32 reqCount
+    // Classic format:       uint64 guid + uint32 questId + uint32 count  (no reqCount)
+    dispatchTable_[Opcode::SMSG_QUESTUPDATE_ADD_PVP_KILL] = [this](network::Packet& packet) {
+        // WotLK 3.3.5a format: uint64 guid + uint32 questId + uint32 count + uint32 reqCount
+        // Classic format:       uint64 guid + uint32 questId + uint32 count  (no reqCount)
+        if (packet.getSize() - packet.getReadPos() >= 16) {
+            /*uint64_t guid =*/ packet.readUInt64();
+            uint32_t questId = packet.readUInt32();
+            uint32_t count   = packet.readUInt32();
+            uint32_t reqCount = 0;
+            if (packet.getSize() - packet.getReadPos() >= 4) {
+                reqCount = packet.readUInt32();
+            }
+
+            // Update quest log kill counts (PvP kills use entry=0 as the key
+            // since there's no specific creature entry — one slot per quest).
+            constexpr uint32_t PVP_KILL_ENTRY = 0u;
+            for (auto& quest : questLog_) {
+                if (quest.questId != questId) continue;
+
+                if (reqCount == 0) {
+                    auto it = quest.killCounts.find(PVP_KILL_ENTRY);
+                    if (it != quest.killCounts.end()) reqCount = it->second.second;
+                }
+                if (reqCount == 0) {
+                    // Pull required count from kill objectives (npcOrGoId == 0 slot, if any)
+                    for (const auto& obj : quest.killObjectives) {
+                        if (obj.npcOrGoId == 0 && obj.required > 0) {
+                            reqCount = obj.required;
+                            break;
+                        }
+                    }
+                }
+                if (reqCount == 0) reqCount = count;
+                quest.killCounts[PVP_KILL_ENTRY] = {count, reqCount};
+
+                std::string progressMsg = quest.title + ": PvP kills " +
+                    std::to_string(count) + "/" + std::to_string(reqCount);
+                addSystemChatMessage(progressMsg);
+                break;
+            }
+        }
+    };
+    dispatchTable_[Opcode::SMSG_NPC_WONT_TALK] = [this](network::Packet& packet) {
+        addUIError("That creature can't talk to you right now.");
+        addSystemChatMessage("That creature can't talk to you right now.");
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_OFFER_PETITION_ERROR] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t err = packet.readUInt32();
+            if (err == 1) addSystemChatMessage("Player is already in a guild.");
+            else if (err == 2) addSystemChatMessage("Player already has a petition.");
+            else addSystemChatMessage("Cannot offer petition to that player.");
+        }
+    };
+    dispatchTable_[Opcode::SMSG_PETITION_QUERY_RESPONSE] = [this](network::Packet& packet) { handlePetitionQueryResponse(packet); };
+    dispatchTable_[Opcode::SMSG_PETITION_SHOW_SIGNATURES] = [this](network::Packet& packet) { handlePetitionShowSignatures(packet); };
+    dispatchTable_[Opcode::SMSG_PETITION_SIGN_RESULTS] = [this](network::Packet& packet) { handlePetitionSignResults(packet); };
+    // uint64 petGuid, uint32 mode
+    // mode bits: low byte = command state, next byte = react state
+    dispatchTable_[Opcode::SMSG_PET_MODE] = [this](network::Packet& packet) {
+        // uint64 petGuid, uint32 mode
+        // mode bits: low byte = command state, next byte = react state
+        if (packet.getSize() - packet.getReadPos() >= 12) {
+            uint64_t modeGuid = packet.readUInt64();
+            uint32_t mode     = packet.readUInt32();
+            if (modeGuid == petGuid_) {
+                petCommand_ = static_cast<uint8_t>(mode & 0xFF);
+                petReact_   = static_cast<uint8_t>((mode >> 8) & 0xFF);
+                LOG_DEBUG("SMSG_PET_MODE: command=", (int)petCommand_,
+                          " react=", (int)petReact_);
+            }
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // Pet bond broken (died or forcibly dismissed) — clear pet state
+    dispatchTable_[Opcode::SMSG_PET_BROKEN] = [this](network::Packet& packet) {
+        // Pet bond broken (died or forcibly dismissed) — clear pet state
+        petGuid_ = 0;
+        petSpellList_.clear();
+        petAutocastSpells_.clear();
+        memset(petActionSlots_, 0, sizeof(petActionSlots_));
+        addSystemChatMessage("Your pet has died.");
+        LOG_INFO("SMSG_PET_BROKEN: pet bond broken");
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_PET_LEARNED_SPELL] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t spellId = packet.readUInt32();
+            petSpellList_.push_back(spellId);
+            const std::string& sname = getSpellName(spellId);
+            addSystemChatMessage("Your pet has learned " + (sname.empty() ? "a new ability." : sname + "."));
+            LOG_DEBUG("SMSG_PET_LEARNED_SPELL: spellId=", spellId);
+            if (addonEventCallback_) addonEventCallback_("PET_BAR_UPDATE", {});
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_PET_UNLEARNED_SPELL] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t spellId = packet.readUInt32();
+            petSpellList_.erase(
+                std::remove(petSpellList_.begin(), petSpellList_.end(), spellId),
+                petSpellList_.end());
+            petAutocastSpells_.erase(spellId);
+            LOG_DEBUG("SMSG_PET_UNLEARNED_SPELL: spellId=", spellId);
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // WotLK: castCount(1) + spellId(4) + reason(1)
+    // Classic/TBC: spellId(4) + reason(1) (no castCount)
+    dispatchTable_[Opcode::SMSG_PET_CAST_FAILED] = [this](network::Packet& packet) {
+        // WotLK: castCount(1) + spellId(4) + reason(1)
+        // Classic/TBC: spellId(4) + reason(1) (no castCount)
+        const bool hasCount = isActiveExpansion("wotlk");
+        const size_t minSize = hasCount ? 6u : 5u;
+        if (packet.getSize() - packet.getReadPos() >= minSize) {
+            if (hasCount) /*uint8_t castCount =*/ packet.readUInt8();
+            uint32_t spellId   = packet.readUInt32();
+            uint8_t  reason    = (packet.getSize() - packet.getReadPos() >= 1)
+                                     ? packet.readUInt8() : 0;
+            LOG_DEBUG("SMSG_PET_CAST_FAILED: spell=", spellId,
+                      " reason=", (int)reason);
+            if (reason != 0) {
+                const char* reasonStr = getSpellCastResultString(reason);
+                const std::string& sName = getSpellName(spellId);
+                std::string errMsg;
+                if (reasonStr && *reasonStr)
+                    errMsg = sName.empty() ? reasonStr : (sName + ": " + reasonStr);
+                else
+                    errMsg = sName.empty() ? "Pet spell failed." : (sName + ": Pet spell failed.");
+                addSystemChatMessage(errMsg);
+            }
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // uint64 petGuid + uint32 cost (copper)
+    for (auto op : { Opcode::SMSG_PET_GUIDS, Opcode::SMSG_PET_DISMISS_SOUND, Opcode::SMSG_PET_ACTION_SOUND, Opcode::SMSG_PET_UNLEARN_CONFIRM }) {
+        dispatchTable_[op] = [this](network::Packet& packet) {
+            // uint64 petGuid + uint32 cost (copper)
+            if (packet.getSize() - packet.getReadPos() >= 12) {
+                petUnlearnGuid_ = packet.readUInt64();
+                petUnlearnCost_ = packet.readUInt32();
+                petUnlearnPending_ = true;
+            }
+            packet.setReadPos(packet.getSize());
+        };
+    }
+    // Server signals that the pet can now be named (first tame)
+    dispatchTable_[Opcode::SMSG_PET_RENAMEABLE] = [this](network::Packet& packet) {
+        // Server signals that the pet can now be named (first tame)
+        petRenameablePending_ = true;
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_PET_NAME_INVALID] = [this](network::Packet& packet) {
+        addUIError("That pet name is invalid. Please choose a different name.");
+        addSystemChatMessage("That pet name is invalid. Please choose a different name.");
+        packet.setReadPos(packet.getSize());
+    };
+    // Classic 1.12: PackedGUID + 19×uint32 itemEntries (EQUIPMENT_SLOT_END=19)
+    // This opcode is only reachable on Classic servers; TBC/WotLK wire 0x115 maps to
+    // SMSG_INSPECT_RESULTS_UPDATE which is handled separately.
+    dispatchTable_[Opcode::SMSG_INSPECT] = [this](network::Packet& packet) {
+        // Classic 1.12: PackedGUID + 19×uint32 itemEntries (EQUIPMENT_SLOT_END=19)
+        // This opcode is only reachable on Classic servers; TBC/WotLK wire 0x115 maps to
+        // SMSG_INSPECT_RESULTS_UPDATE which is handled separately.
+        if (packet.getSize() - packet.getReadPos() < 2) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
+        if (guid == 0) { packet.setReadPos(packet.getSize()); return; }
+
+        constexpr int kGearSlots = 19;
+        size_t needed = kGearSlots * sizeof(uint32_t);
+        if (packet.getSize() - packet.getReadPos() < needed) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+
+        std::array<uint32_t, 19> items{};
+        for (int s = 0; s < kGearSlots; ++s)
+            items[s] = packet.readUInt32();
+
+        // Resolve player name
+        auto ent = entityManager.getEntity(guid);
+        std::string playerName = "Target";
+        if (ent) {
+            auto pl = std::dynamic_pointer_cast<Player>(ent);
+            if (pl && !pl->getName().empty()) playerName = pl->getName();
+        }
+
+        // Populate inspect result immediately (no talent data in Classic SMSG_INSPECT)
+        inspectResult_.guid           = guid;
+        inspectResult_.playerName     = playerName;
+        inspectResult_.totalTalents   = 0;
+        inspectResult_.unspentTalents = 0;
+        inspectResult_.talentGroups   = 0;
+        inspectResult_.activeTalentGroup = 0;
+        inspectResult_.itemEntries    = items;
+        inspectResult_.enchantIds     = {};
+
+        // Also cache for future talent-inspect cross-reference
+        inspectedPlayerItemEntries_[guid] = items;
+
+        // Trigger item queries for non-empty slots
+        for (int s = 0; s < kGearSlots; ++s) {
+            if (items[s] != 0) queryItemInfo(items[s], 0);
+        }
+
+        LOG_INFO("SMSG_INSPECT (Classic): ", playerName, " has gear in ",
+                 std::count_if(items.begin(), items.end(),
+                               [](uint32_t e) { return e != 0; }), "/19 slots");
+        if (addonEventCallback_) {
+            char guidBuf[32];
+            snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", (unsigned long long)guid);
+            addonEventCallback_("INSPECT_READY", {guidBuf});
+        }
+    };
+    // Same wire format as SMSG_COMPRESSED_MOVES: uint8 size + uint16 opcode + payload[]
+    dispatchTable_[Opcode::SMSG_MULTIPLE_MOVES] = [this](network::Packet& packet) {
+        // Same wire format as SMSG_COMPRESSED_MOVES: uint8 size + uint16 opcode + payload[]
+        handleCompressedMoves(packet);
+    };
+    // Each sub-packet uses the standard WotLK server wire format:
+    //   uint16_be subSize  (includes the 2-byte opcode; payload = subSize - 2)
+    //   uint16_le subOpcode
+    //   payload  (subSize - 2 bytes)
+    dispatchTable_[Opcode::SMSG_MULTIPLE_PACKETS] = [this](network::Packet& packet) {
+        // Each sub-packet uses the standard WotLK server wire format:
+        //   uint16_be subSize  (includes the 2-byte opcode; payload = subSize - 2)
+        //   uint16_le subOpcode
+        //   payload  (subSize - 2 bytes)
+        const auto& pdata = packet.getData();
+        size_t dataLen = pdata.size();
+        size_t pos = packet.getReadPos();
+        static uint32_t multiPktWarnCount = 0;
+        std::vector<network::Packet> subPackets;
+        while (pos + 4 <= dataLen) {
+            uint16_t subSize = static_cast<uint16_t>(
+                (static_cast<uint16_t>(pdata[pos]) << 8) | pdata[pos + 1]);
+            if (subSize < 2) break;
+            size_t payloadLen = subSize - 2;
+            if (pos + 4 + payloadLen > dataLen) {
+                if (++multiPktWarnCount <= 10) {
+                    LOG_WARNING("SMSG_MULTIPLE_PACKETS: sub-packet overruns buffer at pos=",
+                                pos, " subSize=", subSize, " dataLen=", dataLen);
+                }
+                break;
+            }
+            uint16_t subOpcode = static_cast<uint16_t>(pdata[pos + 2]) |
+                                 (static_cast<uint16_t>(pdata[pos + 3]) << 8);
+            std::vector<uint8_t> subPayload(pdata.begin() + pos + 4,
+                                            pdata.begin() + pos + 4 + payloadLen);
+            subPackets.emplace_back(subOpcode, std::move(subPayload));
+            pos += 4 + payloadLen;
+        }
+        for (auto it = subPackets.rbegin(); it != subPackets.rend(); ++it) {
+            enqueueIncomingPacketFront(std::move(*it));
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // Recruit-A-Friend: a mentor is offering to grant you a level
+    dispatchTable_[Opcode::SMSG_PROPOSE_LEVEL_GRANT] = [this](network::Packet& packet) {
+        // Recruit-A-Friend: a mentor is offering to grant you a level
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint64_t mentorGuid = packet.readUInt64();
+            std::string mentorName;
+            auto ent = entityManager.getEntity(mentorGuid);
+            if (auto* unit = dynamic_cast<Unit*>(ent.get())) mentorName = unit->getName();
+            if (mentorName.empty()) {
+                auto nit = playerNameCache.find(mentorGuid);
+                if (nit != playerNameCache.end()) mentorName = nit->second;
+            }
+            addSystemChatMessage(mentorName.empty()
+                ? "A player is offering to grant you a level."
+                : (mentorName + " is offering to grant you a level."));
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_REFER_A_FRIEND_EXPIRED] = [this](network::Packet& packet) {
+        addSystemChatMessage("Your Recruit-A-Friend link has expired.");
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_REFER_A_FRIEND_FAILURE] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t reason = packet.readUInt32();
+            static const char* kRafErrors[] = {
+                "Not eligible",            // 0
+                "Target not eligible",     // 1
+                "Too many referrals",      // 2
+                "Wrong faction",           // 3
+                "Not a recruit",           // 4
+                "Recruit requirements not met", // 5
+                "Level above requirement", // 6
+                "Friend needs account upgrade", // 7
+            };
+            const char* msg = (reason < 8) ? kRafErrors[reason]
+                                           : "Recruit-A-Friend failed.";
+            addSystemChatMessage(std::string("Recruit-A-Friend: ") + msg);
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_REPORT_PVP_AFK_RESULT] = [this](network::Packet& packet) {
+        if (packet.getSize() - packet.getReadPos() >= 1) {
+            uint8_t result = packet.readUInt8();
+            if (result == 0)
+                addSystemChatMessage("AFK report submitted.");
+            else
+                addSystemChatMessage("Cannot report that player as AFK right now.");
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    dispatchTable_[Opcode::SMSG_RESPOND_INSPECT_ACHIEVEMENTS] = [this](network::Packet& packet) { handleRespondInspectAchievements(packet); };
+    dispatchTable_[Opcode::SMSG_QUEST_POI_QUERY_RESPONSE] = [this](network::Packet& packet) { handleQuestPoiQueryResponse(packet); };
+    dispatchTable_[Opcode::SMSG_ON_CANCEL_EXPECTED_RIDE_VEHICLE_AURA] = [this](network::Packet& packet) {
+        vehicleId_ = 0;  // Vehicle ride cancelled; clear UI
+        packet.setReadPos(packet.getSize());
+    };
+    // uint32 type (0=normal, 1=heavy, 2=tired/restricted) + uint32 minutes played
+    dispatchTable_[Opcode::SMSG_PLAY_TIME_WARNING] = [this](network::Packet& packet) {
+        // uint32 type (0=normal, 1=heavy, 2=tired/restricted) + uint32 minutes played
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t warnType = packet.readUInt32();
+            uint32_t minutesPlayed = (packet.getSize() - packet.getReadPos() >= 4)
+                ? packet.readUInt32() : 0;
+            const char* severity = (warnType >= 2) ? "[Tired] " : "[Play Time] ";
+            char buf[128];
+            if (minutesPlayed > 0) {
+                uint32_t h = minutesPlayed / 60;
+                uint32_t m = minutesPlayed % 60;
+                if (h > 0)
+                    std::snprintf(buf, sizeof(buf), "%sYou have been playing for %uh %um.", severity, h, m);
+                else
+                    std::snprintf(buf, sizeof(buf), "%sYou have been playing for %um.", severity, m);
+            } else {
+                std::snprintf(buf, sizeof(buf), "%sYou have been playing for a long time.", severity);
+            }
+            addSystemChatMessage(buf);
+            addUIError(buf);
+        }
+    };
+    dispatchTable_[Opcode::SMSG_ITEM_QUERY_MULTIPLE_RESPONSE] = [this](network::Packet& packet) { handleItemQueryResponse(packet); };
+    // WotLK 3.3.5a format:
+    //   uint64 mirrorGuid — GUID of the mirror image unit
+    //   uint32 displayId  — display ID to render the image with
+    //   uint8  raceId     — race of caster
+    //   uint8  genderFlag — gender of caster
+    //   uint8  classId    — class of caster
+    //   uint64 casterGuid — GUID of the player who cast the spell
+    //   Followed by equipped item display IDs (11 × uint32) if casterGuid != 0
+    // Purpose: tells client how to render the image (same appearance as caster).
+    // We parse the GUIDs so units render correctly via their existing display IDs.
+    dispatchTable_[Opcode::SMSG_MIRRORIMAGE_DATA] = [this](network::Packet& packet) {
+        // WotLK 3.3.5a format:
+        //   uint64 mirrorGuid — GUID of the mirror image unit
+        //   uint32 displayId  — display ID to render the image with
+        //   uint8  raceId     — race of caster
+        //   uint8  genderFlag — gender of caster
+        //   uint8  classId    — class of caster
+        //   uint64 casterGuid — GUID of the player who cast the spell
+        //   Followed by equipped item display IDs (11 × uint32) if casterGuid != 0
+        // Purpose: tells client how to render the image (same appearance as caster).
+        // We parse the GUIDs so units render correctly via their existing display IDs.
+        if (packet.getSize() - packet.getReadPos() < 8) return;
+        uint64_t mirrorGuid = packet.readUInt64();
+        if (packet.getSize() - packet.getReadPos() < 4) return;
+        uint32_t displayId  = packet.readUInt32();
+        if (packet.getSize() - packet.getReadPos() < 3) return;
+        /*uint8_t raceId   =*/ packet.readUInt8();
+        /*uint8_t gender   =*/ packet.readUInt8();
+        /*uint8_t classId  =*/ packet.readUInt8();
+        // Apply display ID to the mirror image unit so it renders correctly
+        if (mirrorGuid != 0 && displayId != 0) {
+            auto entity = entityManager.getEntity(mirrorGuid);
+            if (entity) {
+                auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
+                if (unit && unit->getDisplayId() == 0)
+                    unit->setDisplayId(displayId);
+            }
+        }
+        LOG_DEBUG("SMSG_MIRRORIMAGE_DATA: mirrorGuid=0x", std::hex, mirrorGuid,
+                  " displayId=", std::dec, displayId);
+        packet.setReadPos(packet.getSize());
+    };
+    // uint64 battlefieldGuid + uint32 zoneId + uint64 expireUnixTime (seconds)
+    dispatchTable_[Opcode::SMSG_BATTLEFIELD_MGR_ENTRY_INVITE] = [this](network::Packet& packet) {
+        // uint64 battlefieldGuid + uint32 zoneId + uint64 expireUnixTime (seconds)
+        if (packet.getSize() - packet.getReadPos() < 20) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t bfGuid    = packet.readUInt64();
+        uint32_t bfZoneId  = packet.readUInt32();
+        uint64_t expireTime = packet.readUInt64();
+        (void)bfGuid; (void)expireTime;
+        // Store the invitation so the UI can show a prompt
+        bfMgrInvitePending_ = true;
+        bfMgrZoneId_        = bfZoneId;
+        char buf[128];
+        std::string bfZoneName = getAreaName(bfZoneId);
+        if (!bfZoneName.empty())
+            std::snprintf(buf, sizeof(buf),
+                "You are invited to the outdoor battlefield in %s. Click to enter.",
+                bfZoneName.c_str());
+        else
+            std::snprintf(buf, sizeof(buf),
+                "You are invited to the outdoor battlefield in zone %u. Click to enter.",
+                bfZoneId);
+        addSystemChatMessage(buf);
+        LOG_INFO("SMSG_BATTLEFIELD_MGR_ENTRY_INVITE: zoneId=", bfZoneId);
+    };
+    // uint64 battlefieldGuid + uint8 isSafe (1=pvp zones enabled) + uint8 onQueue
+    dispatchTable_[Opcode::SMSG_BATTLEFIELD_MGR_ENTERED] = [this](network::Packet& packet) {
+        // uint64 battlefieldGuid + uint8 isSafe (1=pvp zones enabled) + uint8 onQueue
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            uint64_t bfGuid2 = packet.readUInt64();
+            (void)bfGuid2;
+            uint8_t isSafe  = (packet.getSize() - packet.getReadPos() >= 1) ? packet.readUInt8() : 0;
+            uint8_t onQueue = (packet.getSize() - packet.getReadPos() >= 1) ? packet.readUInt8() : 0;
+            bfMgrInvitePending_ = false;
+            bfMgrActive_        = true;
+            addSystemChatMessage(isSafe ? "You are in the battlefield zone (safe area)."
+                                        : "You have entered the battlefield!");
+            if (onQueue) addSystemChatMessage("You are in the battlefield queue.");
+            LOG_INFO("SMSG_BATTLEFIELD_MGR_ENTERED: isSafe=", (int)isSafe, " onQueue=", (int)onQueue);
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // uint64 battlefieldGuid + uint32 battlefieldId + uint64 expireTime
+    dispatchTable_[Opcode::SMSG_BATTLEFIELD_MGR_QUEUE_INVITE] = [this](network::Packet& packet) {
+        // uint64 battlefieldGuid + uint32 battlefieldId + uint64 expireTime
+        if (packet.getSize() - packet.getReadPos() < 20) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint64_t bfGuid3   = packet.readUInt64();
+        uint32_t bfId      = packet.readUInt32();
+        uint64_t expTime   = packet.readUInt64();
+        (void)bfGuid3; (void)expTime;
+        bfMgrInvitePending_ = true;
+        bfMgrZoneId_        = bfId;
+        char buf[128];
+        std::snprintf(buf, sizeof(buf),
+            "A spot has opened in the battlefield queue (battlefield %u).", bfId);
+        addSystemChatMessage(buf);
+        LOG_INFO("SMSG_BATTLEFIELD_MGR_QUEUE_INVITE: bfId=", bfId);
+    };
+    // uint32 battlefieldId + uint32 teamId + uint8 accepted + uint8 loggingEnabled + uint8 result
+    // result: 0=queued, 1=not_in_group, 2=too_high_level, 3=too_low_level,
+    //         4=in_cooldown, 5=queued_other_bf, 6=bf_full
+    dispatchTable_[Opcode::SMSG_BATTLEFIELD_MGR_QUEUE_REQUEST_RESPONSE] = [this](network::Packet& packet) {
+        // uint32 battlefieldId + uint32 teamId + uint8 accepted + uint8 loggingEnabled + uint8 result
+        // result: 0=queued, 1=not_in_group, 2=too_high_level, 3=too_low_level,
+        //         4=in_cooldown, 5=queued_other_bf, 6=bf_full
+        if (packet.getSize() - packet.getReadPos() < 11) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        uint32_t bfId2    = packet.readUInt32();
+        /*uint32_t teamId =*/ packet.readUInt32();
+        uint8_t accepted  = packet.readUInt8();
+        /*uint8_t logging =*/ packet.readUInt8();
+        uint8_t result    = packet.readUInt8();
+        (void)bfId2;
+        if (accepted) {
+            addSystemChatMessage("You have joined the battlefield queue.");
+        } else {
+            static const char* kBfQueueErrors[] = {
+                "Queued for battlefield.", "Not in a group.", "Level too high.",
+                "Level too low.", "Battlefield in cooldown.", "Already queued for another battlefield.",
+                "Battlefield is full."
+            };
+            const char* msg = (result < 7) ? kBfQueueErrors[result]
+                                           : "Battlefield queue request failed.";
+            addSystemChatMessage(std::string("Battlefield: ") + msg);
+        }
+        LOG_INFO("SMSG_BATTLEFIELD_MGR_QUEUE_REQUEST_RESPONSE: accepted=", (int)accepted,
+                 " result=", (int)result);
+        packet.setReadPos(packet.getSize());
+    };
+    // uint64 battlefieldGuid + uint8 remove
+    dispatchTable_[Opcode::SMSG_BATTLEFIELD_MGR_EJECT_PENDING] = [this](network::Packet& packet) {
+        // uint64 battlefieldGuid + uint8 remove
+        if (packet.getSize() - packet.getReadPos() >= 9) {
+            uint64_t bfGuid4 = packet.readUInt64();
+            uint8_t  remove  = packet.readUInt8();
+            (void)bfGuid4;
+            if (remove) {
+                addSystemChatMessage("You will be removed from the battlefield shortly.");
+            }
+            LOG_INFO("SMSG_BATTLEFIELD_MGR_EJECT_PENDING: remove=", (int)remove);
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // uint64 battlefieldGuid + uint32 reason + uint32 battleStatus + uint8 relocated
+    dispatchTable_[Opcode::SMSG_BATTLEFIELD_MGR_EJECTED] = [this](network::Packet& packet) {
+        // uint64 battlefieldGuid + uint32 reason + uint32 battleStatus + uint8 relocated
+        if (packet.getSize() - packet.getReadPos() >= 17) {
+            uint64_t bfGuid5    = packet.readUInt64();
+            uint32_t reason     = packet.readUInt32();
+            /*uint32_t status  =*/ packet.readUInt32();
+            uint8_t relocated   = packet.readUInt8();
+            (void)bfGuid5;
+            static const char* kEjectReasons[] = {
+                "Removed from battlefield.", "Transported from battlefield.",
+                "Left battlefield voluntarily.", "Offline.",
+            };
+            const char* msg = (reason < 4) ? kEjectReasons[reason]
+                                           : "You have been ejected from the battlefield.";
+            addSystemChatMessage(msg);
+            if (relocated) addSystemChatMessage("You have been relocated outside the battlefield.");
+            LOG_INFO("SMSG_BATTLEFIELD_MGR_EJECTED: reason=", reason, " relocated=", (int)relocated);
+        }
+        bfMgrActive_        = false;
+        bfMgrInvitePending_ = false;
+        packet.setReadPos(packet.getSize());
+    };
+    // uint32 oldState + uint32 newState
+    // States: 0=Waiting, 1=Starting, 2=InProgress, 3=Ending, 4=Cooldown
+    dispatchTable_[Opcode::SMSG_BATTLEFIELD_MGR_STATE_CHANGE] = [this](network::Packet& packet) {
+        // uint32 oldState + uint32 newState
+        // States: 0=Waiting, 1=Starting, 2=InProgress, 3=Ending, 4=Cooldown
+        if (packet.getSize() - packet.getReadPos() >= 8) {
+            /*uint32_t oldState =*/ packet.readUInt32();
+            uint32_t newState   = packet.readUInt32();
+            static const char* kBfStates[] = {
+                "waiting", "starting", "in progress", "ending", "in cooldown"
+            };
+            const char* stateStr = (newState < 5) ? kBfStates[newState] : "unknown state";
+            char buf[128];
+            std::snprintf(buf, sizeof(buf), "Battlefield is now %s.", stateStr);
+            addSystemChatMessage(buf);
+            LOG_INFO("SMSG_BATTLEFIELD_MGR_STATE_CHANGE: newState=", newState);
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // uint32 numPending — number of unacknowledged calendar invites
+    dispatchTable_[Opcode::SMSG_CALENDAR_SEND_NUM_PENDING] = [this](network::Packet& packet) {
+        // uint32 numPending — number of unacknowledged calendar invites
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t numPending = packet.readUInt32();
+            calendarPendingInvites_ = numPending;
+            if (numPending > 0) {
+                char buf[64];
+                std::snprintf(buf, sizeof(buf),
+                    "You have %u pending calendar invite%s.",
+                    numPending, numPending == 1 ? "" : "s");
+                addSystemChatMessage(buf);
+            }
+            LOG_DEBUG("SMSG_CALENDAR_SEND_NUM_PENDING: ", numPending, " pending invites");
+        }
+    };
+    // uint32 command + uint8 result + cstring info
+    // result 0 = success; non-zero = error code
+    // command values: 0=add,1=get,2=guild_filter,3=arena_team,4=update,5=remove,
+    //                 6=copy,7=invite,8=rsvp,9=remove_invite,10=status,11=moderator_status
+    dispatchTable_[Opcode::SMSG_CALENDAR_COMMAND_RESULT] = [this](network::Packet& packet) {
+        // uint32 command + uint8 result + cstring info
+        // result 0 = success; non-zero = error code
+        // command values: 0=add,1=get,2=guild_filter,3=arena_team,4=update,5=remove,
+        //                 6=copy,7=invite,8=rsvp,9=remove_invite,10=status,11=moderator_status
+        if (packet.getSize() - packet.getReadPos() < 5) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        /*uint32_t command =*/ packet.readUInt32();
+        uint8_t result    = packet.readUInt8();
+        std::string info  = (packet.getReadPos() < packet.getSize()) ? packet.readString() : "";
+        if (result != 0) {
+            // Map common calendar error codes to friendly strings
+            static const char* kCalendarErrors[] = {
+                "",
+                "Calendar: Internal error.",           // 1 = CALENDAR_ERROR_INTERNAL
+                "Calendar: Guild event limit reached.",// 2
+                "Calendar: Event limit reached.",      // 3
+                "Calendar: You cannot invite that player.", // 4
+                "Calendar: No invites remaining.",     // 5
+                "Calendar: Invalid date.",             // 6
+                "Calendar: Cannot invite yourself.",   // 7
+                "Calendar: Cannot modify this event.", // 8
+                "Calendar: Not invited.",              // 9
+                "Calendar: Already invited.",          // 10
+                "Calendar: Player not found.",         // 11
+                "Calendar: Not enough focus.",         // 12
+                "Calendar: Event locked.",             // 13
+                "Calendar: Event deleted.",            // 14
+                "Calendar: Not a moderator.",          // 15
+            };
+            const char* errMsg = (result < 16) ? kCalendarErrors[result]
+                                               : "Calendar: Command failed.";
+            if (errMsg && errMsg[0] != '\0') addSystemChatMessage(errMsg);
+            else if (!info.empty()) addSystemChatMessage("Calendar: " + info);
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // Rich notification: eventId(8) + title(cstring) + eventTime(8) + flags(4) +
+    //                   eventType(1) + dungeonId(4) + inviteId(8) + status(1) + rank(1) +
+    //                   isGuildEvent(1) + inviterGuid(8)
+    dispatchTable_[Opcode::SMSG_CALENDAR_EVENT_INVITE_ALERT] = [this](network::Packet& packet) {
+        // Rich notification: eventId(8) + title(cstring) + eventTime(8) + flags(4) +
+        //                   eventType(1) + dungeonId(4) + inviteId(8) + status(1) + rank(1) +
+        //                   isGuildEvent(1) + inviterGuid(8)
+        if (packet.getSize() - packet.getReadPos() < 9) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        /*uint64_t eventId =*/ packet.readUInt64();
+        std::string title = (packet.getReadPos() < packet.getSize()) ? packet.readString() : "";
+        packet.setReadPos(packet.getSize()); // consume remaining fields
+        if (!title.empty()) {
+            addSystemChatMessage("Calendar invite: " + title);
+        } else {
+            addSystemChatMessage("You have a new calendar invite.");
+        }
+        if (calendarPendingInvites_ < 255) ++calendarPendingInvites_;
+        LOG_INFO("SMSG_CALENDAR_EVENT_INVITE_ALERT: title='", title, "'");
+    };
+    // Sent when an event invite's RSVP status changes for the local player
+    // Format: inviteId(8) + eventId(8) + eventType(1) + flags(4) +
+    //         inviteTime(8) + status(1) + rank(1) + isGuildEvent(1) + title(cstring)
+    dispatchTable_[Opcode::SMSG_CALENDAR_EVENT_STATUS] = [this](network::Packet& packet) {
+        // Sent when an event invite's RSVP status changes for the local player
+        // Format: inviteId(8) + eventId(8) + eventType(1) + flags(4) +
+        //         inviteTime(8) + status(1) + rank(1) + isGuildEvent(1) + title(cstring)
+        if (packet.getSize() - packet.getReadPos() < 31) {
+            packet.setReadPos(packet.getSize()); return;
+        }
+        /*uint64_t inviteId =*/ packet.readUInt64();
+        /*uint64_t eventId  =*/ packet.readUInt64();
+        /*uint8_t  evType   =*/ packet.readUInt8();
+        /*uint32_t flags    =*/ packet.readUInt32();
+        /*uint64_t invTime  =*/ packet.readUInt64();
+        uint8_t status     = packet.readUInt8();
+        /*uint8_t rank      =*/ packet.readUInt8();
+        /*uint8_t isGuild   =*/ packet.readUInt8();
+        std::string evTitle = (packet.getReadPos() < packet.getSize()) ? packet.readString() : "";
+        // status: 0=Invited,1=Accepted,2=Declined,3=Confirmed,4=Out,5=Standby,6=SignedUp,7=Not Signed Up,8=Tentative
+        static const char* kRsvpStatus[] = {
+            "invited", "accepted", "declined", "confirmed",
+            "out", "on standby", "signed up", "not signed up", "tentative"
+        };
+        const char* statusStr = (status < 9) ? kRsvpStatus[status] : "unknown";
+        if (!evTitle.empty()) {
+            char buf[256];
+            std::snprintf(buf, sizeof(buf), "Calendar event '%s': your RSVP is %s.",
+                          evTitle.c_str(), statusStr);
+            addSystemChatMessage(buf);
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // uint64 inviteId + uint64 eventId + uint32 mapId + uint32 difficulty + uint64 resetTime
+    dispatchTable_[Opcode::SMSG_CALENDAR_RAID_LOCKOUT_ADDED] = [this](network::Packet& packet) {
+        // uint64 inviteId + uint64 eventId + uint32 mapId + uint32 difficulty + uint64 resetTime
+        if (packet.getSize() - packet.getReadPos() >= 28) {
+            /*uint64_t inviteId =*/ packet.readUInt64();
+            /*uint64_t eventId  =*/ packet.readUInt64();
+            uint32_t mapId     = packet.readUInt32();
+            uint32_t difficulty = packet.readUInt32();
+            /*uint64_t resetTime =*/ packet.readUInt64();
+            std::string mapLabel = getMapName(mapId);
+            if (mapLabel.empty()) mapLabel = "map #" + std::to_string(mapId);
+            static const char* kDiff[] = {"Normal","Heroic","25-Man","25-Man Heroic"};
+            const char* diffStr = (difficulty < 4) ? kDiff[difficulty] : nullptr;
+            std::string msg = "Calendar: Raid lockout added for " + mapLabel;
+            if (diffStr) msg += std::string(" (") + diffStr + ")";
+            msg += '.';
+            addSystemChatMessage(msg);
+            LOG_DEBUG("SMSG_CALENDAR_RAID_LOCKOUT_ADDED: mapId=", mapId, " difficulty=", difficulty);
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // uint64 inviteId + uint64 eventId + uint32 mapId + uint32 difficulty
+    dispatchTable_[Opcode::SMSG_CALENDAR_RAID_LOCKOUT_REMOVED] = [this](network::Packet& packet) {
+        // uint64 inviteId + uint64 eventId + uint32 mapId + uint32 difficulty
+        if (packet.getSize() - packet.getReadPos() >= 20) {
+            /*uint64_t inviteId =*/ packet.readUInt64();
+            /*uint64_t eventId  =*/ packet.readUInt64();
+            uint32_t mapId     = packet.readUInt32();
+            uint32_t difficulty = packet.readUInt32();
+            std::string mapLabel = getMapName(mapId);
+            if (mapLabel.empty()) mapLabel = "map #" + std::to_string(mapId);
+            static const char* kDiff[] = {"Normal","Heroic","25-Man","25-Man Heroic"};
+            const char* diffStr = (difficulty < 4) ? kDiff[difficulty] : nullptr;
+            std::string msg = "Calendar: Raid lockout removed for " + mapLabel;
+            if (diffStr) msg += std::string(" (") + diffStr + ")";
+            msg += '.';
+            addSystemChatMessage(msg);
+            LOG_DEBUG("SMSG_CALENDAR_RAID_LOCKOUT_REMOVED: mapId=", mapId,
+                      " difficulty=", difficulty);
+        }
+        packet.setReadPos(packet.getSize());
+    };
+    // uint32 unixTime — server's current unix timestamp; use to sync gameTime_
+    dispatchTable_[Opcode::SMSG_SERVERTIME] = [this](network::Packet& packet) {
+        // uint32 unixTime — server's current unix timestamp; use to sync gameTime_
+        if (packet.getSize() - packet.getReadPos() >= 4) {
+            uint32_t srvTime = packet.readUInt32();
+            if (srvTime > 0) {
+                gameTime_ = static_cast<float>(srvTime);
+                LOG_DEBUG("SMSG_SERVERTIME: serverTime=", srvTime);
+            }
+        }
+    };
+    // uint64 kickerGuid + uint32 kickReasonType + null-terminated reason string
+    // kickReasonType: 0=other, 1=afk, 2=vote kick
+    dispatchTable_[Opcode::SMSG_KICK_REASON] = [this](network::Packet& packet) {
+        // uint64 kickerGuid + uint32 kickReasonType + null-terminated reason string
+        // kickReasonType: 0=other, 1=afk, 2=vote kick
+        if (!packetHasRemaining(packet, 12)) {
+            packet.setReadPos(packet.getSize());
+            return;
+        }
+        uint64_t kickerGuid   = packet.readUInt64();
+        uint32_t reasonType   = packet.readUInt32();
+        std::string reason;
+        if (packet.getReadPos() < packet.getSize())
+            reason = packet.readString();
+        (void)kickerGuid;
+        (void)reasonType;
+        std::string msg = "You have been removed from the group.";
+        if (!reason.empty())
+            msg = "You have been removed from the group: " + reason;
+        else if (reasonType == 1)
+            msg = "You have been removed from the group for being AFK.";
+        else if (reasonType == 2)
+            msg = "You have been removed from the group by vote.";
+        addSystemChatMessage(msg);
+        addUIError(msg);
+        LOG_INFO("SMSG_KICK_REASON: reasonType=", reasonType,
+                 " reason='", reason, "'");
+    };
+    // uint32 throttleMs — rate-limited group action; notify the player
+    dispatchTable_[Opcode::SMSG_GROUPACTION_THROTTLED] = [this](network::Packet& packet) {
+        // uint32 throttleMs — rate-limited group action; notify the player
+        if (packetHasRemaining(packet, 4)) {
+            uint32_t throttleMs = packet.readUInt32();
+            char buf[128];
+            if (throttleMs > 0) {
+                std::snprintf(buf, sizeof(buf),
+                              "Group action throttled. Please wait %.1f seconds.",
+                              throttleMs / 1000.0f);
+            } else {
+                std::snprintf(buf, sizeof(buf), "Group action throttled.");
+            }
+            addSystemChatMessage(buf);
+            LOG_DEBUG("SMSG_GROUPACTION_THROTTLED: throttleMs=", throttleMs);
+        }
+    };
+    // WotLK 3.3.5a: uint32 ticketId + string subject + string body + uint32 count
+    //   per count: string responseText
+    dispatchTable_[Opcode::SMSG_GMRESPONSE_RECEIVED] = [this](network::Packet& packet) {
+        // WotLK 3.3.5a: uint32 ticketId + string subject + string body + uint32 count
+        //   per count: string responseText
+        if (!packetHasRemaining(packet, 4)) {
+            packet.setReadPos(packet.getSize());
+            return;
+        }
+        uint32_t ticketId = packet.readUInt32();
+        std::string subject;
+        std::string body;
+        if (packet.getReadPos() < packet.getSize()) subject = packet.readString();
+        if (packet.getReadPos() < packet.getSize()) body    = packet.readString();
+        uint32_t responseCount = 0;
+        if (packetHasRemaining(packet, 4))
+            responseCount = packet.readUInt32();
+        std::string responseText;
+        for (uint32_t i = 0; i < responseCount && i < 10; ++i) {
+            if (packet.getReadPos() < packet.getSize()) {
+                std::string t = packet.readString();
+                if (i == 0) responseText = t;
+            }
+        }
+        (void)ticketId;
+        std::string msg;
+        if (!responseText.empty())
+            msg = "[GM Response] " + responseText;
+        else if (!body.empty())
+            msg = "[GM Response] " + body;
+        else if (!subject.empty())
+            msg = "[GM Response] " + subject;
+        else
+            msg = "[GM Response] Your ticket has been answered.";
+        addSystemChatMessage(msg);
+        addUIError(msg);
+        LOG_INFO("SMSG_GMRESPONSE_RECEIVED: ticketId=", ticketId,
+                 " subject='", subject, "'");
+    };
+    // uint32 ticketId + uint8 status (1=open, 2=surveyed, 3=need_more_help)
+    dispatchTable_[Opcode::SMSG_GMRESPONSE_STATUS_UPDATE] = [this](network::Packet& packet) {
+        // uint32 ticketId + uint8 status (1=open, 2=surveyed, 3=need_more_help)
+        if (packet.getSize() - packet.getReadPos() >= 5) {
+            uint32_t ticketId = packet.readUInt32();
+            uint8_t  status   = packet.readUInt8();
+            const char* statusStr = (status == 1) ? "open"
+                                  : (status == 2) ? "answered"
+                                  : (status == 3) ? "needs more info"
+                                  : "updated";
+            char buf[128];
+            std::snprintf(buf, sizeof(buf),
+                          "[GM Ticket #%u] Status: %s.", ticketId, statusStr);
+            addSystemChatMessage(buf);
+            LOG_DEBUG("SMSG_GMRESPONSE_STATUS_UPDATE: ticketId=", ticketId,
+                      " status=", static_cast<int>(status));
+        }
+    };
+    // GM ticket status (new/updated); no ticket UI yet
+    dispatchTable_[Opcode::SMSG_GM_TICKET_STATUS_UPDATE] = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+    // Client uses this outbound; treat inbound variant as no-op for robustness.
+    dispatchTable_[Opcode::MSG_MOVE_WORLDPORT_ACK] = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+    // Observed custom server packet (8 bytes). Safe-consume for now.
+    dispatchTable_[Opcode::MSG_MOVE_TIME_SKIPPED] = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+    // loggingOut_ already cleared by cancelLogout(); this is server's confirmation
+    dispatchTable_[Opcode::SMSG_LOGOUT_CANCEL_ACK] = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+    // These packets are not damage-shield events. Consume them without
+    // synthesizing reflected damage entries or misattributing GUIDs.
+    dispatchTable_[Opcode::SMSG_AURACASTLOG] = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+    // These packets are not damage-shield events. Consume them without
+    // synthesizing reflected damage entries or misattributing GUIDs.
+    dispatchTable_[Opcode::SMSG_SPELLBREAKLOG] = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+    // Consume silently — informational, no UI action needed
+    dispatchTable_[Opcode::SMSG_ITEM_REFUND_INFO_RESPONSE] = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+    // Consume silently — informational, no UI action needed
+    dispatchTable_[Opcode::SMSG_LOOT_LIST] = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+    // Same format as LOCKOUT_ADDED; consume
+    dispatchTable_[Opcode::SMSG_CALENDAR_RAID_LOCKOUT_UPDATED] = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); };
+    // Consume — remaining server notifications not yet parsed
+    for (auto op : {
+        Opcode::SMSG_AFK_MONITOR_INFO_RESPONSE,
+        Opcode::SMSG_AUCTION_LIST_PENDING_SALES,
+        Opcode::SMSG_AVAILABLE_VOICE_CHANNEL,
+        Opcode::SMSG_CALENDAR_ARENA_TEAM,
+        Opcode::SMSG_CALENDAR_CLEAR_PENDING_ACTION,
+        Opcode::SMSG_CALENDAR_EVENT_INVITE,
+        Opcode::SMSG_CALENDAR_EVENT_INVITE_NOTES,
+        Opcode::SMSG_CALENDAR_EVENT_INVITE_NOTES_ALERT,
+        Opcode::SMSG_CALENDAR_EVENT_INVITE_REMOVED,
+        Opcode::SMSG_CALENDAR_EVENT_INVITE_REMOVED_ALERT,
+        Opcode::SMSG_CALENDAR_EVENT_INVITE_STATUS_ALERT,
+        Opcode::SMSG_CALENDAR_EVENT_MODERATOR_STATUS_ALERT,
+        Opcode::SMSG_CALENDAR_EVENT_REMOVED_ALERT,
+        Opcode::SMSG_CALENDAR_EVENT_UPDATED_ALERT,
+        Opcode::SMSG_CALENDAR_FILTER_GUILD,
+        Opcode::SMSG_CALENDAR_SEND_CALENDAR,
+        Opcode::SMSG_CALENDAR_SEND_EVENT,
+        Opcode::SMSG_CHEAT_DUMP_ITEMS_DEBUG_ONLY_RESPONSE,
+        Opcode::SMSG_CHEAT_DUMP_ITEMS_DEBUG_ONLY_RESPONSE_WRITE_FILE,
+        Opcode::SMSG_CHEAT_PLAYER_LOOKUP,
+        Opcode::SMSG_CHECK_FOR_BOTS,
+        Opcode::SMSG_COMMENTATOR_GET_PLAYER_INFO,
+        Opcode::SMSG_COMMENTATOR_MAP_INFO,
+        Opcode::SMSG_COMMENTATOR_PLAYER_INFO,
+        Opcode::SMSG_COMMENTATOR_SKIRMISH_QUEUE_RESULT1,
+        Opcode::SMSG_COMMENTATOR_SKIRMISH_QUEUE_RESULT2,
+        Opcode::SMSG_COMMENTATOR_STATE_CHANGED,
+        Opcode::SMSG_COOLDOWN_CHEAT,
+        Opcode::SMSG_DANCE_QUERY_RESPONSE,
+        Opcode::SMSG_DBLOOKUP,
+        Opcode::SMSG_DEBUGAURAPROC,
+        Opcode::SMSG_DEBUG_AISTATE,
+        Opcode::SMSG_DEBUG_LIST_TARGETS,
+        Opcode::SMSG_DEBUG_SERVER_GEO,
+        Opcode::SMSG_DUMP_OBJECTS_DATA,
+        Opcode::SMSG_FORCEACTIONSHOW,
+        Opcode::SMSG_GM_PLAYER_INFO,
+        Opcode::SMSG_GODMODE,
+        Opcode::SMSG_IGNORE_DIMINISHING_RETURNS_CHEAT,
+        Opcode::SMSG_IGNORE_REQUIREMENTS_CHEAT,
+        Opcode::SMSG_INVALIDATE_DANCE,
+        Opcode::SMSG_LFG_PENDING_INVITE,
+        Opcode::SMSG_LFG_PENDING_MATCH,
+        Opcode::SMSG_LFG_PENDING_MATCH_DONE,
+        Opcode::SMSG_LFG_UPDATE,
+        Opcode::SMSG_LFG_UPDATE_LFG,
+        Opcode::SMSG_LFG_UPDATE_LFM,
+        Opcode::SMSG_LFG_UPDATE_QUEUED,
+        Opcode::SMSG_MOVE_CHARACTER_CHEAT,
+        Opcode::SMSG_NOTIFY_DANCE,
+        Opcode::SMSG_NOTIFY_DEST_LOC_SPELL_CAST,
+        Opcode::SMSG_PETGODMODE,
+        Opcode::SMSG_PET_UPDATE_COMBO_POINTS,
+        Opcode::SMSG_PLAYER_SKINNED,
+        Opcode::SMSG_PLAY_DANCE,
+        Opcode::SMSG_PROFILEDATA_RESPONSE,
+        Opcode::SMSG_PVP_QUEUE_STATS,
+        Opcode::SMSG_QUERY_OBJECT_POSITION,
+        Opcode::SMSG_QUERY_OBJECT_ROTATION,
+        Opcode::SMSG_REDIRECT_CLIENT,
+        Opcode::SMSG_RESET_RANGED_COMBAT_TIMER,
+        Opcode::SMSG_SEND_ALL_COMBAT_LOG,
+        Opcode::SMSG_SET_EXTRA_AURA_INFO_NEED_UPDATE,
+        Opcode::SMSG_SET_PLAYER_DECLINED_NAMES_RESULT,
+        Opcode::SMSG_SET_PROJECTILE_POSITION,
+        Opcode::SMSG_SPELL_CHANCE_RESIST_PUSHBACK,
+        Opcode::SMSG_SPELL_UPDATE_CHAIN_TARGETS,
+        Opcode::SMSG_STOP_DANCE,
+        Opcode::SMSG_TEST_DROP_RATE_RESULT,
+        Opcode::SMSG_UPDATE_ACCOUNT_DATA,
+        Opcode::SMSG_UPDATE_ACCOUNT_DATA_COMPLETE,
+        Opcode::SMSG_UPDATE_INSTANCE_OWNERSHIP,
+        Opcode::SMSG_UPDATE_LAST_INSTANCE,
+        Opcode::SMSG_VOICESESSION_FULL,
+        Opcode::SMSG_VOICE_CHAT_STATUS,
+        Opcode::SMSG_VOICE_PARENTAL_CONTROLS,
+        Opcode::SMSG_VOICE_SESSION_ADJUST_PRIORITY,
+        Opcode::SMSG_VOICE_SESSION_ENABLE,
+        Opcode::SMSG_VOICE_SESSION_LEAVE,
+        Opcode::SMSG_VOICE_SESSION_ROSTER_UPDATE,
+        Opcode::SMSG_VOICE_SET_TALKER_MUTED
+    }) { dispatchTable_[op] = [this](network::Packet& packet) { packet.setReadPos(packet.getSize()); }; }
+}
+
 void GameHandler::handlePacket(network::Packet& packet) {
     if (packet.getSize() < 1) {
         LOG_DEBUG("Received empty world packet (ignored)");
@@ -1713,7231 +8158,38 @@ void GameHandler::handlePacket(network::Packet& packet) {
         return;
     }
 
-    switch (*logicalOp) {
-        case Opcode::SMSG_AUTH_CHALLENGE:
-            if (state == WorldState::CONNECTED) {
-                handleAuthChallenge(packet);
-            } else {
-                LOG_WARNING("Unexpected SMSG_AUTH_CHALLENGE in state: ", worldStateName(state));
+    // Dispatch via the opcode handler table
+    auto it = dispatchTable_.find(*logicalOp);
+    if (it != dispatchTable_.end()) {
+        it->second(packet);
+    } else {
+        // In pre-world states we need full visibility (char create/login handshakes).
+        // In-world we keep de-duplication to avoid heavy log I/O in busy areas.
+        if (state != WorldState::IN_WORLD) {
+            static std::unordered_set<uint32_t> loggedUnhandledByState;
+            const uint32_t key = (static_cast<uint32_t>(static_cast<uint8_t>(state)) << 16) |
+                                 static_cast<uint32_t>(opcode);
+            if (loggedUnhandledByState.insert(key).second) {
+                LOG_WARNING("Unhandled world opcode: 0x", std::hex, opcode, std::dec,
+                            " state=", static_cast<int>(state),
+                            " size=", packet.getSize());
+                const auto& data = packet.getData();
+                std::string hex;
+                size_t limit = std::min<size_t>(data.size(), 48);
+                hex.reserve(limit * 3);
+                for (size_t i = 0; i < limit; ++i) {
+                    char b[4];
+                    snprintf(b, sizeof(b), "%02x ", data[i]);
+                    hex += b;
+                }
+                LOG_INFO("Unhandled opcode payload hex (first ", limit, " bytes): ", hex);
+            }
+        } else {
+            static std::unordered_set<uint16_t> loggedUnhandledOpcodes;
+            if (loggedUnhandledOpcodes.insert(static_cast<uint16_t>(opcode)).second) {
+                LOG_WARNING("Unhandled world opcode: 0x", std::hex, opcode, std::dec);
             }
-            break;
-
-        case Opcode::SMSG_AUTH_RESPONSE:
-            if (state == WorldState::AUTH_SENT) {
-                handleAuthResponse(packet);
-            } else {
-                LOG_WARNING("Unexpected SMSG_AUTH_RESPONSE in state: ", worldStateName(state));
-            }
-            break;
-
-        case Opcode::SMSG_CHAR_CREATE:
-            handleCharCreateResponse(packet);
-            break;
-
-        case Opcode::SMSG_CHAR_DELETE: {
-            uint8_t result = packet.readUInt8();
-            lastCharDeleteResult_ = result;
-            bool success = (result == 0x00 || result == 0x47); // Common success codes
-            LOG_INFO("SMSG_CHAR_DELETE result: ", (int)result, success ? " (success)" : " (failed)");
-            requestCharacterList();
-            if (charDeleteCallback_) charDeleteCallback_(success);
-            break;
-        }
-
-        case Opcode::SMSG_CHAR_ENUM:
-            if (state == WorldState::CHAR_LIST_REQUESTED) {
-                handleCharEnum(packet);
-            } else {
-                LOG_WARNING("Unexpected SMSG_CHAR_ENUM in state: ", worldStateName(state));
-            }
-            break;
-
-        case Opcode::SMSG_CHARACTER_LOGIN_FAILED:
-            handleCharLoginFailed(packet);
-            break;
-
-        case Opcode::SMSG_LOGIN_VERIFY_WORLD:
-            if (state == WorldState::ENTERING_WORLD || state == WorldState::IN_WORLD) {
-                handleLoginVerifyWorld(packet);
-            } else {
-                LOG_WARNING("Unexpected SMSG_LOGIN_VERIFY_WORLD in state: ", worldStateName(state));
-            }
-            break;
-
-        case Opcode::SMSG_LOGIN_SETTIMESPEED:
-            // Can be received during login or at any time after
-            handleLoginSetTimeSpeed(packet);
-            break;
-
-        case Opcode::SMSG_CLIENTCACHE_VERSION:
-            // Early pre-world packet in some realms (e.g. Warmane profile)
-            handleClientCacheVersion(packet);
-            break;
-
-        case Opcode::SMSG_TUTORIAL_FLAGS:
-            // Often sent during char-list stage (8x uint32 tutorial flags)
-            handleTutorialFlags(packet);
-            break;
-
-        case Opcode::SMSG_WARDEN_DATA:
-            handleWardenData(packet);
-            break;
-
-        case Opcode::SMSG_ACCOUNT_DATA_TIMES:
-            // Can be received at any time after authentication
-            handleAccountDataTimes(packet);
-            break;
-
-        case Opcode::SMSG_MOTD:
-            // Can be received at any time after entering world
-            handleMotd(packet);
-            break;
-
-        case Opcode::SMSG_NOTIFICATION:
-            // Vanilla/Classic server notification (single string)
-            handleNotification(packet);
-            break;
-
-        case Opcode::SMSG_PONG:
-            // Can be received at any time after entering world
-            handlePong(packet);
-            break;
-
-        case Opcode::SMSG_UPDATE_OBJECT:
-            LOG_DEBUG("Received SMSG_UPDATE_OBJECT, state=", static_cast<int>(state), " size=", packet.getSize());
-            // Can be received after entering world
-            if (state == WorldState::IN_WORLD) {
-                handleUpdateObject(packet);
-            }
-            break;
-
-        case Opcode::SMSG_COMPRESSED_UPDATE_OBJECT:
-            LOG_DEBUG("Received SMSG_COMPRESSED_UPDATE_OBJECT, state=", static_cast<int>(state), " size=", packet.getSize());
-            // Compressed version of UPDATE_OBJECT
-            if (state == WorldState::IN_WORLD) {
-                handleCompressedUpdateObject(packet);
-            }
-            break;
-        case Opcode::SMSG_DESTROY_OBJECT:
-            // Can be received after entering world
-            if (state == WorldState::IN_WORLD) {
-                handleDestroyObject(packet);
-            }
-            break;
-
-        case Opcode::SMSG_MESSAGECHAT:
-            // Can be received after entering world
-            if (state == WorldState::IN_WORLD) {
-                handleMessageChat(packet);
-            }
-            break;
-        case Opcode::SMSG_GM_MESSAGECHAT:
-            // GM → player message: same wire format as SMSG_MESSAGECHAT
-            if (state == WorldState::IN_WORLD) {
-                handleMessageChat(packet);
-            }
-            break;
-
-        case Opcode::SMSG_TEXT_EMOTE:
-            if (state == WorldState::IN_WORLD) {
-                handleTextEmote(packet);
-            }
-            break;
-        case Opcode::SMSG_EMOTE: {
-            if (state != WorldState::IN_WORLD) break;
-            // SMSG_EMOTE: uint32 emoteAnim, uint64 sourceGuid
-            if (packet.getSize() - packet.getReadPos() < 12) break;
-            uint32_t emoteAnim = packet.readUInt32();
-            uint64_t sourceGuid = packet.readUInt64();
-            if (emoteAnimCallback_ && sourceGuid != 0) {
-                emoteAnimCallback_(sourceGuid, emoteAnim);
-            }
-            break;
-        }
-
-        case Opcode::SMSG_CHANNEL_NOTIFY:
-            // Accept during ENTERING_WORLD too — server auto-joins channels before VERIFY_WORLD
-            if (state == WorldState::IN_WORLD || state == WorldState::ENTERING_WORLD) {
-                handleChannelNotify(packet);
-            }
-            break;
-        case Opcode::SMSG_CHAT_PLAYER_NOT_FOUND: {
-            // string: name of the player not found (for failed whispers)
-            std::string name = packet.readString();
-            if (!name.empty()) {
-                addSystemChatMessage("No player named '" + name + "' is currently playing.");
-            }
-            break;
-        }
-        case Opcode::SMSG_CHAT_PLAYER_AMBIGUOUS: {
-            // string: ambiguous player name (multiple matches)
-            std::string name = packet.readString();
-            if (!name.empty()) {
-                addSystemChatMessage("Player name '" + name + "' is ambiguous.");
-            }
-            break;
-        }
-        case Opcode::SMSG_CHAT_WRONG_FACTION:
-            addUIError("You cannot send messages to members of that faction.");
-            addSystemChatMessage("You cannot send messages to members of that faction.");
-            break;
-        case Opcode::SMSG_CHAT_NOT_IN_PARTY:
-            addUIError("You are not in a party.");
-            addSystemChatMessage("You are not in a party.");
-            break;
-        case Opcode::SMSG_CHAT_RESTRICTED:
-            addUIError("You cannot send chat messages in this area.");
-            addSystemChatMessage("You cannot send chat messages in this area.");
-            break;
-
-        case Opcode::SMSG_QUERY_TIME_RESPONSE:
-            if (state == WorldState::IN_WORLD) {
-                handleQueryTimeResponse(packet);
-            }
-            break;
-
-        case Opcode::SMSG_PLAYED_TIME:
-            if (state == WorldState::IN_WORLD) {
-                handlePlayedTime(packet);
-            }
-            break;
-
-        case Opcode::SMSG_WHO:
-            if (state == WorldState::IN_WORLD) {
-                handleWho(packet);
-            }
-            break;
-
-        case Opcode::SMSG_WHOIS: {
-            // GM/admin response to /whois command: cstring with account/IP info
-            // Format: string (the whois result text, typically "Name: ...\nAccount: ...\nIP: ...")
-            if (packet.getReadPos() < packet.getSize()) {
-                std::string whoisText = packet.readString();
-                if (!whoisText.empty()) {
-                    // Display each line of the whois response in system chat
-                    std::string line;
-                    for (char c : whoisText) {
-                        if (c == '\n') {
-                            if (!line.empty()) addSystemChatMessage("[Whois] " + line);
-                            line.clear();
-                        } else {
-                            line += c;
-                        }
-                    }
-                    if (!line.empty()) addSystemChatMessage("[Whois] " + line);
-                    LOG_INFO("SMSG_WHOIS: ", whoisText);
-                }
-            }
-            break;
-        }
-
-        case Opcode::SMSG_FRIEND_STATUS:
-            if (state == WorldState::IN_WORLD) {
-                handleFriendStatus(packet);
-            }
-            break;
-        case Opcode::SMSG_CONTACT_LIST:
-            handleContactList(packet);
-            break;
-        case Opcode::SMSG_FRIEND_LIST:
-            // Classic 1.12 and TBC friend list (WotLK uses SMSG_CONTACT_LIST instead)
-            handleFriendList(packet);
-            break;
-        case Opcode::SMSG_IGNORE_LIST: {
-            // uint8 count + count × (uint64 guid + string name)
-            // Populate ignoreCache so /unignore works for pre-existing ignores.
-            if (packet.getSize() - packet.getReadPos() < 1) break;
-            uint8_t ignCount = packet.readUInt8();
-            for (uint8_t i = 0; i < ignCount; ++i) {
-                if (packet.getSize() - packet.getReadPos() < 8) break;
-                uint64_t ignGuid = packet.readUInt64();
-                std::string ignName = packet.readString();
-                if (!ignName.empty() && ignGuid != 0) {
-                    ignoreCache[ignName] = ignGuid;
-                }
-            }
-            LOG_DEBUG("SMSG_IGNORE_LIST: loaded ", (int)ignCount, " ignored players");
-            break;
-        }
-
-        case Opcode::MSG_RANDOM_ROLL:
-            if (state == WorldState::IN_WORLD) {
-                handleRandomRoll(packet);
-            }
-            break;
-        case Opcode::SMSG_ITEM_PUSH_RESULT: {
-            // Item received notification (loot, quest reward, trade, etc.)
-            // guid(8) + received(1) + created(1) + showInChat(1) + bagSlot(1) + itemSlot(4)
-            // + itemId(4) + itemSuffixFactor(4) + randomPropertyId(4) + count(4) + totalCount(4)
-            constexpr size_t kMinSize = 8 + 1 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 4;
-            if (packet.getSize() - packet.getReadPos() >= kMinSize) {
-                /*uint64_t recipientGuid =*/ packet.readUInt64();
-                /*uint8_t received =*/ packet.readUInt8();   // 0=looted/generated, 1=received from trade
-                /*uint8_t created =*/ packet.readUInt8();    // 0=stack added, 1=new item slot
-                uint8_t showInChat = packet.readUInt8();
-                /*uint8_t bagSlot =*/ packet.readUInt8();
-                /*uint32_t itemSlot =*/ packet.readUInt32();
-                uint32_t itemId = packet.readUInt32();
-                /*uint32_t suffixFactor =*/ packet.readUInt32();
-                int32_t randomProp = static_cast<int32_t>(packet.readUInt32());
-                uint32_t count = packet.readUInt32();
-                /*uint32_t totalCount =*/ packet.readUInt32();
-
-                queryItemInfo(itemId, 0);
-                if (showInChat) {
-                    if (const ItemQueryResponseData* info = getItemInfo(itemId)) {
-                        // Item info already cached — emit immediately.
-                        std::string itemName = info->name.empty() ? ("item #" + std::to_string(itemId)) : info->name;
-                        // Append random suffix name (e.g., "of the Eagle") if present
-                        if (randomProp != 0) {
-                            std::string suffix = getRandomPropertyName(randomProp);
-                            if (!suffix.empty()) itemName += " " + suffix;
-                        }
-                        uint32_t quality = info->quality;
-                        std::string link = buildItemLink(itemId, quality, itemName);
-                        std::string msg = "Received: " + link;
-                        if (count > 1) msg += " x" + std::to_string(count);
-                        addSystemChatMessage(msg);
-                        if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                            if (auto* sfx = renderer->getUiSoundManager())
-                                sfx->playLootItem();
-                        }
-                        if (itemLootCallback_) itemLootCallback_(itemId, count, quality, itemName);
-                        // Fire CHAT_MSG_LOOT for loot tracking addons
-                        if (addonEventCallback_)
-                            addonEventCallback_("CHAT_MSG_LOOT", {msg, "", std::to_string(itemId), std::to_string(count)});
-                    } else {
-                        // Item info not yet cached; defer until SMSG_ITEM_QUERY_SINGLE_RESPONSE.
-                        pendingItemPushNotifs_.push_back({itemId, count});
-                    }
-                }
-                // Fire bag/inventory events for all item receipts (not just chat-visible ones)
-                if (addonEventCallback_) {
-                    addonEventCallback_("BAG_UPDATE", {});
-                    addonEventCallback_("UNIT_INVENTORY_CHANGED", {"player"});
-                }
-                LOG_INFO("Item push: itemId=", itemId, " count=", count,
-                         " showInChat=", static_cast<int>(showInChat));
-            }
-            break;
-        }
-
-        case Opcode::SMSG_LOGOUT_RESPONSE:
-            handleLogoutResponse(packet);
-            break;
-
-        case Opcode::SMSG_LOGOUT_COMPLETE:
-            handleLogoutComplete(packet);
-            break;
-
-        // ---- Phase 1: Foundation ----
-        case Opcode::SMSG_NAME_QUERY_RESPONSE:
-            handleNameQueryResponse(packet);
-            break;
-
-        case Opcode::SMSG_CREATURE_QUERY_RESPONSE:
-            handleCreatureQueryResponse(packet);
-            break;
-
-        case Opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE:
-            handleItemQueryResponse(packet);
-            break;
-
-        case Opcode::SMSG_INSPECT_TALENT:
-            handleInspectResults(packet);
-            break;
-        case Opcode::SMSG_ADDON_INFO:
-        case Opcode::SMSG_EXPECTED_SPAM_RECORDS:
-            // Optional system payloads that are safe to consume.
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- XP ----
-        case Opcode::SMSG_LOG_XPGAIN:
-            handleXpGain(packet);
-            break;
-        case Opcode::SMSG_EXPLORATION_EXPERIENCE: {
-            // uint32 areaId + uint32 xpGained
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint32_t areaId   = packet.readUInt32();
-                uint32_t xpGained = packet.readUInt32();
-                if (xpGained > 0) {
-                    std::string areaName = getAreaName(areaId);
-                    std::string msg;
-                    if (!areaName.empty()) {
-                        msg = "Discovered " + areaName + "! Gained " +
-                              std::to_string(xpGained) + " experience.";
-                    } else {
-                        char buf[128];
-                        std::snprintf(buf, sizeof(buf),
-                                      "Discovered new area! Gained %u experience.", xpGained);
-                        msg = buf;
-                    }
-                    addSystemChatMessage(msg);
-                    addCombatText(CombatTextEntry::XP_GAIN,
-                                  static_cast<int32_t>(xpGained), 0, true);
-                    // XP is updated via PLAYER_XP update fields from the server.
-                    if (areaDiscoveryCallback_)
-                        areaDiscoveryCallback_(areaName, xpGained);
-                    if (addonEventCallback_)
-                        addonEventCallback_("CHAT_MSG_COMBAT_XP_GAIN", {msg, std::to_string(xpGained)});
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_PET_TAME_FAILURE: {
-            // uint8 reason: 0=invalid_creature, 1=too_many_pets, 2=already_tamed, etc.
-            const char* reasons[] = {
-                "Invalid creature", "Too many pets", "Already tamed",
-                "Wrong faction", "Level too low", "Creature not tameable",
-                "Can't control", "Can't command"
-            };
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                uint8_t reason = packet.readUInt8();
-                const char* msg = (reason < 8) ? reasons[reason] : "Unknown reason";
-                std::string s = std::string("Failed to tame: ") + msg;
-                addUIError(s);
-                addSystemChatMessage(s);
-            }
-            break;
-        }
-        case Opcode::SMSG_PET_ACTION_FEEDBACK: {
-            // uint8 msg: 1=dead, 2=nothing_to_attack, 3=cant_attack_target,
-            //            4=target_too_far, 5=no_path, 6=cant_attack_immune
-            if (packet.getSize() - packet.getReadPos() < 1) break;
-            uint8_t msg = packet.readUInt8();
-            static const char* kPetFeedback[] = {
-                nullptr,
-                "Your pet is dead.",
-                "Your pet has nothing to attack.",
-                "Your pet cannot attack that target.",
-                "That target is too far away.",
-                "Your pet cannot find a path to the target.",
-                "Your pet cannot attack an immune target.",
-            };
-            if (msg > 0 && msg < 7 && kPetFeedback[msg]) {
-                addSystemChatMessage(kPetFeedback[msg]);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_PET_NAME_QUERY_RESPONSE: {
-            // uint32 petNumber + string name + uint32 timestamp + bool declined
-            packet.setReadPos(packet.getSize());  // Consume; pet names shown via unit objects.
-            break;
-        }
-        case Opcode::SMSG_QUESTUPDATE_FAILED: {
-            // uint32 questId
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t questId = packet.readUInt32();
-                std::string questTitle;
-                for (const auto& q : questLog_)
-                    if (q.questId == questId && !q.title.empty()) { questTitle = q.title; break; }
-                addSystemChatMessage(questTitle.empty()
-                    ? std::string("Quest failed!")
-                    : ('"' + questTitle + "\" failed!"));
-            }
-            break;
-        }
-        case Opcode::SMSG_QUESTUPDATE_FAILEDTIMER: {
-            // uint32 questId
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t questId = packet.readUInt32();
-                std::string questTitle;
-                for (const auto& q : questLog_)
-                    if (q.questId == questId && !q.title.empty()) { questTitle = q.title; break; }
-                addSystemChatMessage(questTitle.empty()
-                    ? std::string("Quest timed out!")
-                    : ('"' + questTitle + "\" has timed out."));
-            }
-            break;
-        }
-
-        // ---- Entity health/power delta updates ----
-        case Opcode::SMSG_HEALTH_UPDATE: {
-            // WotLK: packed_guid + uint32 health
-            // TBC: full uint64 + uint32 health
-            // Classic/Vanilla: packed_guid + uint32 health (same as WotLK)
-            const bool huTbc = isActiveExpansion("tbc");
-            if (packet.getSize() - packet.getReadPos() < (huTbc ? 8u : 2u)) break;
-            uint64_t guid = huTbc
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 4) break;
-            uint32_t hp = packet.readUInt32();
-            auto entity = entityManager.getEntity(guid);
-            if (auto* unit = dynamic_cast<Unit*>(entity.get())) {
-                unit->setHealth(hp);
-            }
-            if (addonEventCallback_ && guid != 0) {
-                std::string unitId;
-                if (guid == playerGuid) unitId = "player";
-                else if (guid == targetGuid) unitId = "target";
-                else if (guid == focusGuid) unitId = "focus";
-                else if (guid == petGuid_) unitId = "pet";
-                if (!unitId.empty())
-                    addonEventCallback_("UNIT_HEALTH", {unitId});
-            }
-            break;
-        }
-        case Opcode::SMSG_POWER_UPDATE: {
-            // WotLK: packed_guid + uint8 powerType + uint32 value
-            // TBC: full uint64 + uint8 powerType + uint32 value
-            // Classic/Vanilla: packed_guid + uint8 powerType + uint32 value (same as WotLK)
-            const bool puTbc = isActiveExpansion("tbc");
-            if (packet.getSize() - packet.getReadPos() < (puTbc ? 8u : 2u)) break;
-            uint64_t guid = puTbc
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 5) break;
-            uint8_t  powerType = packet.readUInt8();
-            uint32_t value     = packet.readUInt32();
-            auto entity = entityManager.getEntity(guid);
-            if (auto* unit = dynamic_cast<Unit*>(entity.get())) {
-                unit->setPowerByType(powerType, value);
-            }
-            if (addonEventCallback_ && guid != 0) {
-                std::string unitId;
-                if (guid == playerGuid) unitId = "player";
-                else if (guid == targetGuid) unitId = "target";
-                else if (guid == focusGuid) unitId = "focus";
-                else if (guid == petGuid_) unitId = "pet";
-                if (!unitId.empty()) {
-                    addonEventCallback_("UNIT_POWER", {unitId});
-                    if (guid == playerGuid) {
-                        addonEventCallback_("ACTIONBAR_UPDATE_USABLE", {});
-                        addonEventCallback_("SPELL_UPDATE_USABLE", {});
-                    }
-                }
-            }
-            break;
-        }
-
-        // ---- World state single update ----
-        case Opcode::SMSG_UPDATE_WORLD_STATE: {
-            // uint32 field + uint32 value
-            if (packet.getSize() - packet.getReadPos() < 8) break;
-            uint32_t field = packet.readUInt32();
-            uint32_t value = packet.readUInt32();
-            worldStates_[field] = value;
-            LOG_DEBUG("SMSG_UPDATE_WORLD_STATE: field=", field, " value=", value);
-            if (addonEventCallback_)
-                addonEventCallback_("UPDATE_WORLD_STATES", {});
-            break;
-        }
-        case Opcode::SMSG_WORLD_STATE_UI_TIMER_UPDATE: {
-            // uint32 time (server unix timestamp) — used to sync UI timers (arena, BG)
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t serverTime = packet.readUInt32();
-                LOG_DEBUG("SMSG_WORLD_STATE_UI_TIMER_UPDATE: serverTime=", serverTime);
-            }
-            break;
-        }
-        case Opcode::SMSG_PVP_CREDIT: {
-            // uint32 honorPoints + uint64 victimGuid + uint32 victimRank
-            if (packet.getSize() - packet.getReadPos() >= 16) {
-                uint32_t honor      = packet.readUInt32();
-                uint64_t victimGuid = packet.readUInt64();
-                uint32_t rank       = packet.readUInt32();
-                LOG_INFO("SMSG_PVP_CREDIT: honor=", honor, " victim=0x", std::hex, victimGuid,
-                         std::dec, " rank=", rank);
-                std::string msg = "You gain " + std::to_string(honor) + " honor points.";
-                addSystemChatMessage(msg);
-                if (honor > 0)
-                    addCombatText(CombatTextEntry::HONOR_GAIN, static_cast<int32_t>(honor), 0, true);
-                if (pvpHonorCallback_) {
-                    pvpHonorCallback_(honor, victimGuid, rank);
-                }
-                if (addonEventCallback_)
-                    addonEventCallback_("CHAT_MSG_COMBAT_HONOR_GAIN", {msg});
-            }
-            break;
-        }
-
-        // ---- Combo points ----
-        case Opcode::SMSG_UPDATE_COMBO_POINTS: {
-            // WotLK: packed_guid (target) + uint8 points
-            // TBC: full uint64 (target) + uint8 points
-            // Classic/Vanilla: packed_guid (target) + uint8 points (same as WotLK)
-            const bool cpTbc = isActiveExpansion("tbc");
-            if (packet.getSize() - packet.getReadPos() < (cpTbc ? 8u : 2u)) break;
-            uint64_t target = cpTbc
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 1) break;
-            comboPoints_ = packet.readUInt8();
-            comboTarget_ = target;
-            LOG_DEBUG("SMSG_UPDATE_COMBO_POINTS: target=0x", std::hex, target,
-                      std::dec, " points=", static_cast<int>(comboPoints_));
-            if (addonEventCallback_)
-                addonEventCallback_("PLAYER_COMBO_POINTS", {});
-            break;
-        }
-
-        // ---- Mirror timers (breath/fatigue/feign death) ----
-        case Opcode::SMSG_START_MIRROR_TIMER: {
-            // uint32 type + int32 value + int32 maxValue + int32 scale + uint32 tracker + uint8 paused
-            if (packet.getSize() - packet.getReadPos() < 21) break;
-            uint32_t type  = packet.readUInt32();
-            int32_t  value = static_cast<int32_t>(packet.readUInt32());
-            int32_t  maxV  = static_cast<int32_t>(packet.readUInt32());
-            int32_t  scale = static_cast<int32_t>(packet.readUInt32());
-            /*uint32_t tracker =*/ packet.readUInt32();
-            uint8_t  paused = packet.readUInt8();
-            if (type < 3) {
-                mirrorTimers_[type].value    = value;
-                mirrorTimers_[type].maxValue = maxV;
-                mirrorTimers_[type].scale    = scale;
-                mirrorTimers_[type].paused   = (paused != 0);
-                mirrorTimers_[type].active   = true;
-                if (addonEventCallback_)
-                    addonEventCallback_("MIRROR_TIMER_START", {
-                        std::to_string(type), std::to_string(value),
-                        std::to_string(maxV), std::to_string(scale),
-                        paused ? "1" : "0"});
-            }
-            break;
-        }
-        case Opcode::SMSG_STOP_MIRROR_TIMER: {
-            // uint32 type
-            if (packet.getSize() - packet.getReadPos() < 4) break;
-            uint32_t type = packet.readUInt32();
-            if (type < 3) {
-                mirrorTimers_[type].active = false;
-                mirrorTimers_[type].value  = 0;
-                if (addonEventCallback_)
-                    addonEventCallback_("MIRROR_TIMER_STOP", {std::to_string(type)});
-            }
-            break;
-        }
-        case Opcode::SMSG_PAUSE_MIRROR_TIMER: {
-            // uint32 type + uint8 paused
-            if (packet.getSize() - packet.getReadPos() < 5) break;
-            uint32_t type   = packet.readUInt32();
-            uint8_t  paused = packet.readUInt8();
-            if (type < 3) {
-                mirrorTimers_[type].paused = (paused != 0);
-                if (addonEventCallback_)
-                    addonEventCallback_("MIRROR_TIMER_PAUSE", {paused ? "1" : "0"});
-            }
-            break;
-        }
-
-        // ---- Cast result (WotLK extended cast failed) ----
-        case Opcode::SMSG_CAST_RESULT: {
-            // WotLK: castCount(u8) + spellId(u32) + result(u8)
-            // TBC/Classic: spellId(u32) + result(u8)  (no castCount prefix)
-            // If result == 0, the spell successfully began; otherwise treat like SMSG_CAST_FAILED.
-            uint32_t castResultSpellId = 0;
-            uint8_t  castResult        = 0;
-            if (packetParsers_->parseCastResult(packet, castResultSpellId, castResult)) {
-                if (castResult != 0) {
-                    casting = false;
-                    castIsChannel = false;
-                    currentCastSpellId = 0;
-                    castTimeRemaining  = 0.0f;
-                    lastInteractedGoGuid_ = 0;
-                    // Cancel craft queue and spell queue on cast failure
-                    craftQueueSpellId_ = 0;
-                    craftQueueRemaining_ = 0;
-                    queuedSpellId_ = 0;
-                    queuedSpellTarget_ = 0;
-                    // Pass player's power type so result 85 says "Not enough rage/energy/etc."
-                    int playerPowerType = -1;
-                    if (auto pe = entityManager.getEntity(playerGuid)) {
-                        if (auto pu = std::dynamic_pointer_cast<Unit>(pe))
-                            playerPowerType = static_cast<int>(pu->getPowerType());
-                    }
-                    const char* reason = getSpellCastResultString(castResult, playerPowerType);
-                    std::string errMsg = reason ? reason
-                                                : ("Spell cast failed (error " + std::to_string(castResult) + ")");
-                    addUIError(errMsg);
-                    if (spellCastFailedCallback_) spellCastFailedCallback_(castResultSpellId);
-                    if (addonEventCallback_) {
-                        addonEventCallback_("UNIT_SPELLCAST_FAILED", {"player", std::to_string(castResultSpellId)});
-                        addonEventCallback_("UNIT_SPELLCAST_STOP", {"player", std::to_string(castResultSpellId)});
-                    }
-                    MessageChatData msg;
-                    msg.type     = ChatType::SYSTEM;
-                    msg.language = ChatLanguage::UNIVERSAL;
-                    msg.message  = errMsg;
-                    addLocalChatMessage(msg);
-                }
-            }
-            break;
-        }
-
-        // ---- Spell failed on another unit ----
-        case Opcode::SMSG_SPELL_FAILED_OTHER: {
-            // WotLK: packed_guid + uint8 castCount + uint32 spellId + uint8 reason
-            // TBC/Classic: full uint64 + uint8 castCount + uint32 spellId + uint8 reason
-            const bool tbcLike2 = isClassicLikeExpansion() || isActiveExpansion("tbc");
-            uint64_t failOtherGuid = tbcLike2
-                ? (packet.getSize() - packet.getReadPos() >= 8 ? packet.readUInt64() : 0)
-                : UpdateObjectParser::readPackedGuid(packet);
-            if (failOtherGuid != 0 && failOtherGuid != playerGuid) {
-                unitCastStates_.erase(failOtherGuid);
-                // Fire cast failure events so cast bar addons clear the bar
-                if (addonEventCallback_) {
-                    std::string unitId;
-                    if (failOtherGuid == targetGuid) unitId = "target";
-                    else if (failOtherGuid == focusGuid) unitId = "focus";
-                    if (!unitId.empty()) {
-                        addonEventCallback_("UNIT_SPELLCAST_FAILED", {unitId});
-                        addonEventCallback_("UNIT_SPELLCAST_STOP", {unitId});
-                    }
-                }
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- Spell proc resist log ----
-        case Opcode::SMSG_PROCRESIST: {
-            // WotLK/Classic/Turtle: packed_guid caster + packed_guid victim + uint32 spellId + ...
-            // TBC:                  uint64 caster + uint64 victim + uint32 spellId + ...
-            const bool prUsesFullGuid = isActiveExpansion("tbc");
-            auto readPrGuid = [&]() -> uint64_t {
-                if (prUsesFullGuid)
-                    return (packet.getSize() - packet.getReadPos() >= 8) ? packet.readUInt64() : 0;
-                return UpdateObjectParser::readPackedGuid(packet);
-            };
-            if (packet.getSize() - packet.getReadPos() < (prUsesFullGuid ? 8u : 1u)
-                || (!prUsesFullGuid && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t caster = readPrGuid();
-            if (packet.getSize() - packet.getReadPos() < (prUsesFullGuid ? 8u : 1u)
-                || (!prUsesFullGuid && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t victim = readPrGuid();
-            if (packet.getSize() - packet.getReadPos() < 4) break;
-            uint32_t spellId = packet.readUInt32();
-            if (victim == playerGuid) {
-                addCombatText(CombatTextEntry::RESIST, 0, spellId, false, 0, caster, victim);
-            } else if (caster == playerGuid) {
-                addCombatText(CombatTextEntry::RESIST, 0, spellId, true, 0, caster, victim);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- Loot start roll (Need/Greed popup trigger) ----
-        case Opcode::SMSG_LOOT_START_ROLL: {
-            // WotLK 3.3.5a: uint64 objectGuid + uint32 mapId + uint32 lootSlot + uint32 itemId
-            //              + uint32 randomSuffix + uint32 randomPropId + uint32 countdown + uint8 voteMask (33 bytes)
-            // Classic/TBC:  uint64 objectGuid + uint32 mapId + uint32 lootSlot + uint32 itemId
-            //              + uint32 countdown + uint8 voteMask (25 bytes)
-            const bool isWotLK = isActiveExpansion("wotlk");
-            const size_t minSize = isWotLK ? 33u : 25u;
-            if (packet.getSize() - packet.getReadPos() < minSize) break;
-            uint64_t objectGuid = packet.readUInt64();
-            /*uint32_t mapId =*/ packet.readUInt32();
-            uint32_t slot   = packet.readUInt32();
-            uint32_t itemId = packet.readUInt32();
-            int32_t rollRandProp = 0;
-            if (isWotLK) {
-                /*uint32_t randSuffix =*/ packet.readUInt32();
-                rollRandProp = static_cast<int32_t>(packet.readUInt32());
-            }
-            uint32_t countdown  = packet.readUInt32();
-            uint8_t voteMask = packet.readUInt8();
-            // Trigger the roll popup for local player
-            pendingLootRollActive_      = true;
-            pendingLootRoll_.objectGuid = objectGuid;
-            pendingLootRoll_.slot       = slot;
-            pendingLootRoll_.itemId     = itemId;
-            // Ensure item info is queried so the roll popup can show the name/icon.
-            queryItemInfo(itemId, 0);
-            auto* info = getItemInfo(itemId);
-            std::string rollItemName = info ? info->name : std::to_string(itemId);
-            if (rollRandProp != 0) {
-                std::string suffix = getRandomPropertyName(rollRandProp);
-                if (!suffix.empty()) rollItemName += " " + suffix;
-            }
-            pendingLootRoll_.itemName = rollItemName;
-            pendingLootRoll_.itemQuality = info ? static_cast<uint8_t>(info->quality) : 0;
-            pendingLootRoll_.rollCountdownMs = (countdown > 0 && countdown <= 120000) ? countdown : 60000;
-            pendingLootRoll_.voteMask        = voteMask;
-            pendingLootRoll_.rollStartedAt   = std::chrono::steady_clock::now();
-            LOG_INFO("SMSG_LOOT_START_ROLL: item=", itemId, " (", pendingLootRoll_.itemName,
-                     ") slot=", slot, " voteMask=0x", std::hex, (int)voteMask, std::dec);
-            if (addonEventCallback_)
-                addonEventCallback_("START_LOOT_ROLL", {std::to_string(slot), std::to_string(countdown)});
-            break;
-        }
-
-        // ---- Pet stable list ----
-        case Opcode::MSG_LIST_STABLED_PETS:
-            if (state == WorldState::IN_WORLD) handleListStabledPets(packet);
-            break;
-
-        // ---- Pet stable result ----
-        case Opcode::SMSG_STABLE_RESULT: {
-            // uint8 result
-            if (packet.getSize() - packet.getReadPos() < 1) break;
-            uint8_t result = packet.readUInt8();
-            const char* msg = nullptr;
-            switch (result) {
-                case 0x01: msg = "Pet stored in stable."; break;
-                case 0x06: msg = "Pet retrieved from stable."; break;
-                case 0x07: msg = "Stable slot purchased."; break;
-                case 0x08: msg = "Stable list updated."; break;
-                case 0x09: msg = "Stable failed: not enough money or other error.";
-                           addUIError(msg); break;
-                default:   break;
-            }
-            if (msg) addSystemChatMessage(msg);
-            LOG_INFO("SMSG_STABLE_RESULT: result=", static_cast<int>(result));
-            // Refresh the stable list after a result to reflect the new state
-            if (stableWindowOpen_ && stableMasterGuid_ != 0 && socket && result <= 0x08) {
-                auto refreshPkt = ListStabledPetsPacket::build(stableMasterGuid_);
-                socket->send(refreshPkt);
-            }
-            break;
-        }
-
-        // ---- Title earned ----
-        case Opcode::SMSG_TITLE_EARNED: {
-            // uint32 titleBitIndex + uint32 isLost
-            if (packet.getSize() - packet.getReadPos() < 8) break;
-            uint32_t titleBit = packet.readUInt32();
-            uint32_t isLost   = packet.readUInt32();
-            loadTitleNameCache();
-
-            // Format the title string using the player's own name
-            std::string titleStr;
-            auto tit = titleNameCache_.find(titleBit);
-            if (tit != titleNameCache_.end() && !tit->second.empty()) {
-                // Title strings contain "%s" as a player-name placeholder.
-                // Replace it with the local player's name if known.
-                auto nameIt = playerNameCache.find(playerGuid);
-                const std::string& pName = (nameIt != playerNameCache.end())
-                    ? nameIt->second : "you";
-                const std::string& fmt = tit->second;
-                size_t pos = fmt.find("%s");
-                if (pos != std::string::npos) {
-                    titleStr = fmt.substr(0, pos) + pName + fmt.substr(pos + 2);
-                } else {
-                    titleStr = fmt;
-                }
-            }
-
-            std::string msg;
-            if (!titleStr.empty()) {
-                msg = isLost ? ("Title removed: " + titleStr + ".")
-                             : ("Title earned: " + titleStr + "!");
-            } else {
-                char buf[64];
-                std::snprintf(buf, sizeof(buf),
-                    isLost ? "Title removed (bit %u)." : "Title earned (bit %u)!",
-                    titleBit);
-                msg = buf;
-            }
-            // Track in known title set
-            if (isLost) {
-                knownTitleBits_.erase(titleBit);
-            } else {
-                knownTitleBits_.insert(titleBit);
-            }
-
-            // Only post chat message for actual earned/lost events (isLost and new earn)
-            // Server sends isLost=0 for all known titles during login — suppress the chat spam
-            // by only notifying when we already had some titles (after login sequence)
-            addSystemChatMessage(msg);
-            LOG_INFO("SMSG_TITLE_EARNED: bit=", titleBit, " lost=", isLost,
-                     " title='", titleStr, "' known=", knownTitleBits_.size());
-            break;
-        }
-
-        case Opcode::SMSG_LEARNED_DANCE_MOVES:
-            // Contains bitmask of learned dance moves — cosmetic only, no gameplay effect.
-            LOG_DEBUG("SMSG_LEARNED_DANCE_MOVES: ignored (size=", packet.getSize(), ")");
-            break;
-
-        // ---- Hearthstone binding ----
-        case Opcode::SMSG_PLAYERBOUND: {
-            // uint64 binderGuid + uint32 mapId + uint32 zoneId
-            if (packet.getSize() - packet.getReadPos() < 16) break;
-            /*uint64_t binderGuid =*/ packet.readUInt64();
-            uint32_t mapId = packet.readUInt32();
-            uint32_t zoneId = packet.readUInt32();
-            // Update home bind location so hearthstone tooltip reflects the new zone
-            homeBindMapId_  = mapId;
-            homeBindZoneId_ = zoneId;
-            std::string pbMsg = "Your home location has been set";
-            std::string zoneName = getAreaName(zoneId);
-            if (!zoneName.empty())
-                pbMsg += " to " + zoneName;
-            pbMsg += '.';
-            addSystemChatMessage(pbMsg);
-            break;
-        }
-        case Opcode::SMSG_BINDER_CONFIRM: {
-            // uint64 npcGuid — fires just before SMSG_PLAYERBOUND; PLAYERBOUND shows
-            // the zone name so this confirm is redundant. Consume silently.
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- Phase shift (WotLK phasing) ----
-        case Opcode::SMSG_SET_PHASE_SHIFT: {
-            // uint32 phaseFlags [+ packed guid + uint16 count + repeated uint16 phaseIds]
-            // Just consume; phasing doesn't require action from client in WotLK
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- XP gain toggle ----
-        case Opcode::SMSG_TOGGLE_XP_GAIN: {
-            // uint8 enabled
-            if (packet.getSize() - packet.getReadPos() < 1) break;
-            uint8_t enabled = packet.readUInt8();
-            addSystemChatMessage(enabled ? "XP gain enabled." : "XP gain disabled.");
-            break;
-        }
-
-        // ---- Gossip POI (quest map markers) ----
-        case Opcode::SMSG_GOSSIP_POI: {
-            // uint32 flags + float x + float y + uint32 icon + uint32 data + string name
-            if (packet.getSize() - packet.getReadPos() < 20) break;
-            /*uint32_t flags =*/ packet.readUInt32();
-            float poiX = packet.readFloat();  // WoW canonical coords
-            float poiY = packet.readFloat();
-            uint32_t icon = packet.readUInt32();
-            uint32_t data = packet.readUInt32();
-            std::string name = packet.readString();
-            GossipPoi poi;
-            poi.x    = poiX;
-            poi.y    = poiY;
-            poi.icon = icon;
-            poi.data = data;
-            poi.name = std::move(name);
-            // Cap POI count to prevent unbounded growth from rapid gossip queries
-            if (gossipPois_.size() >= 200) gossipPois_.erase(gossipPois_.begin());
-            gossipPois_.push_back(std::move(poi));
-            LOG_DEBUG("SMSG_GOSSIP_POI: x=", poiX, " y=", poiY, " icon=", icon);
-            break;
-        }
-
-        // ---- Character service results ----
-        case Opcode::SMSG_CHAR_RENAME: {
-            // uint32 result (0=success) + uint64 guid + string newName
-            if (packet.getSize() - packet.getReadPos() >= 13) {
-                uint32_t result = packet.readUInt32();
-                /*uint64_t guid =*/ packet.readUInt64();
-                std::string newName = packet.readString();
-                if (result == 0) {
-                    addSystemChatMessage("Character name changed to: " + newName);
-                } else {
-                    // ResponseCodes for name changes (shared with char create)
-                    static const char* kRenameErrors[] = {
-                        nullptr,                                         // 0 = success
-                        "Name already in use.",                          // 1
-                        "Name too short.",                               // 2
-                        "Name too long.",                                // 3
-                        "Name contains invalid characters.",             // 4
-                        "Name contains a profanity.",                    // 5
-                        "Name is reserved.",                             // 6
-                        "Character name does not meet requirements.",    // 7
-                    };
-                    const char* errMsg = (result < 8) ? kRenameErrors[result] : nullptr;
-                    std::string renameErr = errMsg ? std::string("Rename failed: ") + errMsg
-                                                   : "Character rename failed.";
-                    addUIError(renameErr);
-                    addSystemChatMessage(renameErr);
-                }
-                LOG_INFO("SMSG_CHAR_RENAME: result=", result, " newName=", newName);
-            }
-            break;
-        }
-        case Opcode::SMSG_BINDZONEREPLY: {
-            // uint32 result (0=success, 1=too far)
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t result = packet.readUInt32();
-                if (result == 0) {
-                    addSystemChatMessage("Your home is now set to this location.");
-                } else {
-                    addUIError("You are too far from the innkeeper.");
-                    addSystemChatMessage("You are too far from the innkeeper.");
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_CHANGEPLAYER_DIFFICULTY_RESULT: {
-            // uint32 result
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t result = packet.readUInt32();
-                if (result == 0) {
-                    addSystemChatMessage("Difficulty changed.");
-                } else {
-                    static const char* reasons[] = {
-                        "", "Error", "Too many members", "Already in dungeon",
-                        "You are in a battleground", "Raid not allowed in heroic",
-                        "You must be in a raid group", "Player not in group"
-                    };
-                    const char* msg = (result < 8) ? reasons[result] : "Difficulty change failed.";
-                    addUIError(std::string("Cannot change difficulty: ") + msg);
-                    addSystemChatMessage(std::string("Cannot change difficulty: ") + msg);
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_CORPSE_NOT_IN_INSTANCE:
-            addUIError("Your corpse is outside this instance.");
-            addSystemChatMessage("Your corpse is outside this instance. Release spirit to retrieve it.");
-            break;
-        case Opcode::SMSG_CROSSED_INEBRIATION_THRESHOLD: {
-            // uint64 playerGuid + uint32 threshold
-            if (packet.getSize() - packet.getReadPos() >= 12) {
-                uint64_t guid = packet.readUInt64();
-                uint32_t threshold = packet.readUInt32();
-                if (guid == playerGuid && threshold > 0) {
-                    addSystemChatMessage("You feel rather drunk.");
-                }
-                LOG_DEBUG("SMSG_CROSSED_INEBRIATION_THRESHOLD: guid=0x", std::hex, guid,
-                          std::dec, " threshold=", threshold);
-            }
-            break;
-        }
-        case Opcode::SMSG_CLEAR_FAR_SIGHT_IMMEDIATE:
-            // Far sight cancelled; viewport returns to player camera
-            LOG_DEBUG("SMSG_CLEAR_FAR_SIGHT_IMMEDIATE");
-            break;
-        case Opcode::SMSG_COMBAT_EVENT_FAILED:
-            // Combat event could not be executed (e.g. invalid target for special ability)
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_FORCE_ANIM: {
-            // packed_guid + uint32 animId — force entity to play animation
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                uint64_t animGuid = UpdateObjectParser::readPackedGuid(packet);
-                if (packet.getSize() - packet.getReadPos() >= 4) {
-                    uint32_t animId = packet.readUInt32();
-                    if (emoteAnimCallback_)
-                        emoteAnimCallback_(animGuid, animId);
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_GAMEOBJECT_DESPAWN_ANIM:
-        case Opcode::SMSG_GAMEOBJECT_RESET_STATE:
-        case Opcode::SMSG_FLIGHT_SPLINE_SYNC:
-        case Opcode::SMSG_FORCE_DISPLAY_UPDATE:
-        case Opcode::SMSG_FORCE_SEND_QUEUED_PACKETS:
-        case Opcode::SMSG_FORCE_SET_VEHICLE_REC_ID:
-        case Opcode::SMSG_CORPSE_MAP_POSITION_QUERY_RESPONSE:
-        case Opcode::SMSG_DAMAGE_CALC_LOG:
-        case Opcode::SMSG_DYNAMIC_DROP_ROLL_RESULT:
-        case Opcode::SMSG_DESTRUCTIBLE_BUILDING_DAMAGE:
-            // Consume — handled by broader object update or not yet implemented
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_FORCED_DEATH_UPDATE:
-            // Server forces player into dead state (GM command, scripted event, etc.)
-            playerDead_ = true;
-            if (ghostStateCallback_) ghostStateCallback_(false); // dead but not ghost yet
-            if (addonEventCallback_) addonEventCallback_("PLAYER_DEAD", {});
-            addSystemChatMessage("You have been killed.");
-            LOG_INFO("SMSG_FORCED_DEATH_UPDATE: player force-killed");
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- Zone defense messages ----
-        case Opcode::SMSG_DEFENSE_MESSAGE: {
-            // uint32 zoneId + string message — used for PvP zone attack alerts
-            if (packet.getSize() - packet.getReadPos() >= 5) {
-                /*uint32_t zoneId =*/ packet.readUInt32();
-                std::string defMsg = packet.readString();
-                if (!defMsg.empty()) {
-                    addSystemChatMessage("[Defense] " + defMsg);
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_CORPSE_RECLAIM_DELAY: {
-            // uint32 delayMs before player can reclaim corpse (PvP deaths)
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t delayMs = packet.readUInt32();
-                auto nowMs = static_cast<uint64_t>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now().time_since_epoch()).count());
-                corpseReclaimAvailableMs_ = nowMs + delayMs;
-                LOG_INFO("SMSG_CORPSE_RECLAIM_DELAY: ", delayMs, "ms");
-            }
-            break;
-        }
-        case Opcode::SMSG_DEATH_RELEASE_LOC: {
-            // uint32 mapId + float x + float y + float z
-            // This is the GRAVEYARD / ghost-spawn position, NOT the actual corpse location.
-            // The corpse remains at the death position (already cached when health dropped to 0,
-            // and updated when the corpse object arrives via SMSG_UPDATE_OBJECT).
-            // Do NOT overwrite corpseX_/Y_/Z_/MapId_ here — that would break canReclaimCorpse()
-            // by making it check distance to the graveyard instead of the real corpse.
-            if (packet.getSize() - packet.getReadPos() >= 16) {
-                uint32_t relMapId = packet.readUInt32();
-                float relX = packet.readFloat();
-                float relY = packet.readFloat();
-                float relZ = packet.readFloat();
-                LOG_INFO("SMSG_DEATH_RELEASE_LOC (graveyard spawn): map=", relMapId,
-                         " x=", relX, " y=", relY, " z=", relZ);
-            }
-            break;
-        }
-        case Opcode::SMSG_ENABLE_BARBER_SHOP:
-            // Sent by server when player sits in barber chair — triggers barber shop UI
-            LOG_INFO("SMSG_ENABLE_BARBER_SHOP: barber shop available");
-            barberShopOpen_ = true;
-            if (addonEventCallback_) addonEventCallback_("BARBER_SHOP_OPEN", {});
-            break;
-        case Opcode::MSG_CORPSE_QUERY: {
-            // Server response: uint8 found + (if found) uint32 mapId + float x + float y + float z + uint32 corpseMapId
-            if (packet.getSize() - packet.getReadPos() < 1) break;
-            uint8_t found = packet.readUInt8();
-            if (found && packet.getSize() - packet.getReadPos() >= 20) {
-                /*uint32_t mapId =*/ packet.readUInt32();
-                float cx = packet.readFloat();
-                float cy = packet.readFloat();
-                float cz = packet.readFloat();
-                uint32_t corpseMapId = packet.readUInt32();
-                // Server coords: x=west, y=north (opposite of canonical)
-                corpseX_ = cx;
-                corpseY_ = cy;
-                corpseZ_ = cz;
-                corpseMapId_ = corpseMapId;
-                LOG_INFO("MSG_CORPSE_QUERY: corpse at (", cx, ",", cy, ",", cz, ") map=", corpseMapId);
-            }
-            break;
-        }
-        case Opcode::SMSG_FEIGN_DEATH_RESISTED:
-            addUIError("Your Feign Death was resisted.");
-            addSystemChatMessage("Your Feign Death attempt was resisted.");
-            LOG_DEBUG("SMSG_FEIGN_DEATH_RESISTED");
-            break;
-        case Opcode::SMSG_CHANNEL_MEMBER_COUNT: {
-            // string channelName + uint8 flags + uint32 memberCount
-            std::string chanName = packet.readString();
-            if (packet.getSize() - packet.getReadPos() >= 5) {
-                /*uint8_t flags =*/ packet.readUInt8();
-                uint32_t count = packet.readUInt32();
-                LOG_DEBUG("SMSG_CHANNEL_MEMBER_COUNT: channel=", chanName, " members=", count);
-            }
-            break;
-        }
-        case Opcode::SMSG_GAMETIME_SET:
-        case Opcode::SMSG_GAMETIME_UPDATE:
-            // Server time correction: uint32 gameTimePacked (seconds since epoch)
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t gameTimePacked = packet.readUInt32();
-                gameTime_ = static_cast<float>(gameTimePacked);
-                LOG_DEBUG("Server game time update: ", gameTime_, "s");
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_GAMESPEED_SET:
-            // Server speed correction: uint32 gameTimePacked + float timeSpeed
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint32_t gameTimePacked = packet.readUInt32();
-                float timeSpeed = packet.readFloat();
-                gameTime_ = static_cast<float>(gameTimePacked);
-                timeSpeed_ = timeSpeed;
-                LOG_DEBUG("Server game speed update: time=", gameTime_, " speed=", timeSpeed_);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_GAMETIMEBIAS_SET:
-            // Time bias — consume without processing
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_ACHIEVEMENT_DELETED: {
-            // uint32 achievementId — remove from local earned set
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t achId = packet.readUInt32();
-                earnedAchievements_.erase(achId);
-                achievementDates_.erase(achId);
-                LOG_DEBUG("SMSG_ACHIEVEMENT_DELETED: id=", achId);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_CRITERIA_DELETED: {
-            // uint32 criteriaId — remove from local criteria progress
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t critId = packet.readUInt32();
-                criteriaProgress_.erase(critId);
-                LOG_DEBUG("SMSG_CRITERIA_DELETED: id=", critId);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- Combat clearing ----
-        case Opcode::SMSG_ATTACKSWING_DEADTARGET:
-            // Target died mid-swing: clear auto-attack
-            autoAttacking = false;
-            autoAttackTarget = 0;
-            break;
-        case Opcode::SMSG_THREAT_CLEAR:
-            // All threat dropped on the local player (e.g. Vanish, Feign Death)
-            threatLists_.clear();
-            LOG_DEBUG("SMSG_THREAT_CLEAR: threat wiped");
-            if (addonEventCallback_) addonEventCallback_("UNIT_THREAT_LIST_UPDATE", {});
-            break;
-        case Opcode::SMSG_THREAT_REMOVE: {
-            // packed_guid (unit) + packed_guid (victim whose threat was removed)
-            if (packet.getSize() - packet.getReadPos() < 1) break;
-            uint64_t unitGuid   = UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 1) break;
-            uint64_t victimGuid = UpdateObjectParser::readPackedGuid(packet);
-            auto it = threatLists_.find(unitGuid);
-            if (it != threatLists_.end()) {
-                auto& list = it->second;
-                list.erase(std::remove_if(list.begin(), list.end(),
-                    [victimGuid](const ThreatEntry& e){ return e.victimGuid == victimGuid; }),
-                    list.end());
-                if (list.empty()) threatLists_.erase(it);
-            }
-            break;
-        }
-        case Opcode::SMSG_HIGHEST_THREAT_UPDATE:
-        case Opcode::SMSG_THREAT_UPDATE: {
-            // Both packets share the same format:
-            // packed_guid (unit) + packed_guid (highest-threat target or target, unused here)
-            // + uint32 count + count × (packed_guid victim + uint32 threat)
-            if (packet.getSize() - packet.getReadPos() < 1) break;
-            uint64_t unitGuid = UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 1) break;
-            (void)UpdateObjectParser::readPackedGuid(packet); // highest-threat / current target
-            if (packet.getSize() - packet.getReadPos() < 4) break;
-            uint32_t cnt = packet.readUInt32();
-            if (cnt > 100) { packet.setReadPos(packet.getSize()); break; } // sanity
-            std::vector<ThreatEntry> list;
-            list.reserve(cnt);
-            for (uint32_t i = 0; i < cnt; ++i) {
-                if (packet.getSize() - packet.getReadPos() < 1) break;
-                ThreatEntry entry;
-                entry.victimGuid = UpdateObjectParser::readPackedGuid(packet);
-                if (packet.getSize() - packet.getReadPos() < 4) break;
-                entry.threat = packet.readUInt32();
-                list.push_back(entry);
-            }
-            // Sort descending by threat so highest is first
-            std::sort(list.begin(), list.end(),
-                [](const ThreatEntry& a, const ThreatEntry& b){ return a.threat > b.threat; });
-            threatLists_[unitGuid] = std::move(list);
-            if (addonEventCallback_)
-                addonEventCallback_("UNIT_THREAT_LIST_UPDATE", {});
-            break;
-        }
-
-        case Opcode::SMSG_CANCEL_COMBAT:
-            // Server-side combat state reset
-            autoAttacking = false;
-            autoAttackTarget = 0;
-            autoAttackRequested_ = false;
-            break;
-
-        case Opcode::SMSG_BREAK_TARGET:
-            // Server breaking our targeting (PvP flag, etc.)
-            // uint64 guid — consume; target cleared if it matches
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint64_t bGuid = packet.readUInt64();
-                if (bGuid == targetGuid) targetGuid = 0;
-            }
-            break;
-
-        case Opcode::SMSG_CLEAR_TARGET:
-            // uint64 guid — server cleared targeting on a unit (or 0 = clear all)
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint64_t cGuid = packet.readUInt64();
-                if (cGuid == 0 || cGuid == targetGuid) targetGuid = 0;
-            }
-            break;
-
-        // ---- Server-forced dismount ----
-        case Opcode::SMSG_DISMOUNT:
-            // No payload — server forcing dismount
-            currentMountDisplayId_ = 0;
-            if (mountCallback_) mountCallback_(0);
-            break;
-
-        case Opcode::SMSG_MOUNTRESULT: {
-            // uint32 result: 0=error, 1=invalid, 2=not in range, 3=already mounted, 4=ok
-            if (packet.getSize() - packet.getReadPos() < 4) break;
-            uint32_t result = packet.readUInt32();
-            if (result != 4) {
-                const char* msgs[] = { "Cannot mount here.", "Invalid mount spell.", "Too far away to mount.", "Already mounted." };
-                std::string mountErr = result < 4 ? msgs[result] : "Cannot mount.";
-                addUIError(mountErr);
-                addSystemChatMessage(mountErr);
-            }
-            break;
-        }
-        case Opcode::SMSG_DISMOUNTRESULT: {
-            // uint32 result: 0=ok, others=error
-            if (packet.getSize() - packet.getReadPos() < 4) break;
-            uint32_t result = packet.readUInt32();
-            if (result != 0) { addUIError("Cannot dismount here."); addSystemChatMessage("Cannot dismount here."); }
-            break;
-        }
-
-        // ---- Loot notifications ----
-        case Opcode::SMSG_LOOT_ALL_PASSED: {
-            // WotLK 3.3.5a: uint64 objectGuid + uint32 slot + uint32 itemId + uint32 randSuffix + uint32 randPropId (24 bytes)
-            // Classic/TBC:  uint64 objectGuid + uint32 slot + uint32 itemId (16 bytes)
-            const bool isWotLK = isActiveExpansion("wotlk");
-            const size_t minSize = isWotLK ? 24u : 16u;
-            if (packet.getSize() - packet.getReadPos() < minSize) break;
-            /*uint64_t objGuid =*/ packet.readUInt64();
-            /*uint32_t slot    =*/ packet.readUInt32();
-            uint32_t itemId  = packet.readUInt32();
-            if (isWotLK) {
-                /*uint32_t randSuffix =*/ packet.readUInt32();
-                /*uint32_t randProp   =*/ packet.readUInt32();
-            }
-            auto* info = getItemInfo(itemId);
-            std::string allPassName = info && !info->name.empty() ? info->name : std::to_string(itemId);
-            uint32_t allPassQuality = info ? info->quality : 1u;
-            addSystemChatMessage("Everyone passed on " + buildItemLink(itemId, allPassQuality, allPassName) + ".");
-            pendingLootRollActive_ = false;
-            break;
-        }
-        case Opcode::SMSG_LOOT_ITEM_NOTIFY: {
-            // uint64 looterGuid + uint64 lootGuid + uint32 itemId + uint32 count
-            if (packet.getSize() - packet.getReadPos() < 24) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t looterGuid = packet.readUInt64();
-            /*uint64_t lootGuid =*/ packet.readUInt64();
-            uint32_t itemId  = packet.readUInt32();
-            uint32_t count   = packet.readUInt32();
-            // Show loot message for party members (not the player — SMSG_ITEM_PUSH_RESULT covers that)
-            if (isInGroup() && looterGuid != playerGuid) {
-                auto nit = playerNameCache.find(looterGuid);
-                std::string looterName = (nit != playerNameCache.end()) ? nit->second : "";
-                if (!looterName.empty()) {
-                    queryItemInfo(itemId, 0);
-                    std::string itemName = "item #" + std::to_string(itemId);
-                    uint32_t notifyQuality = 1;
-                    if (const ItemQueryResponseData* info = getItemInfo(itemId)) {
-                        if (!info->name.empty()) itemName = info->name;
-                        notifyQuality = info->quality;
-                    }
-                    std::string itemLink2 = buildItemLink(itemId, notifyQuality, itemName);
-                    std::string lootMsg = looterName + " loots " + itemLink2;
-                    if (count > 1) lootMsg += " x" + std::to_string(count);
-                    lootMsg += ".";
-                    addSystemChatMessage(lootMsg);
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_LOOT_SLOT_CHANGED: {
-            // uint8 slotIndex — another player took the item from this slot in group loot
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                uint8_t slotIndex = packet.readUInt8();
-                for (auto it = currentLoot.items.begin(); it != currentLoot.items.end(); ++it) {
-                    if (it->slotIndex == slotIndex) {
-                        currentLoot.items.erase(it);
-                        break;
-                    }
-                }
-            }
-            break;
-        }
-
-        // ---- Spell log miss ----
-        case Opcode::SMSG_SPELLLOGMISS: {
-            // All expansions: uint32 spellId first.
-            // WotLK/Classic: spellId(4) + packed_guid caster + uint8 unk + uint32 count
-            //                 + count × (packed_guid victim + uint8 missInfo)
-            // TBC:            spellId(4) + uint64 caster + uint8 unk + uint32 count
-            //                 + count × (uint64 victim + uint8 missInfo)
-            // All expansions append uint32 reflectSpellId + uint8 reflectResult when
-            // missInfo==11 (REFLECT).
-            const bool spellMissUsesFullGuid = isActiveExpansion("tbc");
-            auto readSpellMissGuid = [&]() -> uint64_t {
-                if (spellMissUsesFullGuid)
-                    return (packet.getSize() - packet.getReadPos() >= 8) ? packet.readUInt64() : 0;
-                return UpdateObjectParser::readPackedGuid(packet);
-            };
-            // spellId prefix present in all expansions
-            if (packet.getSize() - packet.getReadPos() < 4) break;
-            uint32_t spellId = packet.readUInt32();
-            if (packet.getSize() - packet.getReadPos() < (spellMissUsesFullGuid ? 8u : 1u)
-                || (!spellMissUsesFullGuid && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t casterGuid = readSpellMissGuid();
-            if (packet.getSize() - packet.getReadPos() < 5) break;
-            /*uint8_t unk =*/ packet.readUInt8();
-            const uint32_t rawCount = packet.readUInt32();
-            if (rawCount > 128) {
-                LOG_WARNING("SMSG_SPELLLOGMISS: miss count capped (requested=", rawCount, ")");
-            }
-            const uint32_t storedLimit = std::min<uint32_t>(rawCount, 128u);
-
-            struct SpellMissLogEntry {
-                uint64_t victimGuid = 0;
-                uint8_t missInfo = 0;
-                uint32_t reflectSpellId = 0;  // Only valid when missInfo==11 (REFLECT)
-            };
-            std::vector<SpellMissLogEntry> parsedMisses;
-            parsedMisses.reserve(storedLimit);
-
-            bool truncated = false;
-            for (uint32_t i = 0; i < rawCount; ++i) {
-                if (packet.getSize() - packet.getReadPos() < (spellMissUsesFullGuid ? 9u : 2u)
-                    || (!spellMissUsesFullGuid && !hasFullPackedGuid(packet))) {
-                    truncated = true;
-                    break;
-                }
-                const uint64_t victimGuid = readSpellMissGuid();
-                if (packet.getSize() - packet.getReadPos() < 1) {
-                    truncated = true;
-                    break;
-                }
-                const uint8_t missInfo = packet.readUInt8();
-                // REFLECT (11): extra uint32 reflectSpellId + uint8 reflectResult
-                uint32_t reflectSpellId = 0;
-                if (missInfo == 11) {
-                    if (packet.getSize() - packet.getReadPos() >= 5) {
-                        reflectSpellId = packet.readUInt32();
-                        /*uint8_t reflectResult =*/ packet.readUInt8();
-                    } else {
-                        truncated = true;
-                        break;
-                    }
-                }
-                if (i < storedLimit) {
-                    parsedMisses.push_back({victimGuid, missInfo, reflectSpellId});
-                }
-            }
-
-            if (truncated) {
-                packet.setReadPos(packet.getSize());
-                break;
-            }
-
-            for (const auto& miss : parsedMisses) {
-                const uint64_t victimGuid = miss.victimGuid;
-                const uint8_t missInfo = miss.missInfo;
-                CombatTextEntry::Type ct = combatTextTypeFromSpellMissInfo(missInfo);
-                // For REFLECT, use the reflected spell ID so combat text shows the spell name
-                uint32_t combatSpellId = (ct == CombatTextEntry::REFLECT && miss.reflectSpellId != 0)
-                                         ? miss.reflectSpellId : spellId;
-                if (casterGuid == playerGuid) {
-                    // We cast a spell and it missed the target
-                    addCombatText(ct, 0, combatSpellId, true, 0, casterGuid, victimGuid);
-                } else if (victimGuid == playerGuid) {
-                    // Enemy spell missed us (we dodged/parried/blocked/resisted/etc.)
-                    addCombatText(ct, 0, combatSpellId, false, 0, casterGuid, victimGuid);
-                }
-            }
-            break;
-        }
-
-        // ---- Environmental damage log ----
-        case Opcode::SMSG_ENVIRONMENTALDAMAGELOG: {
-            // uint64 victimGuid + uint8 envDamageType + uint32 damage + uint32 absorb + uint32 resist
-            if (packet.getSize() - packet.getReadPos() < 21) break;
-            uint64_t victimGuid = packet.readUInt64();
-            /*uint8_t  envType =*/ packet.readUInt8();
-            uint32_t damage   = packet.readUInt32();
-            uint32_t absorb   = packet.readUInt32();
-            uint32_t resist   = packet.readUInt32();
-            if (victimGuid == playerGuid) {
-                // Environmental damage: no caster GUID, victim = player
-                if (damage > 0)
-                    addCombatText(CombatTextEntry::ENVIRONMENTAL, static_cast<int32_t>(damage), 0, false, 0, 0, victimGuid);
-                if (absorb > 0)
-                    addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(absorb), 0, false, 0, 0, victimGuid);
-                if (resist > 0)
-                    addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(resist), 0, false, 0, 0, victimGuid);
-            }
-            break;
-        }
-
-        // ---- Creature Movement ----
-        case Opcode::SMSG_MONSTER_MOVE:
-            handleMonsterMove(packet);
-            break;
-
-        case Opcode::SMSG_COMPRESSED_MOVES:
-            handleCompressedMoves(packet);
-            break;
-
-        case Opcode::SMSG_MONSTER_MOVE_TRANSPORT:
-            handleMonsterMoveTransport(packet);
-            break;
-        case Opcode::SMSG_SPLINE_MOVE_FEATHER_FALL:
-        case Opcode::SMSG_SPLINE_MOVE_GRAVITY_DISABLE:
-        case Opcode::SMSG_SPLINE_MOVE_GRAVITY_ENABLE:
-        case Opcode::SMSG_SPLINE_MOVE_LAND_WALK:
-        case Opcode::SMSG_SPLINE_MOVE_NORMAL_FALL:
-        case Opcode::SMSG_SPLINE_MOVE_ROOT:
-        case Opcode::SMSG_SPLINE_MOVE_SET_HOVER: {
-            // Minimal parse: PackedGuid only — no animation-relevant state change.
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                (void)UpdateObjectParser::readPackedGuid(packet);
-            }
-            break;
-        }
-        case Opcode::SMSG_SPLINE_MOVE_SET_WALK_MODE:
-        case Opcode::SMSG_SPLINE_MOVE_SET_RUN_MODE:
-        case Opcode::SMSG_SPLINE_MOVE_SET_FLYING:
-        case Opcode::SMSG_SPLINE_MOVE_START_SWIM:
-        case Opcode::SMSG_SPLINE_MOVE_STOP_SWIM: {
-            // PackedGuid + synthesised move-flags → drives animation state in application layer.
-            // SWIMMING=0x00200000, WALKING=0x00000100, CAN_FLY=0x00800000, FLYING=0x01000000
-            if (packet.getSize() - packet.getReadPos() < 1) break;
-            uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
-            if (guid == 0 || guid == playerGuid || !unitMoveFlagsCallback_) break;
-            uint32_t synthFlags = 0;
-            if (*logicalOp == Opcode::SMSG_SPLINE_MOVE_START_SWIM)
-                synthFlags = 0x00200000u; // SWIMMING
-            else if (*logicalOp == Opcode::SMSG_SPLINE_MOVE_SET_WALK_MODE)
-                synthFlags = 0x00000100u; // WALKING
-            else if (*logicalOp == Opcode::SMSG_SPLINE_MOVE_SET_FLYING)
-                synthFlags = 0x01000000u | 0x00800000u; // FLYING | CAN_FLY
-            // STOP_SWIM and SET_RUN_MODE: synthFlags stays 0 → clears swim/walk
-            unitMoveFlagsCallback_(guid, synthFlags);
-            break;
-        }
-        case Opcode::SMSG_SPLINE_SET_RUN_SPEED:
-        case Opcode::SMSG_SPLINE_SET_RUN_BACK_SPEED:
-        case Opcode::SMSG_SPLINE_SET_SWIM_SPEED: {
-            // Minimal parse: PackedGuid + float speed
-            if (packet.getSize() - packet.getReadPos() < 5) break;
-            uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 4) break;
-            float speed = packet.readFloat();
-            if (guid == playerGuid && std::isfinite(speed) && speed > 0.01f && speed < 200.0f) {
-                if (*logicalOp == Opcode::SMSG_SPLINE_SET_RUN_SPEED)
-                    serverRunSpeed_ = speed;
-                else if (*logicalOp == Opcode::SMSG_SPLINE_SET_RUN_BACK_SPEED)
-                    serverRunBackSpeed_ = speed;
-                else if (*logicalOp == Opcode::SMSG_SPLINE_SET_SWIM_SPEED)
-                    serverSwimSpeed_ = speed;
-            }
-            break;
-        }
-
-        // ---- Speed Changes ----
-        case Opcode::SMSG_FORCE_RUN_SPEED_CHANGE:
-            handleForceRunSpeedChange(packet);
-            break;
-        case Opcode::SMSG_FORCE_MOVE_ROOT:
-            handleForceMoveRootState(packet, true);
-            break;
-        case Opcode::SMSG_FORCE_MOVE_UNROOT:
-            handleForceMoveRootState(packet, false);
-            break;
-
-        // ---- Other force speed changes ----
-        case Opcode::SMSG_FORCE_WALK_SPEED_CHANGE:
-            handleForceSpeedChange(packet, "WALK_SPEED", Opcode::CMSG_FORCE_WALK_SPEED_CHANGE_ACK, &serverWalkSpeed_);
-            break;
-        case Opcode::SMSG_FORCE_RUN_BACK_SPEED_CHANGE:
-            handleForceSpeedChange(packet, "RUN_BACK_SPEED", Opcode::CMSG_FORCE_RUN_BACK_SPEED_CHANGE_ACK, &serverRunBackSpeed_);
-            break;
-        case Opcode::SMSG_FORCE_SWIM_SPEED_CHANGE:
-            handleForceSpeedChange(packet, "SWIM_SPEED", Opcode::CMSG_FORCE_SWIM_SPEED_CHANGE_ACK, &serverSwimSpeed_);
-            break;
-        case Opcode::SMSG_FORCE_SWIM_BACK_SPEED_CHANGE:
-            handleForceSpeedChange(packet, "SWIM_BACK_SPEED", Opcode::CMSG_FORCE_SWIM_BACK_SPEED_CHANGE_ACK, &serverSwimBackSpeed_);
-            break;
-        case Opcode::SMSG_FORCE_FLIGHT_SPEED_CHANGE:
-            handleForceSpeedChange(packet, "FLIGHT_SPEED", Opcode::CMSG_FORCE_FLIGHT_SPEED_CHANGE_ACK, &serverFlightSpeed_);
-            break;
-        case Opcode::SMSG_FORCE_FLIGHT_BACK_SPEED_CHANGE:
-            handleForceSpeedChange(packet, "FLIGHT_BACK_SPEED", Opcode::CMSG_FORCE_FLIGHT_BACK_SPEED_CHANGE_ACK, &serverFlightBackSpeed_);
-            break;
-        case Opcode::SMSG_FORCE_TURN_RATE_CHANGE:
-            handleForceSpeedChange(packet, "TURN_RATE", Opcode::CMSG_FORCE_TURN_RATE_CHANGE_ACK, &serverTurnRate_);
-            break;
-        case Opcode::SMSG_FORCE_PITCH_RATE_CHANGE:
-            handleForceSpeedChange(packet, "PITCH_RATE", Opcode::CMSG_FORCE_PITCH_RATE_CHANGE_ACK, &serverPitchRate_);
-            break;
-
-        // ---- Movement flag toggle ACKs ----
-        case Opcode::SMSG_MOVE_SET_CAN_FLY:
-            handleForceMoveFlagChange(packet, "SET_CAN_FLY", Opcode::CMSG_MOVE_SET_CAN_FLY_ACK,
-                static_cast<uint32_t>(MovementFlags::CAN_FLY), true);
-            break;
-        case Opcode::SMSG_MOVE_UNSET_CAN_FLY:
-            handleForceMoveFlagChange(packet, "UNSET_CAN_FLY", Opcode::CMSG_MOVE_SET_CAN_FLY_ACK,
-                static_cast<uint32_t>(MovementFlags::CAN_FLY), false);
-            break;
-        case Opcode::SMSG_MOVE_FEATHER_FALL:
-            handleForceMoveFlagChange(packet, "FEATHER_FALL", Opcode::CMSG_MOVE_FEATHER_FALL_ACK,
-                static_cast<uint32_t>(MovementFlags::FEATHER_FALL), true);
-            break;
-        case Opcode::SMSG_MOVE_WATER_WALK:
-            handleForceMoveFlagChange(packet, "WATER_WALK", Opcode::CMSG_MOVE_WATER_WALK_ACK,
-                static_cast<uint32_t>(MovementFlags::WATER_WALK), true);
-            break;
-        case Opcode::SMSG_MOVE_SET_HOVER:
-            handleForceMoveFlagChange(packet, "SET_HOVER", Opcode::CMSG_MOVE_HOVER_ACK,
-                static_cast<uint32_t>(MovementFlags::HOVER), true);
-            break;
-        case Opcode::SMSG_MOVE_UNSET_HOVER:
-            handleForceMoveFlagChange(packet, "UNSET_HOVER", Opcode::CMSG_MOVE_HOVER_ACK,
-                static_cast<uint32_t>(MovementFlags::HOVER), false);
-            break;
-
-        // ---- Knockback ----
-        case Opcode::SMSG_MOVE_KNOCK_BACK:
-            handleMoveKnockBack(packet);
-            break;
-
-        case Opcode::SMSG_CAMERA_SHAKE: {
-            // uint32 shakeID (CameraShakes.dbc), uint32 shakeType
-            // We don't parse CameraShakes.dbc; apply a hardcoded moderate shake.
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint32_t shakeId   = packet.readUInt32();
-                uint32_t shakeType = packet.readUInt32();
-                (void)shakeType;
-                // Map shakeId ranges to approximate magnitudes:
-                // IDs < 50: minor environmental (0.04), others: larger boss effects (0.08)
-                float magnitude = (shakeId < 50) ? 0.04f : 0.08f;
-                if (cameraShakeCallback_) {
-                    cameraShakeCallback_(magnitude, 18.0f, 0.5f);
-                }
-                LOG_DEBUG("SMSG_CAMERA_SHAKE: id=", shakeId, " type=", shakeType,
-                          " magnitude=", magnitude);
-            }
-            break;
-        }
-
-        case Opcode::SMSG_CLIENT_CONTROL_UPDATE: {
-            // Minimal parse: PackedGuid + uint8 allowMovement.
-            if (packet.getSize() - packet.getReadPos() < 2) {
-                LOG_WARNING("SMSG_CLIENT_CONTROL_UPDATE too short: ", packet.getSize(), " bytes");
-                break;
-            }
-            uint8_t guidMask = packet.readUInt8();
-            size_t guidBytes = 0;
-            uint64_t controlGuid = 0;
-            for (int i = 0; i < 8; ++i) {
-                if (guidMask & (1u << i)) ++guidBytes;
-            }
-            if (packet.getSize() - packet.getReadPos() < guidBytes + 1) {
-                LOG_WARNING("SMSG_CLIENT_CONTROL_UPDATE malformed (truncated packed guid)");
-                packet.setReadPos(packet.getSize());
-                break;
-            }
-            for (int i = 0; i < 8; ++i) {
-                if (guidMask & (1u << i)) {
-                    uint8_t b = packet.readUInt8();
-                    controlGuid |= (static_cast<uint64_t>(b) << (i * 8));
-                }
-            }
-            bool allowMovement = (packet.readUInt8() != 0);
-            if (controlGuid == 0 || controlGuid == playerGuid) {
-                bool changed = (serverMovementAllowed_ != allowMovement);
-                serverMovementAllowed_ = allowMovement;
-                if (changed && !allowMovement) {
-                    // Force-stop local movement immediately when server revokes control.
-                    movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::FORWARD) |
-                                            static_cast<uint32_t>(MovementFlags::BACKWARD) |
-                                            static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
-                                            static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) |
-                                            static_cast<uint32_t>(MovementFlags::TURN_LEFT) |
-                                            static_cast<uint32_t>(MovementFlags::TURN_RIGHT));
-                    sendMovement(Opcode::MSG_MOVE_STOP);
-                    sendMovement(Opcode::MSG_MOVE_STOP_STRAFE);
-                    sendMovement(Opcode::MSG_MOVE_STOP_TURN);
-                    sendMovement(Opcode::MSG_MOVE_STOP_SWIM);
-                    addSystemChatMessage("Movement disabled by server.");
-                    if (addonEventCallback_) addonEventCallback_("PLAYER_CONTROL_LOST", {});
-                } else if (changed && allowMovement) {
-                    addSystemChatMessage("Movement re-enabled.");
-                    if (addonEventCallback_) addonEventCallback_("PLAYER_CONTROL_GAINED", {});
-                }
-            }
-            break;
-        }
-
-        // ---- Phase 2: Combat ----
-        case Opcode::SMSG_ATTACKSTART:
-            handleAttackStart(packet);
-            break;
-        case Opcode::SMSG_ATTACKSTOP:
-            handleAttackStop(packet);
-            break;
-        case Opcode::SMSG_ATTACKSWING_NOTINRANGE:
-            autoAttackOutOfRange_ = true;
-            if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-                addSystemChatMessage("Target is too far away.");
-                autoAttackRangeWarnCooldown_ = 1.25f;
-            }
-            break;
-        case Opcode::SMSG_ATTACKSWING_BADFACING:
-            if (autoAttackRequested_ && autoAttackTarget != 0) {
-                auto targetEntity = entityManager.getEntity(autoAttackTarget);
-                if (targetEntity) {
-                    float toTargetX = targetEntity->getX() - movementInfo.x;
-                    float toTargetY = targetEntity->getY() - movementInfo.y;
-                    if (std::abs(toTargetX) > 0.01f || std::abs(toTargetY) > 0.01f) {
-                        movementInfo.orientation = std::atan2(-toTargetY, toTargetX);
-                        sendMovement(Opcode::MSG_MOVE_SET_FACING);
-                    }
-                }
-            }
-            break;
-        case Opcode::SMSG_ATTACKSWING_NOTSTANDING:
-            autoAttackOutOfRange_ = false;
-            autoAttackOutOfRangeTime_ = 0.0f;
-            if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-                addSystemChatMessage("You need to stand up to fight.");
-                autoAttackRangeWarnCooldown_ = 1.25f;
-            }
-            break;
-        case Opcode::SMSG_ATTACKSWING_CANT_ATTACK:
-            // Target is permanently non-attackable (critter, civilian, already dead, etc.).
-            // Stop the auto-attack loop so the client doesn't spam the server.
-            stopAutoAttack();
-            if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-                addSystemChatMessage("You can't attack that.");
-                autoAttackRangeWarnCooldown_ = 1.25f;
-            }
-            break;
-        case Opcode::SMSG_ATTACKERSTATEUPDATE:
-            handleAttackerStateUpdate(packet);
-            break;
-        case Opcode::SMSG_AI_REACTION: {
-            // SMSG_AI_REACTION: uint64 guid, uint32 reaction
-            if (packet.getSize() - packet.getReadPos() < 12) break;
-            uint64_t guid = packet.readUInt64();
-            uint32_t reaction = packet.readUInt32();
-            // Reaction 2 commonly indicates aggro.
-            if (reaction == 2 && npcAggroCallback_) {
-                auto entity = entityManager.getEntity(guid);
-                if (entity) {
-                    npcAggroCallback_(guid, glm::vec3(entity->getX(), entity->getY(), entity->getZ()));
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_SPELLNONMELEEDAMAGELOG:
-            handleSpellDamageLog(packet);
-            break;
-        case Opcode::SMSG_PLAY_SPELL_VISUAL: {
-            // uint64 casterGuid + uint32 visualId
-            if (packet.getSize() - packet.getReadPos() < 12) break;
-            uint64_t casterGuid = packet.readUInt64();
-            uint32_t visualId   = packet.readUInt32();
-            if (visualId == 0) break;
-            // Resolve caster world position and spawn the effect
-            auto* renderer = core::Application::getInstance().getRenderer();
-            if (!renderer) break;
-            glm::vec3 spawnPos;
-            if (casterGuid == playerGuid) {
-                spawnPos = renderer->getCharacterPosition();
-            } else {
-                auto entity = entityManager.getEntity(casterGuid);
-                if (!entity) break;
-                glm::vec3 canonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());
-                spawnPos = core::coords::canonicalToRender(canonical);
-            }
-            renderer->playSpellVisual(visualId, spawnPos);
-            break;
-        }
-        case Opcode::SMSG_SPELLHEALLOG:
-            handleSpellHealLog(packet);
-            break;
-
-        // ---- Phase 3: Spells ----
-        case Opcode::SMSG_INITIAL_SPELLS:
-            handleInitialSpells(packet);
-            break;
-        case Opcode::SMSG_CAST_FAILED:
-            handleCastFailed(packet);
-            break;
-        case Opcode::SMSG_SPELL_START:
-            handleSpellStart(packet);
-            break;
-        case Opcode::SMSG_SPELL_GO:
-            handleSpellGo(packet);
-            break;
-        case Opcode::SMSG_SPELL_FAILURE: {
-            // WotLK: packed_guid + uint8 castCount + uint32 spellId + uint8 failReason
-            // TBC:   full uint64 + uint8 castCount + uint32 spellId + uint8 failReason
-            // Classic: full uint64 + uint32 spellId + uint8 failReason  (NO castCount)
-            const bool isClassic = isClassicLikeExpansion();
-            const bool isTbc     = isActiveExpansion("tbc");
-            uint64_t failGuid = (isClassic || isTbc)
-                ? (packet.getSize() - packet.getReadPos() >= 8 ? packet.readUInt64() : 0)
-                : UpdateObjectParser::readPackedGuid(packet);
-            // Classic omits the castCount byte; TBC and WotLK include it
-            const size_t remainingFields = isClassic ? 5u : 6u;  // spellId(4)+reason(1) [+castCount(1)]
-            if (packet.getSize() - packet.getReadPos() >= remainingFields) {
-                if (!isClassic) /*uint8_t castCount =*/ packet.readUInt8();
-                uint32_t failSpellId = packet.readUInt32();
-                uint8_t rawFailReason = packet.readUInt8();
-                // Classic result enum starts at 0=AFFECTING_COMBAT; shift +1 for WotLK table
-                uint8_t failReason = isClassic ? static_cast<uint8_t>(rawFailReason + 1) : rawFailReason;
-                if (failGuid == playerGuid && failReason != 0) {
-                    // Show interruption/failure reason in chat and error overlay for player
-                    int pt = -1;
-                    if (auto pe = entityManager.getEntity(playerGuid))
-                        if (auto pu = std::dynamic_pointer_cast<Unit>(pe))
-                            pt = static_cast<int>(pu->getPowerType());
-                    const char* reason = getSpellCastResultString(failReason, pt);
-                    if (reason) {
-                        // Prefix with spell name for context, e.g. "Fireball: Not in range"
-                        const std::string& sName = getSpellName(failSpellId);
-                        std::string fullMsg = sName.empty() ? reason
-                                                            : sName + ": " + reason;
-                        addUIError(fullMsg);
-                        MessageChatData emsg;
-                        emsg.type = ChatType::SYSTEM;
-                        emsg.language = ChatLanguage::UNIVERSAL;
-                        emsg.message = std::move(fullMsg);
-                        addLocalChatMessage(emsg);
-                    }
-                }
-            }
-            // Fire UNIT_SPELLCAST_INTERRUPTED for Lua addons
-            if (addonEventCallback_) {
-                std::string unitId;
-                if (failGuid == playerGuid || failGuid == 0) unitId = "player";
-                else if (failGuid == targetGuid) unitId = "target";
-                else if (failGuid == focusGuid) unitId = "focus";
-                else if (failGuid == petGuid_) unitId = "pet";
-                if (!unitId.empty()) {
-                    addonEventCallback_("UNIT_SPELLCAST_INTERRUPTED", {unitId});
-                    addonEventCallback_("UNIT_SPELLCAST_STOP", {unitId});
-                }
-            }
-            if (failGuid == playerGuid || failGuid == 0) {
-                // Player's own cast failed — clear gather-node loot target so the
-                // next timed cast doesn't try to loot a stale interrupted gather node.
-                casting = false;
-                castIsChannel = false;
-                currentCastSpellId = 0;
-                lastInteractedGoGuid_ = 0;
-                craftQueueSpellId_ = 0;
-                craftQueueRemaining_ = 0;
-                queuedSpellId_ = 0;
-                queuedSpellTarget_ = 0;
-                if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                    if (auto* ssm = renderer->getSpellSoundManager()) {
-                        ssm->stopPrecast();
-                    }
-                }
-                if (spellCastAnimCallback_) {
-                    spellCastAnimCallback_(playerGuid, false, false);
-                }
-            } else {
-                // Another unit's cast failed — clear their tracked cast bar
-                unitCastStates_.erase(failGuid);
-                if (spellCastAnimCallback_) {
-                    spellCastAnimCallback_(failGuid, false, false);
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_SPELL_COOLDOWN:
-            handleSpellCooldown(packet);
-            break;
-        case Opcode::SMSG_COOLDOWN_EVENT:
-            handleCooldownEvent(packet);
-            break;
-        case Opcode::SMSG_CLEAR_COOLDOWN: {
-            // spellId(u32) + guid(u64): clear cooldown for the given spell/guid
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t spellId = packet.readUInt32();
-                // guid is present but we only track per-spell for the local player
-                spellCooldowns.erase(spellId);
-                for (auto& slot : actionBar) {
-                    if (slot.type == ActionBarSlot::SPELL && slot.id == spellId) {
-                        slot.cooldownRemaining = 0.0f;
-                    }
-                }
-                LOG_DEBUG("SMSG_CLEAR_COOLDOWN: spellId=", spellId);
-            }
-            break;
-        }
-        case Opcode::SMSG_MODIFY_COOLDOWN: {
-            // spellId(u32) + diffMs(i32): adjust cooldown remaining by diffMs
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint32_t spellId = packet.readUInt32();
-                int32_t  diffMs  = static_cast<int32_t>(packet.readUInt32());
-                float diffSec = diffMs / 1000.0f;
-                auto it = spellCooldowns.find(spellId);
-                if (it != spellCooldowns.end()) {
-                    it->second = std::max(0.0f, it->second + diffSec);
-                    for (auto& slot : actionBar) {
-                        if (slot.type == ActionBarSlot::SPELL && slot.id == spellId) {
-                            slot.cooldownRemaining = std::max(0.0f, slot.cooldownRemaining + diffSec);
-                        }
-                    }
-                }
-                LOG_DEBUG("SMSG_MODIFY_COOLDOWN: spellId=", spellId, " diff=", diffMs, "ms");
-            }
-            break;
-        }
-        case Opcode::SMSG_ACHIEVEMENT_EARNED:
-            handleAchievementEarned(packet);
-            break;
-        case Opcode::SMSG_ALL_ACHIEVEMENT_DATA:
-            handleAllAchievementData(packet);
-            break;
-        case Opcode::SMSG_ITEM_COOLDOWN: {
-            // uint64 itemGuid + uint32 spellId + uint32 cooldownMs
-            size_t rem = packet.getSize() - packet.getReadPos();
-            if (rem >= 16) {
-                uint64_t itemGuid = packet.readUInt64();
-                uint32_t spellId  = packet.readUInt32();
-                uint32_t cdMs     = packet.readUInt32();
-                float cdSec = cdMs / 1000.0f;
-                if (cdSec > 0.0f) {
-                    if (spellId != 0) {
-                        auto it = spellCooldowns.find(spellId);
-                        if (it == spellCooldowns.end()) {
-                            spellCooldowns[spellId] = cdSec;
-                        } else {
-                            it->second = mergeCooldownSeconds(it->second, cdSec);
-                        }
-                    }
-                    // Resolve itemId from the GUID so item-type slots are also updated
-                    uint32_t itemId = 0;
-                    auto iit = onlineItems_.find(itemGuid);
-                    if (iit != onlineItems_.end()) itemId = iit->second.entry;
-                    for (auto& slot : actionBar) {
-                        bool match = (spellId != 0 && slot.type == ActionBarSlot::SPELL && slot.id == spellId)
-                                  || (itemId  != 0 && slot.type == ActionBarSlot::ITEM  && slot.id == itemId);
-                        if (match) {
-                            float prevRemaining = slot.cooldownRemaining;
-                            float merged = mergeCooldownSeconds(slot.cooldownRemaining, cdSec);
-                            slot.cooldownRemaining = merged;
-                            if (slot.cooldownTotal <= 0.0f || prevRemaining <= 0.0f) {
-                                slot.cooldownTotal = cdSec;
-                            } else {
-                                slot.cooldownTotal = std::max(slot.cooldownTotal, merged);
-                            }
-                        }
-                    }
-                    LOG_DEBUG("SMSG_ITEM_COOLDOWN: itemGuid=0x", std::hex, itemGuid, std::dec,
-                              " spellId=", spellId, " itemId=", itemId, " cd=", cdSec, "s");
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_FISH_NOT_HOOKED:
-            addSystemChatMessage("Your fish got away.");
-            break;
-        case Opcode::SMSG_FISH_ESCAPED:
-            addSystemChatMessage("Your fish escaped!");
-            break;
-        case Opcode::MSG_MINIMAP_PING: {
-            // WotLK: packed_guid + float posX + float posY
-            // TBC/Classic: uint64 + float posX + float posY
-            const bool mmTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
-            if (packet.getSize() - packet.getReadPos() < (mmTbcLike ? 8u : 1u)) break;
-            uint64_t senderGuid = mmTbcLike
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 8) break;
-            float pingX = packet.readFloat(); // server sends map-coord X (east-west)
-            float pingY = packet.readFloat(); // server sends map-coord Y (north-south)
-            MinimapPing ping;
-            ping.senderGuid = senderGuid;
-            ping.wowX       = pingY;  // canonical WoW X = north = server's posY
-            ping.wowY       = pingX;  // canonical WoW Y = west  = server's posX
-            ping.age        = 0.0f;
-            minimapPings_.push_back(ping);
-            // Play ping sound for other players' pings (not our own)
-            if (senderGuid != playerGuid) {
-                if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                    if (auto* sfx = renderer->getUiSoundManager())
-                        sfx->playMinimapPing();
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_ZONE_UNDER_ATTACK: {
-            // uint32 areaId
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t areaId = packet.readUInt32();
-                std::string areaName = getAreaName(areaId);
-                std::string msg = areaName.empty()
-                    ? std::string("A zone is under attack!")
-                    : (areaName + " is under attack!");
-                addUIError(msg);
-                addSystemChatMessage(msg);
-            }
-            break;
-        }
-        case Opcode::SMSG_CANCEL_AUTO_REPEAT:
-            break; // Server signals to stop a repeating spell (wand/shoot); no client action needed
-        case Opcode::SMSG_AURA_UPDATE:
-            handleAuraUpdate(packet, false);
-            break;
-        case Opcode::SMSG_AURA_UPDATE_ALL:
-            handleAuraUpdate(packet, true);
-            break;
-        case Opcode::SMSG_DISPEL_FAILED: {
-            // WotLK:       uint32 dispelSpellId + packed_guid caster + packed_guid victim
-            //              [+ count × uint32 failedSpellId]
-            // Classic:     uint32 dispelSpellId + packed_guid caster + packed_guid victim
-            //              [+ count × uint32 failedSpellId]
-            // TBC:         uint64 caster + uint64 victim + uint32 spellId
-            //              [+ count × uint32 failedSpellId]
-            const bool dispelUsesFullGuid = isActiveExpansion("tbc");
-            uint32_t dispelSpellId = 0;
-            uint64_t dispelCasterGuid = 0;
-            if (dispelUsesFullGuid) {
-                if (packet.getSize() - packet.getReadPos() < 20) break;
-                dispelCasterGuid = packet.readUInt64();
-                /*uint64_t victim =*/ packet.readUInt64();
-                dispelSpellId = packet.readUInt32();
-            } else {
-                if (packet.getSize() - packet.getReadPos() < 4) break;
-                dispelSpellId = packet.readUInt32();
-                if (!hasFullPackedGuid(packet)) {
-                    packet.setReadPos(packet.getSize()); break;
-                }
-                dispelCasterGuid = UpdateObjectParser::readPackedGuid(packet);
-                if (!hasFullPackedGuid(packet)) {
-                    packet.setReadPos(packet.getSize()); break;
-                }
-                /*uint64_t victim =*/ UpdateObjectParser::readPackedGuid(packet);
-            }
-            // Only show failure to the player who attempted the dispel
-            if (dispelCasterGuid == playerGuid) {
-                loadSpellNameCache();
-                auto it = spellNameCache_.find(dispelSpellId);
-                char buf[128];
-                if (it != spellNameCache_.end() && !it->second.name.empty())
-                    std::snprintf(buf, sizeof(buf), "%s failed to dispel.", it->second.name.c_str());
-                else
-                    std::snprintf(buf, sizeof(buf), "Dispel failed! (spell %u)", dispelSpellId);
-                addSystemChatMessage(buf);
-            }
-            break;
-        }
-        case Opcode::SMSG_TOTEM_CREATED: {
-            // WotLK:       uint8 slot + packed_guid + uint32 duration + uint32 spellId
-            // TBC/Classic: uint8 slot + uint64 guid  + uint32 duration + uint32 spellId
-            const bool totemTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
-            if (packet.getSize() - packet.getReadPos() < (totemTbcLike ? 17u : 9u)) break;
-            uint8_t slot = packet.readUInt8();
-            if (totemTbcLike)
-                /*uint64_t guid =*/ packet.readUInt64();
-            else
-                /*uint64_t guid =*/ UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 8) break;
-            uint32_t duration = packet.readUInt32();
-            uint32_t spellId  = packet.readUInt32();
-            LOG_DEBUG("SMSG_TOTEM_CREATED: slot=", (int)slot,
-                      " spellId=", spellId, " duration=", duration, "ms");
-            if (slot < NUM_TOTEM_SLOTS) {
-                activeTotemSlots_[slot].spellId    = spellId;
-                activeTotemSlots_[slot].durationMs = duration;
-                activeTotemSlots_[slot].placedAt   = std::chrono::steady_clock::now();
-            }
-            break;
-        }
-        case Opcode::SMSG_AREA_SPIRIT_HEALER_TIME: {
-            // uint64 guid + uint32 timeLeftMs
-            if (packet.getSize() - packet.getReadPos() >= 12) {
-                /*uint64_t guid =*/ packet.readUInt64();
-                uint32_t timeMs = packet.readUInt32();
-                uint32_t secs   = timeMs / 1000;
-                char buf[128];
-                std::snprintf(buf, sizeof(buf),
-                              "You will be able to resurrect in %u seconds.", secs);
-                addSystemChatMessage(buf);
-            }
-            break;
-        }
-        case Opcode::SMSG_DURABILITY_DAMAGE_DEATH: {
-            // uint32 percent (how much durability was lost due to death)
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t pct = packet.readUInt32();
-                char buf[80];
-                std::snprintf(buf, sizeof(buf),
-                    "You have lost %u%% of your gear's durability due to death.", pct);
-                addUIError(buf);
-                addSystemChatMessage(buf);
-            }
-            break;
-        }
-        case Opcode::SMSG_LEARNED_SPELL:
-            handleLearnedSpell(packet);
-            break;
-        case Opcode::SMSG_SUPERCEDED_SPELL:
-            handleSupercededSpell(packet);
-            break;
-        case Opcode::SMSG_REMOVED_SPELL:
-            handleRemovedSpell(packet);
-            break;
-        case Opcode::SMSG_SEND_UNLEARN_SPELLS:
-            handleUnlearnSpells(packet);
-            break;
-
-        // ---- Talents ----
-        case Opcode::SMSG_TALENTS_INFO:
-            handleTalentsInfo(packet);
-            break;
-
-        // ---- Phase 4: Group ----
-        case Opcode::SMSG_GROUP_INVITE:
-            handleGroupInvite(packet);
-            break;
-        case Opcode::SMSG_GROUP_DECLINE:
-            handleGroupDecline(packet);
-            break;
-        case Opcode::SMSG_GROUP_LIST:
-            handleGroupList(packet);
-            break;
-        case Opcode::SMSG_GROUP_DESTROYED:
-            // The group was disbanded; clear all party state.
-            partyData.members.clear();
-            partyData.memberCount = 0;
-            partyData.leaderGuid = 0;
-            addUIError("Your party has been disbanded.");
-            addSystemChatMessage("Your party has been disbanded.");
-            LOG_INFO("SMSG_GROUP_DESTROYED: party cleared");
-            if (addonEventCallback_) {
-                addonEventCallback_("GROUP_ROSTER_UPDATE", {});
-                addonEventCallback_("PARTY_MEMBERS_CHANGED", {});
-            }
-            break;
-        case Opcode::SMSG_GROUP_CANCEL:
-            // Group invite was cancelled before being accepted.
-            addSystemChatMessage("Group invite cancelled.");
-            LOG_DEBUG("SMSG_GROUP_CANCEL");
-            break;
-        case Opcode::SMSG_GROUP_UNINVITE:
-            handleGroupUninvite(packet);
-            break;
-        case Opcode::SMSG_PARTY_COMMAND_RESULT:
-            handlePartyCommandResult(packet);
-            break;
-        case Opcode::SMSG_PARTY_MEMBER_STATS:
-            handlePartyMemberStats(packet, false);
-            break;
-        case Opcode::SMSG_PARTY_MEMBER_STATS_FULL:
-            handlePartyMemberStats(packet, true);
-            break;
-        case Opcode::MSG_RAID_READY_CHECK: {
-            // Server is broadcasting a ready check (someone in the raid initiated it).
-            // Payload: empty body, or optional uint64 initiator GUID in some builds.
-            pendingReadyCheck_       = true;
-            readyCheckReadyCount_    = 0;
-            readyCheckNotReadyCount_ = 0;
-            readyCheckInitiator_.clear();
-            readyCheckResults_.clear();
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint64_t initiatorGuid = packet.readUInt64();
-                auto entity = entityManager.getEntity(initiatorGuid);
-                if (auto* unit = dynamic_cast<Unit*>(entity.get())) {
-                    readyCheckInitiator_ = unit->getName();
-                }
-            }
-            if (readyCheckInitiator_.empty() && partyData.leaderGuid != 0) {
-                // Identify initiator from party leader
-                for (const auto& member : partyData.members) {
-                    if (member.guid == partyData.leaderGuid) { readyCheckInitiator_ = member.name; break; }
-                }
-            }
-            addSystemChatMessage(readyCheckInitiator_.empty()
-                ? "Ready check initiated!"
-                : readyCheckInitiator_ + " initiated a ready check!");
-            LOG_INFO("MSG_RAID_READY_CHECK: initiator=", readyCheckInitiator_);
-            if (addonEventCallback_)
-                addonEventCallback_("READY_CHECK", {readyCheckInitiator_});
-            break;
-        }
-        case Opcode::MSG_RAID_READY_CHECK_CONFIRM: {
-            // guid (8) + uint8 isReady (0=not ready, 1=ready)
-            if (packet.getSize() - packet.getReadPos() < 9) { packet.setReadPos(packet.getSize()); break; }
-            uint64_t respGuid = packet.readUInt64();
-            uint8_t  isReady  = packet.readUInt8();
-            if (isReady) ++readyCheckReadyCount_;
-            else         ++readyCheckNotReadyCount_;
-            auto nit = playerNameCache.find(respGuid);
-            std::string rname;
-            if (nit != playerNameCache.end()) rname = nit->second;
-            else {
-                auto ent = entityManager.getEntity(respGuid);
-                if (ent) rname = std::static_pointer_cast<game::Unit>(ent)->getName();
-            }
-            // Track per-player result for live popup display
-            if (!rname.empty()) {
-                bool found = false;
-                for (auto& r : readyCheckResults_) {
-                    if (r.name == rname) { r.ready = (isReady != 0); found = true; break; }
-                }
-                if (!found) readyCheckResults_.push_back({ rname, isReady != 0 });
-
-                char rbuf[128];
-                std::snprintf(rbuf, sizeof(rbuf), "%s is %s.", rname.c_str(), isReady ? "Ready" : "Not Ready");
-                addSystemChatMessage(rbuf);
-            }
-            if (addonEventCallback_) {
-                char guidBuf[32];
-                snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", (unsigned long long)respGuid);
-                addonEventCallback_("READY_CHECK_CONFIRM", {guidBuf, isReady ? "1" : "0"});
-            }
-            break;
-        }
-        case Opcode::MSG_RAID_READY_CHECK_FINISHED: {
-            // Ready check complete — summarize results
-            char fbuf[128];
-            std::snprintf(fbuf, sizeof(fbuf), "Ready check complete: %u ready, %u not ready.",
-                         readyCheckReadyCount_, readyCheckNotReadyCount_);
-            addSystemChatMessage(fbuf);
-            pendingReadyCheck_       = false;
-            readyCheckReadyCount_    = 0;
-            readyCheckNotReadyCount_ = 0;
-            readyCheckResults_.clear();
-            if (addonEventCallback_)
-                addonEventCallback_("READY_CHECK_FINISHED", {});
-            break;
-        }
-        case Opcode::SMSG_RAID_INSTANCE_INFO:
-            handleRaidInstanceInfo(packet);
-            break;
-        case Opcode::SMSG_DUEL_REQUESTED:
-            handleDuelRequested(packet);
-            break;
-        case Opcode::SMSG_DUEL_COMPLETE:
-            handleDuelComplete(packet);
-            break;
-        case Opcode::SMSG_DUEL_WINNER:
-            handleDuelWinner(packet);
-            break;
-        case Opcode::SMSG_DUEL_OUTOFBOUNDS:
-            addUIError("You are out of the duel area!");
-            addSystemChatMessage("You are out of the duel area!");
-            break;
-        case Opcode::SMSG_DUEL_INBOUNDS:
-            // Re-entered the duel area; no special action needed.
-            break;
-        case Opcode::SMSG_DUEL_COUNTDOWN: {
-            // uint32 countdown in milliseconds (typically 3000 ms)
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t ms = packet.readUInt32();
-                duelCountdownMs_        = (ms > 0 && ms <= 30000) ? ms : 3000;
-                duelCountdownStartedAt_ = std::chrono::steady_clock::now();
-                LOG_INFO("SMSG_DUEL_COUNTDOWN: ", duelCountdownMs_, " ms");
-            }
-            break;
-        }
-        case Opcode::SMSG_PARTYKILLLOG: {
-            // uint64 killerGuid + uint64 victimGuid
-            if (packet.getSize() - packet.getReadPos() < 16) break;
-            uint64_t killerGuid = packet.readUInt64();
-            uint64_t victimGuid = packet.readUInt64();
-            // Show kill message in party chat style
-            auto nameForGuid = [&](uint64_t g) -> std::string {
-                // Check player name cache first
-                auto nit = playerNameCache.find(g);
-                if (nit != playerNameCache.end()) return nit->second;
-                // Fall back to entity name (NPCs)
-                auto ent = entityManager.getEntity(g);
-                if (ent && (ent->getType() == game::ObjectType::UNIT ||
-                            ent->getType() == game::ObjectType::PLAYER)) {
-                    auto unit = std::static_pointer_cast<game::Unit>(ent);
-                    return unit->getName();
-                }
-                return {};
-            };
-            std::string killerName = nameForGuid(killerGuid);
-            std::string victimName = nameForGuid(victimGuid);
-            if (!killerName.empty() && !victimName.empty()) {
-                char buf[256];
-                std::snprintf(buf, sizeof(buf), "%s killed %s.",
-                              killerName.c_str(), victimName.c_str());
-                addSystemChatMessage(buf);
-            }
-            break;
-        }
-
-        // ---- Guild ----
-        case Opcode::SMSG_GUILD_INFO:
-            handleGuildInfo(packet);
-            break;
-        case Opcode::SMSG_GUILD_ROSTER:
-            handleGuildRoster(packet);
-            break;
-        case Opcode::SMSG_GUILD_QUERY_RESPONSE:
-            handleGuildQueryResponse(packet);
-            break;
-        case Opcode::SMSG_GUILD_EVENT:
-            handleGuildEvent(packet);
-            break;
-        case Opcode::SMSG_GUILD_INVITE:
-            handleGuildInvite(packet);
-            break;
-        case Opcode::SMSG_GUILD_COMMAND_RESULT:
-            handleGuildCommandResult(packet);
-            break;
-        case Opcode::SMSG_PET_SPELLS:
-            handlePetSpells(packet);
-            break;
-        case Opcode::SMSG_PETITION_SHOWLIST:
-            handlePetitionShowlist(packet);
-            break;
-        case Opcode::SMSG_TURN_IN_PETITION_RESULTS:
-            handleTurnInPetitionResults(packet);
-            break;
-
-        // ---- Phase 5: Loot/Gossip/Vendor ----
-        case Opcode::SMSG_LOOT_RESPONSE:
-            handleLootResponse(packet);
-            break;
-        case Opcode::SMSG_LOOT_RELEASE_RESPONSE:
-            handleLootReleaseResponse(packet);
-            break;
-        case Opcode::SMSG_LOOT_REMOVED:
-            handleLootRemoved(packet);
-            break;
-        case Opcode::SMSG_QUEST_CONFIRM_ACCEPT:
-            handleQuestConfirmAccept(packet);
-            break;
-        case Opcode::SMSG_ITEM_TEXT_QUERY_RESPONSE:
-            handleItemTextQueryResponse(packet);
-            break;
-        case Opcode::SMSG_SUMMON_REQUEST:
-            handleSummonRequest(packet);
-            break;
-        case Opcode::SMSG_SUMMON_CANCEL:
-            pendingSummonRequest_ = false;
-            addSystemChatMessage("Summon cancelled.");
-            break;
-        case Opcode::SMSG_TRADE_STATUS:
-            handleTradeStatus(packet);
-            break;
-        case Opcode::SMSG_TRADE_STATUS_EXTENDED:
-            handleTradeStatusExtended(packet);
-            break;
-        case Opcode::SMSG_LOOT_ROLL:
-            handleLootRoll(packet);
-            break;
-        case Opcode::SMSG_LOOT_ROLL_WON:
-            handleLootRollWon(packet);
-            break;
-        case Opcode::SMSG_LOOT_MASTER_LIST: {
-            // uint8 count + count * uint64 guid — eligible recipients for master looter
-            masterLootCandidates_.clear();
-            if (packet.getSize() - packet.getReadPos() < 1) break;
-            uint8_t mlCount = packet.readUInt8();
-            masterLootCandidates_.reserve(mlCount);
-            for (uint8_t i = 0; i < mlCount; ++i) {
-                if (packet.getSize() - packet.getReadPos() < 8) break;
-                masterLootCandidates_.push_back(packet.readUInt64());
-            }
-            LOG_INFO("SMSG_LOOT_MASTER_LIST: ", (int)masterLootCandidates_.size(), " candidates");
-            break;
-        }
-        case Opcode::SMSG_GOSSIP_MESSAGE:
-            handleGossipMessage(packet);
-            break;
-        case Opcode::SMSG_QUESTGIVER_QUEST_LIST:
-            handleQuestgiverQuestList(packet);
-            break;
-        case Opcode::SMSG_BINDPOINTUPDATE: {
-            BindPointUpdateData data;
-            if (BindPointUpdateParser::parse(packet, data)) {
-                LOG_INFO("Bindpoint updated: mapId=", data.mapId,
-                         " pos=(", data.x, ", ", data.y, ", ", data.z, ")");
-                glm::vec3 canonical = core::coords::serverToCanonical(
-                    glm::vec3(data.x, data.y, data.z));
-                // Only show message if bind point was already set (not initial login sync)
-                bool wasSet = hasHomeBind_;
-                hasHomeBind_ = true;
-                homeBindMapId_ = data.mapId;
-                homeBindZoneId_ = data.zoneId;
-                homeBindPos_ = canonical;
-                if (bindPointCallback_) {
-                    bindPointCallback_(data.mapId, canonical.x, canonical.y, canonical.z);
-                }
-                if (wasSet) {
-                    std::string bindMsg = "Your home has been set";
-                    std::string zoneName = getAreaName(data.zoneId);
-                    if (!zoneName.empty())
-                        bindMsg += " to " + zoneName;
-                    bindMsg += '.';
-                    addSystemChatMessage(bindMsg);
-                }
-            } else {
-                LOG_WARNING("Failed to parse SMSG_BINDPOINTUPDATE");
-            }
-            break;
-        }
-        case Opcode::SMSG_GOSSIP_COMPLETE:
-            handleGossipComplete(packet);
-            break;
-        case Opcode::SMSG_SPIRIT_HEALER_CONFIRM: {
-            if (packet.getSize() - packet.getReadPos() < 8) {
-                LOG_WARNING("SMSG_SPIRIT_HEALER_CONFIRM too short");
-                break;
-            }
-            uint64_t npcGuid = packet.readUInt64();
-            LOG_INFO("Spirit healer confirm from 0x", std::hex, npcGuid, std::dec);
-            if (npcGuid) {
-                resurrectCasterGuid_ = npcGuid;
-                resurrectCasterName_ = "";
-                resurrectIsSpiritHealer_ = true;
-                resurrectRequestPending_ = true;
-            }
-            break;
-        }
-        case Opcode::SMSG_RESURRECT_REQUEST: {
-            if (packet.getSize() - packet.getReadPos() < 8) {
-                LOG_WARNING("SMSG_RESURRECT_REQUEST too short");
-                break;
-            }
-            uint64_t casterGuid = packet.readUInt64();
-            // Optional caster name (CString, may be absent on some server builds)
-            std::string casterName;
-            if (packet.getReadPos() < packet.getSize()) {
-                casterName = packet.readString();
-            }
-            LOG_INFO("Resurrect request from 0x", std::hex, casterGuid, std::dec,
-                     " name='", casterName, "'");
-            if (casterGuid) {
-                resurrectCasterGuid_ = casterGuid;
-                resurrectIsSpiritHealer_ = false;
-                if (!casterName.empty()) {
-                    resurrectCasterName_ = casterName;
-                } else {
-                    auto nit = playerNameCache.find(casterGuid);
-                    resurrectCasterName_ = (nit != playerNameCache.end()) ? nit->second : "";
-                }
-                resurrectRequestPending_ = true;
-                if (addonEventCallback_)
-                    addonEventCallback_("RESURRECT_REQUEST", {resurrectCasterName_});
-            }
-            break;
-        }
-        case Opcode::SMSG_TIME_SYNC_REQ: {
-            if (packet.getSize() - packet.getReadPos() < 4) {
-                LOG_WARNING("SMSG_TIME_SYNC_REQ too short");
-                break;
-            }
-            uint32_t counter = packet.readUInt32();
-            LOG_DEBUG("Time sync request counter: ", counter);
-            if (socket) {
-                network::Packet resp(wireOpcode(Opcode::CMSG_TIME_SYNC_RESP));
-                resp.writeUInt32(counter);
-                resp.writeUInt32(nextMovementTimestampMs());
-                socket->send(resp);
-            }
-            break;
-        }
-        case Opcode::SMSG_LIST_INVENTORY:
-            handleListInventory(packet);
-            break;
-        case Opcode::SMSG_TRAINER_LIST:
-            handleTrainerList(packet);
-            break;
-        case Opcode::SMSG_TRAINER_BUY_SUCCEEDED: {
-            uint64_t guid = packet.readUInt64();
-            uint32_t spellId = packet.readUInt32();
-            (void)guid;
-
-            // Add to known spells immediately for prerequisite re-evaluation
-            // (SMSG_LEARNED_SPELL may come separately, but we need immediate update)
-            if (!knownSpells.count(spellId)) {
-                knownSpells.insert(spellId);
-                LOG_INFO("Added spell ", spellId, " to known spells (trainer purchase)");
-            }
-
-            const std::string& name = getSpellName(spellId);
-            if (!name.empty())
-                addSystemChatMessage("You have learned " + name + ".");
-            else
-                addSystemChatMessage("Spell learned.");
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                if (auto* sfx = renderer->getUiSoundManager())
-                    sfx->playQuestActivate();
-            }
-            if (addonEventCallback_) {
-                addonEventCallback_("TRAINER_UPDATE", {});
-                addonEventCallback_("SPELLS_CHANGED", {});
-            }
-            break;
-        }
-        case Opcode::SMSG_TRAINER_BUY_FAILED: {
-            // Server rejected the spell purchase
-            // Packet format: uint64 trainerGuid, uint32 spellId, uint32 errorCode
-            uint64_t trainerGuid = packet.readUInt64();
-            uint32_t spellId = packet.readUInt32();
-            uint32_t errorCode = 0;
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                errorCode = packet.readUInt32();
-            }
-            LOG_WARNING("Trainer buy spell failed: guid=", trainerGuid,
-                       " spellId=", spellId, " error=", errorCode);
-
-            const std::string& spellName = getSpellName(spellId);
-            std::string msg = "Cannot learn ";
-            if (!spellName.empty()) msg += spellName;
-            else msg += "spell #" + std::to_string(spellId);
-
-            // Common error reasons
-            if (errorCode == 0) msg += " (not enough money)";
-            else if (errorCode == 1) msg += " (not enough skill)";
-            else if (errorCode == 2) msg += " (already known)";
-            else if (errorCode != 0) msg += " (error " + std::to_string(errorCode) + ")";
-
-            addUIError(msg);
-            addSystemChatMessage(msg);
-            // Play error sound so the player notices the failure
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                if (auto* sfx = renderer->getUiSoundManager())
-                    sfx->playError();
-            }
-            break;
-        }
-
-        // Silently ignore common packets we don't handle yet
-        case Opcode::SMSG_INIT_WORLD_STATES: {
-            // WotLK format: uint32 mapId, uint32 zoneId, uint32 areaId, uint16 count, N*(uint32 key, uint32 val)
-            // Classic/TBC format: uint32 mapId, uint32 zoneId, uint16 count, N*(uint32 key, uint32 val)
-            if (packet.getSize() - packet.getReadPos() < 10) {
-                LOG_WARNING("SMSG_INIT_WORLD_STATES too short: ", packet.getSize(), " bytes");
-                break;
-            }
-            worldStateMapId_ = packet.readUInt32();
-            {
-                uint32_t newZoneId = packet.readUInt32();
-                if (newZoneId != worldStateZoneId_ && newZoneId != 0) {
-                    worldStateZoneId_ = newZoneId;
-                    if (addonEventCallback_) {
-                        addonEventCallback_("ZONE_CHANGED_NEW_AREA", {});
-                        addonEventCallback_("ZONE_CHANGED", {});
-                    }
-                } else {
-                    worldStateZoneId_ = newZoneId;
-                }
-            }
-            // WotLK adds areaId (uint32) before count; Classic/TBC/Turtle use the shorter format
-            size_t remaining = packet.getSize() - packet.getReadPos();
-            bool isWotLKFormat = isActiveExpansion("wotlk");
-            if (isWotLKFormat && remaining >= 6) {
-                packet.readUInt32(); // areaId (WotLK only)
-            }
-            uint16_t count = packet.readUInt16();
-            size_t needed = static_cast<size_t>(count) * 8;
-            size_t available = packet.getSize() - packet.getReadPos();
-            if (available < needed) {
-                // Be tolerant across expansion/private-core variants: if packet shape
-                // still looks like N*(key,val) dwords, parse what is present.
-                if ((available % 8) == 0) {
-                    uint16_t adjustedCount = static_cast<uint16_t>(available / 8);
-                    LOG_WARNING("SMSG_INIT_WORLD_STATES count mismatch: header=", count,
-                                " adjusted=", adjustedCount, " (available=", available, ")");
-                    count = adjustedCount;
-                    needed = available;
-                } else {
-                    LOG_WARNING("SMSG_INIT_WORLD_STATES truncated: expected ", needed,
-                                " bytes of state pairs, got ", available);
-                    packet.setReadPos(packet.getSize());
-                    break;
-                }
-            }
-            worldStates_.clear();
-            worldStates_.reserve(count);
-            for (uint16_t i = 0; i < count; ++i) {
-                uint32_t key = packet.readUInt32();
-                uint32_t val = packet.readUInt32();
-                worldStates_[key] = val;
-            }
-            break;
-        }
-        case Opcode::SMSG_INITIALIZE_FACTIONS: {
-            // Minimal parse: uint32 count, repeated (uint8 flags, int32 standing)
-            if (packet.getSize() - packet.getReadPos() < 4) {
-                LOG_WARNING("SMSG_INITIALIZE_FACTIONS too short: ", packet.getSize(), " bytes");
-                break;
-            }
-            uint32_t count = packet.readUInt32();
-            size_t needed = static_cast<size_t>(count) * 5;
-            if (packet.getSize() - packet.getReadPos() < needed) {
-                LOG_WARNING("SMSG_INITIALIZE_FACTIONS truncated: expected ", needed,
-                            " bytes of faction data, got ", packet.getSize() - packet.getReadPos());
-                packet.setReadPos(packet.getSize());
-                break;
-            }
-            initialFactions_.clear();
-            initialFactions_.reserve(count);
-            for (uint32_t i = 0; i < count; ++i) {
-                FactionStandingInit fs{};
-                fs.flags = packet.readUInt8();
-                fs.standing = static_cast<int32_t>(packet.readUInt32());
-                initialFactions_.push_back(fs);
-            }
-            break;
-        }
-        case Opcode::SMSG_SET_FACTION_STANDING: {
-            // uint8 showVisualEffect + uint32 count + count × (uint32 factionId + int32 standing)
-            if (packet.getSize() - packet.getReadPos() < 5) break;
-            /*uint8_t showVisual =*/ packet.readUInt8();
-            uint32_t count = packet.readUInt32();
-            count = std::min(count, 128u);
-            loadFactionNameCache();
-            for (uint32_t i = 0; i < count && packet.getSize() - packet.getReadPos() >= 8; ++i) {
-                uint32_t factionId = packet.readUInt32();
-                int32_t  standing  = static_cast<int32_t>(packet.readUInt32());
-                int32_t  oldStanding = 0;
-                auto it = factionStandings_.find(factionId);
-                if (it != factionStandings_.end()) oldStanding = it->second;
-                factionStandings_[factionId] = standing;
-                int32_t delta = standing - oldStanding;
-                if (delta != 0) {
-                    std::string name = getFactionName(factionId);
-                    char buf[256];
-                    std::snprintf(buf, sizeof(buf), "Reputation with %s %s by %d.",
-                                  name.c_str(),
-                                  delta > 0 ? "increased" : "decreased",
-                                  std::abs(delta));
-                    addSystemChatMessage(buf);
-                    watchedFactionId_ = factionId;
-                    if (repChangeCallback_) repChangeCallback_(name, delta, standing);
-                    if (addonEventCallback_) {
-                        addonEventCallback_("UPDATE_FACTION", {});
-                        addonEventCallback_("CHAT_MSG_COMBAT_FACTION_CHANGE", {std::string(buf)});
-                    }
-                }
-                LOG_DEBUG("SMSG_SET_FACTION_STANDING: faction=", factionId, " standing=", standing);
-            }
-            break;
-        }
-        case Opcode::SMSG_SET_FACTION_ATWAR: {
-            // uint32 repListId + uint8 set (1=set at-war, 0=clear at-war)
-            if (packet.getSize() - packet.getReadPos() < 5) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint32_t repListId = packet.readUInt32();
-            uint8_t  setAtWar  = packet.readUInt8();
-            if (repListId < initialFactions_.size()) {
-                if (setAtWar)
-                    initialFactions_[repListId].flags |=  FACTION_FLAG_AT_WAR;
-                else
-                    initialFactions_[repListId].flags &= ~FACTION_FLAG_AT_WAR;
-                LOG_DEBUG("SMSG_SET_FACTION_ATWAR: repListId=", repListId,
-                          " atWar=", (int)setAtWar);
-            }
-            break;
-        }
-        case Opcode::SMSG_SET_FACTION_VISIBLE: {
-            // uint32 repListId + uint8 visible (1=show, 0=hide)
-            if (packet.getSize() - packet.getReadPos() < 5) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint32_t repListId = packet.readUInt32();
-            uint8_t  visible   = packet.readUInt8();
-            if (repListId < initialFactions_.size()) {
-                if (visible)
-                    initialFactions_[repListId].flags |=  FACTION_FLAG_VISIBLE;
-                else
-                    initialFactions_[repListId].flags &= ~FACTION_FLAG_VISIBLE;
-                LOG_DEBUG("SMSG_SET_FACTION_VISIBLE: repListId=", repListId,
-                          " visible=", (int)visible);
-            }
-            break;
-        }
-
-        case Opcode::SMSG_FEATURE_SYSTEM_STATUS:
-            packet.setReadPos(packet.getSize());
-            break;
-
-        case Opcode::SMSG_SET_FLAT_SPELL_MODIFIER:
-        case Opcode::SMSG_SET_PCT_SPELL_MODIFIER: {
-            // WotLK format: one or more (uint8 groupIndex, uint8 modOp, int32 value) tuples
-            // Each tuple is 6 bytes; iterate until packet is consumed.
-            const bool isFlat = (*logicalOp == Opcode::SMSG_SET_FLAT_SPELL_MODIFIER);
-            auto& modMap = isFlat ? spellFlatMods_ : spellPctMods_;
-            while (packet.getSize() - packet.getReadPos() >= 6) {
-                uint8_t groupIndex = packet.readUInt8();
-                uint8_t modOpRaw   = packet.readUInt8();
-                int32_t value      = static_cast<int32_t>(packet.readUInt32());
-                if (groupIndex > 5 || modOpRaw >= SPELL_MOD_OP_COUNT) continue;
-                SpellModKey key{ static_cast<SpellModOp>(modOpRaw), groupIndex };
-                modMap[key] = value;
-                LOG_DEBUG(isFlat ? "SMSG_SET_FLAT_SPELL_MODIFIER" : "SMSG_SET_PCT_SPELL_MODIFIER",
-                          ": group=", (int)groupIndex, " op=", (int)modOpRaw, " value=", value);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        case Opcode::SMSG_SPELL_DELAYED: {
-            // WotLK: packed_guid (caster) + uint32 delayMs
-            // TBC/Classic: uint64 (caster) + uint32 delayMs
-            const bool spellDelayTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
-            if (packet.getSize() - packet.getReadPos() < (spellDelayTbcLike ? 8u : 1u)) break;
-            uint64_t caster = spellDelayTbcLike
-                ? packet.readUInt64()
-                : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 4) break;
-            uint32_t delayMs = packet.readUInt32();
-            if (delayMs == 0) break;
-            float delaySec = delayMs / 1000.0f;
-            if (caster == playerGuid) {
-                if (casting) {
-                    castTimeRemaining += delaySec;
-                    castTimeTotal     += delaySec;  // keep progress percentage correct
-                }
-            } else {
-                auto it = unitCastStates_.find(caster);
-                if (it != unitCastStates_.end() && it->second.casting) {
-                    it->second.timeRemaining += delaySec;
-                    it->second.timeTotal     += delaySec;
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_EQUIPMENT_SET_SAVED: {
-            // uint32 setIndex + uint64 guid — equipment set was successfully saved
-            std::string setName;
-            if (packet.getSize() - packet.getReadPos() >= 12) {
-                uint32_t setIndex = packet.readUInt32();
-                uint64_t setGuid  = packet.readUInt64();
-                // Update the local set's GUID so subsequent "Update" calls
-                // use the server-assigned GUID instead of 0 (which would
-                // create a duplicate instead of updating).
-                bool found = false;
-                for (auto& es : equipmentSets_) {
-                    if (es.setGuid == setGuid || es.setId == setIndex) {
-                        es.setGuid = setGuid;
-                        setName = es.name;
-                        found = true;
-                        break;
-                    }
-                }
-                // Also update public-facing info
-                for (auto& info : equipmentSetInfo_) {
-                    if (info.setGuid == setGuid || info.setId == setIndex) {
-                        info.setGuid = setGuid;
-                        break;
-                    }
-                }
-                // If the set doesn't exist locally yet (new save), add a
-                // placeholder entry so it shows up in the UI immediately.
-                if (!found && setGuid != 0) {
-                    EquipmentSet newEs;
-                    newEs.setGuid = setGuid;
-                    newEs.setId   = setIndex;
-                    newEs.name    = pendingSaveSetName_;
-                    newEs.iconName = pendingSaveSetIcon_;
-                    for (int s = 0; s < 19; ++s)
-                        newEs.itemGuids[s] = getEquipSlotGuid(s);
-                    equipmentSets_.push_back(std::move(newEs));
-                    EquipmentSetInfo newInfo;
-                    newInfo.setGuid = setGuid;
-                    newInfo.setId   = setIndex;
-                    newInfo.name    = pendingSaveSetName_;
-                    newInfo.iconName = pendingSaveSetIcon_;
-                    equipmentSetInfo_.push_back(std::move(newInfo));
-                    setName = pendingSaveSetName_;
-                }
-                pendingSaveSetName_.clear();
-                pendingSaveSetIcon_.clear();
-                LOG_INFO("SMSG_EQUIPMENT_SET_SAVED: index=", setIndex,
-                         " guid=", setGuid, " name=", setName);
-            }
-            addSystemChatMessage(setName.empty()
-                ? std::string("Equipment set saved.")
-                : "Equipment set \"" + setName + "\" saved.");
-            break;
-        }
-        case Opcode::SMSG_PERIODICAURALOG: {
-            // WotLK: packed_guid victim + packed_guid caster + uint32 spellId + uint32 count + effects
-            // TBC: full uint64 victim + uint64 caster + uint32 spellId + uint32 count + effects
-            // Classic/Vanilla: packed_guid (same as WotLK)
-            const bool periodicTbc = isActiveExpansion("tbc");
-            const size_t guidMinSz = periodicTbc ? 8u : 2u;
-            if (packet.getSize() - packet.getReadPos() < guidMinSz) break;
-            uint64_t victimGuid = periodicTbc
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < guidMinSz) break;
-            uint64_t casterGuid = periodicTbc
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 8) break;
-            uint32_t spellId = packet.readUInt32();
-            uint32_t count   = packet.readUInt32();
-            bool isPlayerVictim = (victimGuid == playerGuid);
-            bool isPlayerCaster = (casterGuid == playerGuid);
-            if (!isPlayerVictim && !isPlayerCaster) {
-                packet.setReadPos(packet.getSize());
-                break;
-            }
-            for (uint32_t i = 0; i < count && packet.getSize() - packet.getReadPos() >= 1; ++i) {
-                uint8_t auraType = packet.readUInt8();
-                if (auraType == 3 || auraType == 89) {
-                    // Classic/TBC: damage(4)+school(4)+absorbed(4)+resisted(4)  = 16 bytes
-                    // WotLK 3.3.5a: damage(4)+overkill(4)+school(4)+absorbed(4)+resisted(4)+isCrit(1) = 21 bytes
-                    const bool periodicWotlk = isActiveExpansion("wotlk");
-                    const size_t dotSz = periodicWotlk ? 21u : 16u;
-                    if (packet.getSize() - packet.getReadPos() < dotSz) break;
-                    uint32_t dmg      = packet.readUInt32();
-                    if (periodicWotlk) /*uint32_t overkill=*/ packet.readUInt32();
-                    /*uint32_t school=*/ packet.readUInt32();
-                    uint32_t abs      = packet.readUInt32();
-                    uint32_t res      = packet.readUInt32();
-                    bool dotCrit = false;
-                    if (periodicWotlk) dotCrit = (packet.readUInt8() != 0);
-                    if (dmg > 0)
-                        addCombatText(dotCrit ? CombatTextEntry::CRIT_DAMAGE : CombatTextEntry::PERIODIC_DAMAGE,
-                                      static_cast<int32_t>(dmg),
-                                      spellId, isPlayerCaster, 0, casterGuid, victimGuid);
-                    if (abs > 0)
-                        addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(abs),
-                                      spellId, isPlayerCaster, 0, casterGuid, victimGuid);
-                    if (res > 0)
-                        addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(res),
-                                      spellId, isPlayerCaster, 0, casterGuid, victimGuid);
-                } else if (auraType == 8 || auraType == 124 || auraType == 45) {
-                    // Classic/TBC: heal(4)+maxHeal(4)+overHeal(4)                  = 12 bytes
-                    // WotLK 3.3.5a: heal(4)+maxHeal(4)+overHeal(4)+absorbed(4)+isCrit(1) = 17 bytes
-                    const bool healWotlk = isActiveExpansion("wotlk");
-                    const size_t hotSz = healWotlk ? 17u : 12u;
-                    if (packet.getSize() - packet.getReadPos() < hotSz) break;
-                    uint32_t heal    = packet.readUInt32();
-                    /*uint32_t max=*/  packet.readUInt32();
-                    /*uint32_t over=*/ packet.readUInt32();
-                    uint32_t hotAbs  = 0;
-                    bool hotCrit = false;
-                    if (healWotlk) {
-                        hotAbs = packet.readUInt32();
-                        hotCrit = (packet.readUInt8() != 0);
-                    }
-                    addCombatText(hotCrit ? CombatTextEntry::CRIT_HEAL : CombatTextEntry::PERIODIC_HEAL,
-                                  static_cast<int32_t>(heal),
-                                  spellId, isPlayerCaster, 0, casterGuid, victimGuid);
-                    if (hotAbs > 0)
-                        addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(hotAbs),
-                                      spellId, isPlayerCaster, 0, casterGuid, victimGuid);
-                } else if (auraType == 46 || auraType == 91) {
-                    // OBS_MOD_POWER / PERIODIC_ENERGIZE: miscValue(powerType) + amount
-                    // Common in WotLK: Replenishment, Mana Spring Totem, Divine Plea, etc.
-                    if (packet.getSize() - packet.getReadPos() < 8) break;
-                    uint8_t periodicPowerType = static_cast<uint8_t>(packet.readUInt32());
-                    uint32_t amount = packet.readUInt32();
-                    if ((isPlayerVictim || isPlayerCaster) && amount > 0)
-                        addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(amount),
-                                      spellId, isPlayerCaster, periodicPowerType, casterGuid, victimGuid);
-                } else if (auraType == 98) {
-                    // PERIODIC_MANA_LEECH: miscValue(powerType) + amount + float multiplier
-                    if (packet.getSize() - packet.getReadPos() < 12) break;
-                    uint8_t powerType = static_cast<uint8_t>(packet.readUInt32());
-                    uint32_t amount = packet.readUInt32();
-                    float multiplier = packet.readFloat();
-                    if (isPlayerVictim && amount > 0)
-                        addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(amount),
-                                      spellId, false, powerType, casterGuid, victimGuid);
-                    if (isPlayerCaster && amount > 0 && multiplier > 0.0f && std::isfinite(multiplier)) {
-                        const uint32_t gainedAmount = static_cast<uint32_t>(
-                            std::lround(static_cast<double>(amount) * static_cast<double>(multiplier)));
-                        if (gainedAmount > 0) {
-                            addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(gainedAmount),
-                                          spellId, true, powerType, casterGuid, casterGuid);
-                        }
-                    }
-                } else {
-                    // Unknown/untracked aura type — stop parsing this event safely
-                    packet.setReadPos(packet.getSize());
-                    break;
-                }
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_SPELLENERGIZELOG: {
-            // WotLK: packed_guid victim + packed_guid caster + uint32 spellId + uint8 powerType + int32 amount
-            // TBC: full uint64 victim + uint64 caster + uint32 spellId + uint8 powerType + int32 amount
-            // Classic/Vanilla: packed_guid (same as WotLK)
-            const bool energizeTbc = isActiveExpansion("tbc");
-            auto readEnergizeGuid = [&]() -> uint64_t {
-                if (energizeTbc)
-                    return (packet.getSize() - packet.getReadPos() >= 8) ? packet.readUInt64() : 0;
-                return UpdateObjectParser::readPackedGuid(packet);
-            };
-            if (packet.getSize() - packet.getReadPos() < (energizeTbc ? 8u : 1u)
-                || (!energizeTbc && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t victimGuid = readEnergizeGuid();
-            if (packet.getSize() - packet.getReadPos() < (energizeTbc ? 8u : 1u)
-                || (!energizeTbc && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t casterGuid = readEnergizeGuid();
-            if (packet.getSize() - packet.getReadPos() < 9) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint32_t spellId       = packet.readUInt32();
-            uint8_t  energizePowerType = packet.readUInt8();
-            int32_t  amount        = static_cast<int32_t>(packet.readUInt32());
-            bool isPlayerVictim = (victimGuid == playerGuid);
-            bool isPlayerCaster = (casterGuid == playerGuid);
-            if ((isPlayerVictim || isPlayerCaster) && amount > 0)
-                addCombatText(CombatTextEntry::ENERGIZE, amount, spellId, isPlayerCaster, energizePowerType, casterGuid, victimGuid);
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_ENVIRONMENTAL_DAMAGE_LOG: {
-            // uint64 victimGuid + uint8 envDmgType + uint32 damage + uint32 absorbed + uint32 resisted
-            // envDmgType: 0=Exhausted(fatigue), 1=Drowning, 2=Fall, 3=Lava, 4=Slime, 5=Fire
-            if (packet.getSize() - packet.getReadPos() < 21) { packet.setReadPos(packet.getSize()); break; }
-            uint64_t victimGuid  = packet.readUInt64();
-            uint8_t envType      = packet.readUInt8();
-            uint32_t dmg         = packet.readUInt32();
-            uint32_t envAbs      = packet.readUInt32();
-            uint32_t envRes      = packet.readUInt32();
-            if (victimGuid == playerGuid) {
-                // Environmental damage: pass envType via powerType field for display differentiation
-                if (dmg > 0)
-                    addCombatText(CombatTextEntry::ENVIRONMENTAL, static_cast<int32_t>(dmg), 0, false, envType, 0, victimGuid);
-                if (envAbs > 0)
-                    addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(envAbs), 0, false, 0, 0, victimGuid);
-                if (envRes > 0)
-                    addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(envRes), 0, false, 0, 0, victimGuid);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_SET_PROFICIENCY: {
-            // uint8 itemClass + uint32 itemSubClassMask
-            if (packet.getSize() - packet.getReadPos() < 5) break;
-            uint8_t  itemClass = packet.readUInt8();
-            uint32_t mask      = packet.readUInt32();
-            if (itemClass == 2) {      // Weapon
-                weaponProficiency_ = mask;
-                LOG_DEBUG("SMSG_SET_PROFICIENCY: weapon mask=0x", std::hex, mask, std::dec);
-            } else if (itemClass == 4) { // Armor
-                armorProficiency_ = mask;
-                LOG_DEBUG("SMSG_SET_PROFICIENCY: armor mask=0x", std::hex, mask, std::dec);
-            }
-            break;
-        }
-
-        case Opcode::SMSG_ACTION_BUTTONS: {
-            // Slot encoding differs by expansion:
-            //   Classic/Turtle: uint16 actionId + uint8 type + uint8 misc
-            //     type: 0=spell, 1=item, 64=macro
-            //   TBC/WotLK: uint32 packed = actionId | (type << 24)
-            //     type: 0x00=spell, 0x80=item, 0x40=macro
-            // Format differences:
-            //   Classic 1.12: no mode byte, 120 slots (480 bytes)
-            //   TBC 2.4.3:    no mode byte, 132 slots (528 bytes)
-            //   WotLK 3.3.5a: uint8 mode + 144 slots (577 bytes)
-            size_t rem = packet.getSize() - packet.getReadPos();
-            const bool hasModeByteExp = isActiveExpansion("wotlk");
-            int serverBarSlots;
-            if (isClassicLikeExpansion()) {
-                serverBarSlots = 120;
-            } else if (isActiveExpansion("tbc")) {
-                serverBarSlots = 132;
-            } else {
-                serverBarSlots = 144;
-            }
-            if (hasModeByteExp) {
-                if (rem < 1) break;
-                /*uint8_t mode =*/ packet.readUInt8();
-                rem--;
-            }
-            for (int i = 0; i < serverBarSlots; ++i) {
-                if (rem < 4) break;
-                uint32_t packed = packet.readUInt32();
-                rem -= 4;
-                if (i >= ACTION_BAR_SLOTS) continue;  // only load bars 1 and 2
-                if (packed == 0) {
-                    // Empty slot — only clear if not already set to Attack/Hearthstone defaults
-                    // so we don't wipe hardcoded fallbacks when the server sends zeros.
-                    continue;
-                }
-                uint8_t type = 0;
-                uint32_t id = 0;
-                if (isClassicLikeExpansion()) {
-                    id = packed & 0x0000FFFFu;
-                    type = static_cast<uint8_t>((packed >> 16) & 0xFF);
-                } else {
-                    type = static_cast<uint8_t>((packed >> 24) & 0xFF);
-                    id = packed & 0x00FFFFFFu;
-                }
-                if (id == 0) continue;
-                ActionBarSlot slot;
-                switch (type) {
-                    case 0x00: slot.type = ActionBarSlot::SPELL; slot.id = id; break;
-                    case 0x01: slot.type = ActionBarSlot::ITEM;  slot.id = id; break;  // Classic item
-                    case 0x80: slot.type = ActionBarSlot::ITEM;  slot.id = id; break;  // TBC/WotLK item
-                    case 0x40: slot.type = ActionBarSlot::MACRO; slot.id = id; break;  // macro (all expansions)
-                    default:   continue;  // unknown — leave as-is
-                }
-                actionBar[i] = slot;
-            }
-            // Apply any pending cooldowns from spellCooldowns to newly populated slots.
-            // SMSG_SPELL_COOLDOWN often arrives before SMSG_ACTION_BUTTONS during login,
-            // so the per-slot cooldownRemaining would be 0 without this sync.
-            for (auto& slot : actionBar) {
-                if (slot.type == ActionBarSlot::SPELL && slot.id != 0) {
-                    auto cdIt = spellCooldowns.find(slot.id);
-                    if (cdIt != spellCooldowns.end() && cdIt->second > 0.0f) {
-                        slot.cooldownRemaining = cdIt->second;
-                        slot.cooldownTotal     = cdIt->second;
-                    }
-                } else if (slot.type == ActionBarSlot::ITEM && slot.id != 0) {
-                    // Items (potions, trinkets): look up the item's on-use spell
-                    // and check if that spell has a pending cooldown.
-                    const auto* qi = getItemInfo(slot.id);
-                    if (qi && qi->valid) {
-                        for (const auto& sp : qi->spells) {
-                            if (sp.spellId == 0) continue;
-                            auto cdIt = spellCooldowns.find(sp.spellId);
-                            if (cdIt != spellCooldowns.end() && cdIt->second > 0.0f) {
-                                slot.cooldownRemaining = cdIt->second;
-                                slot.cooldownTotal     = cdIt->second;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            LOG_INFO("SMSG_ACTION_BUTTONS: populated action bar from server");
-            if (addonEventCallback_) addonEventCallback_("ACTIONBAR_SLOT_CHANGED", {});
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        case Opcode::SMSG_LEVELUP_INFO:
-        case Opcode::SMSG_LEVELUP_INFO_ALT: {
-            // Server-authoritative level-up event.
-            // WotLK layout: uint32 newLevel + uint32 hpDelta + uint32 manaDelta + 5x uint32 statDeltas
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t newLevel = packet.readUInt32();
-                if (newLevel > 0) {
-                    // Parse stat deltas (WotLK layout has 7 more uint32s)
-                    lastLevelUpDeltas_ = {};
-                    if (packet.getSize() - packet.getReadPos() >= 28) {
-                        lastLevelUpDeltas_.hp    = packet.readUInt32();
-                        lastLevelUpDeltas_.mana  = packet.readUInt32();
-                        lastLevelUpDeltas_.str   = packet.readUInt32();
-                        lastLevelUpDeltas_.agi   = packet.readUInt32();
-                        lastLevelUpDeltas_.sta   = packet.readUInt32();
-                        lastLevelUpDeltas_.intel = packet.readUInt32();
-                        lastLevelUpDeltas_.spi   = packet.readUInt32();
-                    }
-                    uint32_t oldLevel = serverPlayerLevel_;
-                    serverPlayerLevel_ = std::max(serverPlayerLevel_, newLevel);
-                    for (auto& ch : characters) {
-                        if (ch.guid == playerGuid) {
-                            ch.level = serverPlayerLevel_;
-                            break;
-                        }
-                    }
-                    if (newLevel > oldLevel) {
-                        addSystemChatMessage("You have reached level " + std::to_string(newLevel) + "!");
-                        if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                            if (auto* sfx = renderer->getUiSoundManager())
-                                sfx->playLevelUp();
-                        }
-                        if (levelUpCallback_) levelUpCallback_(newLevel);
-                        if (addonEventCallback_) addonEventCallback_("PLAYER_LEVEL_UP", {std::to_string(newLevel)});
-                    }
-                }
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        case Opcode::SMSG_PLAY_SOUND:
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t soundId = packet.readUInt32();
-                LOG_DEBUG("SMSG_PLAY_SOUND id=", soundId);
-                if (playSoundCallback_) playSoundCallback_(soundId);
-            }
-            break;
-
-        case Opcode::SMSG_SERVER_MESSAGE: {
-            // uint32 type + string message
-            // Types: 1=shutdown_time, 2=restart_time, 3=string, 4=shutdown_cancelled, 5=restart_cancelled
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t msgType = packet.readUInt32();
-                std::string msg = packet.readString();
-                if (!msg.empty()) {
-                    std::string prefix;
-                    switch (msgType) {
-                        case 1: prefix = "[Shutdown] ";   addUIError("Server shutdown: " + msg);  break;
-                        case 2: prefix = "[Restart] ";    addUIError("Server restart: " + msg);   break;
-                        case 4: prefix = "[Shutdown cancelled] "; break;
-                        case 5: prefix = "[Restart cancelled] ";  break;
-                        default: prefix = "[Server] "; break;
-                    }
-                    addSystemChatMessage(prefix + msg);
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_CHAT_SERVER_MESSAGE: {
-            // uint32 type + string text
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                /*uint32_t msgType =*/ packet.readUInt32();
-                std::string msg = packet.readString();
-                if (!msg.empty()) addSystemChatMessage("[Announcement] " + msg);
-            }
-            break;
-        }
-        case Opcode::SMSG_AREA_TRIGGER_MESSAGE: {
-            // uint32 size, then string
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                /*uint32_t len =*/ packet.readUInt32();
-                std::string msg = packet.readString();
-                if (!msg.empty()) {
-                    addUIError(msg);
-                    addSystemChatMessage(msg);
-                    areaTriggerMsgs_.push_back(msg);
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_TRIGGER_CINEMATIC: {
-            // uint32 cinematicId — we don't play cinematics; acknowledge immediately.
-            packet.setReadPos(packet.getSize());
-            // Send CMSG_NEXT_CINEMATIC_CAMERA to signal cinematic completion;
-            // servers may block further packets until this is received.
-            network::Packet ack(wireOpcode(Opcode::CMSG_NEXT_CINEMATIC_CAMERA));
-            socket->send(ack);
-            LOG_DEBUG("SMSG_TRIGGER_CINEMATIC: skipped, sent CMSG_NEXT_CINEMATIC_CAMERA");
-            break;
-        }
-
-        case Opcode::SMSG_LOOT_MONEY_NOTIFY: {
-            // Format: uint32 money + uint8 soleLooter
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t amount = packet.readUInt32();
-                if (packet.getSize() - packet.getReadPos() >= 1) {
-                    /*uint8_t soleLooter =*/ packet.readUInt8();
-                }
-                playerMoneyCopper_ += amount;
-                pendingMoneyDelta_ = amount;
-                pendingMoneyDeltaTimer_ = 2.0f;
-                LOG_INFO("Looted ", amount, " copper (total: ", playerMoneyCopper_, ")");
-                uint64_t notifyGuid = pendingLootMoneyGuid_ != 0 ? pendingLootMoneyGuid_ : currentLoot.lootGuid;
-                pendingLootMoneyGuid_ = 0;
-                pendingLootMoneyAmount_ = 0;
-                pendingLootMoneyNotifyTimer_ = 0.0f;
-                bool alreadyAnnounced = false;
-                auto it = localLootState_.find(notifyGuid);
-                if (it != localLootState_.end()) {
-                    alreadyAnnounced = it->second.moneyTaken;
-                    it->second.moneyTaken = true;
-                }
-                if (!alreadyAnnounced) {
-                    addSystemChatMessage("Looted: " + formatCopperAmount(amount));
-                    auto* renderer = core::Application::getInstance().getRenderer();
-                    if (renderer) {
-                        if (auto* sfx = renderer->getUiSoundManager()) {
-                            if (amount >= 10000) {
-                                sfx->playLootCoinLarge();
-                            } else {
-                                sfx->playLootCoinSmall();
-                            }
-                        }
-                    }
-                    if (notifyGuid != 0) {
-                        recentLootMoneyAnnounceCooldowns_[notifyGuid] = 1.5f;
-                    }
-                }
-                if (addonEventCallback_) addonEventCallback_("PLAYER_MONEY", {});
-            }
-            break;
-        }
-        case Opcode::SMSG_LOOT_CLEAR_MONEY:
-        case Opcode::SMSG_NPC_TEXT_UPDATE:
-            break;
-        case Opcode::SMSG_SELL_ITEM: {
-            // uint64 vendorGuid, uint64 itemGuid, uint8 result
-            if ((packet.getSize() - packet.getReadPos()) >= 17) {
-                uint64_t vendorGuid = packet.readUInt64();
-                uint64_t itemGuid = packet.readUInt64(); // itemGuid
-                uint8_t result = packet.readUInt8();
-                LOG_INFO("SMSG_SELL_ITEM: vendorGuid=0x", std::hex, vendorGuid,
-                         " itemGuid=0x", itemGuid, std::dec,
-                         " result=", static_cast<int>(result));
-                if (result == 0) {
-                    pendingSellToBuyback_.erase(itemGuid);
-                    if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                        if (auto* sfx = renderer->getUiSoundManager())
-                            sfx->playDropOnGround();
-                    }
-                    if (addonEventCallback_) {
-                        addonEventCallback_("BAG_UPDATE", {});
-                        addonEventCallback_("PLAYER_MONEY", {});
-                    }
-                } else {
-                    bool removedPending = false;
-                    auto it = pendingSellToBuyback_.find(itemGuid);
-                    if (it != pendingSellToBuyback_.end()) {
-                        for (auto bit = buybackItems_.begin(); bit != buybackItems_.end(); ++bit) {
-                            if (bit->itemGuid == itemGuid) {
-                                buybackItems_.erase(bit);
-                                break;
-                            }
-                        }
-                        pendingSellToBuyback_.erase(it);
-                        removedPending = true;
-                    }
-                    if (!removedPending) {
-                        // Some cores return a non-item GUID on sell failure; drop the newest
-                        // optimistic entry if it is still pending so stale rows don't block buyback.
-                        if (!buybackItems_.empty()) {
-                            uint64_t frontGuid = buybackItems_.front().itemGuid;
-                            if (pendingSellToBuyback_.erase(frontGuid) > 0) {
-                                buybackItems_.pop_front();
-                                removedPending = true;
-                            }
-                        }
-                    }
-                    if (!removedPending && !pendingSellToBuyback_.empty()) {
-                        // Last-resort desync recovery.
-                        pendingSellToBuyback_.clear();
-                        buybackItems_.clear();
-                    }
-                    static const char* sellErrors[] = {
-                        "OK", "Can't find item", "Can't sell item",
-                        "Can't find vendor", "You don't own that item",
-                        "Unknown error", "Only empty bag"
-                    };
-                    const char* msg = (result < 7) ? sellErrors[result] : "Unknown sell error";
-                    addUIError(std::string("Sell failed: ") + msg);
-                    addSystemChatMessage(std::string("Sell failed: ") + msg);
-                    if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                        if (auto* sfx = renderer->getUiSoundManager())
-                            sfx->playError();
-                    }
-                    LOG_WARNING("SMSG_SELL_ITEM error: ", (int)result, " (", msg, ")");
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_INVENTORY_CHANGE_FAILURE: {
-            if ((packet.getSize() - packet.getReadPos()) >= 1) {
-                uint8_t error = packet.readUInt8();
-                if (error != 0) {
-                    LOG_WARNING("SMSG_INVENTORY_CHANGE_FAILURE: error=", (int)error);
-                    // After error byte: item_guid1(8) + item_guid2(8) + bag_slot(1) = 17 bytes
-                    uint32_t requiredLevel = 0;
-                    if (packet.getSize() - packet.getReadPos() >= 17) {
-                        packet.readUInt64(); // item_guid1
-                        packet.readUInt64(); // item_guid2
-                        packet.readUInt8();  // bag_slot
-                        // Error 1 = EQUIP_ERR_LEVEL_REQ: server appends required level as uint32
-                        if (error == 1 && packet.getSize() - packet.getReadPos() >= 4)
-                            requiredLevel = packet.readUInt32();
-                    }
-                    // InventoryResult enum (AzerothCore 3.3.5a)
-                    const char* errMsg = nullptr;
-                    char levelBuf[64];
-                    switch (error) {
-                        case 1:
-                            if (requiredLevel > 0) {
-                                std::snprintf(levelBuf, sizeof(levelBuf),
-                                              "You must reach level %u to use that item.", requiredLevel);
-                                addUIError(levelBuf);
-                                addSystemChatMessage(levelBuf);
-                            } else {
-                                addUIError("You must reach a higher level to use that item.");
-                                addSystemChatMessage("You must reach a higher level to use that item.");
-                            }
-                            break;
-                        case 2:  errMsg = "You don't have the required skill."; break;
-                        case 3:  errMsg = "That item doesn't go in that slot."; break;
-                        case 4:  errMsg = "That bag is full."; break;
-                        case 5:  errMsg = "Can't put bags in bags."; break;
-                        case 6:  errMsg = "Can't trade equipped bags."; break;
-                        case 7:  errMsg = "That slot only holds ammo."; break;
-                        case 8:  errMsg = "You can't use that item."; break;
-                        case 9:  errMsg = "No equipment slot available."; break;
-                        case 10: errMsg = "You can never use that item."; break;
-                        case 11: errMsg = "You can never use that item."; break;
-                        case 12: errMsg = "No equipment slot available."; break;
-                        case 13: errMsg = "Can't equip with a two-handed weapon."; break;
-                        case 14: errMsg = "Can't dual-wield."; break;
-                        case 15: errMsg = "That item doesn't go in that bag."; break;
-                        case 16: errMsg = "That item doesn't go in that bag."; break;
-                        case 17: errMsg = "You can't carry any more of those."; break;
-                        case 18: errMsg = "No equipment slot available."; break;
-                        case 19: errMsg = "Can't stack those items."; break;
-                        case 20: errMsg = "That item can't be equipped."; break;
-                        case 21: errMsg = "Can't swap items."; break;
-                        case 22: errMsg = "That slot is empty."; break;
-                        case 23: errMsg = "Item not found."; break;
-                        case 24: errMsg = "Can't drop soulbound items."; break;
-                        case 25: errMsg = "Out of range."; break;
-                        case 26: errMsg = "Need to split more than 1."; break;
-                        case 27: errMsg = "Split failed."; break;
-                        case 28: errMsg = "Not enough reagents."; break;
-                        case 29: errMsg = "Not enough money."; break;
-                        case 30: errMsg = "Not a bag."; break;
-                        case 31: errMsg = "Can't destroy non-empty bag."; break;
-                        case 32: errMsg = "You don't own that item."; break;
-                        case 33: errMsg = "You can only have one quiver."; break;
-                        case 34: errMsg = "No free bank slots."; break;
-                        case 35: errMsg = "No bank here."; break;
-                        case 36: errMsg = "Item is locked."; break;
-                        case 37: errMsg = "You are stunned."; break;
-                        case 38: errMsg = "You are dead."; break;
-                        case 39: errMsg = "Can't do that right now."; break;
-                        case 40: errMsg = "Internal bag error."; break;
-                        case 49: errMsg = "Loot is gone."; break;
-                        case 50: errMsg = "Inventory is full."; break;
-                        case 51: errMsg = "Bank is full."; break;
-                        case 52: errMsg = "That item is sold out."; break;
-                        case 58: errMsg = "That object is busy."; break;
-                        case 60: errMsg = "Can't do that in combat."; break;
-                        case 61: errMsg = "Can't do that while disarmed."; break;
-                        case 63: errMsg = "Requires a higher rank."; break;
-                        case 64: errMsg = "Requires higher reputation."; break;
-                        case 67: errMsg = "That item is unique-equipped."; break;
-                        case 69: errMsg = "Not enough honor points."; break;
-                        case 70: errMsg = "Not enough arena points."; break;
-                        case 77: errMsg = "Too much gold."; break;
-                        case 78: errMsg = "Can't do that during arena match."; break;
-                        case 80: errMsg = "Requires a personal arena rating."; break;
-                        case 87: errMsg = "Requires a higher level."; break;
-                        case 88: errMsg = "Requires the right talent."; break;
-                        default: break;
-                    }
-                    std::string msg = errMsg ? errMsg : "Inventory error (" + std::to_string(error) + ").";
-                    addUIError(msg);
-                    addSystemChatMessage(msg);
-                    if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                        if (auto* sfx = renderer->getUiSoundManager())
-                            sfx->playError();
-                    }
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_BUY_FAILED: {
-            // vendorGuid(8) + itemId(4) + errorCode(1)
-            if (packet.getSize() - packet.getReadPos() >= 13) {
-                uint64_t vendorGuid = packet.readUInt64();
-                uint32_t itemIdOrSlot = packet.readUInt32();
-                uint8_t errCode = packet.readUInt8();
-                LOG_INFO("SMSG_BUY_FAILED: vendorGuid=0x", std::hex, vendorGuid, std::dec,
-                         " item/slot=", itemIdOrSlot,
-                         " err=", static_cast<int>(errCode),
-                         " pendingBuybackSlot=", pendingBuybackSlot_,
-                         " pendingBuybackWireSlot=", pendingBuybackWireSlot_,
-                         " pendingBuyItemId=", pendingBuyItemId_,
-                         " pendingBuyItemSlot=", pendingBuyItemSlot_);
-                if (pendingBuybackSlot_ >= 0) {
-                    // Some cores require probing absolute buyback slots until a live entry is found.
-                    if (errCode == 0) {
-                        constexpr uint16_t kWotlkCmsgBuybackItemOpcode = 0x290;
-                        constexpr uint32_t kBuybackSlotEnd = 85;
-                        if (pendingBuybackWireSlot_ >= 74 && pendingBuybackWireSlot_ < kBuybackSlotEnd &&
-                            socket && state == WorldState::IN_WORLD && currentVendorItems.vendorGuid != 0) {
-                            ++pendingBuybackWireSlot_;
-                            LOG_INFO("Buyback retry: vendorGuid=0x", std::hex, currentVendorItems.vendorGuid,
-                                     std::dec, " uiSlot=", pendingBuybackSlot_,
-                                     " wireSlot=", pendingBuybackWireSlot_);
-                            network::Packet retry(kWotlkCmsgBuybackItemOpcode);
-                            retry.writeUInt64(currentVendorItems.vendorGuid);
-                            retry.writeUInt32(pendingBuybackWireSlot_);
-                            socket->send(retry);
-                            break;
-                        }
-                        // Exhausted slot probe: drop stale local row and advance.
-                        if (pendingBuybackSlot_ < static_cast<int>(buybackItems_.size())) {
-                            buybackItems_.erase(buybackItems_.begin() + pendingBuybackSlot_);
-                        }
-                        pendingBuybackSlot_ = -1;
-                        pendingBuybackWireSlot_ = 0;
-                        if (currentVendorItems.vendorGuid != 0 && socket && state == WorldState::IN_WORLD) {
-                            auto pkt = ListInventoryPacket::build(currentVendorItems.vendorGuid);
-                            socket->send(pkt);
-                        }
-                        break;
-                    }
-                    pendingBuybackSlot_ = -1;
-                    pendingBuybackWireSlot_ = 0;
-                }
-
-                const char* msg = "Purchase failed.";
-                switch (errCode) {
-                    case 0: msg = "Purchase failed: item not found."; break;
-                    case 2: msg = "You don't have enough money."; break;
-                    case 4: msg = "Seller is too far away."; break;
-                    case 5: msg = "That item is sold out."; break;
-                    case 6: msg = "You can't carry any more items."; break;
-                    default: break;
-                }
-                addUIError(msg);
-                addSystemChatMessage(msg);
-                if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                    if (auto* sfx = renderer->getUiSoundManager())
-                        sfx->playError();
-                }
-            }
-            break;
-        }
-        case Opcode::MSG_RAID_TARGET_UPDATE: {
-            // uint8 type: 0 = full update (8 × (uint8 icon + uint64 guid)),
-            //             1 = single update (uint8 icon + uint64 guid)
-            size_t remRTU = packet.getSize() - packet.getReadPos();
-            if (remRTU < 1) break;
-            uint8_t rtuType = packet.readUInt8();
-            if (rtuType == 0) {
-                // Full update: always 8 entries
-                for (uint32_t i = 0; i < kRaidMarkCount; ++i) {
-                    if (packet.getSize() - packet.getReadPos() < 9) break;
-                    uint8_t  icon = packet.readUInt8();
-                    uint64_t guid = packet.readUInt64();
-                    if (icon < kRaidMarkCount)
-                        raidTargetGuids_[icon] = guid;
-                }
-            } else {
-                // Single update
-                if (packet.getSize() - packet.getReadPos() >= 9) {
-                    uint8_t  icon = packet.readUInt8();
-                    uint64_t guid = packet.readUInt64();
-                    if (icon < kRaidMarkCount)
-                        raidTargetGuids_[icon] = guid;
-                }
-            }
-            LOG_DEBUG("MSG_RAID_TARGET_UPDATE: type=", static_cast<int>(rtuType));
-            if (addonEventCallback_)
-                addonEventCallback_("RAID_TARGET_UPDATE", {});
-            break;
-        }
-        case Opcode::SMSG_BUY_ITEM: {
-            // uint64 vendorGuid + uint32 vendorSlot + int32 newCount + uint32 itemCount
-            // Confirms a successful CMSG_BUY_ITEM. The inventory update arrives via SMSG_UPDATE_OBJECT.
-            if (packet.getSize() - packet.getReadPos() >= 20) {
-                /*uint64_t vendorGuid =*/ packet.readUInt64();
-                /*uint32_t vendorSlot =*/ packet.readUInt32();
-                /*int32_t  newCount   =*/ static_cast<int32_t>(packet.readUInt32());
-                uint32_t itemCount  = packet.readUInt32();
-                // Show purchase confirmation with item name if available
-                if (pendingBuyItemId_ != 0) {
-                    std::string itemLabel;
-                    uint32_t buyQuality = 1;
-                    if (const ItemQueryResponseData* info = getItemInfo(pendingBuyItemId_)) {
-                        if (!info->name.empty()) itemLabel = info->name;
-                        buyQuality = info->quality;
-                    }
-                    if (itemLabel.empty()) itemLabel = "item #" + std::to_string(pendingBuyItemId_);
-                    std::string msg = "Purchased: " + buildItemLink(pendingBuyItemId_, buyQuality, itemLabel);
-                    if (itemCount > 1) msg += " x" + std::to_string(itemCount);
-                    addSystemChatMessage(msg);
-                    if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                        if (auto* sfx = renderer->getUiSoundManager())
-                            sfx->playPickupBag();
-                    }
-                }
-                pendingBuyItemId_   = 0;
-                pendingBuyItemSlot_ = 0;
-                if (addonEventCallback_) {
-                    addonEventCallback_("MERCHANT_UPDATE", {});
-                    addonEventCallback_("BAG_UPDATE", {});
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_CRITERIA_UPDATE: {
-            // uint32 criteriaId + uint64 progress + uint32 elapsedTime + uint32 creationTime
-            if (packet.getSize() - packet.getReadPos() >= 20) {
-                uint32_t criteriaId    = packet.readUInt32();
-                uint64_t progress      = packet.readUInt64();
-                packet.readUInt32(); // elapsedTime
-                packet.readUInt32(); // creationTime
-                uint64_t oldProgress = 0;
-                auto cpit = criteriaProgress_.find(criteriaId);
-                if (cpit != criteriaProgress_.end()) oldProgress = cpit->second;
-                criteriaProgress_[criteriaId] = progress;
-                LOG_DEBUG("SMSG_CRITERIA_UPDATE: id=", criteriaId, " progress=", progress);
-                // Fire addon event for achievement tracking addons
-                if (addonEventCallback_ && progress != oldProgress)
-                    addonEventCallback_("CRITERIA_UPDATE", {std::to_string(criteriaId), std::to_string(progress)});
-            }
-            break;
-        }
-        case Opcode::SMSG_BARBER_SHOP_RESULT: {
-            // uint32 result (0 = success, 1 = no money, 2 = not barber, 3 = sitting)
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t result = packet.readUInt32();
-                if (result == 0) {
-                    addSystemChatMessage("Hairstyle changed.");
-                    barberShopOpen_ = false;
-                    if (addonEventCallback_) addonEventCallback_("BARBER_SHOP_CLOSE", {});
-                } else {
-                    const char* msg = (result == 1) ? "Not enough money for new hairstyle."
-                                    : (result == 2) ? "You are not at a barber shop."
-                                    : (result == 3) ? "You must stand up to use the barber shop."
-                                    : "Barber shop unavailable.";
-                    addUIError(msg);
-                    addSystemChatMessage(msg);
-                }
-                LOG_DEBUG("SMSG_BARBER_SHOP_RESULT: result=", result);
-            }
-            break;
-        }
-        case Opcode::SMSG_OVERRIDE_LIGHT: {
-            // uint32 currentZoneLightId + uint32 overrideLightId + uint32 transitionMs
-            if (packet.getSize() - packet.getReadPos() >= 12) {
-                uint32_t zoneLightId     = packet.readUInt32();
-                uint32_t overrideLightId = packet.readUInt32();
-                uint32_t transitionMs    = packet.readUInt32();
-                overrideLightId_      = overrideLightId;
-                overrideLightTransMs_ = transitionMs;
-                LOG_DEBUG("SMSG_OVERRIDE_LIGHT: zone=", zoneLightId,
-                          " override=", overrideLightId, " transition=", transitionMs, "ms");
-            }
-            break;
-        }
-        case Opcode::SMSG_WEATHER: {
-            // Classic 1.12: uint32 weatherType + float intensity (8 bytes, no isAbrupt)
-            // TBC 2.4.3 / WotLK 3.3.5a: uint32 weatherType + float intensity + uint8 isAbrupt (9 bytes)
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint32_t wType = packet.readUInt32();
-                float wIntensity = packet.readFloat();
-                if (packet.getSize() - packet.getReadPos() >= 1)
-                    /*uint8_t isAbrupt =*/ packet.readUInt8();
-                uint32_t prevWeatherType = weatherType_;
-                weatherType_ = wType;
-                weatherIntensity_ = wIntensity;
-                const char* typeName = (wType == 1) ? "Rain" : (wType == 2) ? "Snow" : (wType == 3) ? "Storm" : "Clear";
-                LOG_INFO("Weather changed: type=", wType, " (", typeName, "), intensity=", wIntensity);
-                // Announce weather changes (including initial zone weather)
-                if (wType != prevWeatherType) {
-                    const char* weatherMsg = nullptr;
-                    if (wIntensity < 0.05f || wType == 0) {
-                        if (prevWeatherType != 0)
-                            weatherMsg = "The weather clears.";
-                    } else if (wType == 1) {
-                        weatherMsg = "It begins to rain.";
-                    } else if (wType == 2) {
-                        weatherMsg = "It begins to snow.";
-                    } else if (wType == 3) {
-                        weatherMsg = "A storm rolls in.";
-                    }
-                    if (weatherMsg) addSystemChatMessage(weatherMsg);
-                }
-                // Notify addons of weather change
-                if (addonEventCallback_)
-                    addonEventCallback_("WEATHER_CHANGED", {std::to_string(wType), std::to_string(wIntensity)});
-                // Storm transition: trigger a low-frequency thunder rumble shake
-                if (wType == 3 && wIntensity > 0.3f && cameraShakeCallback_) {
-                    float mag = 0.03f + wIntensity * 0.04f; // 0.03–0.07 units
-                    cameraShakeCallback_(mag, 6.0f, 0.6f);
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_SCRIPT_MESSAGE: {
-            // Server-script text message — display in system chat
-            std::string msg = packet.readString();
-            if (!msg.empty()) {
-                addSystemChatMessage(msg);
-                LOG_INFO("SMSG_SCRIPT_MESSAGE: ", msg);
-            }
-            break;
-        }
-        case Opcode::SMSG_ENCHANTMENTLOG: {
-            // uint64 targetGuid + uint64 casterGuid + uint32 spellId + uint32 displayId + uint32 animType
-            if (packet.getSize() - packet.getReadPos() >= 28) {
-                uint64_t enchTargetGuid = packet.readUInt64();
-                uint64_t enchCasterGuid = packet.readUInt64();
-                uint32_t enchSpellId = packet.readUInt32();
-                /*uint32_t displayId =*/ packet.readUInt32();
-                /*uint32_t animType =*/ packet.readUInt32();
-                LOG_DEBUG("SMSG_ENCHANTMENTLOG: spellId=", enchSpellId);
-                // Show enchant message if the player is involved
-                if (enchTargetGuid == playerGuid || enchCasterGuid == playerGuid) {
-                    const std::string& enchName = getSpellName(enchSpellId);
-                    std::string casterName = lookupName(enchCasterGuid);
-                    if (!enchName.empty()) {
-                        std::string msg;
-                        if (enchCasterGuid == playerGuid)
-                            msg = "You enchant with " + enchName + ".";
-                        else if (!casterName.empty())
-                            msg = casterName + " enchants your item with " + enchName + ".";
-                        else
-                            msg = "Your item has been enchanted with " + enchName + ".";
-                        addSystemChatMessage(msg);
-                    }
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_SOCKET_GEMS_RESULT: {
-            // uint64 itemGuid + uint32 result (0 = success)
-            if (packet.getSize() - packet.getReadPos() >= 12) {
-                /*uint64_t itemGuid =*/ packet.readUInt64();
-                uint32_t result = packet.readUInt32();
-                if (result == 0) {
-                    addSystemChatMessage("Gems socketed successfully.");
-                } else {
-                    addUIError("Failed to socket gems.");
-                    addSystemChatMessage("Failed to socket gems.");
-                }
-                LOG_DEBUG("SMSG_SOCKET_GEMS_RESULT: result=", result);
-            }
-            break;
-        }
-        case Opcode::SMSG_ITEM_REFUND_RESULT: {
-            // uint64 itemGuid + uint32 result (0=success)
-            if (packet.getSize() - packet.getReadPos() >= 12) {
-                /*uint64_t itemGuid =*/ packet.readUInt64();
-                uint32_t result = packet.readUInt32();
-                if (result == 0) {
-                    addSystemChatMessage("Item returned. Refund processed.");
-                } else {
-                    addSystemChatMessage("Could not return item for refund.");
-                }
-                LOG_DEBUG("SMSG_ITEM_REFUND_RESULT: result=", result);
-            }
-            break;
-        }
-        case Opcode::SMSG_ITEM_TIME_UPDATE: {
-            // uint64 itemGuid + uint32 durationMs — item duration ticking down
-            if (packet.getSize() - packet.getReadPos() >= 12) {
-                /*uint64_t itemGuid =*/ packet.readUInt64();
-                uint32_t durationMs = packet.readUInt32();
-                LOG_DEBUG("SMSG_ITEM_TIME_UPDATE: remainingMs=", durationMs);
-            }
-            break;
-        }
-        case Opcode::SMSG_RESURRECT_FAILED: {
-            // uint32 reason — various resurrection failures
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t reason = packet.readUInt32();
-                const char* msg = (reason == 1) ? "The target cannot be resurrected right now."
-                                : (reason == 2) ? "Cannot resurrect in this area."
-                                : "Resurrection failed.";
-                addUIError(msg);
-                addSystemChatMessage(msg);
-                LOG_DEBUG("SMSG_RESURRECT_FAILED: reason=", reason);
-            }
-            break;
-        }
-        case Opcode::SMSG_GAMEOBJECT_QUERY_RESPONSE:
-            handleGameObjectQueryResponse(packet);
-            break;
-        case Opcode::SMSG_GAMEOBJECT_PAGETEXT:
-            handleGameObjectPageText(packet);
-            break;
-        case Opcode::SMSG_GAMEOBJECT_CUSTOM_ANIM: {
-            if (packet.getSize() >= 12) {
-                uint64_t guid = packet.readUInt64();
-                uint32_t animId = packet.readUInt32();
-                if (gameObjectCustomAnimCallback_) {
-                    gameObjectCustomAnimCallback_(guid, animId);
-                }
-                // animId == 0 is the fishing bobber splash ("fish hooked").
-                // Detect by GO type 17 (FISHINGNODE) and notify the player so they
-                // know to click the bobber before the fish escapes.
-                if (animId == 0) {
-                    auto goEnt = entityManager.getEntity(guid);
-                    if (goEnt && goEnt->getType() == ObjectType::GAMEOBJECT) {
-                        auto go = std::static_pointer_cast<GameObject>(goEnt);
-                        auto* info = getCachedGameObjectInfo(go->getEntry());
-                        if (info && info->type == 17) {  // GO_TYPE_FISHINGNODE
-                            addUIError("A fish is on your line!");
-                            addSystemChatMessage("A fish is on your line!");
-                            // Play a distinctive UI sound to alert the player
-                            if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                                if (auto* sfx = renderer->getUiSoundManager()) {
-                                    sfx->playQuestUpdate(); // Distinct "ping" sound
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_PAGE_TEXT_QUERY_RESPONSE:
-            handlePageTextQueryResponse(packet);
-            break;
-        case Opcode::SMSG_QUESTGIVER_STATUS: {
-            if (packet.getSize() - packet.getReadPos() >= 9) {
-                uint64_t npcGuid = packet.readUInt64();
-                uint8_t status = packetParsers_->readQuestGiverStatus(packet);
-                npcQuestStatus_[npcGuid] = static_cast<QuestGiverStatus>(status);
-                LOG_DEBUG("SMSG_QUESTGIVER_STATUS: guid=0x", std::hex, npcGuid, std::dec, " status=", (int)status);
-            }
-            break;
-        }
-        case Opcode::SMSG_QUESTGIVER_STATUS_MULTIPLE: {
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t count = packet.readUInt32();
-                for (uint32_t i = 0; i < count; ++i) {
-                    if (packet.getSize() - packet.getReadPos() < 9) break;
-                    uint64_t npcGuid = packet.readUInt64();
-                    uint8_t status = packetParsers_->readQuestGiverStatus(packet);
-                    npcQuestStatus_[npcGuid] = static_cast<QuestGiverStatus>(status);
-                }
-                LOG_DEBUG("SMSG_QUESTGIVER_STATUS_MULTIPLE: ", count, " entries");
-            }
-            break;
-        }
-        case Opcode::SMSG_QUESTGIVER_QUEST_DETAILS:
-            handleQuestDetails(packet);
-            break;
-        case Opcode::SMSG_QUESTGIVER_QUEST_INVALID: {
-            // Quest query failed - parse failure reason
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t failReason = packet.readUInt32();
-                pendingTurnInRewardRequest_ = false;
-                const char* reasonStr = "Unknown";
-                switch (failReason) {
-                    case 0: reasonStr = "Don't have quest"; break;
-                    case 1: reasonStr = "Quest level too low"; break;
-                    case 4: reasonStr = "Insufficient money"; break;
-                    case 5: reasonStr = "Inventory full"; break;
-                    case 13: reasonStr = "Already on that quest"; break;
-                    case 18: reasonStr = "Already completed quest"; break;
-                    case 19: reasonStr = "Can't take any more quests"; break;
-                }
-                LOG_WARNING("Quest invalid: reason=", failReason, " (", reasonStr, ")");
-                if (!pendingQuestAcceptTimeouts_.empty()) {
-                    std::vector<uint32_t> pendingQuestIds;
-                    pendingQuestIds.reserve(pendingQuestAcceptTimeouts_.size());
-                    for (const auto& pending : pendingQuestAcceptTimeouts_) {
-                        pendingQuestIds.push_back(pending.first);
-                    }
-                    for (uint32_t questId : pendingQuestIds) {
-                        const uint64_t npcGuid = pendingQuestAcceptNpcGuids_.count(questId) != 0
-                            ? pendingQuestAcceptNpcGuids_[questId] : 0;
-                        if (failReason == 13) {
-                            std::string fallbackTitle = "Quest #" + std::to_string(questId);
-                            std::string fallbackObjectives;
-                            if (currentQuestDetails.questId == questId) {
-                                if (!currentQuestDetails.title.empty()) fallbackTitle = currentQuestDetails.title;
-                                fallbackObjectives = currentQuestDetails.objectives;
-                            }
-                            addQuestToLocalLogIfMissing(questId, fallbackTitle, fallbackObjectives);
-                            triggerQuestAcceptResync(questId, npcGuid, "already-on-quest");
-                        } else if (failReason == 18) {
-                            triggerQuestAcceptResync(questId, npcGuid, "already-completed");
-                        }
-                        clearPendingQuestAccept(questId);
-                    }
-                }
-                // Only show error to user for real errors (not informational messages)
-                if (failReason != 13 && failReason != 18) {  // Don't spam "already on/completed"
-                    addSystemChatMessage(std::string("Quest unavailable: ") + reasonStr);
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_QUESTGIVER_QUEST_COMPLETE: {
-            // Mark quest as complete in local log
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t questId = packet.readUInt32();
-                LOG_INFO("Quest completed: questId=", questId);
-                if (pendingTurnInQuestId_ == questId) {
-                    pendingTurnInQuestId_ = 0;
-                    pendingTurnInNpcGuid_ = 0;
-                    pendingTurnInRewardRequest_ = false;
-                }
-                for (auto it = questLog_.begin(); it != questLog_.end(); ++it) {
-                    if (it->questId == questId) {
-                        // Fire toast callback before erasing
-                        if (questCompleteCallback_) {
-                            questCompleteCallback_(questId, it->title);
-                        }
-                        // Play quest-complete sound
-                        if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                            if (auto* sfx = renderer->getUiSoundManager())
-                                sfx->playQuestComplete();
-                        }
-                        questLog_.erase(it);
-                        LOG_INFO("  Removed quest ", questId, " from quest log");
-                        if (addonEventCallback_)
-                            addonEventCallback_("QUEST_TURNED_IN", {std::to_string(questId)});
-                        break;
-                    }
-                }
-            }
-            if (addonEventCallback_)
-                addonEventCallback_("QUEST_LOG_UPDATE", {});
-                    addonEventCallback_("UNIT_QUEST_LOG_CHANGED", {"player"});
-            // Re-query all nearby quest giver NPCs so markers refresh
-            if (socket) {
-                for (const auto& [guid, entity] : entityManager.getEntities()) {
-                    if (entity->getType() != ObjectType::UNIT) continue;
-                    auto unit = std::static_pointer_cast<Unit>(entity);
-                    if (unit->getNpcFlags() & 0x02) {
-                        network::Packet qsPkt(wireOpcode(Opcode::CMSG_QUESTGIVER_STATUS_QUERY));
-                        qsPkt.writeUInt64(guid);
-                        socket->send(qsPkt);
-                    }
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_QUESTUPDATE_ADD_KILL: {
-            // Quest kill count update
-            // Compatibility: some classic-family opcode tables swap ADD_KILL and COMPLETE.
-            size_t rem = packet.getSize() - packet.getReadPos();
-            if (rem >= 12) {
-                uint32_t questId = packet.readUInt32();
-                clearPendingQuestAccept(questId);
-                uint32_t entry = packet.readUInt32();   // Creature entry
-                uint32_t count = packet.readUInt32();   // Current kills
-                uint32_t reqCount = 0;
-                if (packet.getSize() - packet.getReadPos() >= 4) {
-                    reqCount = packet.readUInt32();     // Required kills (if present)
-                }
-
-                LOG_INFO("Quest kill update: questId=", questId, " entry=", entry,
-                         " count=", count, "/", reqCount);
-
-                // Update quest log with kill count
-                for (auto& quest : questLog_) {
-                    if (quest.questId == questId) {
-                        // Preserve prior required count if this packet variant omits it.
-                        if (reqCount == 0) {
-                            auto it = quest.killCounts.find(entry);
-                            if (it != quest.killCounts.end()) reqCount = it->second.second;
-                        }
-                        // Fall back to killObjectives (parsed from SMSG_QUEST_QUERY_RESPONSE).
-                        // Note: npcOrGoId < 0 means game object; server always sends entry as uint32
-                        // in QUESTUPDATE_ADD_KILL regardless of type, so match by absolute value.
-                        if (reqCount == 0) {
-                            for (const auto& obj : quest.killObjectives) {
-                                if (obj.npcOrGoId == 0 || obj.required == 0) continue;
-                                uint32_t objEntry = static_cast<uint32_t>(
-                                    obj.npcOrGoId > 0 ? obj.npcOrGoId : -obj.npcOrGoId);
-                                if (objEntry == entry) {
-                                    reqCount = obj.required;
-                                    break;
-                                }
-                            }
-                        }
-                        if (reqCount == 0) reqCount = count;  // last-resort: avoid 0/0 display
-                        quest.killCounts[entry] = {count, reqCount};
-
-                        std::string creatureName = getCachedCreatureName(entry);
-                        std::string progressMsg = quest.title + ": ";
-                        if (!creatureName.empty()) {
-                            progressMsg += creatureName + " ";
-                        }
-                        progressMsg += std::to_string(count) + "/" + std::to_string(reqCount);
-                        addSystemChatMessage(progressMsg);
-
-                        if (questProgressCallback_) {
-                            questProgressCallback_(quest.title, creatureName, count, reqCount);
-                        }
-                        if (addonEventCallback_) {
-                            addonEventCallback_("QUEST_WATCH_UPDATE", {std::to_string(questId)});
-                            addonEventCallback_("QUEST_LOG_UPDATE", {});
-                    addonEventCallback_("UNIT_QUEST_LOG_CHANGED", {"player"});
-                        }
-
-                        LOG_INFO("Updated kill count for quest ", questId, ": ",
-                                 count, "/", reqCount);
-                        break;
-                    }
-                }
-            } else if (rem >= 4) {
-                // Swapped mapping fallback: treat as QUESTUPDATE_COMPLETE packet.
-                uint32_t questId = packet.readUInt32();
-                clearPendingQuestAccept(questId);
-                LOG_INFO("Quest objectives completed (compat via ADD_KILL): questId=", questId);
-                for (auto& quest : questLog_) {
-                    if (quest.questId == questId) {
-                        quest.complete = true;
-                        addSystemChatMessage("Quest Complete: " + quest.title);
-                        break;
-                    }
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_QUESTUPDATE_ADD_ITEM: {
-            // Quest item count update: itemId + count
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint32_t itemId = packet.readUInt32();
-                uint32_t count = packet.readUInt32();
-                queryItemInfo(itemId, 0);
-
-                std::string itemLabel = "item #" + std::to_string(itemId);
-                uint32_t questItemQuality = 1;
-                if (const ItemQueryResponseData* info = getItemInfo(itemId)) {
-                    if (!info->name.empty()) itemLabel = info->name;
-                    questItemQuality = info->quality;
-                }
-
-                bool updatedAny = false;
-                for (auto& quest : questLog_) {
-                    if (quest.complete) continue;
-                    bool tracksItem =
-                        quest.requiredItemCounts.count(itemId) > 0 ||
-                        quest.itemCounts.count(itemId) > 0;
-                    // Also check itemObjectives parsed from SMSG_QUEST_QUERY_RESPONSE in case
-                    // requiredItemCounts hasn't been populated yet (race during quest accept).
-                    if (!tracksItem) {
-                        for (const auto& obj : quest.itemObjectives) {
-                            if (obj.itemId == itemId && obj.required > 0) {
-                                quest.requiredItemCounts.emplace(itemId, obj.required);
-                                tracksItem = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (!tracksItem) continue;
-                    quest.itemCounts[itemId] = count;
-                    updatedAny = true;
-                }
-                addSystemChatMessage("Quest item: " + buildItemLink(itemId, questItemQuality, itemLabel) + " (" + std::to_string(count) + ")");
-
-                if (questProgressCallback_ && updatedAny) {
-                    // Find the quest that tracks this item to get title and required count
-                    for (const auto& quest : questLog_) {
-                        if (quest.complete) continue;
-                        if (quest.itemCounts.count(itemId) == 0) continue;
-                        uint32_t required = 0;
-                        auto rIt = quest.requiredItemCounts.find(itemId);
-                        if (rIt != quest.requiredItemCounts.end()) required = rIt->second;
-                        if (required == 0) {
-                            for (const auto& obj : quest.itemObjectives) {
-                                if (obj.itemId == itemId) { required = obj.required; break; }
-                            }
-                        }
-                        if (required == 0) required = count;
-                        questProgressCallback_(quest.title, itemLabel, count, required);
-                        break;
-                    }
-                }
-
-                if (addonEventCallback_ && updatedAny) {
-                    addonEventCallback_("QUEST_WATCH_UPDATE", {});
-                    addonEventCallback_("QUEST_LOG_UPDATE", {});
-                    addonEventCallback_("UNIT_QUEST_LOG_CHANGED", {"player"});
-                }
-                LOG_INFO("Quest item update: itemId=", itemId, " count=", count,
-                         " trackedQuestsUpdated=", updatedAny);
-            }
-            break;
-        }
-        case Opcode::SMSG_QUESTUPDATE_COMPLETE: {
-            // Quest objectives completed - mark as ready to turn in.
-            // Compatibility: some classic-family opcode tables swap COMPLETE and ADD_KILL.
-            size_t rem = packet.getSize() - packet.getReadPos();
-            if (rem >= 12) {
-                uint32_t questId = packet.readUInt32();
-                clearPendingQuestAccept(questId);
-                uint32_t entry = packet.readUInt32();
-                uint32_t count = packet.readUInt32();
-                uint32_t reqCount = 0;
-                if (packet.getSize() - packet.getReadPos() >= 4) reqCount = packet.readUInt32();
-                if (reqCount == 0) reqCount = count;
-                LOG_INFO("Quest kill update (compat via COMPLETE): questId=", questId,
-                         " entry=", entry, " count=", count, "/", reqCount);
-                for (auto& quest : questLog_) {
-                    if (quest.questId == questId) {
-                        quest.killCounts[entry] = {count, reqCount};
-                        addSystemChatMessage(quest.title + ": " + std::to_string(count) +
-                                             "/" + std::to_string(reqCount));
-                        break;
-                    }
-                }
-            } else if (rem >= 4) {
-                uint32_t questId = packet.readUInt32();
-                clearPendingQuestAccept(questId);
-                LOG_INFO("Quest objectives completed: questId=", questId);
-
-                for (auto& quest : questLog_) {
-                    if (quest.questId == questId) {
-                        quest.complete = true;
-                        addSystemChatMessage("Quest Complete: " + quest.title);
-                        LOG_INFO("Marked quest ", questId, " as complete");
-                        break;
-                    }
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_QUEST_FORCE_REMOVE: {
-            // This opcode is aliased to SMSG_SET_REST_START in the opcode table
-            // because both share opcode 0x21E in WotLK 3.3.5a.
-            // In WotLK: payload = uint32 areaId (entering rest) or 0 (leaving rest).
-            // In Classic/TBC: payload = uint32 questId (force-remove a quest).
-            if (packet.getSize() - packet.getReadPos() < 4) {
-                LOG_WARNING("SMSG_QUEST_FORCE_REMOVE/SET_REST_START too short");
-                break;
-            }
-            uint32_t value = packet.readUInt32();
-
-            // WotLK uses this opcode as SMSG_SET_REST_START: non-zero = entering
-            // a rest area (inn/city), zero = leaving. Classic/TBC use it for quest removal.
-            if (!isClassicLikeExpansion() && !isActiveExpansion("tbc")) {
-                // WotLK: treat as SET_REST_START
-                bool nowResting = (value != 0);
-                if (nowResting != isResting_) {
-                    isResting_ = nowResting;
-                    addSystemChatMessage(isResting_ ? "You are now resting."
-                                                    : "You are no longer resting.");
-                    if (addonEventCallback_)
-                        addonEventCallback_("PLAYER_UPDATE_RESTING", {});
-                }
-                break;
-            }
-
-            // Classic/TBC: treat as QUEST_FORCE_REMOVE (uint32 questId)
-            uint32_t questId = value;
-            clearPendingQuestAccept(questId);
-            pendingQuestQueryIds_.erase(questId);
-            if (questId == 0) {
-                // Some servers emit a zero-id variant during world bootstrap.
-                // Treat as no-op to avoid false "Quest removed" spam.
-                break;
-            }
-
-            bool removed = false;
-            std::string removedTitle;
-            for (auto it = questLog_.begin(); it != questLog_.end(); ++it) {
-                if (it->questId == questId) {
-                    removedTitle = it->title;
-                    questLog_.erase(it);
-                    removed = true;
-                    break;
-                }
-            }
-            if (currentQuestDetails.questId == questId) {
-                questDetailsOpen = false;
-                questDetailsOpenTime = std::chrono::steady_clock::time_point{};
-                currentQuestDetails = QuestDetailsData{};
-                removed = true;
-            }
-            if (currentQuestRequestItems_.questId == questId) {
-                questRequestItemsOpen_ = false;
-                currentQuestRequestItems_ = QuestRequestItemsData{};
-                removed = true;
-            }
-            if (currentQuestOfferReward_.questId == questId) {
-                questOfferRewardOpen_ = false;
-                currentQuestOfferReward_ = QuestOfferRewardData{};
-                removed = true;
-            }
-            if (removed) {
-                if (!removedTitle.empty()) {
-                    addSystemChatMessage("Quest removed: " + removedTitle);
-                } else {
-                    addSystemChatMessage("Quest removed (ID " + std::to_string(questId) + ").");
-                }
-                if (addonEventCallback_) {
-                    addonEventCallback_("QUEST_LOG_UPDATE", {});
-                    addonEventCallback_("UNIT_QUEST_LOG_CHANGED", {"player"});
-                    addonEventCallback_("QUEST_REMOVED", {std::to_string(questId)});
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_QUEST_QUERY_RESPONSE: {
-            if (packet.getSize() < 8) {
-                LOG_WARNING("SMSG_QUEST_QUERY_RESPONSE: packet too small (", packet.getSize(), " bytes)");
-                break;
-            }
-
-            uint32_t questId = packet.readUInt32();
-            packet.readUInt32(); // questMethod
-
-            // Classic/Turtle = stride 3, TBC = stride 4 — all use 40 fixed fields + 4 strings.
-            // WotLK = stride 5, uses 55 fixed fields + 5 strings.
-            const bool isClassicLayout = packetParsers_ && packetParsers_->questLogStride() <= 4;
-            const QuestQueryTextCandidate parsed = pickBestQuestQueryTexts(packet.getData(), isClassicLayout);
-            const QuestQueryObjectives objs = extractQuestQueryObjectives(packet.getData(), isClassicLayout);
-            const QuestQueryRewards rwds = tryParseQuestRewards(packet.getData(), isClassicLayout);
-
-            for (auto& q : questLog_) {
-                if (q.questId != questId) continue;
-
-                const int existingScore = scoreQuestTitle(q.title);
-                const bool parsedStrong = isStrongQuestTitle(parsed.title);
-                const bool parsedLongEnough = parsed.title.size() >= 6;
-                const bool notShorterThanExisting =
-                    isPlaceholderQuestTitle(q.title) || q.title.empty() || parsed.title.size() + 2 >= q.title.size();
-                const bool shouldReplaceTitle =
-                    parsed.score > -1000 &&
-                    parsedStrong &&
-                    parsedLongEnough &&
-                    notShorterThanExisting &&
-                    (isPlaceholderQuestTitle(q.title) || q.title.empty() || parsed.score >= existingScore + 12);
-
-                if (shouldReplaceTitle && !parsed.title.empty()) {
-                    q.title = parsed.title;
-                }
-                if (!parsed.objectives.empty() &&
-                    (q.objectives.empty() || q.objectives.size() < 16)) {
-                    q.objectives = parsed.objectives;
-                }
-
-                // Store structured kill/item objectives for later kill-count restoration.
-                if (objs.valid) {
-                    for (int i = 0; i < 4; ++i) {
-                        q.killObjectives[i].npcOrGoId = objs.kills[i].npcOrGoId;
-                        q.killObjectives[i].required  = objs.kills[i].required;
-                    }
-                    for (int i = 0; i < 6; ++i) {
-                        q.itemObjectives[i].itemId   = objs.items[i].itemId;
-                        q.itemObjectives[i].required = objs.items[i].required;
-                    }
-                    // Now that we have the objective creature IDs, apply any packed kill
-                    // counts from the player update fields that arrived at login.
-                    applyPackedKillCountsFromFields(q);
-                    // Pre-fetch creature/GO names and item info so objective display is
-                    // populated by the time the player opens the quest log.
-                    for (int i = 0; i < 4; ++i) {
-                        int32_t id = objs.kills[i].npcOrGoId;
-                        if (id == 0 || objs.kills[i].required == 0) continue;
-                        if (id > 0) queryCreatureInfo(static_cast<uint32_t>(id), 0);
-                        else        queryGameObjectInfo(static_cast<uint32_t>(-id), 0);
-                    }
-                    for (int i = 0; i < 6; ++i) {
-                        if (objs.items[i].itemId != 0 && objs.items[i].required != 0)
-                            queryItemInfo(objs.items[i].itemId, 0);
-                    }
-                    LOG_DEBUG("Quest ", questId, " objectives parsed: kills=[",
-                              objs.kills[0].npcOrGoId, "/", objs.kills[0].required, ", ",
-                              objs.kills[1].npcOrGoId, "/", objs.kills[1].required, ", ",
-                              objs.kills[2].npcOrGoId, "/", objs.kills[2].required, ", ",
-                              objs.kills[3].npcOrGoId, "/", objs.kills[3].required, "]");
-                }
-
-                // Store reward data and pre-fetch item info for icons.
-                if (rwds.valid) {
-                    q.rewardMoney = rwds.rewardMoney;
-                    for (int i = 0; i < 4; ++i) {
-                        q.rewardItems[i].itemId = rwds.itemId[i];
-                        q.rewardItems[i].count  = (rwds.itemId[i] != 0) ? rwds.itemCount[i] : 0;
-                        if (rwds.itemId[i] != 0) queryItemInfo(rwds.itemId[i], 0);
-                    }
-                    for (int i = 0; i < 6; ++i) {
-                        q.rewardChoiceItems[i].itemId = rwds.choiceItemId[i];
-                        q.rewardChoiceItems[i].count  = (rwds.choiceItemId[i] != 0) ? rwds.choiceItemCount[i] : 0;
-                        if (rwds.choiceItemId[i] != 0) queryItemInfo(rwds.choiceItemId[i], 0);
-                    }
-                }
-                break;
-            }
-
-            pendingQuestQueryIds_.erase(questId);
-            break;
-        }
-        case Opcode::SMSG_QUESTLOG_FULL:
-            // Zero-payload notification: the player's quest log is full (25 quests).
-            addUIError("Your quest log is full.");
-            addSystemChatMessage("Your quest log is full.");
-            LOG_INFO("SMSG_QUESTLOG_FULL: quest log is at capacity");
-            break;
-        case Opcode::SMSG_QUESTGIVER_REQUEST_ITEMS:
-            handleQuestRequestItems(packet);
-            break;
-        case Opcode::SMSG_QUESTGIVER_OFFER_REWARD:
-            handleQuestOfferReward(packet);
-            break;
-        case Opcode::SMSG_GROUP_SET_LEADER: {
-            // SMSG_GROUP_SET_LEADER: string leaderName (null-terminated)
-            if (packet.getSize() > packet.getReadPos()) {
-                std::string leaderName = packet.readString();
-                // Update leaderGuid by name lookup in party members
-                for (const auto& m : partyData.members) {
-                    if (m.name == leaderName) {
-                        partyData.leaderGuid = m.guid;
-                        break;
-                    }
-                }
-                if (!leaderName.empty())
-                    addSystemChatMessage(leaderName + " is now the group leader.");
-                LOG_INFO("SMSG_GROUP_SET_LEADER: ", leaderName);
-                if (addonEventCallback_) {
-                    addonEventCallback_("PARTY_LEADER_CHANGED", {});
-                    addonEventCallback_("GROUP_ROSTER_UPDATE", {});
-                }
-            }
-            break;
-        }
-
-        // ---- Teleport / Transfer ----
-        case Opcode::MSG_MOVE_TELEPORT:
-        case Opcode::MSG_MOVE_TELEPORT_ACK:
-            handleTeleportAck(packet);
-            break;
-        case Opcode::SMSG_TRANSFER_PENDING: {
-            // SMSG_TRANSFER_PENDING: uint32 mapId, then optional transport data
-            uint32_t pendingMapId = packet.readUInt32();
-            LOG_INFO("SMSG_TRANSFER_PENDING: mapId=", pendingMapId);
-            // Optional: if remaining data, there's a transport entry + mapId
-            if (packet.getReadPos() + 8 <= packet.getSize()) {
-                uint32_t transportEntry = packet.readUInt32();
-                uint32_t transportMapId = packet.readUInt32();
-                LOG_INFO("  Transport entry=", transportEntry, " transportMapId=", transportMapId);
-            }
-            break;
-        }
-        case Opcode::SMSG_NEW_WORLD:
-            handleNewWorld(packet);
-            break;
-        case Opcode::SMSG_TRANSFER_ABORTED: {
-            uint32_t mapId = packet.readUInt32();
-            uint8_t reason = (packet.getReadPos() < packet.getSize()) ? packet.readUInt8() : 0;
-            LOG_WARNING("SMSG_TRANSFER_ABORTED: mapId=", mapId, " reason=", (int)reason);
-            // Provide reason-specific feedback (WotLK TRANSFER_ABORT_* codes)
-            const char* abortMsg = nullptr;
-            switch (reason) {
-                case 0x01: abortMsg = "Transfer aborted: difficulty unavailable."; break;
-                case 0x02: abortMsg = "Transfer aborted: expansion required."; break;
-                case 0x03: abortMsg = "Transfer aborted: instance not found."; break;
-                case 0x04: abortMsg = "Transfer aborted: too many instances. Please wait before entering a new instance."; break;
-                case 0x06: abortMsg = "Transfer aborted: instance is full."; break;
-                case 0x07: abortMsg = "Transfer aborted: zone is in combat."; break;
-                case 0x08: abortMsg = "Transfer aborted: you are already in this instance."; break;
-                case 0x09: abortMsg = "Transfer aborted: not enough players."; break;
-                case 0x0C: abortMsg = "Transfer aborted."; break;
-                default:   abortMsg = "Transfer aborted."; break;
-            }
-            addUIError(abortMsg);
-            addSystemChatMessage(abortMsg);
-            break;
-        }
-
-        // ---- Taxi / Flight Paths ----
-        case Opcode::SMSG_SHOWTAXINODES:
-            handleShowTaxiNodes(packet);
-            break;
-        case Opcode::SMSG_ACTIVATETAXIREPLY:
-            handleActivateTaxiReply(packet);
-            break;
-        case Opcode::SMSG_STANDSTATE_UPDATE:
-            // Server confirms stand state change (sit/stand/sleep/kneel)
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                standState_ = packet.readUInt8();
-                LOG_INFO("Stand state updated: ", static_cast<int>(standState_),
-                         " (", standState_ == 0 ? "stand" : standState_ == 1 ? "sit"
-                            : standState_ == 7 ? "dead" : standState_ == 8 ? "kneel" : "other", ")");
-                if (standStateCallback_) {
-                    standStateCallback_(standState_);
-                }
-            }
-            break;
-        case Opcode::SMSG_NEW_TAXI_PATH:
-            // Empty packet - server signals a new flight path was learned
-            // The actual node details come in the next SMSG_SHOWTAXINODES
-            addSystemChatMessage("New flight path discovered!");
-            break;
-
-        // ---- Arena / Battleground ----
-        case Opcode::SMSG_BATTLEFIELD_STATUS:
-            handleBattlefieldStatus(packet);
-            break;
-        case Opcode::SMSG_BATTLEFIELD_LIST:
-            handleBattlefieldList(packet);
-            break;
-        case Opcode::SMSG_BATTLEFIELD_PORT_DENIED:
-            addUIError("Battlefield port denied.");
-            addSystemChatMessage("Battlefield port denied.");
-            break;
-        case Opcode::MSG_BATTLEGROUND_PLAYER_POSITIONS: {
-            bgPlayerPositions_.clear();
-            for (int grp = 0; grp < 2; ++grp) {
-                if (packet.getSize() - packet.getReadPos() < 4) break;
-                uint32_t count = packet.readUInt32();
-                for (uint32_t i = 0; i < count && packet.getSize() - packet.getReadPos() >= 16; ++i) {
-                    BgPlayerPosition pos;
-                    pos.guid  = packet.readUInt64();
-                    pos.wowX  = packet.readFloat();
-                    pos.wowY  = packet.readFloat();
-                    pos.group = grp;
-                    bgPlayerPositions_.push_back(pos);
-                }
-            }
-            break;
-        }
-        case Opcode::SMSG_REMOVED_FROM_PVP_QUEUE:
-            addSystemChatMessage("You have been removed from the PvP queue.");
-            break;
-        case Opcode::SMSG_GROUP_JOINED_BATTLEGROUND:
-            addSystemChatMessage("Your group has joined the battleground.");
-            break;
-        case Opcode::SMSG_JOINED_BATTLEGROUND_QUEUE:
-            addSystemChatMessage("You have joined the battleground queue.");
-            break;
-        case Opcode::SMSG_BATTLEGROUND_PLAYER_JOINED: {
-            // SMSG_BATTLEGROUND_PLAYER_JOINED: uint64 guid
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint64_t guid = packet.readUInt64();
-                auto it = playerNameCache.find(guid);
-                std::string name = (it != playerNameCache.end()) ? it->second : "";
-                if (!name.empty())
-                    addSystemChatMessage(name + " has entered the battleground.");
-                LOG_INFO("SMSG_BATTLEGROUND_PLAYER_JOINED: guid=0x", std::hex, guid, std::dec);
-            }
-            break;
-        }
-        case Opcode::SMSG_BATTLEGROUND_PLAYER_LEFT: {
-            // SMSG_BATTLEGROUND_PLAYER_LEFT: uint64 guid
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint64_t guid = packet.readUInt64();
-                auto it = playerNameCache.find(guid);
-                std::string name = (it != playerNameCache.end()) ? it->second : "";
-                if (!name.empty())
-                    addSystemChatMessage(name + " has left the battleground.");
-                LOG_INFO("SMSG_BATTLEGROUND_PLAYER_LEFT: guid=0x", std::hex, guid, std::dec);
-            }
-            break;
-        }
-        case Opcode::SMSG_INSTANCE_DIFFICULTY:
-        case Opcode::MSG_SET_DUNGEON_DIFFICULTY:
-            handleInstanceDifficulty(packet);
-            break;
-        case Opcode::SMSG_INSTANCE_SAVE_CREATED:
-            // Zero-payload: your instance save was just created on the server.
-            addSystemChatMessage("You are now saved to this instance.");
-            LOG_INFO("SMSG_INSTANCE_SAVE_CREATED");
-            break;
-        case Opcode::SMSG_RAID_INSTANCE_MESSAGE: {
-            if (packet.getSize() - packet.getReadPos() >= 12) {
-                uint32_t msgType   = packet.readUInt32();
-                uint32_t mapId     = packet.readUInt32();
-                /*uint32_t diff =*/  packet.readUInt32();
-                std::string mapLabel = getMapName(mapId);
-                if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
-                // type: 1=warning(time left), 2=saved, 3=welcome
-                if (msgType == 1 && packet.getSize() - packet.getReadPos() >= 4) {
-                    uint32_t timeLeft = packet.readUInt32();
-                    uint32_t minutes  = timeLeft / 60;
-                    addSystemChatMessage(mapLabel + " will reset in " +
-                                        std::to_string(minutes) + " minute(s).");
-                } else if (msgType == 2) {
-                    addSystemChatMessage("You have been saved to " + mapLabel + ".");
-                } else if (msgType == 3) {
-                    addSystemChatMessage("Welcome to " + mapLabel + ".");
-                }
-                LOG_INFO("SMSG_RAID_INSTANCE_MESSAGE: type=", msgType, " map=", mapId);
-            }
-            break;
-        }
-        case Opcode::SMSG_INSTANCE_RESET: {
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t mapId = packet.readUInt32();
-                // Remove matching lockout from local cache
-                auto it = std::remove_if(instanceLockouts_.begin(), instanceLockouts_.end(),
-                    [mapId](const InstanceLockout& lo){ return lo.mapId == mapId; });
-                instanceLockouts_.erase(it, instanceLockouts_.end());
-                std::string mapLabel = getMapName(mapId);
-                if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
-                addSystemChatMessage(mapLabel + " has been reset.");
-                LOG_INFO("SMSG_INSTANCE_RESET: mapId=", mapId);
-            }
-            break;
-        }
-        case Opcode::SMSG_INSTANCE_RESET_FAILED: {
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint32_t mapId  = packet.readUInt32();
-                uint32_t reason = packet.readUInt32();
-                static const char* resetFailReasons[] = {
-                    "Not max level.", "Offline party members.", "Party members inside.",
-                    "Party members changing zone.", "Heroic difficulty only."
-                };
-                const char* reasonMsg = (reason < 5) ? resetFailReasons[reason] : "Unknown reason.";
-                std::string mapLabel = getMapName(mapId);
-                if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
-                addUIError("Cannot reset " + mapLabel + ": " + reasonMsg);
-                addSystemChatMessage("Cannot reset " + mapLabel + ": " + reasonMsg);
-                LOG_INFO("SMSG_INSTANCE_RESET_FAILED: mapId=", mapId, " reason=", reason);
-            }
-            break;
-        }
-        case Opcode::SMSG_INSTANCE_LOCK_WARNING_QUERY: {
-            // Server asks player to confirm entering a saved instance.
-            // We auto-confirm with CMSG_INSTANCE_LOCK_RESPONSE.
-            if (socket && packet.getSize() - packet.getReadPos() >= 17) {
-                uint32_t ilMapId    = packet.readUInt32();
-                uint32_t ilDiff     = packet.readUInt32();
-                uint32_t ilTimeLeft = packet.readUInt32();
-                packet.readUInt32(); // unk
-                uint8_t  ilLocked   = packet.readUInt8();
-                // Notify player which instance is being entered/resumed
-                std::string ilName = getMapName(ilMapId);
-                if (ilName.empty()) ilName = "instance #" + std::to_string(ilMapId);
-                static const char* kDiff[] = {"Normal","Heroic","25-Man","25-Man Heroic"};
-                std::string ilMsg = "Entering " + ilName;
-                if (ilDiff < 4) ilMsg += std::string(" (") + kDiff[ilDiff] + ")";
-                if (ilLocked && ilTimeLeft > 0) {
-                    uint32_t ilMins = ilTimeLeft / 60;
-                    ilMsg += " — " + std::to_string(ilMins) + " min remaining.";
-                } else {
-                    ilMsg += ".";
-                }
-                addSystemChatMessage(ilMsg);
-                // Send acceptance
-                network::Packet resp(wireOpcode(Opcode::CMSG_INSTANCE_LOCK_RESPONSE));
-                resp.writeUInt8(1); // 1=accept
-                socket->send(resp);
-                LOG_INFO("SMSG_INSTANCE_LOCK_WARNING_QUERY: auto-accepted mapId=", ilMapId,
-                         " diff=", ilDiff, " timeLeft=", ilTimeLeft);
-            }
-            break;
-        }
-
-        // ---- LFG / Dungeon Finder ----
-        case Opcode::SMSG_LFG_JOIN_RESULT:
-            handleLfgJoinResult(packet);
-            break;
-        case Opcode::SMSG_LFG_QUEUE_STATUS:
-            handleLfgQueueStatus(packet);
-            break;
-        case Opcode::SMSG_LFG_PROPOSAL_UPDATE:
-            handleLfgProposalUpdate(packet);
-            break;
-        case Opcode::SMSG_LFG_ROLE_CHECK_UPDATE:
-            handleLfgRoleCheckUpdate(packet);
-            break;
-        case Opcode::SMSG_LFG_UPDATE_PLAYER:
-        case Opcode::SMSG_LFG_UPDATE_PARTY:
-            handleLfgUpdatePlayer(packet);
-            break;
-        case Opcode::SMSG_LFG_PLAYER_REWARD:
-            handleLfgPlayerReward(packet);
-            break;
-        case Opcode::SMSG_LFG_BOOT_PROPOSAL_UPDATE:
-            handleLfgBootProposalUpdate(packet);
-            break;
-        case Opcode::SMSG_LFG_TELEPORT_DENIED:
-            handleLfgTeleportDenied(packet);
-            break;
-        case Opcode::SMSG_LFG_DISABLED:
-            addSystemChatMessage("The Dungeon Finder is currently disabled.");
-            LOG_INFO("SMSG_LFG_DISABLED received");
-            break;
-        case Opcode::SMSG_LFG_OFFER_CONTINUE:
-            addSystemChatMessage("Dungeon Finder: You may continue your dungeon.");
-            break;
-        case Opcode::SMSG_LFG_ROLE_CHOSEN: {
-            // uint64 guid + uint8 ready + uint32 roles
-            if (packet.getSize() - packet.getReadPos() >= 13) {
-                uint64_t roleGuid = packet.readUInt64();
-                uint8_t  ready    = packet.readUInt8();
-                uint32_t roles    = packet.readUInt32();
-                // Build a descriptive message for group chat
-                std::string roleName;
-                if (roles & 0x02) roleName += "Tank ";
-                if (roles & 0x04) roleName += "Healer ";
-                if (roles & 0x08) roleName += "DPS ";
-                if (roleName.empty()) roleName = "None";
-                // Find player name
-                std::string pName = "A player";
-                if (auto e = entityManager.getEntity(roleGuid))
-                    if (auto u = std::dynamic_pointer_cast<Unit>(e))
-                        pName = u->getName();
-                if (ready)
-                    addSystemChatMessage(pName + " has chosen: " + roleName);
-                LOG_DEBUG("SMSG_LFG_ROLE_CHOSEN: guid=", roleGuid,
-                          " ready=", (int)ready, " roles=", roles);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_LFG_UPDATE_SEARCH:
-        case Opcode::SMSG_UPDATE_LFG_LIST:
-        case Opcode::SMSG_LFG_PLAYER_INFO:
-        case Opcode::SMSG_LFG_PARTY_INFO:
-            // Informational LFG packets not yet surfaced in UI — consume silently.
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_OPEN_LFG_DUNGEON_FINDER:
-            // Server requests client to open the dungeon finder UI
-            packet.setReadPos(packet.getSize()); // consume any payload
-            if (openLfgCallback_) openLfgCallback_();
-            break;
-
-        case Opcode::SMSG_ARENA_TEAM_COMMAND_RESULT:
-            handleArenaTeamCommandResult(packet);
-            break;
-        case Opcode::SMSG_ARENA_TEAM_QUERY_RESPONSE:
-            handleArenaTeamQueryResponse(packet);
-            break;
-        case Opcode::SMSG_ARENA_TEAM_ROSTER:
-            handleArenaTeamRoster(packet);
-            break;
-        case Opcode::SMSG_ARENA_TEAM_INVITE:
-            handleArenaTeamInvite(packet);
-            break;
-        case Opcode::SMSG_ARENA_TEAM_EVENT:
-            handleArenaTeamEvent(packet);
-            break;
-        case Opcode::SMSG_ARENA_TEAM_STATS:
-            handleArenaTeamStats(packet);
-            break;
-        case Opcode::SMSG_ARENA_ERROR:
-            handleArenaError(packet);
-            break;
-        case Opcode::MSG_PVP_LOG_DATA:
-            handlePvpLogData(packet);
-            break;
-        case Opcode::MSG_INSPECT_ARENA_TEAMS: {
-            // WotLK: uint64 playerGuid + uint8 teamCount + per-team fields
-            if (packet.getSize() - packet.getReadPos() < 9) {
-                packet.setReadPos(packet.getSize());
-                break;
-            }
-            uint64_t inspGuid  = packet.readUInt64();
-            uint8_t  teamCount = packet.readUInt8();
-            if (teamCount > 3) teamCount = 3; // 2v2, 3v3, 5v5
-            if (inspGuid == inspectResult_.guid || inspectResult_.guid == 0) {
-                inspectResult_.guid = inspGuid;
-                inspectResult_.arenaTeams.clear();
-                for (uint8_t t = 0; t < teamCount; ++t) {
-                    if (packet.getSize() - packet.getReadPos() < 21) break;
-                    InspectArenaTeam team;
-                    team.teamId         = packet.readUInt32();
-                    team.type           = packet.readUInt8();
-                    team.weekGames      = packet.readUInt32();
-                    team.weekWins       = packet.readUInt32();
-                    team.seasonGames    = packet.readUInt32();
-                    team.seasonWins     = packet.readUInt32();
-                    team.name           = packet.readString();
-                    if (packet.getSize() - packet.getReadPos() < 4) break;
-                    team.personalRating = packet.readUInt32();
-                    inspectResult_.arenaTeams.push_back(std::move(team));
-                }
-            }
-            LOG_DEBUG("MSG_INSPECT_ARENA_TEAMS: guid=0x", std::hex, inspGuid, std::dec,
-                      " teams=", (int)teamCount);
-            break;
-        }
-        case Opcode::MSG_TALENT_WIPE_CONFIRM: {
-            // Server sends: uint64 npcGuid + uint32 cost
-            // Client must respond with the same opcode containing uint64 npcGuid to confirm.
-            if (packet.getSize() - packet.getReadPos() < 12) {
-                packet.setReadPos(packet.getSize());
-                break;
-            }
-            talentWipeNpcGuid_ = packet.readUInt64();
-            talentWipeCost_    = packet.readUInt32();
-            talentWipePending_ = true;
-            LOG_INFO("MSG_TALENT_WIPE_CONFIRM: npc=0x", std::hex, talentWipeNpcGuid_,
-                     std::dec, " cost=", talentWipeCost_);
-            if (addonEventCallback_)
-                addonEventCallback_("CONFIRM_TALENT_WIPE", {std::to_string(talentWipeCost_)});
-            break;
-        }
-
-        // ---- MSG_MOVE_* opcodes (server relays other players' movement) ----
-        case Opcode::MSG_MOVE_START_FORWARD:
-        case Opcode::MSG_MOVE_START_BACKWARD:
-        case Opcode::MSG_MOVE_STOP:
-        case Opcode::MSG_MOVE_START_STRAFE_LEFT:
-        case Opcode::MSG_MOVE_START_STRAFE_RIGHT:
-        case Opcode::MSG_MOVE_STOP_STRAFE:
-        case Opcode::MSG_MOVE_JUMP:
-        case Opcode::MSG_MOVE_START_TURN_LEFT:
-        case Opcode::MSG_MOVE_START_TURN_RIGHT:
-        case Opcode::MSG_MOVE_STOP_TURN:
-        case Opcode::MSG_MOVE_SET_FACING:
-        case Opcode::MSG_MOVE_FALL_LAND:
-        case Opcode::MSG_MOVE_HEARTBEAT:
-        case Opcode::MSG_MOVE_START_SWIM:
-        case Opcode::MSG_MOVE_STOP_SWIM:
-        case Opcode::MSG_MOVE_SET_WALK_MODE:
-        case Opcode::MSG_MOVE_SET_RUN_MODE:
-        case Opcode::MSG_MOVE_START_PITCH_UP:
-        case Opcode::MSG_MOVE_START_PITCH_DOWN:
-        case Opcode::MSG_MOVE_STOP_PITCH:
-        case Opcode::MSG_MOVE_START_ASCEND:
-        case Opcode::MSG_MOVE_STOP_ASCEND:
-        case Opcode::MSG_MOVE_START_DESCEND:
-        case Opcode::MSG_MOVE_SET_PITCH:
-        case Opcode::MSG_MOVE_GRAVITY_CHNG:
-        case Opcode::MSG_MOVE_UPDATE_CAN_FLY:
-        case Opcode::MSG_MOVE_UPDATE_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY:
-        case Opcode::MSG_MOVE_ROOT:
-        case Opcode::MSG_MOVE_UNROOT:
-            if (state == WorldState::IN_WORLD) {
-                handleOtherPlayerMovement(packet);
-            }
-            break;
-
-        // ---- Broadcast speed changes (server→client, no ACK) ----
-        // Format: PackedGuid (mover) + MovementInfo (variable) + float speed
-        // MovementInfo is complex (optional transport/fall/spline blocks based on flags).
-        // We consume the packet to suppress "Unhandled world opcode" warnings.
-        case Opcode::MSG_MOVE_SET_RUN_SPEED:
-        case Opcode::MSG_MOVE_SET_RUN_BACK_SPEED:
-        case Opcode::MSG_MOVE_SET_WALK_SPEED:
-        case Opcode::MSG_MOVE_SET_SWIM_SPEED:
-        case Opcode::MSG_MOVE_SET_SWIM_BACK_SPEED:
-        case Opcode::MSG_MOVE_SET_FLIGHT_SPEED:
-        case Opcode::MSG_MOVE_SET_FLIGHT_BACK_SPEED:
-            if (state == WorldState::IN_WORLD) {
-                handleMoveSetSpeed(packet);
-            }
-            break;
-
-        // ---- Mail ----
-        case Opcode::SMSG_SHOW_MAILBOX:
-            handleShowMailbox(packet);
-            break;
-        case Opcode::SMSG_MAIL_LIST_RESULT:
-            handleMailListResult(packet);
-            break;
-        case Opcode::SMSG_SEND_MAIL_RESULT:
-            handleSendMailResult(packet);
-            break;
-        case Opcode::SMSG_RECEIVED_MAIL:
-            handleReceivedMail(packet);
-            break;
-        case Opcode::MSG_QUERY_NEXT_MAIL_TIME:
-            handleQueryNextMailTime(packet);
-            break;
-        case Opcode::SMSG_CHANNEL_LIST: {
-            // string channelName + uint8 flags + uint32 count + count×(uint64 guid + uint8 memberFlags)
-            std::string chanName = packet.readString();
-            if (packet.getSize() - packet.getReadPos() < 5) break;
-            /*uint8_t chanFlags =*/ packet.readUInt8();
-            uint32_t memberCount = packet.readUInt32();
-            memberCount = std::min(memberCount, 200u);
-            addSystemChatMessage(chanName + " has " + std::to_string(memberCount) + " member(s):");
-            for (uint32_t i = 0; i < memberCount; ++i) {
-                if (packet.getSize() - packet.getReadPos() < 9) break;
-                uint64_t memberGuid = packet.readUInt64();
-                uint8_t memberFlags = packet.readUInt8();
-                // Look up the name: entity manager > playerNameCache
-                auto entity = entityManager.getEntity(memberGuid);
-                std::string name;
-                if (entity) {
-                    auto player = std::dynamic_pointer_cast<Player>(entity);
-                    if (player && !player->getName().empty()) name = player->getName();
-                }
-                if (name.empty()) {
-                    auto nit = playerNameCache.find(memberGuid);
-                    if (nit != playerNameCache.end()) name = nit->second;
-                }
-                if (name.empty()) name = "(unknown)";
-                std::string entry = "  " + name;
-                if (memberFlags & 0x01) entry += " [Moderator]";
-                if (memberFlags & 0x02) entry += " [Muted]";
-                addSystemChatMessage(entry);
-                LOG_DEBUG("  channel member: 0x", std::hex, memberGuid, std::dec,
-                          " flags=", (int)memberFlags, " name=", name);
-            }
-            break;
-        }
-        case Opcode::SMSG_INSPECT_RESULTS_UPDATE:
-            handleInspectResults(packet);
-            break;
-
-        // ---- Bank ----
-        case Opcode::SMSG_SHOW_BANK:
-            handleShowBank(packet);
-            break;
-        case Opcode::SMSG_BUY_BANK_SLOT_RESULT:
-            handleBuyBankSlotResult(packet);
-            break;
-
-        // ---- Guild Bank ----
-        case Opcode::SMSG_GUILD_BANK_LIST:
-            handleGuildBankList(packet);
-            break;
-
-        // ---- Auction House ----
-        case Opcode::MSG_AUCTION_HELLO:
-            handleAuctionHello(packet);
-            break;
-        case Opcode::SMSG_AUCTION_LIST_RESULT:
-            handleAuctionListResult(packet);
-            break;
-        case Opcode::SMSG_AUCTION_OWNER_LIST_RESULT:
-            handleAuctionOwnerListResult(packet);
-            break;
-        case Opcode::SMSG_AUCTION_BIDDER_LIST_RESULT:
-            handleAuctionBidderListResult(packet);
-            break;
-        case Opcode::SMSG_AUCTION_COMMAND_RESULT:
-            handleAuctionCommandResult(packet);
-            break;
-        case Opcode::SMSG_AUCTION_OWNER_NOTIFICATION: {
-            // auctionId(u32) + action(u32) + error(u32) + itemEntry(u32) + randomPropertyId(u32) + ...
-            // action: 0=sold/won, 1=expired, 2=bid placed on your auction
-            if (packet.getSize() - packet.getReadPos() >= 16) {
-                /*uint32_t auctionId =*/ packet.readUInt32();
-                uint32_t action    = packet.readUInt32();
-                /*uint32_t error   =*/ packet.readUInt32();
-                uint32_t itemEntry = packet.readUInt32();
-                int32_t ownerRandProp = 0;
-                if (packet.getSize() - packet.getReadPos() >= 4)
-                    ownerRandProp = static_cast<int32_t>(packet.readUInt32());
-                ensureItemInfo(itemEntry);
-                auto* info = getItemInfo(itemEntry);
-                std::string rawName = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
-                if (ownerRandProp != 0) {
-                    std::string suffix = getRandomPropertyName(ownerRandProp);
-                    if (!suffix.empty()) rawName += " " + suffix;
-                }
-                uint32_t aucQuality = info ? info->quality : 1u;
-                std::string itemLink = buildItemLink(itemEntry, aucQuality, rawName);
-                if (action == 1)
-                    addSystemChatMessage("Your auction of " + itemLink + " has expired.");
-                else if (action == 2)
-                    addSystemChatMessage("A bid has been placed on your auction of " + itemLink + ".");
-                else
-                    addSystemChatMessage("Your auction of " + itemLink + " has sold!");
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_AUCTION_BIDDER_NOTIFICATION: {
-            // auctionHouseId(u32) + auctionId(u32) + bidderGuid(u64) + bidAmount(u32) + outbidAmount(u32) + itemEntry(u32) + randomPropertyId(u32)
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                /*uint32_t auctionId =*/ packet.readUInt32();
-                uint32_t itemEntry = packet.readUInt32();
-                int32_t bidRandProp = 0;
-                // Try to read randomPropertyId if enough data remains
-                if (packet.getSize() - packet.getReadPos() >= 4)
-                    bidRandProp = static_cast<int32_t>(packet.readUInt32());
-                ensureItemInfo(itemEntry);
-                auto* info = getItemInfo(itemEntry);
-                std::string rawName2 = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
-                if (bidRandProp != 0) {
-                    std::string suffix = getRandomPropertyName(bidRandProp);
-                    if (!suffix.empty()) rawName2 += " " + suffix;
-                }
-                uint32_t bidQuality = info ? info->quality : 1u;
-                std::string bidLink = buildItemLink(itemEntry, bidQuality, rawName2);
-                addSystemChatMessage("You have been outbid on " + bidLink + ".");
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_AUCTION_REMOVED_NOTIFICATION: {
-            // uint32 auctionId + uint32 itemEntry + uint32 itemRandom — auction expired/cancelled
-            if (packet.getSize() - packet.getReadPos() >= 12) {
-                /*uint32_t auctionId =*/ packet.readUInt32();
-                uint32_t itemEntry = packet.readUInt32();
-                int32_t itemRandom = static_cast<int32_t>(packet.readUInt32());
-                ensureItemInfo(itemEntry);
-                auto* info = getItemInfo(itemEntry);
-                std::string rawName3 = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
-                if (itemRandom != 0) {
-                    std::string suffix = getRandomPropertyName(itemRandom);
-                    if (!suffix.empty()) rawName3 += " " + suffix;
-                }
-                uint32_t remQuality = info ? info->quality : 1u;
-                std::string remLink = buildItemLink(itemEntry, remQuality, rawName3);
-                addSystemChatMessage("Your auction of " + remLink + " has expired.");
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_OPEN_CONTAINER: {
-            // uint64 containerGuid — tells client to open this container
-            // The actual items come via update packets; we just log this.
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint64_t containerGuid = packet.readUInt64();
-                LOG_DEBUG("SMSG_OPEN_CONTAINER: guid=0x", std::hex, containerGuid, std::dec);
-            }
-            break;
-        }
-        case Opcode::SMSG_GM_TICKET_STATUS_UPDATE:
-            // GM ticket status (new/updated); no ticket UI yet
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_PLAYER_VEHICLE_DATA: {
-            // PackedGuid (player guid) + uint32 vehicleId
-            // vehicleId == 0 means the player left the vehicle
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                (void)UpdateObjectParser::readPackedGuid(packet); // player guid (unused)
-            }
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                vehicleId_ = packet.readUInt32();
-            } else {
-                vehicleId_ = 0;
-            }
-            break;
-        }
-        case Opcode::SMSG_SET_EXTRA_AURA_INFO_NEED_UPDATE:
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_TAXINODE_STATUS: {
-            // guid(8) + status(1): status 1 = NPC has available/new routes for this player
-            if (packet.getSize() - packet.getReadPos() >= 9) {
-                uint64_t npcGuid = packet.readUInt64();
-                uint8_t  status  = packet.readUInt8();
-                taxiNpcHasRoutes_[npcGuid] = (status != 0);
-            }
-            break;
-        }
-        case Opcode::SMSG_INIT_EXTRA_AURA_INFO_OBSOLETE:
-        case Opcode::SMSG_SET_EXTRA_AURA_INFO_OBSOLETE: {
-            // TBC 2.4.3 aura tracking: replaces SMSG_AURA_UPDATE which doesn't exist in TBC.
-            // Format: uint64 targetGuid + uint8 count + N×{uint8 slot, uint32 spellId,
-            //         uint8 effectIndex, uint8 flags, uint32 durationMs, uint32 maxDurationMs}
-            const bool isInit = (*logicalOp == Opcode::SMSG_INIT_EXTRA_AURA_INFO_OBSOLETE);
-            auto remaining = [&]() { return packet.getSize() - packet.getReadPos(); };
-            if (remaining() < 9) { packet.setReadPos(packet.getSize()); break; }
-            uint64_t auraTargetGuid = packet.readUInt64();
-            uint8_t count = packet.readUInt8();
-
-            std::vector<AuraSlot>* auraList = nullptr;
-            if (auraTargetGuid == playerGuid)       auraList = &playerAuras;
-            else if (auraTargetGuid == targetGuid)  auraList = &targetAuras;
-            else if (auraTargetGuid != 0)           auraList = &unitAurasCache_[auraTargetGuid];
-
-            if (auraList && isInit) auraList->clear();
-
-            uint64_t nowMs = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now().time_since_epoch()).count());
-
-            for (uint8_t i = 0; i < count && remaining() >= 15; i++) {
-                uint8_t  slot        = packet.readUInt8();   // 1 byte
-                uint32_t spellId     = packet.readUInt32();  // 4 bytes
-                (void)               packet.readUInt8();     // effectIndex: 1 byte (unused for slot display)
-                uint8_t  flags       = packet.readUInt8();   // 1 byte
-                uint32_t durationMs  = packet.readUInt32();  // 4 bytes
-                uint32_t maxDurMs    = packet.readUInt32();  // 4 bytes — total 15 bytes per entry
-
-                if (auraList) {
-                    while (auraList->size() <= slot) auraList->push_back(AuraSlot{});
-                    AuraSlot& a = (*auraList)[slot];
-                    a.spellId      = spellId;
-                    // TBC uses same flag convention as Classic: 0x02=harmful, 0x04=beneficial.
-                    // Normalize to WotLK SMSG_AURA_UPDATE convention: 0x80=debuff, 0=buff.
-                    a.flags        = (flags & 0x02) ? 0x80u : 0u;
-                    a.durationMs   = (durationMs == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(durationMs);
-                    a.maxDurationMs= (maxDurMs   == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(maxDurMs);
-                    a.receivedAtMs = nowMs;
-                }
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::MSG_MOVE_WORLDPORT_ACK:
-            // Client uses this outbound; treat inbound variant as no-op for robustness.
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::MSG_MOVE_TIME_SKIPPED:
-            // Observed custom server packet (8 bytes). Safe-consume for now.
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- Logout cancel ACK ----
-        case Opcode::SMSG_LOGOUT_CANCEL_ACK:
-            // loggingOut_ already cleared by cancelLogout(); this is server's confirmation
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- Guild decline ----
-        case Opcode::SMSG_GUILD_DECLINE: {
-            if (packet.getReadPos() < packet.getSize()) {
-                std::string name = packet.readString();
-                addSystemChatMessage(name + " declined your guild invitation.");
-            }
-            break;
-        }
-
-        // ---- Talents involuntarily reset ----
-        case Opcode::SMSG_TALENTS_INVOLUNTARILY_RESET:
-            // Clear cached talent data so the talent screen reflects the reset.
-            learnedTalents_[0].clear();
-            learnedTalents_[1].clear();
-            addUIError("Your talents have been reset by the server.");
-            addSystemChatMessage("Your talents have been reset by the server.");
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- Account data sync ----
-        case Opcode::SMSG_UPDATE_ACCOUNT_DATA:
-        case Opcode::SMSG_UPDATE_ACCOUNT_DATA_COMPLETE:
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- Rest state ----
-        case Opcode::SMSG_SET_REST_START: {
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t restTrigger = packet.readUInt32();
-                isResting_ = (restTrigger > 0);
-                addSystemChatMessage(isResting_ ? "You are now resting."
-                                                : "You are no longer resting.");
-                if (addonEventCallback_)
-                    addonEventCallback_("PLAYER_UPDATE_RESTING", {});
-            }
-            break;
-        }
-
-        // ---- Aura duration update ----
-        case Opcode::SMSG_UPDATE_AURA_DURATION: {
-            if (packet.getSize() - packet.getReadPos() >= 5) {
-                uint8_t slot       = packet.readUInt8();
-                uint32_t durationMs = packet.readUInt32();
-                handleUpdateAuraDuration(slot, durationMs);
-            }
-            break;
-        }
-
-        // ---- Item name query response ----
-        case Opcode::SMSG_ITEM_NAME_QUERY_RESPONSE: {
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t itemId = packet.readUInt32();
-                std::string name = packet.readString();
-                if (!itemInfoCache_.count(itemId) && !name.empty()) {
-                    ItemQueryResponseData stub;
-                    stub.entry = itemId;
-                    stub.name  = std::move(name);
-                    stub.valid = true;
-                    itemInfoCache_[itemId] = std::move(stub);
-                }
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- Mount special animation ----
-        case Opcode::SMSG_MOUNTSPECIAL_ANIM:
-            (void)UpdateObjectParser::readPackedGuid(packet);
-            break;
-
-        // ---- Character customisation / faction change results ----
-        case Opcode::SMSG_CHAR_CUSTOMIZE: {
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                uint8_t result = packet.readUInt8();
-                addSystemChatMessage(result == 0 ? "Character customization complete."
-                                                 : "Character customization failed.");
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_CHAR_FACTION_CHANGE: {
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                uint8_t result = packet.readUInt8();
-                addSystemChatMessage(result == 0 ? "Faction change complete."
-                                                 : "Faction change failed.");
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- Invalidate cached player data ----
-        case Opcode::SMSG_INVALIDATE_PLAYER: {
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint64_t guid = packet.readUInt64();
-                playerNameCache.erase(guid);
-            }
-            break;
-        }
-
-        // ---- Movie trigger ----
-        case Opcode::SMSG_TRIGGER_MOVIE: {
-            // uint32 movieId — we don't play movies; acknowledge immediately.
-            packet.setReadPos(packet.getSize());
-            // WotLK servers expect CMSG_COMPLETE_MOVIE after the movie finishes;
-            // without it, the server may hang or disconnect the client.
-            uint16_t wire = wireOpcode(Opcode::CMSG_COMPLETE_MOVIE);
-            if (wire != 0xFFFF) {
-                network::Packet ack(wire);
-                socket->send(ack);
-                LOG_DEBUG("SMSG_TRIGGER_MOVIE: skipped, sent CMSG_COMPLETE_MOVIE");
-            }
-            break;
-        }
-
-        // ---- Equipment sets ----
-        case Opcode::SMSG_EQUIPMENT_SET_LIST:
-            handleEquipmentSetList(packet);
-            break;
-        case Opcode::SMSG_EQUIPMENT_SET_USE_RESULT: {
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                uint8_t result = packet.readUInt8();
-                if (result != 0) { addUIError("Failed to equip item set."); addSystemChatMessage("Failed to equip item set."); }
-            }
-            break;
-        }
-
-        // ---- LFG informational (not yet surfaced in UI) ----
-        case Opcode::SMSG_LFG_UPDATE:
-        case Opcode::SMSG_LFG_UPDATE_LFG:
-        case Opcode::SMSG_LFG_UPDATE_LFM:
-        case Opcode::SMSG_LFG_UPDATE_QUEUED:
-        case Opcode::SMSG_LFG_PENDING_INVITE:
-        case Opcode::SMSG_LFG_PENDING_MATCH:
-        case Opcode::SMSG_LFG_PENDING_MATCH_DONE:
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- LFG error/timeout states ----
-        case Opcode::SMSG_LFG_TIMEDOUT:
-            // Server-side LFG invite timed out (no response within time limit)
-            addSystemChatMessage("Dungeon Finder: Invite timed out.");
-            if (openLfgCallback_) openLfgCallback_();
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_LFG_OTHER_TIMEDOUT:
-            // Another party member failed to respond to a LFG role-check in time
-            addSystemChatMessage("Dungeon Finder: Another player's invite timed out.");
-            if (openLfgCallback_) openLfgCallback_();
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_LFG_AUTOJOIN_FAILED: {
-            // uint32 result — LFG auto-join attempt failed (player selected auto-join at queue time)
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t result = packet.readUInt32();
-                (void)result;
-            }
-            addUIError("Dungeon Finder: Auto-join failed.");
-            addSystemChatMessage("Dungeon Finder: Auto-join failed.");
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_LFG_AUTOJOIN_FAILED_NO_PLAYER:
-            // No eligible players found for auto-join
-            addUIError("Dungeon Finder: No players available for auto-join.");
-            addSystemChatMessage("Dungeon Finder: No players available for auto-join.");
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_LFG_LEADER_IS_LFM:
-            // Party leader is currently set to Looking for More (LFM) mode
-            addSystemChatMessage("Your party leader is currently Looking for More.");
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- Meeting stone (Classic/TBC group-finding via summon stone) ----
-        case Opcode::SMSG_MEETINGSTONE_SETQUEUE: {
-            // uint32 zoneId + uint8 level_min + uint8 level_max — player queued for meeting stone
-            if (packet.getSize() - packet.getReadPos() >= 6) {
-                uint32_t zoneId   = packet.readUInt32();
-                uint8_t  levelMin = packet.readUInt8();
-                uint8_t  levelMax = packet.readUInt8();
-                char buf[128];
-                std::string zoneName = getAreaName(zoneId);
-                if (!zoneName.empty())
-                    std::snprintf(buf, sizeof(buf),
-                        "You are now in the Meeting Stone queue for %s (levels %u-%u).",
-                        zoneName.c_str(), levelMin, levelMax);
-                else
-                    std::snprintf(buf, sizeof(buf),
-                        "You are now in the Meeting Stone queue for zone %u (levels %u-%u).",
-                        zoneId, levelMin, levelMax);
-                addSystemChatMessage(buf);
-                LOG_INFO("SMSG_MEETINGSTONE_SETQUEUE: zone=", zoneId,
-                         " levels=", (int)levelMin, "-", (int)levelMax);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_MEETINGSTONE_COMPLETE:
-            // Server confirms group found and teleport summon is ready
-            addSystemChatMessage("Meeting Stone: Your group is ready! Use the Meeting Stone to summon.");
-            LOG_INFO("SMSG_MEETINGSTONE_COMPLETE");
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_MEETINGSTONE_IN_PROGRESS:
-            // Meeting stone search is still ongoing
-            addSystemChatMessage("Meeting Stone: Searching for group members...");
-            LOG_DEBUG("SMSG_MEETINGSTONE_IN_PROGRESS");
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_MEETINGSTONE_MEMBER_ADDED: {
-            // uint64 memberGuid — a player was added to your group via meeting stone
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint64_t memberGuid = packet.readUInt64();
-                auto nit = playerNameCache.find(memberGuid);
-                if (nit != playerNameCache.end() && !nit->second.empty()) {
-                    addSystemChatMessage("Meeting Stone: " + nit->second +
-                                         " has been added to your group.");
-                } else {
-                    addSystemChatMessage("Meeting Stone: A new player has been added to your group.");
-                }
-                LOG_INFO("SMSG_MEETINGSTONE_MEMBER_ADDED: guid=0x", std::hex, memberGuid, std::dec);
-            }
-            break;
-        }
-        case Opcode::SMSG_MEETINGSTONE_JOINFAILED: {
-            // uint8 reason — failed to join group via meeting stone
-            // 0=target_not_in_lfg, 1=target_in_party, 2=target_invalid_map, 3=target_not_available
-            static const char* kMeetingstoneErrors[] = {
-                "Target player is not using the Meeting Stone.",
-                "Target player is already in a group.",
-                "You are not in a valid zone for that Meeting Stone.",
-                "Target player is not available.",
-            };
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                uint8_t reason = packet.readUInt8();
-                const char* msg = (reason < 4) ? kMeetingstoneErrors[reason]
-                                               : "Meeting Stone: Could not join group.";
-                addSystemChatMessage(msg);
-                LOG_INFO("SMSG_MEETINGSTONE_JOINFAILED: reason=", (int)reason);
-            }
-            break;
-        }
-        case Opcode::SMSG_MEETINGSTONE_LEAVE:
-            // Player was removed from the meeting stone queue (left, or group disbanded)
-            addSystemChatMessage("You have left the Meeting Stone queue.");
-            LOG_DEBUG("SMSG_MEETINGSTONE_LEAVE");
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- GM Ticket responses ----
-        case Opcode::SMSG_GMTICKET_CREATE: {
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                uint8_t res = packet.readUInt8();
-                addSystemChatMessage(res == 1 ? "GM ticket submitted."
-                                              : "Failed to submit GM ticket.");
-            }
-            break;
-        }
-        case Opcode::SMSG_GMTICKET_UPDATETEXT: {
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                uint8_t res = packet.readUInt8();
-                addSystemChatMessage(res == 1 ? "GM ticket updated."
-                                              : "Failed to update GM ticket.");
-            }
-            break;
-        }
-        case Opcode::SMSG_GMTICKET_DELETETICKET: {
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                uint8_t res = packet.readUInt8();
-                addSystemChatMessage(res == 9 ? "GM ticket deleted."
-                                              : "No ticket to delete.");
-            }
-            break;
-        }
-        case Opcode::SMSG_GMTICKET_GETTICKET: {
-            // WotLK 3.3.5a format:
-            //   uint8  status  — 1=no ticket, 6=has open ticket, 3=closed, 10=suspended
-            // If status == 6 (GMTICKET_STATUS_HASTEXT):
-            //   cstring ticketText
-            //   uint32  ticketAge       (seconds old)
-            //   uint32  daysUntilOld    (days remaining before escalation)
-            //   float   waitTimeHours   (estimated GM wait time)
-            if (packet.getSize() - packet.getReadPos() < 1) { packet.setReadPos(packet.getSize()); break; }
-            uint8_t gmStatus = packet.readUInt8();
-            // Status 6 = GMTICKET_STATUS_HASTEXT — open ticket with text
-            if (gmStatus == 6 && packet.getSize() - packet.getReadPos() >= 1) {
-                gmTicketText_    = packet.readString();
-                uint32_t ageSec  = (packet.getSize() - packet.getReadPos() >= 4) ? packet.readUInt32() : 0;
-                /*uint32_t daysLeft =*/ (packet.getSize() - packet.getReadPos() >= 4) ? packet.readUInt32() : 0;
-                gmTicketWaitHours_ = (packet.getSize() - packet.getReadPos() >= 4)
-                    ? packet.readFloat() : 0.0f;
-                gmTicketActive_ = true;
-                char buf[256];
-                if (ageSec < 60) {
-                    std::snprintf(buf, sizeof(buf),
-                        "You have an open GM ticket (submitted %us ago). Estimated wait: %.1f hours.",
-                        ageSec, gmTicketWaitHours_);
-                } else {
-                    uint32_t ageMin = ageSec / 60;
-                    std::snprintf(buf, sizeof(buf),
-                        "You have an open GM ticket (submitted %um ago). Estimated wait: %.1f hours.",
-                        ageMin, gmTicketWaitHours_);
-                }
-                addSystemChatMessage(buf);
-                LOG_INFO("SMSG_GMTICKET_GETTICKET: open ticket age=", ageSec,
-                         "s wait=", gmTicketWaitHours_, "h");
-            } else if (gmStatus == 3) {
-                gmTicketActive_ = false;
-                gmTicketText_.clear();
-                addSystemChatMessage("Your GM ticket has been closed.");
-                LOG_INFO("SMSG_GMTICKET_GETTICKET: ticket closed");
-            } else if (gmStatus == 10) {
-                gmTicketActive_ = false;
-                gmTicketText_.clear();
-                addSystemChatMessage("Your GM ticket has been suspended.");
-                LOG_INFO("SMSG_GMTICKET_GETTICKET: ticket suspended");
-            } else {
-                // Status 1 = no open ticket (default/no ticket)
-                gmTicketActive_ = false;
-                gmTicketText_.clear();
-                LOG_DEBUG("SMSG_GMTICKET_GETTICKET: no open ticket (status=", (int)gmStatus, ")");
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_GMTICKET_SYSTEMSTATUS: {
-            // uint32 status: 1 = GM support available, 0 = offline/unavailable
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t sysStatus = packet.readUInt32();
-                gmSupportAvailable_ = (sysStatus != 0);
-                addSystemChatMessage(gmSupportAvailable_
-                    ? "GM support is currently available."
-                    : "GM support is currently unavailable.");
-                LOG_INFO("SMSG_GMTICKET_SYSTEMSTATUS: available=", gmSupportAvailable_);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- DK rune tracking ----
-        case Opcode::SMSG_CONVERT_RUNE: {
-            // uint8 runeIndex + uint8 newRuneType (0=Blood,1=Unholy,2=Frost,3=Death)
-            if (packet.getSize() - packet.getReadPos() < 2) {
-                packet.setReadPos(packet.getSize());
-                break;
-            }
-            uint8_t idx  = packet.readUInt8();
-            uint8_t type = packet.readUInt8();
-            if (idx < 6) playerRunes_[idx].type = static_cast<RuneType>(type & 0x3);
-            break;
-        }
-        case Opcode::SMSG_RESYNC_RUNES: {
-            // uint8 runeReadyMask (bit i=1 → rune i is ready)
-            // uint8[6] cooldowns (0=ready, 255=just used → readyFraction = 1 - val/255)
-            if (packet.getSize() - packet.getReadPos() < 7) {
-                packet.setReadPos(packet.getSize());
-                break;
-            }
-            uint8_t readyMask = packet.readUInt8();
-            for (int i = 0; i < 6; i++) {
-                uint8_t cd = packet.readUInt8();
-                playerRunes_[i].ready = (readyMask & (1u << i)) != 0;
-                playerRunes_[i].readyFraction = 1.0f - cd / 255.0f;
-                if (playerRunes_[i].ready) playerRunes_[i].readyFraction = 1.0f;
-            }
-            break;
-        }
-        case Opcode::SMSG_ADD_RUNE_POWER: {
-            // uint32 runeMask (bit i=1 → rune i just became ready)
-            if (packet.getSize() - packet.getReadPos() < 4) {
-                packet.setReadPos(packet.getSize());
-                break;
-            }
-            uint32_t runeMask = packet.readUInt32();
-            for (int i = 0; i < 6; i++) {
-                if (runeMask & (1u << i)) {
-                    playerRunes_[i].ready = true;
-                    playerRunes_[i].readyFraction = 1.0f;
-                }
-            }
-            break;
-        }
-
-        // ---- Spell combat logs (consume) ----
-        case Opcode::SMSG_SPELLDAMAGESHIELD: {
-            // Classic: packed_guid victim + packed_guid caster + spellId(4) + damage(4) + schoolMask(4)
-            // TBC:     uint64 victim + uint64 caster + spellId(4) + damage(4) + schoolMask(4)
-            // WotLK:   packed_guid victim + packed_guid caster + spellId(4) + damage(4) + absorbed(4) + schoolMask(4)
-            const bool shieldTbc = isActiveExpansion("tbc");
-            const bool shieldWotlkLike = !isClassicLikeExpansion() && !shieldTbc;
-            const auto shieldRem = [&]() { return packet.getSize() - packet.getReadPos(); };
-            const size_t shieldMinSz = shieldTbc ? 24u : 2u;
-            if (packet.getSize() - packet.getReadPos() < shieldMinSz) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            if (!shieldTbc && (!hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t victimGuid = shieldTbc
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < (shieldTbc ? 8u : 1u)
-                || (!shieldTbc && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t casterGuid = shieldTbc
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            const size_t shieldTailSize = shieldWotlkLike ? 16u : 12u;
-            if (shieldRem() < shieldTailSize) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint32_t shieldSpellId = packet.readUInt32();
-            uint32_t damage        = packet.readUInt32();
-            if (shieldWotlkLike)
-                /*uint32_t absorbed =*/ packet.readUInt32();
-            /*uint32_t school =*/  packet.readUInt32();
-            // Show combat text: damage shield reflect
-            if (casterGuid == playerGuid) {
-                // We have a damage shield that reflected damage
-                addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(damage), shieldSpellId, true, 0, casterGuid, victimGuid);
-            } else if (victimGuid == playerGuid) {
-                // A damage shield hit us (e.g. target's Thorns)
-                addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(damage), shieldSpellId, false, 0, casterGuid, victimGuid);
-            }
-            break;
-        }
-        case Opcode::SMSG_AURACASTLOG:
-        case Opcode::SMSG_SPELLBREAKLOG:
-            // These packets are not damage-shield events. Consume them without
-            // synthesizing reflected damage entries or misattributing GUIDs.
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_SPELLORDAMAGE_IMMUNE: {
-            // WotLK/Classic/Turtle: packed casterGuid + packed victimGuid + uint32 spellId + uint8 saveType
-            // TBC:                  full uint64 casterGuid + full uint64 victimGuid + uint32 + uint8
-            const bool immuneUsesFullGuid = isActiveExpansion("tbc");
-            const size_t minSz = immuneUsesFullGuid ? 21u : 2u;
-            if (packet.getSize() - packet.getReadPos() < minSz) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            if (!immuneUsesFullGuid && !hasFullPackedGuid(packet)) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t casterGuid = immuneUsesFullGuid
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < (immuneUsesFullGuid ? 8u : 2u)
-                || (!immuneUsesFullGuid && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t victimGuid = immuneUsesFullGuid
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 5) break;
-            uint32_t immuneSpellId = packet.readUInt32();
-            /*uint8_t saveType =*/ packet.readUInt8();
-            // Show IMMUNE text when the player is the caster (we hit an immune target)
-            // or the victim (we are immune)
-            if (casterGuid == playerGuid || victimGuid == playerGuid) {
-                addCombatText(CombatTextEntry::IMMUNE, 0, immuneSpellId,
-                              casterGuid == playerGuid, 0, casterGuid, victimGuid);
-            }
-            break;
-        }
-        case Opcode::SMSG_SPELLDISPELLOG: {
-            // WotLK/Classic/Turtle: packed casterGuid + packed victimGuid + uint32 dispelSpell + uint8 isStolen
-            // TBC:                  full uint64 casterGuid + full uint64 victimGuid + ...
-            // + uint32 count + count × (uint32 dispelled_spellId + uint32 unk)
-            const bool dispelUsesFullGuid = isActiveExpansion("tbc");
-            if (packet.getSize() - packet.getReadPos() < (dispelUsesFullGuid ? 8u : 1u)
-                || (!dispelUsesFullGuid && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t casterGuid = dispelUsesFullGuid
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < (dispelUsesFullGuid ? 8u : 1u)
-                || (!dispelUsesFullGuid && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t victimGuid = dispelUsesFullGuid
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 9) break;
-            /*uint32_t dispelSpell =*/ packet.readUInt32();
-            uint8_t isStolen = packet.readUInt8();
-            uint32_t count   = packet.readUInt32();
-            // Preserve every dispelled aura in the combat log instead of collapsing
-            // multi-aura packets down to the first entry only.
-            const size_t dispelEntrySize = dispelUsesFullGuid ? 8u : 5u;
-            std::vector<uint32_t> dispelledIds;
-            dispelledIds.reserve(count);
-            for (uint32_t i = 0; i < count && packet.getSize() - packet.getReadPos() >= dispelEntrySize; ++i) {
-                uint32_t dispelledId = packet.readUInt32();
-                if (dispelUsesFullGuid) {
-                    /*uint32_t unk =*/ packet.readUInt32();
-                } else {
-                    /*uint8_t isPositive =*/ packet.readUInt8();
-                }
-                if (dispelledId != 0) {
-                    dispelledIds.push_back(dispelledId);
-                }
-            }
-            // Show system message if player was victim or caster
-            if (victimGuid == playerGuid || casterGuid == playerGuid) {
-                std::vector<uint32_t> loggedIds;
-                if (isStolen) {
-                    loggedIds.reserve(dispelledIds.size());
-                    for (uint32_t dispelledId : dispelledIds) {
-                        if (shouldLogSpellstealAura(casterGuid, victimGuid, dispelledId))
-                            loggedIds.push_back(dispelledId);
-                    }
-                } else {
-                    loggedIds = dispelledIds;
-                }
-
-                const std::string displaySpellNames = formatSpellNameList(*this, loggedIds);
-                if (!displaySpellNames.empty()) {
-                    char buf[256];
-                    const char* passiveVerb = loggedIds.size() == 1 ? "was" : "were";
-                    if (isStolen) {
-                        if (victimGuid == playerGuid && casterGuid != playerGuid)
-                            std::snprintf(buf, sizeof(buf), "%s %s stolen.",
-                                          displaySpellNames.c_str(), passiveVerb);
-                        else if (casterGuid == playerGuid)
-                            std::snprintf(buf, sizeof(buf), "You steal %s.", displaySpellNames.c_str());
-                        else
-                            std::snprintf(buf, sizeof(buf), "%s %s stolen.",
-                                          displaySpellNames.c_str(), passiveVerb);
-                    } else {
-                        if (victimGuid == playerGuid && casterGuid != playerGuid)
-                            std::snprintf(buf, sizeof(buf), "%s %s dispelled.",
-                                          displaySpellNames.c_str(), passiveVerb);
-                        else if (casterGuid == playerGuid)
-                            std::snprintf(buf, sizeof(buf), "You dispel %s.", displaySpellNames.c_str());
-                        else
-                            std::snprintf(buf, sizeof(buf), "%s %s dispelled.",
-                                          displaySpellNames.c_str(), passiveVerb);
-                    }
-                    addSystemChatMessage(buf);
-                }
-                // Preserve stolen auras as spellsteal events so the log wording stays accurate.
-                if (!loggedIds.empty()) {
-                    bool isPlayerCaster = (casterGuid == playerGuid);
-                    for (uint32_t dispelledId : loggedIds) {
-                        addCombatText(isStolen ? CombatTextEntry::STEAL : CombatTextEntry::DISPEL,
-                                      0, dispelledId, isPlayerCaster, 0,
-                                      casterGuid, victimGuid);
-                    }
-                }
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_SPELLSTEALLOG: {
-            // Sent to the CASTER (Mage) when Spellsteal succeeds.
-            // Wire format mirrors SPELLDISPELLOG:
-            // WotLK/Classic/Turtle: packed victim + packed caster + uint32 spellId + uint8 isStolen + uint32 count
-            //                        + count × (uint32 stolenSpellId + uint8 isPositive)
-            // TBC:                   full uint64 victim + full uint64 caster + same tail
-            const bool stealUsesFullGuid = isActiveExpansion("tbc");
-            if (packet.getSize() - packet.getReadPos() < (stealUsesFullGuid ? 8u : 1u)
-                || (!stealUsesFullGuid && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t stealVictim = stealUsesFullGuid
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < (stealUsesFullGuid ? 8u : 1u)
-                || (!stealUsesFullGuid && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t stealCaster = stealUsesFullGuid
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 9) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            /*uint32_t stealSpellId =*/ packet.readUInt32();
-            /*uint8_t  isStolen    =*/ packet.readUInt8();
-            uint32_t stealCount   = packet.readUInt32();
-            // Preserve every stolen aura in the combat log instead of only the first.
-            const size_t stealEntrySize = stealUsesFullGuid ? 8u : 5u;
-            std::vector<uint32_t> stolenIds;
-            stolenIds.reserve(stealCount);
-            for (uint32_t i = 0; i < stealCount && packet.getSize() - packet.getReadPos() >= stealEntrySize; ++i) {
-                uint32_t stolenId = packet.readUInt32();
-                if (stealUsesFullGuid) {
-                    /*uint32_t unk =*/ packet.readUInt32();
-                } else {
-                    /*uint8_t isPos  =*/ packet.readUInt8();
-                }
-                if (stolenId != 0) {
-                    stolenIds.push_back(stolenId);
-                }
-            }
-            if (stealCaster == playerGuid || stealVictim == playerGuid) {
-                std::vector<uint32_t> loggedIds;
-                loggedIds.reserve(stolenIds.size());
-                for (uint32_t stolenId : stolenIds) {
-                    if (shouldLogSpellstealAura(stealCaster, stealVictim, stolenId))
-                        loggedIds.push_back(stolenId);
-                }
-
-                const std::string displaySpellNames = formatSpellNameList(*this, loggedIds);
-                if (!displaySpellNames.empty()) {
-                    char buf[256];
-                    if (stealCaster == playerGuid)
-                        std::snprintf(buf, sizeof(buf), "You stole %s.", displaySpellNames.c_str());
-                    else
-                        std::snprintf(buf, sizeof(buf), "%s %s stolen.", displaySpellNames.c_str(),
-                                      loggedIds.size() == 1 ? "was" : "were");
-                    addSystemChatMessage(buf);
-                }
-                // Some servers emit both SPELLDISPELLOG(isStolen=1) and SPELLSTEALLOG
-                // for the same aura. Keep the first event and suppress the duplicate.
-                if (!loggedIds.empty()) {
-                    bool isPlayerCaster = (stealCaster == playerGuid);
-                    for (uint32_t stolenId : loggedIds) {
-                        addCombatText(CombatTextEntry::STEAL, 0, stolenId, isPlayerCaster, 0,
-                                      stealCaster, stealVictim);
-                    }
-                }
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_SPELL_CHANCE_PROC_LOG: {
-            // WotLK/Classic/Turtle: packed_guid target + packed_guid caster + uint32 spellId + ...
-            // TBC:                  uint64 target + uint64 caster + uint32 spellId + ...
-            const bool procChanceUsesFullGuid = isActiveExpansion("tbc");
-            auto readProcChanceGuid = [&]() -> uint64_t {
-                if (procChanceUsesFullGuid)
-                    return (packet.getSize() - packet.getReadPos() >= 8) ? packet.readUInt64() : 0;
-                return UpdateObjectParser::readPackedGuid(packet);
-            };
-            if (packet.getSize() - packet.getReadPos() < (procChanceUsesFullGuid ? 8u : 1u)
-                || (!procChanceUsesFullGuid && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t procTargetGuid = readProcChanceGuid();
-            if (packet.getSize() - packet.getReadPos() < (procChanceUsesFullGuid ? 8u : 1u)
-                || (!procChanceUsesFullGuid && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t procCasterGuid = readProcChanceGuid();
-            if (packet.getSize() - packet.getReadPos() < 4) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint32_t procSpellId = packet.readUInt32();
-            // Show a "PROC!" floating text when the player triggers the proc
-            if (procCasterGuid == playerGuid && procSpellId > 0)
-                addCombatText(CombatTextEntry::PROC_TRIGGER, 0, procSpellId, true, 0,
-                              procCasterGuid, procTargetGuid);
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_SPELLINSTAKILLLOG: {
-            // Sent when a unit is killed by a spell with SPELL_ATTR_EX2_INSTAKILL (e.g. Execute, Obliterate, etc.)
-            // WotLK/Classic/Turtle: packed_guid caster + packed_guid victim + uint32 spellId
-            // TBC:                  full uint64 caster + full uint64 victim + uint32 spellId
-            const bool ikUsesFullGuid = isActiveExpansion("tbc");
-            auto ik_rem = [&]() { return packet.getSize() - packet.getReadPos(); };
-            if (ik_rem() < (ikUsesFullGuid ? 8u : 1u)
-                || (!ikUsesFullGuid && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t ikCaster = ikUsesFullGuid
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (ik_rem() < (ikUsesFullGuid ? 8u : 1u)
-                || (!ikUsesFullGuid && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t ikVictim = ikUsesFullGuid
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (ik_rem() < 4) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint32_t ikSpell = packet.readUInt32();
-            // Show kill/death feedback for the local player
-            if (ikCaster == playerGuid) {
-                addCombatText(CombatTextEntry::INSTAKILL, 0, ikSpell, true, 0, ikCaster, ikVictim);
-            } else if (ikVictim == playerGuid) {
-                addCombatText(CombatTextEntry::INSTAKILL, 0, ikSpell, false, 0, ikCaster, ikVictim);
-                addUIError("You were killed by an instant-kill effect.");
-                addSystemChatMessage("You were killed by an instant-kill effect.");
-            }
-            LOG_DEBUG("SMSG_SPELLINSTAKILLLOG: caster=0x", std::hex, ikCaster,
-                      " victim=0x", ikVictim, std::dec, " spell=", ikSpell);
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_SPELLLOGEXECUTE: {
-            // WotLK/Classic/Turtle: packed_guid caster + uint32 spellId + uint32 effectCount
-            // TBC:                  uint64 caster + uint32 spellId + uint32 effectCount
-            // Per-effect: uint8 effectType + uint32 effectLogCount + effect-specific data
-            // Effect 10 = POWER_DRAIN:   packed_guid target + uint32 amount + uint32 powerType + float multiplier
-            // Effect 11 = HEALTH_LEECH:  packed_guid target + uint32 amount + float multiplier
-            // Effect 24 = CREATE_ITEM:   uint32 itemEntry
-            // Effect 26 = INTERRUPT_CAST: packed_guid target + uint32 interrupted_spell_id
-            // Effect 49 = FEED_PET:      uint32 itemEntry
-            // Effect 114= CREATE_ITEM2:  uint32 itemEntry (same layout as CREATE_ITEM)
-            const bool exeUsesFullGuid = isActiveExpansion("tbc");
-            if (packet.getSize() - packet.getReadPos() < (exeUsesFullGuid ? 8u : 1u)) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            if (!exeUsesFullGuid && !hasFullPackedGuid(packet)) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t exeCaster = exeUsesFullGuid
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 8) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint32_t exeSpellId = packet.readUInt32();
-            uint32_t exeEffectCount = packet.readUInt32();
-            exeEffectCount = std::min(exeEffectCount, 32u); // sanity
-
-            const bool isPlayerCaster = (exeCaster == playerGuid);
-            for (uint32_t ei = 0; ei < exeEffectCount; ++ei) {
-                if (packet.getSize() - packet.getReadPos() < 5) break;
-                uint8_t  effectType     = packet.readUInt8();
-                uint32_t effectLogCount = packet.readUInt32();
-                effectLogCount = std::min(effectLogCount, 64u); // sanity
-                if (effectType == 10) {
-                    // SPELL_EFFECT_POWER_DRAIN: packed_guid target + uint32 amount + uint32 powerType + float multiplier
-                    for (uint32_t li = 0; li < effectLogCount; ++li) {
-                        if (packet.getSize() - packet.getReadPos() < (exeUsesFullGuid ? 8u : 1u)
-                            || (!exeUsesFullGuid && !hasFullPackedGuid(packet))) {
-                            packet.setReadPos(packet.getSize()); break;
-                        }
-                        uint64_t drainTarget = exeUsesFullGuid
-                            ? packet.readUInt64()
-                            : UpdateObjectParser::readPackedGuid(packet);
-                        if (packet.getSize() - packet.getReadPos() < 12) { packet.setReadPos(packet.getSize()); break; }
-                        uint32_t drainAmount = packet.readUInt32();
-                        uint32_t drainPower  = packet.readUInt32(); // 0=mana,1=rage,3=energy,6=runic
-                        float drainMult = packet.readFloat();
-                        if (drainAmount > 0) {
-                            if (drainTarget == playerGuid)
-                                addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(drainAmount), exeSpellId, false,
-                                              static_cast<uint8_t>(drainPower),
-                                              exeCaster, drainTarget);
-                            if (isPlayerCaster) {
-                                if (drainTarget != playerGuid) {
-                                    addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(drainAmount), exeSpellId, true,
-                                                  static_cast<uint8_t>(drainPower), exeCaster, drainTarget);
-                                }
-                                if (drainMult > 0.0f && std::isfinite(drainMult)) {
-                                    const uint32_t gainedAmount = static_cast<uint32_t>(
-                                        std::lround(static_cast<double>(drainAmount) * static_cast<double>(drainMult)));
-                                    if (gainedAmount > 0) {
-                                        addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(gainedAmount), exeSpellId, true,
-                                                      static_cast<uint8_t>(drainPower), exeCaster, exeCaster);
-                                    }
-                                }
-                            }
-                        }
-                        LOG_DEBUG("SMSG_SPELLLOGEXECUTE POWER_DRAIN: spell=", exeSpellId,
-                                  " power=", drainPower, " amount=", drainAmount,
-                                  " multiplier=", drainMult);
-                    }
-                } else if (effectType == 11) {
-                    // SPELL_EFFECT_HEALTH_LEECH: packed_guid target + uint32 amount + float multiplier
-                    for (uint32_t li = 0; li < effectLogCount; ++li) {
-                        if (packet.getSize() - packet.getReadPos() < (exeUsesFullGuid ? 8u : 1u)
-                            || (!exeUsesFullGuid && !hasFullPackedGuid(packet))) {
-                            packet.setReadPos(packet.getSize()); break;
-                        }
-                        uint64_t leechTarget = exeUsesFullGuid
-                            ? packet.readUInt64()
-                            : UpdateObjectParser::readPackedGuid(packet);
-                        if (packet.getSize() - packet.getReadPos() < 8) { packet.setReadPos(packet.getSize()); break; }
-                        uint32_t leechAmount = packet.readUInt32();
-                        float leechMult = packet.readFloat();
-                        if (leechAmount > 0) {
-                            if (leechTarget == playerGuid) {
-                                addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(leechAmount), exeSpellId, false, 0,
-                                              exeCaster, leechTarget);
-                            } else if (isPlayerCaster) {
-                                addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(leechAmount), exeSpellId, true, 0,
-                                              exeCaster, leechTarget);
-                            }
-                            if (isPlayerCaster && leechMult > 0.0f && std::isfinite(leechMult)) {
-                                const uint32_t gainedAmount = static_cast<uint32_t>(
-                                    std::lround(static_cast<double>(leechAmount) * static_cast<double>(leechMult)));
-                                if (gainedAmount > 0) {
-                                    addCombatText(CombatTextEntry::HEAL, static_cast<int32_t>(gainedAmount), exeSpellId, true, 0,
-                                                  exeCaster, exeCaster);
-                                }
-                            }
-                        }
-                        LOG_DEBUG("SMSG_SPELLLOGEXECUTE HEALTH_LEECH: spell=", exeSpellId,
-                                  " amount=", leechAmount, " multiplier=", leechMult);
-                    }
-                } else if (effectType == 24 || effectType == 114) {
-                    // SPELL_EFFECT_CREATE_ITEM / CREATE_ITEM2: uint32 itemEntry per log entry
-                    for (uint32_t li = 0; li < effectLogCount; ++li) {
-                        if (packet.getSize() - packet.getReadPos() < 4) break;
-                        uint32_t itemEntry = packet.readUInt32();
-                        if (isPlayerCaster && itemEntry != 0) {
-                            ensureItemInfo(itemEntry);
-                            const ItemQueryResponseData* info = getItemInfo(itemEntry);
-                            std::string itemName = info && !info->name.empty()
-                                ? info->name : ("item #" + std::to_string(itemEntry));
-                            loadSpellNameCache();
-                            auto spellIt = spellNameCache_.find(exeSpellId);
-                            std::string spellName = (spellIt != spellNameCache_.end() && !spellIt->second.name.empty())
-                                ? spellIt->second.name : "";
-                            std::string msg = spellName.empty()
-                                ? ("You create: " + itemName + ".")
-                                : ("You create " + itemName + " using " + spellName + ".");
-                            addSystemChatMessage(msg);
-                            LOG_DEBUG("SMSG_SPELLLOGEXECUTE CREATE_ITEM: spell=", exeSpellId,
-                                      " item=", itemEntry, " name=", itemName);
-
-                            // Repeat-craft queue: re-cast if more crafts remaining
-                            if (craftQueueRemaining_ > 0 && craftQueueSpellId_ == exeSpellId) {
-                                --craftQueueRemaining_;
-                                if (craftQueueRemaining_ > 0) {
-                                    castSpell(craftQueueSpellId_, 0);
-                                } else {
-                                    craftQueueSpellId_ = 0;
-                                }
-                            }
-                        }
-                    }
-                } else if (effectType == 26) {
-                    // SPELL_EFFECT_INTERRUPT_CAST: packed_guid target + uint32 interrupted_spell_id
-                    for (uint32_t li = 0; li < effectLogCount; ++li) {
-                        if (packet.getSize() - packet.getReadPos() < (exeUsesFullGuid ? 8u : 1u)
-                            || (!exeUsesFullGuid && !hasFullPackedGuid(packet))) {
-                            packet.setReadPos(packet.getSize()); break;
-                        }
-                        uint64_t icTarget = exeUsesFullGuid
-                            ? packet.readUInt64()
-                            : UpdateObjectParser::readPackedGuid(packet);
-                        if (packet.getSize() - packet.getReadPos() < 4) { packet.setReadPos(packet.getSize()); break; }
-                        uint32_t icSpellId = packet.readUInt32();
-                        // Clear the interrupted unit's cast bar immediately
-                        unitCastStates_.erase(icTarget);
-                        // Record interrupt in combat log when player is involved
-                        if (isPlayerCaster || icTarget == playerGuid)
-                            addCombatText(CombatTextEntry::INTERRUPT, 0, icSpellId, isPlayerCaster, 0,
-                                          exeCaster, icTarget);
-                        LOG_DEBUG("SMSG_SPELLLOGEXECUTE INTERRUPT_CAST: spell=", exeSpellId,
-                                  " interrupted=", icSpellId, " target=0x", std::hex, icTarget, std::dec);
-                    }
-                } else if (effectType == 49) {
-                    // SPELL_EFFECT_FEED_PET: uint32 itemEntry per log entry
-                    for (uint32_t li = 0; li < effectLogCount; ++li) {
-                        if (packet.getSize() - packet.getReadPos() < 4) break;
-                        uint32_t feedItem = packet.readUInt32();
-                        if (isPlayerCaster && feedItem != 0) {
-                            ensureItemInfo(feedItem);
-                            const ItemQueryResponseData* info = getItemInfo(feedItem);
-                            std::string itemName = info && !info->name.empty()
-                                ? info->name : ("item #" + std::to_string(feedItem));
-                            uint32_t feedQuality = info ? info->quality : 1u;
-                            addSystemChatMessage("You feed your pet " + buildItemLink(feedItem, feedQuality, itemName) + ".");
-                            LOG_DEBUG("SMSG_SPELLLOGEXECUTE FEED_PET: item=", feedItem, " name=", itemName);
-                        }
-                    }
-                } else {
-                    // Unknown effect type — stop parsing to avoid misalignment
-                    packet.setReadPos(packet.getSize());
-                    break;
-                }
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_SPELL_CHANCE_RESIST_PUSHBACK:
-        case Opcode::SMSG_SPELL_UPDATE_CHAIN_TARGETS:
-            packet.setReadPos(packet.getSize());
-            break;
-
-        case Opcode::SMSG_CLEAR_EXTRA_AURA_INFO: {
-            // TBC 2.4.3: clear a single aura slot for a unit
-            // Format: uint64 targetGuid + uint8 slot
-            if (packet.getSize() - packet.getReadPos() >= 9) {
-                uint64_t clearGuid  = packet.readUInt64();
-                uint8_t  slot       = packet.readUInt8();
-                std::vector<AuraSlot>* auraList = nullptr;
-                if (clearGuid == playerGuid)      auraList = &playerAuras;
-                else if (clearGuid == targetGuid) auraList = &targetAuras;
-                if (auraList && slot < auraList->size()) {
-                    (*auraList)[slot] = AuraSlot{};
-                }
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- Misc consume ----
-        case Opcode::SMSG_ITEM_ENCHANT_TIME_UPDATE: {
-            // Format: uint64 itemGuid + uint32 slot + uint32 durationSec + uint64 playerGuid
-            // slot: 0=main-hand, 1=off-hand, 2=ranged
-            if (packet.getSize() - packet.getReadPos() < 24) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            /*uint64_t itemGuid =*/ packet.readUInt64();
-            uint32_t enchSlot    = packet.readUInt32();
-            uint32_t durationSec = packet.readUInt32();
-            /*uint64_t playerGuid =*/ packet.readUInt64();
-
-            // Clamp to known slots (0-2)
-            if (enchSlot > 2) { break; }
-
-            uint64_t nowMs = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now().time_since_epoch()).count());
-
-            if (durationSec == 0) {
-                // Enchant expired / removed — erase the slot entry
-                tempEnchantTimers_.erase(
-                    std::remove_if(tempEnchantTimers_.begin(), tempEnchantTimers_.end(),
-                                   [enchSlot](const TempEnchantTimer& t) { return t.slot == enchSlot; }),
-                    tempEnchantTimers_.end());
-            } else {
-                uint64_t expireMs = nowMs + static_cast<uint64_t>(durationSec) * 1000u;
-                bool found = false;
-                for (auto& t : tempEnchantTimers_) {
-                    if (t.slot == enchSlot) { t.expireMs = expireMs; found = true; break; }
-                }
-                if (!found) tempEnchantTimers_.push_back({enchSlot, expireMs});
-
-                // Warn at important thresholds
-                if (durationSec <= 60 && durationSec > 55) {
-                    const char* slotName = (enchSlot < 3) ? kTempEnchantSlotNames[enchSlot] : "weapon";
-                    char buf[80];
-                    std::snprintf(buf, sizeof(buf), "Weapon enchant (%s) expires in 1 minute!", slotName);
-                    addSystemChatMessage(buf);
-                } else if (durationSec <= 300 && durationSec > 295) {
-                    const char* slotName = (enchSlot < 3) ? kTempEnchantSlotNames[enchSlot] : "weapon";
-                    char buf[80];
-                    std::snprintf(buf, sizeof(buf), "Weapon enchant (%s) expires in 5 minutes.", slotName);
-                    addSystemChatMessage(buf);
-                }
-            }
-            LOG_DEBUG("SMSG_ITEM_ENCHANT_TIME_UPDATE: slot=", enchSlot, " dur=", durationSec, "s");
-            break;
-        }
-        case Opcode::SMSG_COMPLAIN_RESULT: {
-            // uint8 result: 0=success, 1=failed, 2=disabled
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                uint8_t result = packet.readUInt8();
-                if (result == 0)
-                    addSystemChatMessage("Your complaint has been submitted.");
-                else if (result == 2)
-                    addUIError("Report a Player is currently disabled.");
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_ITEM_REFUND_INFO_RESPONSE:
-        case Opcode::SMSG_LOOT_LIST:
-            // Consume silently — informational, no UI action needed
-            packet.setReadPos(packet.getSize());
-            break;
-
-        case Opcode::SMSG_RESUME_CAST_BAR: {
-            // WotLK: packed_guid caster + packed_guid target + uint32 spellId + uint32 remainingMs + uint32 totalMs + uint8 schoolMask
-            // TBC/Classic: uint64 caster + uint64 target + ...
-            const bool rcbTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
-            auto remaining = [&]() { return packet.getSize() - packet.getReadPos(); };
-            if (remaining() < (rcbTbc ? 8u : 1u)) break;
-            uint64_t caster = rcbTbc
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (remaining() < (rcbTbc ? 8u : 1u)) break;
-            if (rcbTbc) packet.readUInt64(); // target (discard)
-            else (void)UpdateObjectParser::readPackedGuid(packet); // target
-            if (remaining() < 12) break;
-            uint32_t spellId   = packet.readUInt32();
-            uint32_t remainMs  = packet.readUInt32();
-            uint32_t totalMs   = packet.readUInt32();
-            if (totalMs > 0) {
-                if (caster == playerGuid) {
-                    casting            = true;
-                    castIsChannel      = false;
-                    currentCastSpellId = spellId;
-                    castTimeTotal      = totalMs  / 1000.0f;
-                    castTimeRemaining  = remainMs / 1000.0f;
-                } else {
-                    auto& s = unitCastStates_[caster];
-                    s.casting       = true;
-                    s.spellId       = spellId;
-                    s.timeTotal     = totalMs  / 1000.0f;
-                    s.timeRemaining = remainMs / 1000.0f;
-                }
-                LOG_DEBUG("SMSG_RESUME_CAST_BAR: caster=0x", std::hex, caster, std::dec,
-                          " spell=", spellId, " remaining=", remainMs, "ms total=", totalMs, "ms");
-            }
-            break;
-        }
-        // ---- Channeled spell start/tick (WotLK: packed GUIDs; TBC/Classic: full uint64) ----
-        case Opcode::MSG_CHANNEL_START: {
-            // casterGuid + uint32 spellId + uint32 totalDurationMs
-            const bool tbcOrClassic = isClassicLikeExpansion() || isActiveExpansion("tbc");
-            uint64_t chanCaster = tbcOrClassic
-                ? (packet.getSize() - packet.getReadPos() >= 8 ? packet.readUInt64() : 0)
-                : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 8) break;
-            uint32_t chanSpellId = packet.readUInt32();
-            uint32_t chanTotalMs = packet.readUInt32();
-            if (chanTotalMs > 0 && chanCaster != 0) {
-                if (chanCaster == playerGuid) {
-                    casting            = true;
-                    castIsChannel      = true;
-                    currentCastSpellId = chanSpellId;
-                    castTimeTotal      = chanTotalMs / 1000.0f;
-                    castTimeRemaining  = castTimeTotal;
-                } else {
-                    auto& s = unitCastStates_[chanCaster];
-                    s.casting        = true;
-                    s.isChannel      = true;
-                    s.spellId        = chanSpellId;
-                    s.timeTotal      = chanTotalMs / 1000.0f;
-                    s.timeRemaining  = s.timeTotal;
-                    s.interruptible  = isSpellInterruptible(chanSpellId);
-                }
-                LOG_DEBUG("MSG_CHANNEL_START: caster=0x", std::hex, chanCaster, std::dec,
-                          " spell=", chanSpellId, " total=", chanTotalMs, "ms");
-                // Fire UNIT_SPELLCAST_CHANNEL_START for Lua addons
-                if (addonEventCallback_) {
-                    std::string unitId;
-                    if (chanCaster == playerGuid) unitId = "player";
-                    else if (chanCaster == targetGuid) unitId = "target";
-                    else if (chanCaster == focusGuid) unitId = "focus";
-                    else if (chanCaster == petGuid_) unitId = "pet";
-                    if (!unitId.empty())
-                        addonEventCallback_("UNIT_SPELLCAST_CHANNEL_START", {unitId, std::to_string(chanSpellId)});
-                }
-            }
-            break;
-        }
-        case Opcode::MSG_CHANNEL_UPDATE: {
-            // casterGuid + uint32 remainingMs
-            const bool tbcOrClassic2 = isClassicLikeExpansion() || isActiveExpansion("tbc");
-            uint64_t chanCaster2 = tbcOrClassic2
-                ? (packet.getSize() - packet.getReadPos() >= 8 ? packet.readUInt64() : 0)
-                : UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 4) break;
-            uint32_t chanRemainMs = packet.readUInt32();
-            if (chanCaster2 == playerGuid) {
-                castTimeRemaining = chanRemainMs / 1000.0f;
-                if (chanRemainMs == 0) {
-                    casting = false;
-                    castIsChannel = false;
-                    currentCastSpellId = 0;
-                }
-            } else if (chanCaster2 != 0) {
-                auto it = unitCastStates_.find(chanCaster2);
-                if (it != unitCastStates_.end()) {
-                    it->second.timeRemaining = chanRemainMs / 1000.0f;
-                    if (chanRemainMs == 0) unitCastStates_.erase(it);
-                }
-            }
-            LOG_DEBUG("MSG_CHANNEL_UPDATE: caster=0x", std::hex, chanCaster2, std::dec,
-                      " remaining=", chanRemainMs, "ms");
-            // Fire UNIT_SPELLCAST_CHANNEL_STOP when channel ends
-            if (chanRemainMs == 0 && addonEventCallback_) {
-                std::string unitId;
-                if (chanCaster2 == playerGuid) unitId = "player";
-                else if (chanCaster2 == targetGuid) unitId = "target";
-                else if (chanCaster2 == focusGuid) unitId = "focus";
-                else if (chanCaster2 == petGuid_) unitId = "pet";
-                if (!unitId.empty())
-                    addonEventCallback_("UNIT_SPELLCAST_CHANNEL_STOP", {unitId});
-            }
-            break;
-        }
-
-        case Opcode::SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT: {
-            // uint32 slot + packed_guid unit (0 packed = clear slot)
-            if (packet.getSize() - packet.getReadPos() < 5) {
-                packet.setReadPos(packet.getSize());
-                break;
-            }
-            uint32_t slot = packet.readUInt32();
-            uint64_t unit = UpdateObjectParser::readPackedGuid(packet);
-            if (slot < kMaxEncounterSlots) {
-                encounterUnitGuids_[slot] = unit;
-                LOG_DEBUG("SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT: slot=", slot,
-                          " guid=0x", std::hex, unit, std::dec);
-            }
-            break;
-        }
-        case Opcode::SMSG_UPDATE_INSTANCE_OWNERSHIP:
-        case Opcode::SMSG_UPDATE_LAST_INSTANCE:
-        case Opcode::SMSG_SEND_ALL_COMBAT_LOG:
-        case Opcode::SMSG_SET_PROJECTILE_POSITION:
-        case Opcode::SMSG_AUCTION_LIST_PENDING_SALES:
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- Server-first achievement broadcast ----
-        case Opcode::SMSG_SERVER_FIRST_ACHIEVEMENT: {
-            // charName (cstring) + guid (uint64) + achievementId (uint32) + ...
-            if (packet.getReadPos() < packet.getSize()) {
-                std::string charName = packet.readString();
-                if (packet.getSize() - packet.getReadPos() >= 12) {
-                    /*uint64_t guid =*/ packet.readUInt64();
-                    uint32_t achievementId = packet.readUInt32();
-                    loadAchievementNameCache();
-                    auto nit = achievementNameCache_.find(achievementId);
-                    char buf[256];
-                    if (nit != achievementNameCache_.end() && !nit->second.empty()) {
-                        std::snprintf(buf, sizeof(buf),
-                            "%s is the first on the realm to earn: %s!",
-                            charName.c_str(), nit->second.c_str());
-                    } else {
-                        std::snprintf(buf, sizeof(buf),
-                            "%s is the first on the realm to earn achievement #%u!",
-                            charName.c_str(), achievementId);
-                    }
-                    addSystemChatMessage(buf);
-                }
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- Forced faction reactions ----
-        case Opcode::SMSG_SET_FORCED_REACTIONS:
-            handleSetForcedReactions(packet);
-            break;
-
-        // ---- Spline speed changes for other units ----
-        case Opcode::SMSG_SPLINE_SET_FLIGHT_SPEED:
-        case Opcode::SMSG_SPLINE_SET_FLIGHT_BACK_SPEED:
-        case Opcode::SMSG_SPLINE_SET_SWIM_BACK_SPEED:
-        case Opcode::SMSG_SPLINE_SET_WALK_SPEED:
-        case Opcode::SMSG_SPLINE_SET_TURN_RATE:
-        case Opcode::SMSG_SPLINE_SET_PITCH_RATE: {
-            // Minimal parse: PackedGuid + float speed
-            if (packet.getSize() - packet.getReadPos() < 5) break;
-            uint64_t sGuid = UpdateObjectParser::readPackedGuid(packet);
-            if (packet.getSize() - packet.getReadPos() < 4) break;
-            float sSpeed = packet.readFloat();
-            if (sGuid == playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
-                if (*logicalOp == Opcode::SMSG_SPLINE_SET_FLIGHT_SPEED)
-                    serverFlightSpeed_ = sSpeed;
-                else if (*logicalOp == Opcode::SMSG_SPLINE_SET_FLIGHT_BACK_SPEED)
-                    serverFlightBackSpeed_ = sSpeed;
-                else if (*logicalOp == Opcode::SMSG_SPLINE_SET_SWIM_BACK_SPEED)
-                    serverSwimBackSpeed_ = sSpeed;
-                else if (*logicalOp == Opcode::SMSG_SPLINE_SET_WALK_SPEED)
-                    serverWalkSpeed_ = sSpeed;
-                else if (*logicalOp == Opcode::SMSG_SPLINE_SET_TURN_RATE)
-                    serverTurnRate_ = sSpeed;  // rad/s
-            }
-            break;
-        }
-
-        // ---- Spline move flag changes for other units ----
-        case Opcode::SMSG_SPLINE_MOVE_UNROOT:
-        case Opcode::SMSG_SPLINE_MOVE_UNSET_HOVER:
-        case Opcode::SMSG_SPLINE_MOVE_WATER_WALK: {
-            // Minimal parse: PackedGuid only — no animation-relevant state change.
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                (void)UpdateObjectParser::readPackedGuid(packet);
-            }
-            break;
-        }
-        case Opcode::SMSG_SPLINE_MOVE_UNSET_FLYING: {
-            // PackedGuid + synthesised move-flags=0 → clears flying animation.
-            if (packet.getSize() - packet.getReadPos() < 1) break;
-            uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
-            if (guid == 0 || guid == playerGuid || !unitMoveFlagsCallback_) break;
-            unitMoveFlagsCallback_(guid, 0u); // clear flying/CAN_FLY
-            break;
-        }
-
-        // ---- Quest failure notification ----
-        case Opcode::SMSG_QUESTGIVER_QUEST_FAILED: {
-            // uint32 questId + uint32 reason
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint32_t questId = packet.readUInt32();
-                uint32_t reason = packet.readUInt32();
-                std::string questTitle;
-                for (const auto& q : questLog_)
-                    if (q.questId == questId && !q.title.empty()) { questTitle = q.title; break; }
-                const char* reasonStr = nullptr;
-                switch (reason) {
-                    case 1: reasonStr = "failed conditions"; break;
-                    case 2: reasonStr = "inventory full"; break;
-                    case 3: reasonStr = "too far away"; break;
-                    case 4: reasonStr = "another quest is blocking"; break;
-                    case 5: reasonStr = "wrong time of day"; break;
-                    case 6: reasonStr = "wrong race"; break;
-                    case 7: reasonStr = "wrong class"; break;
-                }
-                std::string msg = questTitle.empty() ? "Quest" : ('"' + questTitle + '"');
-                msg += " failed";
-                if (reasonStr) msg += std::string(": ") + reasonStr;
-                msg += '.';
-                addSystemChatMessage(msg);
-            }
-            break;
-        }
-
-        // ---- Suspend comms (requires ACK) ----
-        case Opcode::SMSG_SUSPEND_COMMS: {
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t seqIdx = packet.readUInt32();
-                if (socket) {
-                    network::Packet ack(wireOpcode(Opcode::CMSG_SUSPEND_COMMS_ACK));
-                    ack.writeUInt32(seqIdx);
-                    socket->send(ack);
-                }
-            }
-            break;
-        }
-
-        // ---- Pre-resurrect state ----
-        case Opcode::SMSG_PRE_RESURRECT: {
-            // SMSG_PRE_RESURRECT: packed GUID of the player who can self-resurrect.
-            // Sent when the dead player has Reincarnation (Shaman), Twisting Nether (Warlock),
-            // or Deathpact (Death Knight passive). The client must send CMSG_SELF_RES to accept.
-            uint64_t targetGuid = UpdateObjectParser::readPackedGuid(packet);
-            if (targetGuid == playerGuid || targetGuid == 0) {
-                selfResAvailable_ = true;
-                LOG_INFO("SMSG_PRE_RESURRECT: self-resurrection available (guid=0x",
-                         std::hex, targetGuid, std::dec, ")");
-            }
-            break;
-        }
-
-        // ---- Hearthstone bind error ----
-        case Opcode::SMSG_PLAYERBINDERROR: {
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t error = packet.readUInt32();
-                if (error == 0) {
-                    addUIError("Your hearthstone is not bound.");
-                    addSystemChatMessage("Your hearthstone is not bound.");
-                } else {
-                    addUIError("Hearthstone bind failed.");
-                    addSystemChatMessage("Hearthstone bind failed.");
-                }
-            }
-            break;
-        }
-
-        // ---- Instance/raid errors ----
-        case Opcode::SMSG_RAID_GROUP_ONLY: {
-            addUIError("You must be in a raid group to enter this instance.");
-            addSystemChatMessage("You must be in a raid group to enter this instance.");
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_RAID_READY_CHECK_ERROR: {
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                uint8_t err = packet.readUInt8();
-                if (err == 0) { addUIError("Ready check failed: not in a group."); addSystemChatMessage("Ready check failed: not in a group."); }
-                else if (err == 1) { addUIError("Ready check failed: in instance."); addSystemChatMessage("Ready check failed: in instance."); }
-                else { addUIError("Ready check failed."); addSystemChatMessage("Ready check failed."); }
-            }
-            break;
-        }
-        case Opcode::SMSG_RESET_FAILED_NOTIFY: {
-            addUIError("Cannot reset instance: another player is still inside.");
-            addSystemChatMessage("Cannot reset instance: another player is still inside.");
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- Realm split ----
-        case Opcode::SMSG_REALM_SPLIT: {
-            // uint32 splitType + uint32 deferTime + string realmName
-            // Client must respond with CMSG_REALM_SPLIT to avoid session timeout on some servers.
-            uint32_t splitType = 0;
-            if (packet.getSize() - packet.getReadPos() >= 4)
-                splitType = packet.readUInt32();
-            packet.setReadPos(packet.getSize());
-            if (socket) {
-                network::Packet resp(wireOpcode(Opcode::CMSG_REALM_SPLIT));
-                resp.writeUInt32(splitType);
-                resp.writeString("3.3.5");
-                socket->send(resp);
-                LOG_DEBUG("SMSG_REALM_SPLIT splitType=", splitType, " — sent CMSG_REALM_SPLIT ack");
-            }
-            break;
-        }
-
-        // ---- Real group update (group type, local player flags, leader) ----
-        // Sent when the player's group configuration changes: group type,
-        // role/flags (assistant/MT/MA), or leader changes.
-        // Format: uint8 groupType | uint32 memberFlags | uint64 leaderGuid
-        case Opcode::SMSG_REAL_GROUP_UPDATE: {
-            auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
-            if (rem() < 1) break;
-            uint8_t newGroupType = packet.readUInt8();
-            if (rem() < 4) break;
-            uint32_t newMemberFlags = packet.readUInt32();
-            if (rem() < 8) break;
-            uint64_t newLeaderGuid = packet.readUInt64();
-
-            partyData.groupType = newGroupType;
-            partyData.leaderGuid = newLeaderGuid;
-
-            // Update local player's flags in the member list
-            uint64_t localGuid = playerGuid;
-            for (auto& m : partyData.members) {
-                if (m.guid == localGuid) {
-                    m.flags = static_cast<uint8_t>(newMemberFlags & 0xFF);
-                    break;
-                }
-            }
-            LOG_DEBUG("SMSG_REAL_GROUP_UPDATE groupType=", static_cast<int>(newGroupType),
-                      " memberFlags=0x", std::hex, newMemberFlags, std::dec,
-                      " leaderGuid=", newLeaderGuid);
-            if (addonEventCallback_) {
-                addonEventCallback_("PARTY_LEADER_CHANGED", {});
-                addonEventCallback_("GROUP_ROSTER_UPDATE", {});
-            }
-            break;
-        }
-
-        // ---- Play music (WotLK standard opcode) ----
-        case Opcode::SMSG_PLAY_MUSIC: {
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t soundId = packet.readUInt32();
-                if (playMusicCallback_) playMusicCallback_(soundId);
-            }
-            break;
-        }
-
-        // ---- Play object/spell sounds ----
-        case Opcode::SMSG_PLAY_OBJECT_SOUND:
-            if (packet.getSize() - packet.getReadPos() >= 12) {
-                // uint32 soundId + uint64 sourceGuid
-                uint32_t soundId = packet.readUInt32();
-                uint64_t srcGuid = packet.readUInt64();
-                LOG_DEBUG("SMSG_PLAY_OBJECT_SOUND: id=", soundId, " src=0x", std::hex, srcGuid, std::dec);
-                if (playPositionalSoundCallback_) playPositionalSoundCallback_(soundId, srcGuid);
-                else if (playSoundCallback_) playSoundCallback_(soundId);
-            } else if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t soundId = packet.readUInt32();
-                if (playSoundCallback_) playSoundCallback_(soundId);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_PLAY_SPELL_IMPACT: {
-            // uint64 targetGuid + uint32 visualId (same structure as SMSG_PLAY_SPELL_VISUAL)
-            if (packet.getSize() - packet.getReadPos() < 12) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t impTargetGuid = packet.readUInt64();
-            uint32_t impVisualId   = packet.readUInt32();
-            if (impVisualId == 0) break;
-            auto* renderer = core::Application::getInstance().getRenderer();
-            if (!renderer) break;
-            glm::vec3 spawnPos;
-            if (impTargetGuid == playerGuid) {
-                spawnPos = renderer->getCharacterPosition();
-            } else {
-                auto entity = entityManager.getEntity(impTargetGuid);
-                if (!entity) break;
-                glm::vec3 canonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());
-                spawnPos = core::coords::canonicalToRender(canonical);
-            }
-            renderer->playSpellVisual(impVisualId, spawnPos, /*useImpactKit=*/true);
-            break;
-        }
-
-        // ---- Resistance/combat log ----
-        case Opcode::SMSG_RESISTLOG: {
-            // WotLK/Classic/Turtle: uint32 hitInfo + packed_guid attacker + packed_guid victim + uint32 spellId
-            //                      + float resistFactor + uint32 targetRes + uint32 resistedValue + ...
-            // TBC:                 same layout but full uint64 GUIDs
-            // Show RESIST combat text when player resists an incoming spell.
-            const bool rlUsesFullGuid = isActiveExpansion("tbc");
-            auto rl_rem = [&]() { return packet.getSize() - packet.getReadPos(); };
-            if (rl_rem() < 4) { packet.setReadPos(packet.getSize()); break; }
-            /*uint32_t hitInfo =*/ packet.readUInt32();
-            if (rl_rem() < (rlUsesFullGuid ? 8u : 1u)
-                || (!rlUsesFullGuid && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t attackerGuid = rlUsesFullGuid
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (rl_rem() < (rlUsesFullGuid ? 8u : 1u)
-                || (!rlUsesFullGuid && !hasFullPackedGuid(packet))) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t victimGuid = rlUsesFullGuid
-                ? packet.readUInt64() : UpdateObjectParser::readPackedGuid(packet);
-            if (rl_rem() < 4) { packet.setReadPos(packet.getSize()); break; }
-            uint32_t spellId = packet.readUInt32();
-            // Resist payload includes:
-            // float resistFactor + uint32 targetResistance + uint32 resistedValue.
-            // Require the full payload so truncated packets cannot synthesize
-            // zero-value resist events.
-            if (rl_rem() < 12) { packet.setReadPos(packet.getSize()); break; }
-            /*float resistFactor =*/ packet.readFloat();
-            /*uint32_t targetRes =*/ packet.readUInt32();
-            int32_t resistedAmount = static_cast<int32_t>(packet.readUInt32());
-            // Show RESIST when the player is involved on either side.
-            if (resistedAmount > 0 && victimGuid == playerGuid) {
-                addCombatText(CombatTextEntry::RESIST, resistedAmount, spellId, false, 0, attackerGuid, victimGuid);
-            } else if (resistedAmount > 0 && attackerGuid == playerGuid) {
-                addCombatText(CombatTextEntry::RESIST, resistedAmount, spellId, true, 0, attackerGuid, victimGuid);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- Read item results ----
-        case Opcode::SMSG_READ_ITEM_OK:
-            bookPages_.clear();  // fresh book for this item read
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_READ_ITEM_FAILED:
-            addUIError("You cannot read this item.");
-            addSystemChatMessage("You cannot read this item.");
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- Completed quests query ----
-        case Opcode::SMSG_QUERY_QUESTS_COMPLETED_RESPONSE: {
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t count = packet.readUInt32();
-                if (count <= 4096) {
-                    for (uint32_t i = 0; i < count; ++i) {
-                        if (packet.getSize() - packet.getReadPos() < 4) break;
-                        uint32_t questId = packet.readUInt32();
-                        completedQuests_.insert(questId);
-                    }
-                    LOG_DEBUG("SMSG_QUERY_QUESTS_COMPLETED_RESPONSE: ", count, " completed quests");
-                }
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- PVP quest kill update ----
-        case Opcode::SMSG_QUESTUPDATE_ADD_PVP_KILL: {
-            // WotLK 3.3.5a format: uint64 guid + uint32 questId + uint32 count + uint32 reqCount
-            // Classic format:       uint64 guid + uint32 questId + uint32 count  (no reqCount)
-            if (packet.getSize() - packet.getReadPos() >= 16) {
-                /*uint64_t guid =*/ packet.readUInt64();
-                uint32_t questId = packet.readUInt32();
-                uint32_t count   = packet.readUInt32();
-                uint32_t reqCount = 0;
-                if (packet.getSize() - packet.getReadPos() >= 4) {
-                    reqCount = packet.readUInt32();
-                }
-
-                // Update quest log kill counts (PvP kills use entry=0 as the key
-                // since there's no specific creature entry — one slot per quest).
-                constexpr uint32_t PVP_KILL_ENTRY = 0u;
-                for (auto& quest : questLog_) {
-                    if (quest.questId != questId) continue;
-
-                    if (reqCount == 0) {
-                        auto it = quest.killCounts.find(PVP_KILL_ENTRY);
-                        if (it != quest.killCounts.end()) reqCount = it->second.second;
-                    }
-                    if (reqCount == 0) {
-                        // Pull required count from kill objectives (npcOrGoId == 0 slot, if any)
-                        for (const auto& obj : quest.killObjectives) {
-                            if (obj.npcOrGoId == 0 && obj.required > 0) {
-                                reqCount = obj.required;
-                                break;
-                            }
-                        }
-                    }
-                    if (reqCount == 0) reqCount = count;
-                    quest.killCounts[PVP_KILL_ENTRY] = {count, reqCount};
-
-                    std::string progressMsg = quest.title + ": PvP kills " +
-                        std::to_string(count) + "/" + std::to_string(reqCount);
-                    addSystemChatMessage(progressMsg);
-                    break;
-                }
-            }
-            break;
-        }
-
-        // ---- NPC not responding ----
-        case Opcode::SMSG_NPC_WONT_TALK:
-            addUIError("That creature can't talk to you right now.");
-            addSystemChatMessage("That creature can't talk to you right now.");
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- Petition ----
-        case Opcode::SMSG_OFFER_PETITION_ERROR: {
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t err = packet.readUInt32();
-                if (err == 1) addSystemChatMessage("Player is already in a guild.");
-                else if (err == 2) addSystemChatMessage("Player already has a petition.");
-                else addSystemChatMessage("Cannot offer petition to that player.");
-            }
-            break;
-        }
-        case Opcode::SMSG_PETITION_QUERY_RESPONSE:
-            handlePetitionQueryResponse(packet);
-            break;
-        case Opcode::SMSG_PETITION_SHOW_SIGNATURES:
-            handlePetitionShowSignatures(packet);
-            break;
-        case Opcode::SMSG_PETITION_SIGN_RESULTS:
-            handlePetitionSignResults(packet);
-            break;
-
-        // ---- Pet system ----
-        case Opcode::SMSG_PET_MODE: {
-            // uint64 petGuid, uint32 mode
-            // mode bits: low byte = command state, next byte = react state
-            if (packet.getSize() - packet.getReadPos() >= 12) {
-                uint64_t modeGuid = packet.readUInt64();
-                uint32_t mode     = packet.readUInt32();
-                if (modeGuid == petGuid_) {
-                    petCommand_ = static_cast<uint8_t>(mode & 0xFF);
-                    petReact_   = static_cast<uint8_t>((mode >> 8) & 0xFF);
-                    LOG_DEBUG("SMSG_PET_MODE: command=", (int)petCommand_,
-                              " react=", (int)petReact_);
-                }
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_PET_BROKEN:
-            // Pet bond broken (died or forcibly dismissed) — clear pet state
-            petGuid_ = 0;
-            petSpellList_.clear();
-            petAutocastSpells_.clear();
-            memset(petActionSlots_, 0, sizeof(petActionSlots_));
-            addSystemChatMessage("Your pet has died.");
-            LOG_INFO("SMSG_PET_BROKEN: pet bond broken");
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_PET_LEARNED_SPELL: {
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t spellId = packet.readUInt32();
-                petSpellList_.push_back(spellId);
-                const std::string& sname = getSpellName(spellId);
-                addSystemChatMessage("Your pet has learned " + (sname.empty() ? "a new ability." : sname + "."));
-                LOG_DEBUG("SMSG_PET_LEARNED_SPELL: spellId=", spellId);
-                if (addonEventCallback_) addonEventCallback_("PET_BAR_UPDATE", {});
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_PET_UNLEARNED_SPELL: {
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t spellId = packet.readUInt32();
-                petSpellList_.erase(
-                    std::remove(petSpellList_.begin(), petSpellList_.end(), spellId),
-                    petSpellList_.end());
-                petAutocastSpells_.erase(spellId);
-                LOG_DEBUG("SMSG_PET_UNLEARNED_SPELL: spellId=", spellId);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_PET_CAST_FAILED: {
-            // WotLK: castCount(1) + spellId(4) + reason(1)
-            // Classic/TBC: spellId(4) + reason(1) (no castCount)
-            const bool hasCount = isActiveExpansion("wotlk");
-            const size_t minSize = hasCount ? 6u : 5u;
-            if (packet.getSize() - packet.getReadPos() >= minSize) {
-                if (hasCount) /*uint8_t castCount =*/ packet.readUInt8();
-                uint32_t spellId   = packet.readUInt32();
-                uint8_t  reason    = (packet.getSize() - packet.getReadPos() >= 1)
-                                         ? packet.readUInt8() : 0;
-                LOG_DEBUG("SMSG_PET_CAST_FAILED: spell=", spellId,
-                          " reason=", (int)reason);
-                if (reason != 0) {
-                    const char* reasonStr = getSpellCastResultString(reason);
-                    const std::string& sName = getSpellName(spellId);
-                    std::string errMsg;
-                    if (reasonStr && *reasonStr)
-                        errMsg = sName.empty() ? reasonStr : (sName + ": " + reasonStr);
-                    else
-                        errMsg = sName.empty() ? "Pet spell failed." : (sName + ": Pet spell failed.");
-                    addSystemChatMessage(errMsg);
-                }
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_PET_GUIDS:
-        case Opcode::SMSG_PET_DISMISS_SOUND:
-        case Opcode::SMSG_PET_ACTION_SOUND:
-        case Opcode::SMSG_PET_UNLEARN_CONFIRM: {
-            // uint64 petGuid + uint32 cost (copper)
-            if (packet.getSize() - packet.getReadPos() >= 12) {
-                petUnlearnGuid_ = packet.readUInt64();
-                petUnlearnCost_ = packet.readUInt32();
-                petUnlearnPending_ = true;
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_PET_UPDATE_COMBO_POINTS:
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_PET_RENAMEABLE:
-            // Server signals that the pet can now be named (first tame)
-            petRenameablePending_ = true;
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_PET_NAME_INVALID:
-            addUIError("That pet name is invalid. Please choose a different name.");
-            addSystemChatMessage("That pet name is invalid. Please choose a different name.");
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- Inspect (Classic 1.12 gear inspection) ----
-        case Opcode::SMSG_INSPECT: {
-            // Classic 1.12: PackedGUID + 19×uint32 itemEntries (EQUIPMENT_SLOT_END=19)
-            // This opcode is only reachable on Classic servers; TBC/WotLK wire 0x115 maps to
-            // SMSG_INSPECT_RESULTS_UPDATE which is handled separately.
-            if (packet.getSize() - packet.getReadPos() < 2) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
-            if (guid == 0) { packet.setReadPos(packet.getSize()); break; }
-
-            constexpr int kGearSlots = 19;
-            size_t needed = kGearSlots * sizeof(uint32_t);
-            if (packet.getSize() - packet.getReadPos() < needed) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-
-            std::array<uint32_t, 19> items{};
-            for (int s = 0; s < kGearSlots; ++s)
-                items[s] = packet.readUInt32();
-
-            // Resolve player name
-            auto ent = entityManager.getEntity(guid);
-            std::string playerName = "Target";
-            if (ent) {
-                auto pl = std::dynamic_pointer_cast<Player>(ent);
-                if (pl && !pl->getName().empty()) playerName = pl->getName();
-            }
-
-            // Populate inspect result immediately (no talent data in Classic SMSG_INSPECT)
-            inspectResult_.guid           = guid;
-            inspectResult_.playerName     = playerName;
-            inspectResult_.totalTalents   = 0;
-            inspectResult_.unspentTalents = 0;
-            inspectResult_.talentGroups   = 0;
-            inspectResult_.activeTalentGroup = 0;
-            inspectResult_.itemEntries    = items;
-            inspectResult_.enchantIds     = {};
-
-            // Also cache for future talent-inspect cross-reference
-            inspectedPlayerItemEntries_[guid] = items;
-
-            // Trigger item queries for non-empty slots
-            for (int s = 0; s < kGearSlots; ++s) {
-                if (items[s] != 0) queryItemInfo(items[s], 0);
-            }
-
-            LOG_INFO("SMSG_INSPECT (Classic): ", playerName, " has gear in ",
-                     std::count_if(items.begin(), items.end(),
-                                   [](uint32_t e) { return e != 0; }), "/19 slots");
-            if (addonEventCallback_) {
-                char guidBuf[32];
-                snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", (unsigned long long)guid);
-                addonEventCallback_("INSPECT_READY", {guidBuf});
-            }
-            break;
-        }
-
-        // ---- Multiple aggregated packets/moves ----
-        case Opcode::SMSG_MULTIPLE_MOVES:
-            // Same wire format as SMSG_COMPRESSED_MOVES: uint8 size + uint16 opcode + payload[]
-            handleCompressedMoves(packet);
-            break;
-
-        case Opcode::SMSG_MULTIPLE_PACKETS: {
-            // Each sub-packet uses the standard WotLK server wire format:
-            //   uint16_be subSize  (includes the 2-byte opcode; payload = subSize - 2)
-            //   uint16_le subOpcode
-            //   payload  (subSize - 2 bytes)
-            const auto& pdata = packet.getData();
-            size_t dataLen = pdata.size();
-            size_t pos = packet.getReadPos();
-            static uint32_t multiPktWarnCount = 0;
-            std::vector<network::Packet> subPackets;
-            while (pos + 4 <= dataLen) {
-                uint16_t subSize = static_cast<uint16_t>(
-                    (static_cast<uint16_t>(pdata[pos]) << 8) | pdata[pos + 1]);
-                if (subSize < 2) break;
-                size_t payloadLen = subSize - 2;
-                if (pos + 4 + payloadLen > dataLen) {
-                    if (++multiPktWarnCount <= 10) {
-                        LOG_WARNING("SMSG_MULTIPLE_PACKETS: sub-packet overruns buffer at pos=",
-                                    pos, " subSize=", subSize, " dataLen=", dataLen);
-                    }
-                    break;
-                }
-                uint16_t subOpcode = static_cast<uint16_t>(pdata[pos + 2]) |
-                                     (static_cast<uint16_t>(pdata[pos + 3]) << 8);
-                std::vector<uint8_t> subPayload(pdata.begin() + pos + 4,
-                                                pdata.begin() + pos + 4 + payloadLen);
-                subPackets.emplace_back(subOpcode, std::move(subPayload));
-                pos += 4 + payloadLen;
-            }
-            for (auto it = subPackets.rbegin(); it != subPackets.rend(); ++it) {
-                enqueueIncomingPacketFront(std::move(*it));
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- Misc consume (no state change needed) ----
-        case Opcode::SMSG_SET_PLAYER_DECLINED_NAMES_RESULT:
-        case Opcode::SMSG_REDIRECT_CLIENT:
-        case Opcode::SMSG_PVP_QUEUE_STATS:
-        case Opcode::SMSG_NOTIFY_DEST_LOC_SPELL_CAST:
-        case Opcode::SMSG_PLAYER_SKINNED:
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_PROPOSE_LEVEL_GRANT: {
-            // Recruit-A-Friend: a mentor is offering to grant you a level
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint64_t mentorGuid = packet.readUInt64();
-                std::string mentorName;
-                auto ent = entityManager.getEntity(mentorGuid);
-                if (auto* unit = dynamic_cast<Unit*>(ent.get())) mentorName = unit->getName();
-                if (mentorName.empty()) {
-                    auto nit = playerNameCache.find(mentorGuid);
-                    if (nit != playerNameCache.end()) mentorName = nit->second;
-                }
-                addSystemChatMessage(mentorName.empty()
-                    ? "A player is offering to grant you a level."
-                    : (mentorName + " is offering to grant you a level."));
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_REFER_A_FRIEND_EXPIRED:
-            addSystemChatMessage("Your Recruit-A-Friend link has expired.");
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_REFER_A_FRIEND_FAILURE: {
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t reason = packet.readUInt32();
-                static const char* kRafErrors[] = {
-                    "Not eligible",            // 0
-                    "Target not eligible",     // 1
-                    "Too many referrals",      // 2
-                    "Wrong faction",           // 3
-                    "Not a recruit",           // 4
-                    "Recruit requirements not met", // 5
-                    "Level above requirement", // 6
-                    "Friend needs account upgrade", // 7
-                };
-                const char* msg = (reason < 8) ? kRafErrors[reason]
-                                               : "Recruit-A-Friend failed.";
-                addSystemChatMessage(std::string("Recruit-A-Friend: ") + msg);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_REPORT_PVP_AFK_RESULT: {
-            if (packet.getSize() - packet.getReadPos() >= 1) {
-                uint8_t result = packet.readUInt8();
-                if (result == 0)
-                    addSystemChatMessage("AFK report submitted.");
-                else
-                    addSystemChatMessage("Cannot report that player as AFK right now.");
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_RESPOND_INSPECT_ACHIEVEMENTS:
-            handleRespondInspectAchievements(packet);
-            break;
-        case Opcode::SMSG_QUEST_POI_QUERY_RESPONSE:
-            handleQuestPoiQueryResponse(packet);
-            break;
-        case Opcode::SMSG_ON_CANCEL_EXPECTED_RIDE_VEHICLE_AURA:
-            vehicleId_ = 0;  // Vehicle ride cancelled; clear UI
-            packet.setReadPos(packet.getSize());
-            break;
-        case Opcode::SMSG_RESET_RANGED_COMBAT_TIMER:
-        case Opcode::SMSG_PROFILEDATA_RESPONSE:
-            packet.setReadPos(packet.getSize());
-            break;
-
-        case Opcode::SMSG_PLAY_TIME_WARNING: {
-            // uint32 type (0=normal, 1=heavy, 2=tired/restricted) + uint32 minutes played
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t warnType = packet.readUInt32();
-                uint32_t minutesPlayed = (packet.getSize() - packet.getReadPos() >= 4)
-                    ? packet.readUInt32() : 0;
-                const char* severity = (warnType >= 2) ? "[Tired] " : "[Play Time] ";
-                char buf[128];
-                if (minutesPlayed > 0) {
-                    uint32_t h = minutesPlayed / 60;
-                    uint32_t m = minutesPlayed % 60;
-                    if (h > 0)
-                        std::snprintf(buf, sizeof(buf), "%sYou have been playing for %uh %um.", severity, h, m);
-                    else
-                        std::snprintf(buf, sizeof(buf), "%sYou have been playing for %um.", severity, m);
-                } else {
-                    std::snprintf(buf, sizeof(buf), "%sYou have been playing for a long time.", severity);
-                }
-                addSystemChatMessage(buf);
-                addUIError(buf);
-            }
-            break;
-        }
-
-        // ---- Item query multiple (same format as single, re-use handler) ----
-        case Opcode::SMSG_ITEM_QUERY_MULTIPLE_RESPONSE:
-            handleItemQueryResponse(packet);
-            break;
-
-        // ---- Object position/rotation queries ----
-        case Opcode::SMSG_QUERY_OBJECT_POSITION:
-        case Opcode::SMSG_QUERY_OBJECT_ROTATION:
-        case Opcode::SMSG_VOICESESSION_FULL:
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- Mirror image data (WotLK: Mage ability Mirror Image) ----
-        case Opcode::SMSG_MIRRORIMAGE_DATA: {
-            // WotLK 3.3.5a format:
-            //   uint64 mirrorGuid — GUID of the mirror image unit
-            //   uint32 displayId  — display ID to render the image with
-            //   uint8  raceId     — race of caster
-            //   uint8  genderFlag — gender of caster
-            //   uint8  classId    — class of caster
-            //   uint64 casterGuid — GUID of the player who cast the spell
-            //   Followed by equipped item display IDs (11 × uint32) if casterGuid != 0
-            // Purpose: tells client how to render the image (same appearance as caster).
-            // We parse the GUIDs so units render correctly via their existing display IDs.
-            if (packet.getSize() - packet.getReadPos() < 8) break;
-            uint64_t mirrorGuid = packet.readUInt64();
-            if (packet.getSize() - packet.getReadPos() < 4) break;
-            uint32_t displayId  = packet.readUInt32();
-            if (packet.getSize() - packet.getReadPos() < 3) break;
-            /*uint8_t raceId   =*/ packet.readUInt8();
-            /*uint8_t gender   =*/ packet.readUInt8();
-            /*uint8_t classId  =*/ packet.readUInt8();
-            // Apply display ID to the mirror image unit so it renders correctly
-            if (mirrorGuid != 0 && displayId != 0) {
-                auto entity = entityManager.getEntity(mirrorGuid);
-                if (entity) {
-                    auto unit = std::dynamic_pointer_cast<game::Unit>(entity);
-                    if (unit && unit->getDisplayId() == 0)
-                        unit->setDisplayId(displayId);
-                }
-            }
-            LOG_DEBUG("SMSG_MIRRORIMAGE_DATA: mirrorGuid=0x", std::hex, mirrorGuid,
-                      " displayId=", std::dec, displayId);
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- Player movement flag changes (server-pushed) ----
-        case Opcode::SMSG_MOVE_GRAVITY_DISABLE:
-            handleForceMoveFlagChange(packet, "GRAVITY_DISABLE", Opcode::CMSG_MOVE_GRAVITY_DISABLE_ACK,
-                static_cast<uint32_t>(MovementFlags::LEVITATING), true);
-            break;
-        case Opcode::SMSG_MOVE_GRAVITY_ENABLE:
-            handleForceMoveFlagChange(packet, "GRAVITY_ENABLE", Opcode::CMSG_MOVE_GRAVITY_ENABLE_ACK,
-                static_cast<uint32_t>(MovementFlags::LEVITATING), false);
-            break;
-        case Opcode::SMSG_MOVE_LAND_WALK:
-            handleForceMoveFlagChange(packet, "LAND_WALK", Opcode::CMSG_MOVE_WATER_WALK_ACK,
-                static_cast<uint32_t>(MovementFlags::WATER_WALK), false);
-            break;
-        case Opcode::SMSG_MOVE_NORMAL_FALL:
-            handleForceMoveFlagChange(packet, "NORMAL_FALL", Opcode::CMSG_MOVE_FEATHER_FALL_ACK,
-                static_cast<uint32_t>(MovementFlags::FEATHER_FALL), false);
-            break;
-        case Opcode::SMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY:
-            handleForceMoveFlagChange(packet, "SET_CAN_TRANSITION_SWIM_FLY",
-                Opcode::CMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY_ACK, 0, true);
-            break;
-        case Opcode::SMSG_MOVE_UNSET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY:
-            handleForceMoveFlagChange(packet, "UNSET_CAN_TRANSITION_SWIM_FLY",
-                Opcode::CMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY_ACK, 0, false);
-            break;
-        case Opcode::SMSG_MOVE_SET_COLLISION_HGT:
-            handleMoveSetCollisionHeight(packet);
-            break;
-        case Opcode::SMSG_MOVE_SET_FLIGHT:
-            handleForceMoveFlagChange(packet, "SET_FLIGHT", Opcode::CMSG_MOVE_FLIGHT_ACK,
-                static_cast<uint32_t>(MovementFlags::FLYING), true);
-            break;
-        case Opcode::SMSG_MOVE_UNSET_FLIGHT:
-            handleForceMoveFlagChange(packet, "UNSET_FLIGHT", Opcode::CMSG_MOVE_FLIGHT_ACK,
-                static_cast<uint32_t>(MovementFlags::FLYING), false);
-            break;
-
-        // ---- Battlefield Manager (WotLK outdoor battlefields: Wintergrasp, Tol Barad) ----
-        case Opcode::SMSG_BATTLEFIELD_MGR_ENTRY_INVITE: {
-            // uint64 battlefieldGuid + uint32 zoneId + uint64 expireUnixTime (seconds)
-            if (packet.getSize() - packet.getReadPos() < 20) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t bfGuid    = packet.readUInt64();
-            uint32_t bfZoneId  = packet.readUInt32();
-            uint64_t expireTime = packet.readUInt64();
-            (void)bfGuid; (void)expireTime;
-            // Store the invitation so the UI can show a prompt
-            bfMgrInvitePending_ = true;
-            bfMgrZoneId_        = bfZoneId;
-            char buf[128];
-            std::string bfZoneName = getAreaName(bfZoneId);
-            if (!bfZoneName.empty())
-                std::snprintf(buf, sizeof(buf),
-                    "You are invited to the outdoor battlefield in %s. Click to enter.",
-                    bfZoneName.c_str());
-            else
-                std::snprintf(buf, sizeof(buf),
-                    "You are invited to the outdoor battlefield in zone %u. Click to enter.",
-                    bfZoneId);
-            addSystemChatMessage(buf);
-            LOG_INFO("SMSG_BATTLEFIELD_MGR_ENTRY_INVITE: zoneId=", bfZoneId);
-            break;
-        }
-        case Opcode::SMSG_BATTLEFIELD_MGR_ENTERED: {
-            // uint64 battlefieldGuid + uint8 isSafe (1=pvp zones enabled) + uint8 onQueue
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                uint64_t bfGuid2 = packet.readUInt64();
-                (void)bfGuid2;
-                uint8_t isSafe  = (packet.getSize() - packet.getReadPos() >= 1) ? packet.readUInt8() : 0;
-                uint8_t onQueue = (packet.getSize() - packet.getReadPos() >= 1) ? packet.readUInt8() : 0;
-                bfMgrInvitePending_ = false;
-                bfMgrActive_        = true;
-                addSystemChatMessage(isSafe ? "You are in the battlefield zone (safe area)."
-                                            : "You have entered the battlefield!");
-                if (onQueue) addSystemChatMessage("You are in the battlefield queue.");
-                LOG_INFO("SMSG_BATTLEFIELD_MGR_ENTERED: isSafe=", (int)isSafe, " onQueue=", (int)onQueue);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_BATTLEFIELD_MGR_QUEUE_INVITE: {
-            // uint64 battlefieldGuid + uint32 battlefieldId + uint64 expireTime
-            if (packet.getSize() - packet.getReadPos() < 20) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint64_t bfGuid3   = packet.readUInt64();
-            uint32_t bfId      = packet.readUInt32();
-            uint64_t expTime   = packet.readUInt64();
-            (void)bfGuid3; (void)expTime;
-            bfMgrInvitePending_ = true;
-            bfMgrZoneId_        = bfId;
-            char buf[128];
-            std::snprintf(buf, sizeof(buf),
-                "A spot has opened in the battlefield queue (battlefield %u).", bfId);
-            addSystemChatMessage(buf);
-            LOG_INFO("SMSG_BATTLEFIELD_MGR_QUEUE_INVITE: bfId=", bfId);
-            break;
-        }
-        case Opcode::SMSG_BATTLEFIELD_MGR_QUEUE_REQUEST_RESPONSE: {
-            // uint32 battlefieldId + uint32 teamId + uint8 accepted + uint8 loggingEnabled + uint8 result
-            // result: 0=queued, 1=not_in_group, 2=too_high_level, 3=too_low_level,
-            //         4=in_cooldown, 5=queued_other_bf, 6=bf_full
-            if (packet.getSize() - packet.getReadPos() < 11) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            uint32_t bfId2    = packet.readUInt32();
-            /*uint32_t teamId =*/ packet.readUInt32();
-            uint8_t accepted  = packet.readUInt8();
-            /*uint8_t logging =*/ packet.readUInt8();
-            uint8_t result    = packet.readUInt8();
-            (void)bfId2;
-            if (accepted) {
-                addSystemChatMessage("You have joined the battlefield queue.");
-            } else {
-                static const char* kBfQueueErrors[] = {
-                    "Queued for battlefield.", "Not in a group.", "Level too high.",
-                    "Level too low.", "Battlefield in cooldown.", "Already queued for another battlefield.",
-                    "Battlefield is full."
-                };
-                const char* msg = (result < 7) ? kBfQueueErrors[result]
-                                               : "Battlefield queue request failed.";
-                addSystemChatMessage(std::string("Battlefield: ") + msg);
-            }
-            LOG_INFO("SMSG_BATTLEFIELD_MGR_QUEUE_REQUEST_RESPONSE: accepted=", (int)accepted,
-                     " result=", (int)result);
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_BATTLEFIELD_MGR_EJECT_PENDING: {
-            // uint64 battlefieldGuid + uint8 remove
-            if (packet.getSize() - packet.getReadPos() >= 9) {
-                uint64_t bfGuid4 = packet.readUInt64();
-                uint8_t  remove  = packet.readUInt8();
-                (void)bfGuid4;
-                if (remove) {
-                    addSystemChatMessage("You will be removed from the battlefield shortly.");
-                }
-                LOG_INFO("SMSG_BATTLEFIELD_MGR_EJECT_PENDING: remove=", (int)remove);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_BATTLEFIELD_MGR_EJECTED: {
-            // uint64 battlefieldGuid + uint32 reason + uint32 battleStatus + uint8 relocated
-            if (packet.getSize() - packet.getReadPos() >= 17) {
-                uint64_t bfGuid5    = packet.readUInt64();
-                uint32_t reason     = packet.readUInt32();
-                /*uint32_t status  =*/ packet.readUInt32();
-                uint8_t relocated   = packet.readUInt8();
-                (void)bfGuid5;
-                static const char* kEjectReasons[] = {
-                    "Removed from battlefield.", "Transported from battlefield.",
-                    "Left battlefield voluntarily.", "Offline.",
-                };
-                const char* msg = (reason < 4) ? kEjectReasons[reason]
-                                               : "You have been ejected from the battlefield.";
-                addSystemChatMessage(msg);
-                if (relocated) addSystemChatMessage("You have been relocated outside the battlefield.");
-                LOG_INFO("SMSG_BATTLEFIELD_MGR_EJECTED: reason=", reason, " relocated=", (int)relocated);
-            }
-            bfMgrActive_        = false;
-            bfMgrInvitePending_ = false;
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_BATTLEFIELD_MGR_STATE_CHANGE: {
-            // uint32 oldState + uint32 newState
-            // States: 0=Waiting, 1=Starting, 2=InProgress, 3=Ending, 4=Cooldown
-            if (packet.getSize() - packet.getReadPos() >= 8) {
-                /*uint32_t oldState =*/ packet.readUInt32();
-                uint32_t newState   = packet.readUInt32();
-                static const char* kBfStates[] = {
-                    "waiting", "starting", "in progress", "ending", "in cooldown"
-                };
-                const char* stateStr = (newState < 5) ? kBfStates[newState] : "unknown state";
-                char buf[128];
-                std::snprintf(buf, sizeof(buf), "Battlefield is now %s.", stateStr);
-                addSystemChatMessage(buf);
-                LOG_INFO("SMSG_BATTLEFIELD_MGR_STATE_CHANGE: newState=", newState);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-
-        // ---- WotLK Calendar system (pending invites, event notifications, command results) ----
-        case Opcode::SMSG_CALENDAR_SEND_NUM_PENDING: {
-            // uint32 numPending — number of unacknowledged calendar invites
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t numPending = packet.readUInt32();
-                calendarPendingInvites_ = numPending;
-                if (numPending > 0) {
-                    char buf[64];
-                    std::snprintf(buf, sizeof(buf),
-                        "You have %u pending calendar invite%s.",
-                        numPending, numPending == 1 ? "" : "s");
-                    addSystemChatMessage(buf);
-                }
-                LOG_DEBUG("SMSG_CALENDAR_SEND_NUM_PENDING: ", numPending, " pending invites");
-            }
-            break;
-        }
-        case Opcode::SMSG_CALENDAR_COMMAND_RESULT: {
-            // uint32 command + uint8 result + cstring info
-            // result 0 = success; non-zero = error code
-            // command values: 0=add,1=get,2=guild_filter,3=arena_team,4=update,5=remove,
-            //                 6=copy,7=invite,8=rsvp,9=remove_invite,10=status,11=moderator_status
-            if (packet.getSize() - packet.getReadPos() < 5) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            /*uint32_t command =*/ packet.readUInt32();
-            uint8_t result    = packet.readUInt8();
-            std::string info  = (packet.getReadPos() < packet.getSize()) ? packet.readString() : "";
-            if (result != 0) {
-                // Map common calendar error codes to friendly strings
-                static const char* kCalendarErrors[] = {
-                    "",
-                    "Calendar: Internal error.",           // 1 = CALENDAR_ERROR_INTERNAL
-                    "Calendar: Guild event limit reached.",// 2
-                    "Calendar: Event limit reached.",      // 3
-                    "Calendar: You cannot invite that player.", // 4
-                    "Calendar: No invites remaining.",     // 5
-                    "Calendar: Invalid date.",             // 6
-                    "Calendar: Cannot invite yourself.",   // 7
-                    "Calendar: Cannot modify this event.", // 8
-                    "Calendar: Not invited.",              // 9
-                    "Calendar: Already invited.",          // 10
-                    "Calendar: Player not found.",         // 11
-                    "Calendar: Not enough focus.",         // 12
-                    "Calendar: Event locked.",             // 13
-                    "Calendar: Event deleted.",            // 14
-                    "Calendar: Not a moderator.",          // 15
-                };
-                const char* errMsg = (result < 16) ? kCalendarErrors[result]
-                                                   : "Calendar: Command failed.";
-                if (errMsg && errMsg[0] != '\0') addSystemChatMessage(errMsg);
-                else if (!info.empty()) addSystemChatMessage("Calendar: " + info);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_CALENDAR_EVENT_INVITE_ALERT: {
-            // Rich notification: eventId(8) + title(cstring) + eventTime(8) + flags(4) +
-            //                   eventType(1) + dungeonId(4) + inviteId(8) + status(1) + rank(1) +
-            //                   isGuildEvent(1) + inviterGuid(8)
-            if (packet.getSize() - packet.getReadPos() < 9) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            /*uint64_t eventId =*/ packet.readUInt64();
-            std::string title = (packet.getReadPos() < packet.getSize()) ? packet.readString() : "";
-            packet.setReadPos(packet.getSize()); // consume remaining fields
-            if (!title.empty()) {
-                addSystemChatMessage("Calendar invite: " + title);
-            } else {
-                addSystemChatMessage("You have a new calendar invite.");
-            }
-            if (calendarPendingInvites_ < 255) ++calendarPendingInvites_;
-            LOG_INFO("SMSG_CALENDAR_EVENT_INVITE_ALERT: title='", title, "'");
-            break;
-        }
-        // Remaining calendar informational packets — parse title where possible and consume
-        case Opcode::SMSG_CALENDAR_EVENT_STATUS: {
-            // Sent when an event invite's RSVP status changes for the local player
-            // Format: inviteId(8) + eventId(8) + eventType(1) + flags(4) +
-            //         inviteTime(8) + status(1) + rank(1) + isGuildEvent(1) + title(cstring)
-            if (packet.getSize() - packet.getReadPos() < 31) {
-                packet.setReadPos(packet.getSize()); break;
-            }
-            /*uint64_t inviteId =*/ packet.readUInt64();
-            /*uint64_t eventId  =*/ packet.readUInt64();
-            /*uint8_t  evType   =*/ packet.readUInt8();
-            /*uint32_t flags    =*/ packet.readUInt32();
-            /*uint64_t invTime  =*/ packet.readUInt64();
-            uint8_t status     = packet.readUInt8();
-            /*uint8_t rank      =*/ packet.readUInt8();
-            /*uint8_t isGuild   =*/ packet.readUInt8();
-            std::string evTitle = (packet.getReadPos() < packet.getSize()) ? packet.readString() : "";
-            // status: 0=Invited,1=Accepted,2=Declined,3=Confirmed,4=Out,5=Standby,6=SignedUp,7=Not Signed Up,8=Tentative
-            static const char* kRsvpStatus[] = {
-                "invited", "accepted", "declined", "confirmed",
-                "out", "on standby", "signed up", "not signed up", "tentative"
-            };
-            const char* statusStr = (status < 9) ? kRsvpStatus[status] : "unknown";
-            if (!evTitle.empty()) {
-                char buf[256];
-                std::snprintf(buf, sizeof(buf), "Calendar event '%s': your RSVP is %s.",
-                              evTitle.c_str(), statusStr);
-                addSystemChatMessage(buf);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_CALENDAR_RAID_LOCKOUT_ADDED: {
-            // uint64 inviteId + uint64 eventId + uint32 mapId + uint32 difficulty + uint64 resetTime
-            if (packet.getSize() - packet.getReadPos() >= 28) {
-                /*uint64_t inviteId =*/ packet.readUInt64();
-                /*uint64_t eventId  =*/ packet.readUInt64();
-                uint32_t mapId     = packet.readUInt32();
-                uint32_t difficulty = packet.readUInt32();
-                /*uint64_t resetTime =*/ packet.readUInt64();
-                std::string mapLabel = getMapName(mapId);
-                if (mapLabel.empty()) mapLabel = "map #" + std::to_string(mapId);
-                static const char* kDiff[] = {"Normal","Heroic","25-Man","25-Man Heroic"};
-                const char* diffStr = (difficulty < 4) ? kDiff[difficulty] : nullptr;
-                std::string msg = "Calendar: Raid lockout added for " + mapLabel;
-                if (diffStr) msg += std::string(" (") + diffStr + ")";
-                msg += '.';
-                addSystemChatMessage(msg);
-                LOG_DEBUG("SMSG_CALENDAR_RAID_LOCKOUT_ADDED: mapId=", mapId, " difficulty=", difficulty);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_CALENDAR_RAID_LOCKOUT_REMOVED: {
-            // uint64 inviteId + uint64 eventId + uint32 mapId + uint32 difficulty
-            if (packet.getSize() - packet.getReadPos() >= 20) {
-                /*uint64_t inviteId =*/ packet.readUInt64();
-                /*uint64_t eventId  =*/ packet.readUInt64();
-                uint32_t mapId     = packet.readUInt32();
-                uint32_t difficulty = packet.readUInt32();
-                std::string mapLabel = getMapName(mapId);
-                if (mapLabel.empty()) mapLabel = "map #" + std::to_string(mapId);
-                static const char* kDiff[] = {"Normal","Heroic","25-Man","25-Man Heroic"};
-                const char* diffStr = (difficulty < 4) ? kDiff[difficulty] : nullptr;
-                std::string msg = "Calendar: Raid lockout removed for " + mapLabel;
-                if (diffStr) msg += std::string(" (") + diffStr + ")";
-                msg += '.';
-                addSystemChatMessage(msg);
-                LOG_DEBUG("SMSG_CALENDAR_RAID_LOCKOUT_REMOVED: mapId=", mapId,
-                          " difficulty=", difficulty);
-            }
-            packet.setReadPos(packet.getSize());
-            break;
-        }
-        case Opcode::SMSG_CALENDAR_RAID_LOCKOUT_UPDATED: {
-            // Same format as LOCKOUT_ADDED; consume
-            packet.setReadPos(packet.getSize());
-            break;
         }
-        // Remaining calendar opcodes: safe consume — data surfaced via SEND_CALENDAR/SEND_EVENT
-        case Opcode::SMSG_CALENDAR_SEND_CALENDAR:
-        case Opcode::SMSG_CALENDAR_SEND_EVENT:
-        case Opcode::SMSG_CALENDAR_ARENA_TEAM:
-        case Opcode::SMSG_CALENDAR_FILTER_GUILD:
-        case Opcode::SMSG_CALENDAR_CLEAR_PENDING_ACTION:
-        case Opcode::SMSG_CALENDAR_EVENT_INVITE:
-        case Opcode::SMSG_CALENDAR_EVENT_INVITE_NOTES:
-        case Opcode::SMSG_CALENDAR_EVENT_INVITE_NOTES_ALERT:
-        case Opcode::SMSG_CALENDAR_EVENT_INVITE_REMOVED:
-        case Opcode::SMSG_CALENDAR_EVENT_INVITE_REMOVED_ALERT:
-        case Opcode::SMSG_CALENDAR_EVENT_INVITE_STATUS_ALERT:
-        case Opcode::SMSG_CALENDAR_EVENT_MODERATOR_STATUS_ALERT:
-        case Opcode::SMSG_CALENDAR_EVENT_REMOVED_ALERT:
-        case Opcode::SMSG_CALENDAR_EVENT_UPDATED_ALERT:
-            packet.setReadPos(packet.getSize());
-            break;
-
-        case Opcode::SMSG_SERVERTIME: {
-            // uint32 unixTime — server's current unix timestamp; use to sync gameTime_
-            if (packet.getSize() - packet.getReadPos() >= 4) {
-                uint32_t srvTime = packet.readUInt32();
-                if (srvTime > 0) {
-                    gameTime_ = static_cast<float>(srvTime);
-                    LOG_DEBUG("SMSG_SERVERTIME: serverTime=", srvTime);
-                }
-            }
-            break;
-        }
-
-        case Opcode::SMSG_KICK_REASON: {
-            // uint64 kickerGuid + uint32 kickReasonType + null-terminated reason string
-            // kickReasonType: 0=other, 1=afk, 2=vote kick
-            if (!packetHasRemaining(packet, 12)) {
-                packet.setReadPos(packet.getSize());
-                break;
-            }
-            uint64_t kickerGuid   = packet.readUInt64();
-            uint32_t reasonType   = packet.readUInt32();
-            std::string reason;
-            if (packet.getReadPos() < packet.getSize())
-                reason = packet.readString();
-            (void)kickerGuid;
-            (void)reasonType;
-            std::string msg = "You have been removed from the group.";
-            if (!reason.empty())
-                msg = "You have been removed from the group: " + reason;
-            else if (reasonType == 1)
-                msg = "You have been removed from the group for being AFK.";
-            else if (reasonType == 2)
-                msg = "You have been removed from the group by vote.";
-            addSystemChatMessage(msg);
-            addUIError(msg);
-            LOG_INFO("SMSG_KICK_REASON: reasonType=", reasonType,
-                     " reason='", reason, "'");
-            break;
-        }
-
-        case Opcode::SMSG_GROUPACTION_THROTTLED: {
-            // uint32 throttleMs — rate-limited group action; notify the player
-            if (packetHasRemaining(packet, 4)) {
-                uint32_t throttleMs = packet.readUInt32();
-                char buf[128];
-                if (throttleMs > 0) {
-                    std::snprintf(buf, sizeof(buf),
-                                  "Group action throttled. Please wait %.1f seconds.",
-                                  throttleMs / 1000.0f);
-                } else {
-                    std::snprintf(buf, sizeof(buf), "Group action throttled.");
-                }
-                addSystemChatMessage(buf);
-                LOG_DEBUG("SMSG_GROUPACTION_THROTTLED: throttleMs=", throttleMs);
-            }
-            break;
-        }
-
-        case Opcode::SMSG_GMRESPONSE_RECEIVED: {
-            // WotLK 3.3.5a: uint32 ticketId + string subject + string body + uint32 count
-            //   per count: string responseText
-            if (!packetHasRemaining(packet, 4)) {
-                packet.setReadPos(packet.getSize());
-                break;
-            }
-            uint32_t ticketId = packet.readUInt32();
-            std::string subject;
-            std::string body;
-            if (packet.getReadPos() < packet.getSize()) subject = packet.readString();
-            if (packet.getReadPos() < packet.getSize()) body    = packet.readString();
-            uint32_t responseCount = 0;
-            if (packetHasRemaining(packet, 4))
-                responseCount = packet.readUInt32();
-            std::string responseText;
-            for (uint32_t i = 0; i < responseCount && i < 10; ++i) {
-                if (packet.getReadPos() < packet.getSize()) {
-                    std::string t = packet.readString();
-                    if (i == 0) responseText = t;
-                }
-            }
-            (void)ticketId;
-            std::string msg;
-            if (!responseText.empty())
-                msg = "[GM Response] " + responseText;
-            else if (!body.empty())
-                msg = "[GM Response] " + body;
-            else if (!subject.empty())
-                msg = "[GM Response] " + subject;
-            else
-                msg = "[GM Response] Your ticket has been answered.";
-            addSystemChatMessage(msg);
-            addUIError(msg);
-            LOG_INFO("SMSG_GMRESPONSE_RECEIVED: ticketId=", ticketId,
-                     " subject='", subject, "'");
-            break;
-        }
-
-        case Opcode::SMSG_GMRESPONSE_STATUS_UPDATE: {
-            // uint32 ticketId + uint8 status (1=open, 2=surveyed, 3=need_more_help)
-            if (packet.getSize() - packet.getReadPos() >= 5) {
-                uint32_t ticketId = packet.readUInt32();
-                uint8_t  status   = packet.readUInt8();
-                const char* statusStr = (status == 1) ? "open"
-                                      : (status == 2) ? "answered"
-                                      : (status == 3) ? "needs more info"
-                                      : "updated";
-                char buf[128];
-                std::snprintf(buf, sizeof(buf),
-                              "[GM Ticket #%u] Status: %s.", ticketId, statusStr);
-                addSystemChatMessage(buf);
-                LOG_DEBUG("SMSG_GMRESPONSE_STATUS_UPDATE: ticketId=", ticketId,
-                          " status=", static_cast<int>(status));
-            }
-            break;
-        }
-
-        // ---- Voice chat (WotLK built-in voice) — consume silently ----
-        case Opcode::SMSG_VOICE_SESSION_ROSTER_UPDATE:
-        case Opcode::SMSG_VOICE_SESSION_LEAVE:
-        case Opcode::SMSG_VOICE_SESSION_ADJUST_PRIORITY:
-        case Opcode::SMSG_VOICE_SET_TALKER_MUTED:
-        case Opcode::SMSG_VOICE_SESSION_ENABLE:
-        case Opcode::SMSG_VOICE_PARENTAL_CONTROLS:
-        case Opcode::SMSG_AVAILABLE_VOICE_CHANNEL:
-        case Opcode::SMSG_VOICE_CHAT_STATUS:
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- Dance / custom emote system (WotLK) — consume silently ----
-        case Opcode::SMSG_NOTIFY_DANCE:
-        case Opcode::SMSG_PLAY_DANCE:
-        case Opcode::SMSG_STOP_DANCE:
-        case Opcode::SMSG_DANCE_QUERY_RESPONSE:
-        case Opcode::SMSG_INVALIDATE_DANCE:
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- Commentator / spectator mode — consume silently ----
-        case Opcode::SMSG_COMMENTATOR_STATE_CHANGED:
-        case Opcode::SMSG_COMMENTATOR_MAP_INFO:
-        case Opcode::SMSG_COMMENTATOR_GET_PLAYER_INFO:
-        case Opcode::SMSG_COMMENTATOR_PLAYER_INFO:
-        case Opcode::SMSG_COMMENTATOR_SKIRMISH_QUEUE_RESULT1:
-        case Opcode::SMSG_COMMENTATOR_SKIRMISH_QUEUE_RESULT2:
-            packet.setReadPos(packet.getSize());
-            break;
-
-        // ---- Debug / cheat / GM-only opcodes — consume silently ----
-        case Opcode::SMSG_DBLOOKUP:
-        case Opcode::SMSG_CHECK_FOR_BOTS:
-        case Opcode::SMSG_GODMODE:
-        case Opcode::SMSG_PETGODMODE:
-        case Opcode::SMSG_DEBUG_AISTATE:
-        case Opcode::SMSG_DEBUGAURAPROC:
-        case Opcode::SMSG_TEST_DROP_RATE_RESULT:
-        case Opcode::SMSG_COOLDOWN_CHEAT:
-        case Opcode::SMSG_GM_PLAYER_INFO:
-        case Opcode::SMSG_CHEAT_DUMP_ITEMS_DEBUG_ONLY_RESPONSE:
-        case Opcode::SMSG_CHEAT_DUMP_ITEMS_DEBUG_ONLY_RESPONSE_WRITE_FILE:
-        case Opcode::SMSG_CHEAT_PLAYER_LOOKUP:
-        case Opcode::SMSG_IGNORE_REQUIREMENTS_CHEAT:
-        case Opcode::SMSG_IGNORE_DIMINISHING_RETURNS_CHEAT:
-        case Opcode::SMSG_DEBUG_LIST_TARGETS:
-        case Opcode::SMSG_DEBUG_SERVER_GEO:
-        case Opcode::SMSG_DUMP_OBJECTS_DATA:
-        case Opcode::SMSG_AFK_MONITOR_INFO_RESPONSE:
-        case Opcode::SMSG_FORCEACTIONSHOW:
-        case Opcode::SMSG_MOVE_CHARACTER_CHEAT:
-            packet.setReadPos(packet.getSize());
-            break;
-
-        default:
-            // In pre-world states we need full visibility (char create/login handshakes).
-            // In-world we keep de-duplication to avoid heavy log I/O in busy areas.
-            if (state != WorldState::IN_WORLD) {
-                static std::unordered_set<uint32_t> loggedUnhandledByState;
-                const uint32_t key = (static_cast<uint32_t>(static_cast<uint8_t>(state)) << 16) |
-                                     static_cast<uint32_t>(opcode);
-                if (loggedUnhandledByState.insert(key).second) {
-                    LOG_WARNING("Unhandled world opcode: 0x", std::hex, opcode, std::dec,
-                                " state=", static_cast<int>(state),
-                                " size=", packet.getSize());
-                    const auto& data = packet.getData();
-                    std::string hex;
-                    size_t limit = std::min<size_t>(data.size(), 48);
-                    hex.reserve(limit * 3);
-                    for (size_t i = 0; i < limit; ++i) {
-                        char b[4];
-                        snprintf(b, sizeof(b), "%02x ", data[i]);
-                        hex += b;
-                    }
-                    LOG_INFO("Unhandled opcode payload hex (first ", limit, " bytes): ", hex);
-                }
-            } else {
-                static std::unordered_set<uint16_t> loggedUnhandledOpcodes;
-                if (loggedUnhandledOpcodes.insert(static_cast<uint16_t>(opcode)).second) {
-                    LOG_WARNING("Unhandled world opcode: 0x", std::hex, opcode, std::dec);
-                }
-            }
-            break;
     }
     } catch (const std::bad_alloc& e) {
         LOG_ERROR("OOM while handling world opcode=0x", std::hex, opcode, std::dec,

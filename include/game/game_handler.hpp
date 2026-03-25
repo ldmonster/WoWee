@@ -2321,6 +2321,7 @@ private:
      * Handle incoming packet from world server
      */
     void handlePacket(network::Packet& packet);
+    void registerOpcodeHandlers();
     void enqueueIncomingPacket(const network::Packet& packet);
     void enqueueIncomingPacketFront(network::Packet&& packet);
     void processQueuedIncomingPackets();
@@ -2645,6 +2646,10 @@ private:
                                 const glm::vec3& localOffset, bool hasLocalOrientation,
                                 float localOrientation);
     void clearTransportAttachment(uint64_t childGuid);
+
+    // Opcode dispatch table — built once in registerOpcodeHandlers(), called by handlePacket()
+    using PacketHandler = std::function<void(network::Packet&)>;
+    std::unordered_map<LogicalOpcode, PacketHandler> dispatchTable_;
 
     // Opcode translation table (expansion-specific wire ↔ logical mapping)
     OpcodeTable opcodeTable_;
