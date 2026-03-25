@@ -115,6 +115,10 @@ bool isClassicLikeExpansion() {
     return isActiveExpansion("classic") || isActiveExpansion("turtle");
 }
 
+bool isPreWotlk() {
+    return isPreWotlk();
+}
+
 bool envFlagEnabled(const char* key, bool defaultValue = false) {
     const char* raw = std::getenv(key);
     if (!raw || !*raw) return defaultValue;
@@ -1101,7 +1105,7 @@ void GameHandler::update(float deltaTime) {
         timeSinceLastMoveHeartbeat_ += deltaTime;
 
         const float currentPingInterval =
-            (isClassicLikeExpansion() || isActiveExpansion("tbc")) ? 10.0f : pingInterval;
+            (isPreWotlk()) ? 10.0f : pingInterval;
         if (timeSinceLastPing >= currentPingInterval) {
             if (socket) {
                 sendPing();
@@ -1110,7 +1114,7 @@ void GameHandler::update(float deltaTime) {
         }
 
         const bool classicLikeCombatSync =
-            autoAttackRequested_ && (isClassicLikeExpansion() || isActiveExpansion("tbc"));
+            autoAttackRequested_ && (isPreWotlk());
         const uint32_t locomotionFlags =
             static_cast<uint32_t>(MovementFlags::FORWARD) |
             static_cast<uint32_t>(MovementFlags::BACKWARD) |
@@ -1364,7 +1368,7 @@ void GameHandler::update(float deltaTime) {
                 float dz = movementInfo.z - targetZ;
                 float dist = std::sqrt(dx * dx + dy * dy);
                 float dist3d = std::sqrt(dx * dx + dy * dy + dz * dz);
-                const bool classicLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+                const bool classicLike = isPreWotlk();
                 if (dist > 40.0f) {
                     stopAutoAttack();
                     LOG_INFO("Left combat: target too far (", dist, " yards)");
@@ -1936,7 +1940,7 @@ void GameHandler::registerOpcodeHandlers() {
         }
     };
     dispatchTable_[Opcode::SMSG_SPELL_FAILED_OTHER] = [this](network::Packet& packet) {
-        const bool tbcLike2 = isClassicLikeExpansion() || isActiveExpansion("tbc");
+        const bool tbcLike2 = isPreWotlk();
         uint64_t failOtherGuid = tbcLike2
             ? (packet.getRemainingSize() >= 8 ? packet.readUInt64() : 0)
             : packet.readPackedGuid();
@@ -2908,7 +2912,7 @@ void GameHandler::registerOpcodeHandlers() {
 
     // Minimap ping
     dispatchTable_[Opcode::MSG_MINIMAP_PING] = [this](network::Packet& packet) {
-        const bool mmTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+        const bool mmTbcLike = isPreWotlk();
         if (packet.getRemainingSize() < (mmTbcLike ? 8u : 1u)) return;
         uint64_t senderGuid = mmTbcLike
             ? packet.readUInt64() : packet.readPackedGuid();
@@ -3049,7 +3053,7 @@ void GameHandler::registerOpcodeHandlers() {
 
     // Spell delayed
     dispatchTable_[Opcode::SMSG_SPELL_DELAYED] = [this](network::Packet& packet) {
-        const bool spellDelayTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+        const bool spellDelayTbcLike = isPreWotlk();
         if (packet.getRemainingSize() < (spellDelayTbcLike ? 8u : 1u)) return;
         uint64_t caster = spellDelayTbcLike
             ? packet.readUInt64() : packet.readPackedGuid();
@@ -3905,7 +3909,7 @@ void GameHandler::registerOpcodeHandlers() {
     dispatchTable_[Opcode::SMSG_TOTEM_CREATED] = [this](network::Packet& packet) {
         // WotLK:       uint8 slot + packed_guid + uint32 duration + uint32 spellId
         // TBC/Classic: uint8 slot + uint64 guid  + uint32 duration + uint32 spellId
-        const bool totemTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+        const bool totemTbcLike = isPreWotlk();
         if (packet.getRemainingSize() < (totemTbcLike ? 17u : 9u)) return;
         uint8_t slot = packet.readUInt8();
         if (totemTbcLike)
@@ -6480,7 +6484,7 @@ void GameHandler::registerOpcodeHandlers() {
     dispatchTable_[Opcode::SMSG_RESUME_CAST_BAR] = [this](network::Packet& packet) {
         // WotLK: packed_guid caster + packed_guid target + uint32 spellId + uint32 remainingMs + uint32 totalMs + uint8 schoolMask
         // TBC/Classic: uint64 caster + uint64 target + ...
-        const bool rcbTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
+        const bool rcbTbc = isPreWotlk();
         auto remaining = [&]() { return packet.getRemainingSize(); };
         if (remaining() < (rcbTbc ? 8u : 1u)) return;
         uint64_t caster = rcbTbc
@@ -6513,7 +6517,7 @@ void GameHandler::registerOpcodeHandlers() {
     // casterGuid + uint32 spellId + uint32 totalDurationMs
     dispatchTable_[Opcode::MSG_CHANNEL_START] = [this](network::Packet& packet) {
         // casterGuid + uint32 spellId + uint32 totalDurationMs
-        const bool tbcOrClassic = isClassicLikeExpansion() || isActiveExpansion("tbc");
+        const bool tbcOrClassic = isPreWotlk();
         uint64_t chanCaster = tbcOrClassic
             ? (packet.getRemainingSize() >= 8 ? packet.readUInt64() : 0)
             : packet.readPackedGuid();
@@ -6549,7 +6553,7 @@ void GameHandler::registerOpcodeHandlers() {
     // casterGuid + uint32 remainingMs
     dispatchTable_[Opcode::MSG_CHANNEL_UPDATE] = [this](network::Packet& packet) {
         // casterGuid + uint32 remainingMs
-        const bool tbcOrClassic2 = isClassicLikeExpansion() || isActiveExpansion("tbc");
+        const bool tbcOrClassic2 = isPreWotlk();
         uint64_t chanCaster2 = tbcOrClassic2
             ? (packet.getRemainingSize() >= 8 ? packet.readUInt64() : 0)
             : packet.readPackedGuid();
@@ -7735,7 +7739,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
 
     try {
 
-    const bool allowVanillaAliases = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool allowVanillaAliases = isPreWotlk();
 
     // Vanilla compatibility aliases:
     // - 0x006B: can be SMSG_COMPRESSED_MOVES on some vanilla-family servers
@@ -10247,7 +10251,7 @@ void GameHandler::sendMovement(Opcode opcode) {
     movementInfo.time = movementTime;
 
     if (opcode == Opcode::MSG_MOVE_SET_FACING &&
-        (isClassicLikeExpansion() || isActiveExpansion("tbc"))) {
+        (isPreWotlk())) {
         const float facingDelta = core::coords::normalizeAngleRad(
             movementInfo.orientation - lastFacingSentOrientation_);
         const uint32_t sinceLastFacingMs =
@@ -12533,7 +12537,7 @@ void GameHandler::sendTextEmote(uint32_t textEmoteId, uint64_t targetGuid) {
 void GameHandler::handleTextEmote(network::Packet& packet) {
     // Classic 1.12 and TBC 2.4.3 send: textEmoteId(u32) + emoteNum(u32) + senderGuid(u64) + nameLen(u32) + name
     // WotLK 3.3.5a reversed this to: senderGuid(u64) + textEmoteId(u32) + emoteNum(u32) + nameLen(u32) + name
-    const bool legacyFormat = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool legacyFormat = isPreWotlk();
     TextEmoteData data;
     if (!TextEmoteParser::parse(packet, data, legacyFormat)) {
         LOG_WARNING("Failed to parse SMSG_TEXT_EMOTE");
@@ -14394,7 +14398,7 @@ void GameHandler::handleInspectResults(network::Packet& packet) {
 
     // talentType == 1: inspect result
     // WotLK: packed GUID; TBC: full uint64
-    const bool talentTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool talentTbc = isPreWotlk();
     if (packet.getRemainingSize() < (talentTbc ? 8u : 2u)) return;
 
     uint64_t guid = talentTbc
@@ -15529,7 +15533,7 @@ void GameHandler::dismount() {
 void GameHandler::handleForceSpeedChange(network::Packet& packet, const char* name,
                                           Opcode ackOpcode, float* speedStorage) {
     // WotLK: packed GUID; TBC/Classic: full uint64
-    const bool fscTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool fscTbcLike = isPreWotlk();
     uint64_t guid = fscTbcLike
         ? packet.readUInt64() : packet.readPackedGuid();
     // uint32 counter
@@ -15622,7 +15626,7 @@ void GameHandler::handleForceMoveRootState(network::Packet& packet, bool rooted)
     // WotLK: packed GUID + uint32 counter + [optional unknown field(s)]
     // TBC/Classic: full uint64 + uint32 counter
     // We always ACK with current movement state, same pattern as speed-change ACKs.
-    const bool rootTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool rootTbc = isPreWotlk();
     if (packet.getRemainingSize() < (rootTbc ? 8u : 2u)) return;
     uint64_t guid = rootTbc
         ? packet.readUInt64() : packet.readPackedGuid();
@@ -15682,7 +15686,7 @@ void GameHandler::handleForceMoveRootState(network::Packet& packet, bool rooted)
 void GameHandler::handleForceMoveFlagChange(network::Packet& packet, const char* name,
                                              Opcode ackOpcode, uint32_t flag, bool set) {
     // WotLK: packed GUID; TBC/Classic: full uint64
-    const bool fmfTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool fmfTbcLike = isPreWotlk();
     if (packet.getRemainingSize() < (fmfTbcLike ? 8u : 2u)) return;
     uint64_t guid = fmfTbcLike
         ? packet.readUInt64() : packet.readPackedGuid();
@@ -15742,7 +15746,7 @@ void GameHandler::handleForceMoveFlagChange(network::Packet& packet, const char*
 void GameHandler::handleMoveSetCollisionHeight(network::Packet& packet) {
     // SMSG_MOVE_SET_COLLISION_HGT: packed guid + counter + float (height)
     // ACK: CMSG_MOVE_SET_COLLISION_HGT_ACK = packed guid + counter + movement block + float (height)
-    const bool legacyGuid = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool legacyGuid = isPreWotlk();
     if (packet.getRemainingSize() < (legacyGuid ? 8u : 2u)) return;
     uint64_t guid = legacyGuid ? packet.readUInt64() : packet.readPackedGuid();
     if (packet.getRemainingSize() < 8) return;  // counter(4) + height(4)
@@ -15782,7 +15786,7 @@ void GameHandler::handleMoveSetCollisionHeight(network::Packet& packet) {
 
 void GameHandler::handleMoveKnockBack(network::Packet& packet) {
     // WotLK: packed GUID; TBC/Classic: full uint64
-    const bool mkbTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool mkbTbc = isPreWotlk();
     if (packet.getRemainingSize() < (mkbTbc ? 8u : 2u)) return;
     uint64_t guid = mkbTbc
         ? packet.readUInt64() : packet.readPackedGuid();
@@ -17071,7 +17075,7 @@ void GameHandler::handleMoveSetSpeed(network::Packet& packet) {
     // The MovementInfo block is variable-length; rather than fully parsing it, we read the
     // fixed prefix, skip over optional blocks by consuming remaining bytes until 4 remain,
     // then read the speed float. This is safe because the speed is always the last field.
-    const bool useFull = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool useFull = isPreWotlk();
     uint64_t moverGuid = useFull
         ? packet.readUInt64() : packet.readPackedGuid();
 
@@ -17102,7 +17106,7 @@ void GameHandler::handleMoveSetSpeed(network::Packet& packet) {
 
 void GameHandler::handleOtherPlayerMovement(network::Packet& packet) {
     // Server relays MSG_MOVE_* for other players: packed GUID (WotLK) or full uint64 (TBC/Classic)
-    const bool otherMoveTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool otherMoveTbc = isPreWotlk();
     uint64_t moverGuid = otherMoveTbc
         ? packet.readUInt64() : packet.readPackedGuid();
     if (moverGuid == playerGuid || moverGuid == 0) {
@@ -22465,7 +22469,7 @@ void GameHandler::handleTeleportAck(network::Packet& packet) {
     // MSG_MOVE_TELEPORT_ACK (server→client):
     // WotLK: packed GUID + u32 counter + u32 time + movement info with new position
     // TBC/Classic: uint64 + u32 counter + u32 time + movement info
-    const bool taTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool taTbc = isPreWotlk();
     if (packet.getRemainingSize() < (taTbc ? 8u : 4u)) {
         LOG_WARNING("MSG_MOVE_TELEPORT_ACK too short");
         return;
@@ -22480,7 +22484,7 @@ void GameHandler::handleTeleportAck(network::Packet& packet) {
     // WotLK: moveFlags(4) + moveFlags2(2) + time(4) + x(4) + y(4) + z(4) + o(4) = 26 bytes
     // Classic 1.12 / TBC 2.4.3: moveFlags(4) + time(4) + x(4) + y(4) + z(4) + o(4) = 24 bytes
     // (Classic and TBC have no moveFlags2 field in movement packets)
-    const bool taNoFlags2 = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool taNoFlags2 = isPreWotlk();
     const size_t minMoveSz = taNoFlags2 ? (4 + 4 + 4 * 4) : (4 + 2 + 4 + 4 * 4);
     if (packet.getRemainingSize() < minMoveSz) {
         LOG_WARNING("MSG_MOVE_TELEPORT_ACK: not enough data for movement info");
