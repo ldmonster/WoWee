@@ -86,6 +86,17 @@ float Packet::readFloat() {
     return value;
 }
 
+uint64_t Packet::readPackedGuid() {
+    uint8_t mask = readUInt8();
+    if (mask == 0) return 0;
+    uint64_t guid = 0;
+    for (int i = 0; i < 8; ++i) {
+        if (mask & (1 << i))
+            guid |= static_cast<uint64_t>(readUInt8()) << (i * 8);
+    }
+    return guid;
+}
+
 std::string Packet::readString() {
     std::string result;
     while (readPos < data.size()) {

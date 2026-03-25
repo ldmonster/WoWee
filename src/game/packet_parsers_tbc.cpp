@@ -78,7 +78,7 @@ bool TbcPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlock& 
         if (moveFlags & TbcMoveFlags::ON_TRANSPORT) {
             if (rem() < 1) return false;
             block.onTransport = true;
-            block.transportGuid = UpdateObjectParser::readPackedGuid(packet);
+            block.transportGuid = packet.readPackedGuid();
             if (rem() < 20) return false; // 4 floats + 1 uint32
             block.transportX = packet.readFloat();
             block.transportY = packet.readFloat();
@@ -184,7 +184,7 @@ bool TbcPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlock& 
     // Target GUID
     if (updateFlags & UPDATEFLAG_HAS_TARGET) {
         if (rem() < 1) return false;
-        /*uint64_t targetGuid =*/ UpdateObjectParser::readPackedGuid(packet);
+        /*uint64_t targetGuid =*/ packet.readPackedGuid();
     }
 
     // Transport time
@@ -452,7 +452,7 @@ bool TbcPacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjectDa
                         packet.setReadPos(start);
                         return false;
                     }
-                    uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
+                    uint64_t guid = packet.readPackedGuid();
                     out.outOfRangeGuids.push_back(guid);
                 }
             } else {
@@ -479,7 +479,7 @@ bool TbcPacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjectDa
             bool ok = false;
             switch (block.updateType) {
                 case UpdateType::VALUES: {
-                    block.guid = UpdateObjectParser::readPackedGuid(packet);
+                    block.guid = packet.readPackedGuid();
                     ok = UpdateObjectParser::parseUpdateFields(packet, block);
                     break;
                 }
@@ -490,7 +490,7 @@ bool TbcPacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjectDa
                 }
                 case UpdateType::CREATE_OBJECT:
                 case UpdateType::CREATE_OBJECT2: {
-                    block.guid = UpdateObjectParser::readPackedGuid(packet);
+                    block.guid = packet.readPackedGuid();
                     if (packet.getReadPos() >= packet.getSize()) {
                         ok = false;
                         break;
@@ -632,7 +632,7 @@ bool TbcPacketParsers::parseGossipMessage(network::Packet& packet, GossipMessage
 // byte and parse as garbage.
 // ============================================================================
 bool TbcPacketParsers::parseMonsterMove(network::Packet& packet, MonsterMoveData& data) {
-    data.guid = UpdateObjectParser::readPackedGuid(packet);
+    data.guid = packet.readPackedGuid();
     if (data.guid == 0) return false;
     // No unk byte here in TBC 2.4.3
 
@@ -1260,7 +1260,7 @@ static bool skipTbcSpellCastTargets(network::Packet& packet, uint64_t* primaryTa
         size_t needed = 1;
         for (int b = 0; b < 8; ++b) if (mask & (1u << b)) ++needed;
         if (packet.getRemainingSize() < needed) return false;
-        uint64_t g = UpdateObjectParser::readPackedGuid(packet);
+        uint64_t g = packet.readPackedGuid();
         if (capture && primaryTargetGuid && *primaryTargetGuid == 0) *primaryTargetGuid = g;
         return true;
     };

@@ -2699,7 +2699,7 @@ bool NameQueryResponseParser::parse(network::Packet& packet, NameQueryResponseDa
     if (packet.getRemainingSize() < 2) return false; // At least 1 for packed GUID + 1 for found
 
     size_t startPos = packet.getReadPos();
-    data.guid = UpdateObjectParser::readPackedGuid(packet);
+    data.guid = packet.readPackedGuid();
 
     // Validate found flag read
     if (packet.getRemainingSize() < 1) {
@@ -3140,7 +3140,7 @@ bool ItemQueryResponseParser::parse(network::Packet& packet, ItemQueryResponseDa
 
 bool MonsterMoveParser::parse(network::Packet& packet, MonsterMoveData& data) {
     // PackedGuid
-    data.guid = UpdateObjectParser::readPackedGuid(packet);
+    data.guid = packet.readPackedGuid();
     if (data.guid == 0) return false;
 
     // uint8 unk (toggle for MOVEMENTFLAG2_UNK7)
@@ -3259,7 +3259,7 @@ bool MonsterMoveParser::parse(network::Packet& packet, MonsterMoveData& data) {
 }
 
 bool MonsterMoveParser::parseVanilla(network::Packet& packet, MonsterMoveData& data) {
-    data.guid = UpdateObjectParser::readPackedGuid(packet);
+    data.guid = packet.readPackedGuid();
     if (data.guid == 0) return false;
 
     if (packet.getReadPos() + 12 > packet.getSize()) return false;
@@ -3376,8 +3376,8 @@ bool AttackStartParser::parse(network::Packet& packet, AttackStartData& data) {
 }
 
 bool AttackStopParser::parse(network::Packet& packet, AttackStopData& data) {
-    data.attackerGuid = UpdateObjectParser::readPackedGuid(packet);
-    data.victimGuid = UpdateObjectParser::readPackedGuid(packet);
+    data.attackerGuid = packet.readPackedGuid();
+    data.victimGuid = packet.readPackedGuid();
     if (packet.getReadPos() < packet.getSize()) {
         data.unknown = packet.readUInt32();
     }
@@ -3395,12 +3395,12 @@ bool AttackerStateUpdateParser::parse(network::Packet& packet, AttackerStateUpda
         packet.setReadPos(startPos);
         return false;
     }
-    data.attackerGuid = UpdateObjectParser::readPackedGuid(packet);
+    data.attackerGuid = packet.readPackedGuid();
     if (!packet.hasFullPackedGuid()) {
         packet.setReadPos(startPos);
         return false;
     }
-    data.targetGuid = UpdateObjectParser::readPackedGuid(packet);
+    data.targetGuid = packet.readPackedGuid();
 
     // Validate totalDamage + subDamageCount can be read (5 bytes)
     if (packet.getRemainingSize() < 5) {
@@ -3482,12 +3482,12 @@ bool SpellDamageLogParser::parse(network::Packet& packet, SpellDamageLogData& da
         packet.setReadPos(startPos);
         return false;
     }
-    data.targetGuid = UpdateObjectParser::readPackedGuid(packet);
+    data.targetGuid = packet.readPackedGuid();
     if (!packet.hasFullPackedGuid()) {
         packet.setReadPos(startPos);
         return false;
     }
-    data.attackerGuid = UpdateObjectParser::readPackedGuid(packet);
+    data.attackerGuid = packet.readPackedGuid();
 
     // Validate core fields (spellId + damage + overkill + schoolMask + absorbed + resisted = 21 bytes)
     if (packet.getRemainingSize() < 21) {
@@ -3532,12 +3532,12 @@ bool SpellHealLogParser::parse(network::Packet& packet, SpellHealLogData& data) 
         packet.setReadPos(startPos);
         return false;
     }
-    data.targetGuid = UpdateObjectParser::readPackedGuid(packet);
+    data.targetGuid = packet.readPackedGuid();
     if (!packet.hasFullPackedGuid()) {
         packet.setReadPos(startPos);
         return false;
     }
-    data.casterGuid = UpdateObjectParser::readPackedGuid(packet);
+    data.casterGuid = packet.readPackedGuid();
 
     // Validate remaining fields (spellId + heal + overheal + absorbed + critFlag = 17 bytes)
     if (packet.getRemainingSize() < 17) {
@@ -3768,12 +3768,12 @@ bool SpellStartParser::parse(network::Packet& packet, SpellStartData& data) {
     if (!packet.hasFullPackedGuid()) {
         return false;
     }
-    data.casterGuid = UpdateObjectParser::readPackedGuid(packet);
+    data.casterGuid = packet.readPackedGuid();
     if (!packet.hasFullPackedGuid()) {
         packet.setReadPos(startPos);
         return false;
     }
-    data.casterUnit = UpdateObjectParser::readPackedGuid(packet);
+    data.casterUnit = packet.readPackedGuid();
 
     // Validate remaining fixed fields (castCount + spellId + castFlags + castTime = 13 bytes)
     if (packet.getRemainingSize() < 13) {
@@ -3800,13 +3800,13 @@ bool SpellStartParser::parse(network::Packet& packet, SpellStartData& data) {
 
     auto readPackedTarget = [&](uint64_t* out) -> bool {
         if (!packet.hasFullPackedGuid()) return false;
-        uint64_t g = UpdateObjectParser::readPackedGuid(packet);
+        uint64_t g = packet.readPackedGuid();
         if (out) *out = g;
         return true;
     };
     auto skipPackedAndFloats3 = [&]() -> bool {
         if (!packet.hasFullPackedGuid()) return false;
-        UpdateObjectParser::readPackedGuid(packet); // transport GUID (may be zero)
+        packet.readPackedGuid(); // transport GUID (may be zero)
         if (packet.getRemainingSize() < 12) return false;
         packet.readFloat(); packet.readFloat(); packet.readFloat();
         return true;
@@ -3849,12 +3849,12 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
     if (!packet.hasFullPackedGuid()) {
         return false;
     }
-    data.casterGuid = UpdateObjectParser::readPackedGuid(packet);
+    data.casterGuid = packet.readPackedGuid();
     if (!packet.hasFullPackedGuid()) {
         packet.setReadPos(startPos);
         return false;
     }
-    data.casterUnit = UpdateObjectParser::readPackedGuid(packet);
+    data.casterUnit = packet.readPackedGuid();
 
     // Validate remaining fixed fields up to hitCount/missCount
     if (packet.getRemainingSize() < 14) { // castCount(1) + spellId(4) + castFlags(4) + timestamp(4) + hitCount(1)
@@ -3975,13 +3975,13 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
 
             auto readPackedTarget = [&](uint64_t* out) -> bool {
                 if (!packet.hasFullPackedGuid()) return false;
-                uint64_t g = UpdateObjectParser::readPackedGuid(packet);
+                uint64_t g = packet.readPackedGuid();
                 if (out) *out = g;
                 return true;
             };
             auto skipPackedAndFloats3 = [&]() -> bool {
                 if (!packet.hasFullPackedGuid()) return false;
-                UpdateObjectParser::readPackedGuid(packet); // transport GUID
+                packet.readPackedGuid(); // transport GUID
                 if (packet.getRemainingSize() < 12) return false;
                 packet.readFloat(); packet.readFloat(); packet.readFloat();
                 return true;
@@ -4019,7 +4019,7 @@ bool AuraUpdateParser::parse(network::Packet& packet, AuraUpdateData& data, bool
     // Validation: packed GUID (1-8 bytes minimum for reading)
     if (packet.getRemainingSize() < 1) return false;
 
-    data.guid = UpdateObjectParser::readPackedGuid(packet);
+    data.guid = packet.readPackedGuid();
 
     // Cap number of aura entries to prevent unbounded loop DoS
     uint32_t maxAuras = isAll ? 512 : 1;
@@ -4057,7 +4057,7 @@ bool AuraUpdateParser::parse(network::Packet& packet, AuraUpdateData& data, bool
                 if (packet.getRemainingSize() < 1) {
                     aura.casterGuid = 0;
                 } else {
-                    aura.casterGuid = UpdateObjectParser::readPackedGuid(packet);
+                    aura.casterGuid = packet.readPackedGuid();
                 }
             }
 

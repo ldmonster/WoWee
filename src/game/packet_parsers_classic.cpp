@@ -39,7 +39,7 @@ bool skipClassicSpellCastTargets(network::Packet& packet, uint64_t* primaryTarge
         if (!packet.hasFullPackedGuid()) {
             return false;
         }
-        const uint64_t guid = UpdateObjectParser::readPackedGuid(packet);
+        const uint64_t guid = packet.readPackedGuid();
         if (capture && primaryTargetGuid && *primaryTargetGuid == 0) {
             *primaryTargetGuid = guid;
         }
@@ -211,7 +211,7 @@ bool ClassicPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlo
         if (moveFlags & ClassicMoveFlags::ONTRANSPORT) {
             if (rem() < 1) return false;
             block.onTransport = true;
-            block.transportGuid = UpdateObjectParser::readPackedGuid(packet);
+            block.transportGuid = packet.readPackedGuid();
             if (rem() < 16) return false; // 4 floats
             block.transportX = packet.readFloat();
             block.transportY = packet.readFloat();
@@ -324,7 +324,7 @@ bool ClassicPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlo
     // Current melee target as packed guid
     if (updateFlags & UPDATEFLAG_MELEE_ATTACKING) {
         if (rem() < 1) return false;
-        /*uint64_t meleeTargetGuid =*/ UpdateObjectParser::readPackedGuid(packet);
+        /*uint64_t meleeTargetGuid =*/ packet.readPackedGuid();
     }
 
     // Transport progress / world time
@@ -497,12 +497,12 @@ bool ClassicPacketParsers::parseSpellStart(network::Packet& packet, SpellStartDa
         packet.setReadPos(startPos);
         return false;
     }
-    data.casterGuid = UpdateObjectParser::readPackedGuid(packet);
+    data.casterGuid = packet.readPackedGuid();
     if (!packet.hasFullPackedGuid()) {
         packet.setReadPos(startPos);
         return false;
     }
-    data.casterUnit = UpdateObjectParser::readPackedGuid(packet);
+    data.casterUnit = packet.readPackedGuid();
 
     // Vanilla/Turtle SMSG_SPELL_START does not include castCount here.
     // Layout after the two packed GUIDs is spellId(u32) + castFlags(u16) + castTime(u32).
@@ -569,9 +569,9 @@ bool ClassicPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& da
     if (rem() < 2) return false;
 
     if (!packet.hasFullPackedGuid()) return false;
-    data.casterGuid = UpdateObjectParser::readPackedGuid(packet);
+    data.casterGuid = packet.readPackedGuid();
     if (!packet.hasFullPackedGuid()) return false;
-    data.casterUnit = UpdateObjectParser::readPackedGuid(packet);
+    data.casterUnit = packet.readPackedGuid();
 
     // Vanilla/Turtle SMSG_SPELL_GO does not include castCount here.
     // Layout after the two packed GUIDs is spellId(u32) + castFlags(u16).
@@ -622,7 +622,7 @@ bool ClassicPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& da
                     if (!packet.hasFullPackedGuid()) {
                         return false;
                     }
-                    targetGuid = UpdateObjectParser::readPackedGuid(packet);
+                    targetGuid = packet.readPackedGuid();
                 } else {
                     if (rem() < 8) {
                         return false;
@@ -695,7 +695,7 @@ bool ClassicPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& da
                     if (!packet.hasFullPackedGuid()) {
                         return false;
                     }
-                    m.targetGuid = UpdateObjectParser::readPackedGuid(packet);
+                    m.targetGuid = packet.readPackedGuid();
                 } else {
                     if (rem() < 8) {
                         return false;
@@ -785,12 +785,12 @@ bool ClassicPacketParsers::parseAttackerStateUpdate(network::Packet& packet, Att
         packet.setReadPos(startPos);
         return false;
     }
-    data.attackerGuid = UpdateObjectParser::readPackedGuid(packet); // PackedGuid in Vanilla
+    data.attackerGuid = packet.readPackedGuid(); // PackedGuid in Vanilla
     if (!packet.hasFullPackedGuid()) {
         packet.setReadPos(startPos);
         return false;
     }
-    data.targetGuid   = UpdateObjectParser::readPackedGuid(packet); // PackedGuid in Vanilla
+    data.targetGuid   = packet.readPackedGuid(); // PackedGuid in Vanilla
 
     if (rem() < 5) {
         packet.setReadPos(startPos);
@@ -849,9 +849,9 @@ bool ClassicPacketParsers::parseSpellDamageLog(network::Packet& packet, SpellDam
     auto rem = [&]() { return packet.getRemainingSize(); };
     if (rem() < 2 || !packet.hasFullPackedGuid()) return false;
 
-    data.targetGuid   = UpdateObjectParser::readPackedGuid(packet); // PackedGuid in Vanilla
+    data.targetGuid   = packet.readPackedGuid(); // PackedGuid in Vanilla
     if (rem() < 1 || !packet.hasFullPackedGuid()) return false;
-    data.attackerGuid = UpdateObjectParser::readPackedGuid(packet); // PackedGuid in Vanilla
+    data.attackerGuid = packet.readPackedGuid(); // PackedGuid in Vanilla
 
     // uint32(spellId) + uint32(damage) + uint8(schoolMask) + uint32(absorbed)
     // + uint32(resisted) + uint8 + uint8 + uint32(blocked) + uint32(flags) = 21 bytes
@@ -884,9 +884,9 @@ bool ClassicPacketParsers::parseSpellHealLog(network::Packet& packet, SpellHealL
     auto rem = [&]() { return packet.getRemainingSize(); };
     if (rem() < 2 || !packet.hasFullPackedGuid()) return false;
 
-    data.targetGuid = UpdateObjectParser::readPackedGuid(packet); // PackedGuid in Vanilla
+    data.targetGuid = packet.readPackedGuid(); // PackedGuid in Vanilla
     if (rem() < 1 || !packet.hasFullPackedGuid()) return false;
-    data.casterGuid = UpdateObjectParser::readPackedGuid(packet); // PackedGuid in Vanilla
+    data.casterGuid = packet.readPackedGuid(); // PackedGuid in Vanilla
 
     if (rem() < 13) return false;  // uint32 + uint32 + uint32 + uint8 = 13 bytes
     data.spellId  = packet.readUInt32();
@@ -926,7 +926,7 @@ bool ClassicPacketParsers::parseAuraUpdate(network::Packet& packet, AuraUpdateDa
     auto rem = [&]() { return packet.getRemainingSize(); };
     if (rem() < 1) return false;
 
-    data.guid = UpdateObjectParser::readPackedGuid(packet);
+    data.guid = packet.readPackedGuid();
 
     while (rem() > 0) {
         if (rem() < 1) break;
@@ -1948,7 +1948,7 @@ bool TurtlePacketParsers::parseMovementBlock(network::Packet& packet, UpdateBloc
         if (moveFlags & TurtleMoveFlags::ONTRANSPORT) {
             if (rem() < 1) return false; // PackedGuid mask byte
             block.onTransport = true;
-            block.transportGuid = UpdateObjectParser::readPackedGuid(packet);
+            block.transportGuid = packet.readPackedGuid();
             if (rem() < 20) return false; // 4 floats + u32 timestamp
             block.transportX = packet.readFloat();
             block.transportY = packet.readFloat();
@@ -2069,7 +2069,7 @@ bool TurtlePacketParsers::parseMovementBlock(network::Packet& packet, UpdateBloc
 
     if (updateFlags & UPDATEFLAG_MELEE_ATTACKING) {
         if (rem() < 1) return false;
-        /*uint64_t meleeTargetGuid =*/ UpdateObjectParser::readPackedGuid(packet);
+        /*uint64_t meleeTargetGuid =*/ packet.readPackedGuid();
     }
 
     if (updateFlags & UPDATEFLAG_TRANSPORT) {
@@ -2126,7 +2126,7 @@ bool TurtlePacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjec
                         packet.setReadPos(start);
                         return false;
                     }
-                    out.outOfRangeGuids.push_back(UpdateObjectParser::readPackedGuid(packet));
+                    out.outOfRangeGuids.push_back(packet.readPackedGuid());
                 }
             } else {
                 packet.setReadPos(packet.getReadPos() - 1);
@@ -2166,7 +2166,7 @@ bool TurtlePacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjec
                         return true;
                     case UpdateType::CREATE_OBJECT:
                     case UpdateType::CREATE_OBJECT2:
-                        block.guid = UpdateObjectParser::readPackedGuid(packet);
+                        block.guid = packet.readPackedGuid();
                         if (packet.getReadPos() >= packet.getSize()) return false;
                         block.objectType = static_cast<ObjectType>(packet.readUInt8());
                         if (!movementParser(packet, block)) return false;
@@ -2180,7 +2180,7 @@ bool TurtlePacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjec
 
             switch (updateType) {
                 case UpdateType::VALUES:
-                    block.guid = UpdateObjectParser::readPackedGuid(packet);
+                    block.guid = packet.readPackedGuid();
                     ok = UpdateObjectParser::parseUpdateFields(packet, block);
                     break;
                 case UpdateType::MOVEMENT:
