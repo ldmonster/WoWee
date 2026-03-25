@@ -200,15 +200,8 @@ network::Packet AuthSessionPacket::build(uint32_t build,
     LOG_INFO("CMSG_AUTH_SESSION packet built: ", packet.getSize(), " bytes");
 
     // Dump full packet for protocol debugging
-    const auto& data = packet.getData();
-    std::string hexDump;
-    for (size_t i = 0; i < data.size(); ++i) {
-        char buf[4];
-        snprintf(buf, sizeof(buf), "%02x ", data[i]);
-        hexDump += buf;
-        if ((i + 1) % 16 == 0) hexDump += "\n";
-    }
-    LOG_DEBUG("CMSG_AUTH_SESSION full dump:\n", hexDump);
+    LOG_DEBUG("CMSG_AUTH_SESSION full dump:\n",
+              core::toHexString(packet.getData().data(), packet.getData().size(), true));
 
     return packet;
 }
@@ -249,33 +242,14 @@ std::vector<uint8_t> AuthSessionPacket::computeAuthHash(
     hashInput.insert(hashInput.end(), sessionKey.begin(), sessionKey.end());
 
     // Diagnostic: dump auth hash inputs for debugging AUTH_REJECT
-    {
-        auto toHex = [](const uint8_t* data, size_t len) {
-            std::string s;
-            for (size_t i = 0; i < len; ++i) {
-                char buf[4]; snprintf(buf, sizeof(buf), "%02x", data[i]); s += buf;
-            }
-            return s;
-        };
-        LOG_DEBUG("AUTH HASH: account='", accountName, "' clientSeed=0x", std::hex, clientSeed,
-                  " serverSeed=0x", serverSeed, std::dec);
-        LOG_DEBUG("AUTH HASH: sessionKey=", toHex(sessionKey.data(), sessionKey.size()));
-        LOG_DEBUG("AUTH HASH: input(", hashInput.size(), ")=", toHex(hashInput.data(), hashInput.size()));
-    }
+    LOG_DEBUG("AUTH HASH: account='", accountName, "' clientSeed=0x", std::hex, clientSeed,
+              " serverSeed=0x", serverSeed, std::dec);
+    LOG_DEBUG("AUTH HASH: sessionKey=", core::toHexString(sessionKey.data(), sessionKey.size()));
+    LOG_DEBUG("AUTH HASH: input(", hashInput.size(), ")=", core::toHexString(hashInput.data(), hashInput.size()));
 
     // Compute SHA1 hash
     auto result = auth::Crypto::sha1(hashInput);
-
-    {
-        auto toHex = [](const uint8_t* data, size_t len) {
-            std::string s;
-            for (size_t i = 0; i < len; ++i) {
-                char buf[4]; snprintf(buf, sizeof(buf), "%02x", data[i]); s += buf;
-            }
-            return s;
-        };
-        LOG_DEBUG("AUTH HASH: digest=", toHex(result.data(), result.size()));
-    }
+    LOG_DEBUG("AUTH HASH: digest=", core::toHexString(result.data(), result.size()));
 
     return result;
 }
@@ -420,14 +394,8 @@ network::Packet CharCreatePacket::build(const CharCreateData& data) {
               " facial=", static_cast<int>(data.facialHair));
 
     // Dump full packet for protocol debugging
-    const auto& pktData = packet.getData();
-    std::string hexDump;
-    for (size_t i = 0; i < pktData.size(); ++i) {
-        char buf[4];
-        snprintf(buf, sizeof(buf), "%02x ", pktData[i]);
-        hexDump += buf;
-    }
-    LOG_DEBUG("CMSG_CHAR_CREATE full dump: ", hexDump);
+    LOG_DEBUG("CMSG_CHAR_CREATE full dump: ",
+              core::toHexString(packet.getData().data(), packet.getData().size(), true));
 
     return packet;
 }

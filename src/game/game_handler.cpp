@@ -703,11 +703,8 @@ bool GameHandler::connect(const std::string& host,
     this->realmId_ = realmId;
 
     // Diagnostic: dump session key for AUTH_REJECT debugging
-    {
-        std::string hex;
-        for (uint8_t b : sessionKey) { char buf[4]; snprintf(buf, sizeof(buf), "%02x", b); hex += buf; }
-        LOG_INFO("GameHandler session key (", sessionKey.size(), "): ", hex);
-    }
+    LOG_INFO("GameHandler session key (", sessionKey.size(), "): ",
+             core::toHexString(sessionKey.data(), sessionKey.size()));
     requiresWarden_ = false;
     wardenGateSeen_ = false;
     wardenGateElapsed_ = 0.0f;

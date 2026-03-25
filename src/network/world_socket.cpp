@@ -360,13 +360,8 @@ void WorldSocket::send(const Packet& packet) {
     }
 
     if (kLogSwapItemPackets && (opcode == 0x10C || opcode == 0x10D)) { // CMSG_SWAP_ITEM / CMSG_SWAP_INV_ITEM
-        std::string hex;
-        for (size_t i = 0; i < data.size(); i++) {
-            char buf[4];
-            snprintf(buf, sizeof(buf), "%02x ", data[i]);
-            hex += buf;
-        }
-        LOG_INFO("WS TX opcode=0x", std::hex, opcode, std::dec, " payloadLen=", payloadLen, " data=[", hex, "]");
+        LOG_INFO("WS TX opcode=0x", std::hex, opcode, std::dec, " payloadLen=", payloadLen,
+                 " data=[", core::toHexString(data.data(), data.size(), true), "]");
     }
 
     const auto traceNow = std::chrono::steady_clock::now();
@@ -418,14 +413,8 @@ void WorldSocket::send(const Packet& packet) {
 
     // Debug: dump packet bytes for AUTH_SESSION
     if (opcode == 0x1ED) {
-        std::string hexDump = "AUTH_SESSION raw bytes: ";
-        for (size_t i = 0; i < sendData.size(); ++i) {
-            char buf[4];
-            snprintf(buf, sizeof(buf), "%02x ", sendData[i]);
-            hexDump += buf;
-            if ((i + 1) % 32 == 0) hexDump += "\n";
-        }
-        LOG_DEBUG(hexDump);
+        LOG_DEBUG("AUTH_SESSION raw bytes: ",
+                  core::toHexString(sendData.data(), sendData.size(), true));
     }
     if (isLoginPipelineCmsg(opcode)) {
         LOG_INFO("WS TX LOGIN opcode=0x", std::hex, opcode, std::dec,
@@ -588,11 +577,9 @@ void WorldSocket::pumpNetworkIO() {
         }
         // Hex dump received bytes for auth debugging (debug-only to avoid per-frame string work)
         if (debugLog && bytesReadThisTick <= 128) {
-            std::string hex;
-            for (size_t i = receiveReadOffset_; i < receiveBuffer.size(); ++i) {
-                char buf[4]; snprintf(buf, sizeof(buf), "%02x ", receiveBuffer[i]); hex += buf;
-            }
-            LOG_DEBUG("World socket raw bytes: ", hex);
+            LOG_DEBUG("World socket raw bytes: ",
+                      core::toHexString(receiveBuffer.data() + receiveReadOffset_,
+                                        receiveBuffer.size() - receiveReadOffset_, true));
         }
         tryParsePackets();
         if (debugLog && connected && bufferedBytes() > 0) {

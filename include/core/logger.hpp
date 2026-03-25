@@ -7,6 +7,8 @@
 #include <fstream>
 #include <chrono>
 #include <atomic>
+#include <cstdio>
+#include <cstdint>
 
 namespace wowee {
 namespace core {
@@ -143,6 +145,17 @@ private:
         _wowee_logger.fatal(__VA_ARGS__); \
     } \
 } while (0)
+
+inline std::string toHexString(const uint8_t* data, size_t len, bool spaces = false) {
+    std::string s;
+    s.reserve(len * (spaces ? 3 : 2));
+    for (size_t i = 0; i < len; ++i) {
+        char buf[4];
+        std::snprintf(buf, sizeof(buf), spaces ? "%02x " : "%02x", data[i]);
+        s += buf;
+    }
+    return s;
+}
 
 } // namespace core
 } // namespace wowee

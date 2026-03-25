@@ -50,10 +50,12 @@
 
 namespace {
     // Common ImGui colors
-    constexpr ImVec4 kColorRed    = {1.0f, 0.3f, 0.3f, 1.0f};
-    constexpr ImVec4 kColorGreen  = {0.4f, 1.0f, 0.4f, 1.0f};
-    constexpr ImVec4 kColorYellow = {1.0f, 1.0f, 0.3f, 1.0f};
-    constexpr ImVec4 kColorGray   = {0.6f, 0.6f, 0.6f, 1.0f};
+    constexpr ImVec4 kColorRed        = {1.0f, 0.3f, 0.3f, 1.0f};
+    constexpr ImVec4 kColorGreen      = {0.4f, 1.0f, 0.4f, 1.0f};
+    constexpr ImVec4 kColorBrightGreen= {0.3f, 1.0f, 0.3f, 1.0f};
+    constexpr ImVec4 kColorYellow     = {1.0f, 1.0f, 0.3f, 1.0f};
+    constexpr ImVec4 kColorGray       = {0.6f, 0.6f, 0.6f, 1.0f};
+    constexpr ImVec4 kColorDarkGray   = {0.5f, 0.5f, 0.5f, 1.0f};
 
     // Common ImGui window flags for popup dialogs
     const ImGuiWindowFlags kDialogFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize;
@@ -1146,7 +1148,7 @@ void GameScreen::renderPlayerInfo(game::GameHandler& gameHandler) {
     auto state = gameHandler.getState();
     switch (state) {
         case game::WorldState::IN_WORLD:
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "In World");
+            ImGui::TextColored(kColorBrightGreen, "In World");
             break;
         case game::WorldState::AUTHENTICATED:
             ImGui::TextColored(kColorYellow, "Authenticated");
@@ -1205,7 +1207,7 @@ void GameScreen::renderEntityList(game::GameHandler& gameHandler) {
                 ImGui::TableSetColumnIndex(1);
                 switch (entity->getType()) {
                     case game::ObjectType::PLAYER:
-                        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Player");
+                        ImGui::TextColored(kColorBrightGreen, "Player");
                         break;
                     case game::ObjectType::UNIT:
                         ImGui::TextColored(kColorYellow, "Unit");
@@ -2587,10 +2589,10 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
     switch (selectedChatType) {
         case 1: inputColor = kColorRed; break;  // YELL - red
         case 2: inputColor = ImVec4(0.4f, 0.6f, 1.0f, 1.0f); break;  // PARTY - blue
-        case 3: inputColor = ImVec4(0.3f, 1.0f, 0.3f, 1.0f); break;  // GUILD - green
+        case 3: inputColor = kColorBrightGreen; break;  // GUILD - green
         case 4: inputColor = ImVec4(1.0f, 0.5f, 1.0f, 1.0f); break;  // WHISPER - pink
         case 5: inputColor = ImVec4(1.0f, 0.5f, 0.0f, 1.0f); break;  // RAID - orange
-        case 6: inputColor = ImVec4(0.3f, 1.0f, 0.3f, 1.0f); break;  // OFFICER - green
+        case 6: inputColor = kColorBrightGreen; break;  // OFFICER - green
         case 7: inputColor = ImVec4(1.0f, 0.5f, 0.0f, 1.0f); break;  // BG - orange
         case 8: inputColor = ImVec4(1.0f, 0.3f, 0.0f, 1.0f); break;  // RAID WARNING - red-orange
         case 9:  inputColor = ImVec4(0.4f, 0.6f, 1.0f, 1.0f); break;  // INSTANCE - blue
@@ -3382,7 +3384,7 @@ void GameScreen::renderPlayerFrame(game::GameHandler& gameHandler) {
     const bool inCombatConfirmed = gameHandler.isInCombat();
     const bool attackIntentOnly = gameHandler.hasAutoAttackIntent() && !inCombatConfirmed;
     ImVec4 playerBorder = isDead
-        ? ImVec4(0.5f, 0.5f, 0.5f, 1.0f)
+        ? kColorDarkGray
         : (inCombatConfirmed
             ? ImVec4(1.0f, 0.2f, 0.2f, 1.0f)
             : (attackIntentOnly
@@ -3417,7 +3419,7 @@ void GameScreen::renderPlayerFrame(game::GameHandler& gameHandler) {
         // Derive class color via shared helper
         ImVec4 classColor = activeChar
             ? classColorVec4(static_cast<uint8_t>(activeChar->characterClass))
-            : ImVec4(0.3f, 1.0f, 0.3f, 1.0f);
+            : kColorBrightGreen;
 
         // Name in class color — clickable for self-target, right-click for menu
         ImGui::PushStyleColor(ImGuiCol_Text, classColor);
@@ -3515,7 +3517,7 @@ void GameScreen::renderPlayerFrame(game::GameHandler& gameHandler) {
         float pct = static_cast<float>(playerHp) / static_cast<float>(playerMaxHp);
         ImVec4 hpColor;
         if (isDead) {
-            hpColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+            hpColor = kColorDarkGray;
         } else if (pct > 0.5f) {
             hpColor = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);              // green
         } else if (pct > 0.2f) {
@@ -4240,11 +4242,11 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
     // Determine hostility/level color for border and name (WoW-canonical)
     ImVec4 hostileColor(0.7f, 0.7f, 0.7f, 1.0f);
     if (target->getType() == game::ObjectType::PLAYER) {
-        hostileColor = ImVec4(0.3f, 1.0f, 0.3f, 1.0f);
+        hostileColor = kColorBrightGreen;
     } else if (target->getType() == game::ObjectType::UNIT) {
         auto u = std::static_pointer_cast<game::Unit>(target);
         if (u->getHealth() == 0 && u->getMaxHealth() > 0) {
-            hostileColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+            hostileColor = kColorDarkGray;
         } else if (u->isHostile()) {
             // Check tapped-by-other: grey name for mobs tagged by someone else
             uint32_t tgtDynFlags = u->getDynamicFlags();
@@ -4269,12 +4271,12 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                 } else if (diff >= -2) {
                     hostileColor = ImVec4(1.0f, 1.0f, 0.1f, 1.0f); // Yellow - even
                 } else {
-                    hostileColor = ImVec4(0.3f, 1.0f, 0.3f, 1.0f); // Green - easy
+                    hostileColor = kColorBrightGreen; // Green - easy
                 }
             }
             } // end tapped else
         } else {
-            hostileColor = ImVec4(0.3f, 1.0f, 0.3f, 1.0f); // Friendly
+            hostileColor = kColorBrightGreen; // Friendly
         }
     }
 
@@ -4682,7 +4684,7 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                 if (totGuid == gameHandler.getPlayerGuid()) {
                     auto playerEnt = gameHandler.getEntityManager().getEntity(totGuid);
                     totName = playerEnt ? getEntityName(playerEnt) : "You";
-                    totColor = ImVec4(0.3f, 1.0f, 0.3f, 1.0f);
+                    totColor = kColorBrightGreen;
                 } else if (totEnt) {
                     totName = getEntityName(totEnt);
                     uint8_t cid = entityClassId(totEnt.get());
@@ -5191,11 +5193,11 @@ void GameScreen::renderFocusFrame(game::GameHandler& gameHandler) {
     if (focus->getType() == game::ObjectType::PLAYER) {
         // Use class color for player focus targets
         uint8_t cid = entityClassId(focus.get());
-        focusColor = (cid != 0) ? classColorVec4(cid) : ImVec4(0.3f, 1.0f, 0.3f, 1.0f);
+        focusColor = (cid != 0) ? classColorVec4(cid) : kColorBrightGreen;
     } else if (focus->getType() == game::ObjectType::UNIT) {
         auto u = std::static_pointer_cast<game::Unit>(focus);
         if (u->getHealth() == 0 && u->getMaxHealth() > 0) {
-            focusColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+            focusColor = kColorDarkGray;
         } else if (u->isHostile()) {
             // Tapped-by-other: grey focus frame name
             uint32_t focDynFlags = u->getDynamicFlags();
@@ -5218,11 +5220,11 @@ void GameScreen::renderFocusFrame(game::GameHandler& gameHandler) {
                 else if (diff >= -2)
                     focusColor = ImVec4(1.0f, 1.0f, 0.1f, 1.0f);
                 else
-                    focusColor = ImVec4(0.3f, 1.0f, 0.3f, 1.0f);
+                    focusColor = kColorBrightGreen;
             }
             } // end tapped else
         } else {
-            focusColor = ImVec4(0.3f, 1.0f, 0.3f, 1.0f);
+            focusColor = kColorBrightGreen;
         }
     }
 
@@ -5647,7 +5649,7 @@ void GameScreen::renderFocusFrame(game::GameHandler& gameHandler) {
                 ImVec4 fofColor(0.7f, 0.7f, 0.7f, 1.0f);
                 if (fofGuid == gameHandler.getPlayerGuid()) {
                     fofName = "You";
-                    fofColor = ImVec4(0.3f, 1.0f, 0.3f, 1.0f);
+                    fofColor = kColorBrightGreen;
                 } else if (fofEnt) {
                     fofName = getEntityName(fofEnt);
                     uint8_t fcid = entityClassId(fofEnt.get());
@@ -8340,7 +8342,7 @@ ImVec4 GameScreen::getChatTypeColor(game::ChatType type) const {
         case game::ChatType::PARTY:
             return ImVec4(0.5f, 0.5f, 1.0f, 1.0f);  // Light blue
         case game::ChatType::GUILD:
-            return ImVec4(0.3f, 1.0f, 0.3f, 1.0f);  // Green
+            return kColorBrightGreen;  // Green
         case game::ChatType::OFFICER:
             return ImVec4(0.3f, 0.8f, 0.3f, 1.0f);  // Dark green
         case game::ChatType::RAID:
@@ -12721,7 +12723,7 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                     case 4: powerColor = ImVec4(0.5f, 0.9f, 0.3f, 1.0f); break; // Happiness (green)
                     case 6: powerColor = ImVec4(0.8f, 0.1f, 0.2f, 1.0f); break; // Runic Power (crimson)
                     case 7: powerColor = ImVec4(0.4f, 0.1f, 0.6f, 1.0f); break; // Soul Shards (purple)
-                    default: powerColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f); break;
+                    default: powerColor = kColorDarkGray; break;
                 }
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram, powerColor);
                 ImGui::ProgressBar(powerPct, ImVec2(-1, 8), "");
@@ -14108,7 +14110,7 @@ void GameScreen::renderLootRollPopup(game::GameHandler& gameHandler) {
                 ImVec4(0.2f, 0.9f, 0.2f, 1.0f),  // Need  — green
                 ImVec4(0.3f, 0.6f, 1.0f, 1.0f),  // Greed — blue
                 ImVec4(0.7f, 0.3f, 0.9f, 1.0f),  // Disenchant — purple
-                ImVec4(0.5f, 0.5f, 0.5f, 1.0f),  // Pass  — gray
+                kColorDarkGray,  // Pass  — gray
             };
             auto rollTypeIndex = [](uint8_t t) -> int {
                 if (t == 0) return 0;
@@ -14653,7 +14655,7 @@ void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
                         for (const auto& m : sortedMembers) {
                             ImGui::TableNextRow();
                             ImVec4 textColor = m.online ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f)
-                                                        : ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+                                                        : kColorDarkGray;
                             ImVec4 nameColor = m.online ? classColorVec4(m.classId) : textColor;
 
                             ImGui::TableNextColumn();
@@ -14832,7 +14834,7 @@ void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
                 if (!roster.motd.empty()) {
                     ImGui::TextWrapped("%s", roster.motd.c_str());
                 } else {
-                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "(not set)");
+                    ImGui::TextColored(kColorDarkGray, "(not set)");
                 }
                 if (ImGui::Button("Set MOTD")) {
                     showMotdEdit_ = true;
@@ -14885,7 +14887,7 @@ void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
                         ImGui::Text("  %zu. %s", i + 1, rankNames[i].c_str());
                         if (!perms.empty()) {
                             ImGui::SameLine();
-                            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "[%s]", perms.c_str());
+                            ImGui::TextColored(kColorDarkGray, "[%s]", perms.c_str());
                         }
                     } else {
                         ImGui::Text("  %zu. %s", i + 1, rankNames[i].c_str());
@@ -15201,7 +15203,7 @@ void GameScreen::renderSocialFrame(game::GameHandler& gameHandler) {
                         const char* displayName = c.name.empty() ? "(unknown)" : c.name.c_str();
                         ImVec4 nameCol = c.isOnline()
                             ? classColorVec4(static_cast<uint8_t>(c.classId))
-                            : ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+                            : kColorDarkGray;
                         ImGui::TextColored(nameCol, "%s", displayName);
 
                         if (c.isOnline() && c.level > 0) {
@@ -24072,7 +24074,7 @@ void GameScreen::renderInstanceLockouts(game::GameHandler& gameHandler) {
                             static_cast<unsigned long long>(mins));
                     }
                 } else {
-                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Expired");
+                    ImGui::TextColored(kColorDarkGray, "Expired");
                 }
 
                 // Locked / Extended status
@@ -24446,7 +24448,7 @@ void GameScreen::renderCombatLog(game::GameHandler& gameHandler) {
                         snprintf(desc, sizeof(desc), "%s critically heals %s for %d! (%s)", src, tgt, e.amount, spell);
                     else
                         snprintf(desc, sizeof(desc), "%s critically heals %s for %d!", src, tgt, e.amount);
-                    color = ImVec4(0.3f, 1.0f, 0.3f, 1.0f);
+                    color = kColorBrightGreen;
                     break;
                 case T::PERIODIC_HEAL:
                     if (spell)
