@@ -18844,8 +18844,8 @@ void GameHandler::handleSpellStart(network::Packet& packet) {
         castTimeRemaining = castTimeTotal;
         if (addonEventCallback_) addonEventCallback_("CURRENT_SPELL_CAST_CHANGED", {});
 
-        // Play precast (channeling) sound with correct magic school
-        // Skip sound for profession/tradeskill spells (crafting should be silent)
+        // Play precast sound — skip profession/tradeskill spells (they use crafting
+        // animations/sounds, not magic spell audio).
         if (!isProfessionSpell(data.spellId)) {
             if (auto* renderer = core::Application::getInstance().getRenderer()) {
                 if (auto* ssm = renderer->getSpellSoundManager()) {
@@ -18891,8 +18891,7 @@ void GameHandler::handleSpellGo(network::Packet& packet) {
 
     // Cast completed
     if (data.casterUnit == playerGuid) {
-        // Play cast-complete sound with correct magic school
-        // Skip sound for profession/tradeskill spells (crafting should be silent)
+        // Play cast-complete sound — skip profession spells (no magic sound for crafting)
         if (!isProfessionSpell(data.spellId)) {
             if (auto* renderer = core::Application::getInstance().getRenderer()) {
                 if (auto* ssm = renderer->getSpellSoundManager()) {
@@ -18908,11 +18907,12 @@ void GameHandler::handleSpellGo(network::Packet& packet) {
 
         // Instant melee abilities → trigger attack animation
         // Detect via physical school mask (1 = Physical) from the spell DBC cache.
+        // Skip profession spells — crafting should not swing weapons.
         // This covers warrior, rogue, DK, paladin, feral druid, and hunter melee
         // abilities generically instead of maintaining a brittle per-spell-ID list.
         uint32_t sid = data.spellId;
         bool isMeleeAbility = false;
-        {
+        if (!isProfessionSpell(sid)) {
             loadSpellNameCache();
             auto cacheIt = spellNameCache_.find(sid);
             if (cacheIt != spellNameCache_.end() && cacheIt->second.schoolMask == 1) {

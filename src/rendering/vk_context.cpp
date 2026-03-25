@@ -13,6 +13,44 @@
 namespace wowee {
 namespace rendering {
 
+VkContext* VkContext::sInstance_ = nullptr;
+
+// Hash a VkSamplerCreateInfo into a 64-bit key for the sampler cache.
+static uint64_t hashSamplerCreateInfo(const VkSamplerCreateInfo& s) {
+    // Pack the relevant fields into a deterministic hash.
+    // FNV-1a 64-bit on the raw config values.
+    uint64_t h = 14695981039346656037ULL;
+    auto mix = [&](uint64_t v) {
+        h ^= v;
+        h *= 1099511628211ULL;
+    };
+    mix(static_cast<uint64_t>(s.minFilter));
+    mix(static_cast<uint64_t>(s.magFilter));
+    mix(static_cast<uint64_t>(s.mipmapMode));
+    mix(static_cast<uint64_t>(s.addressModeU));
+    mix(static_cast<uint64_t>(s.addressModeV));
+    mix(static_cast<uint64_t>(s.addressModeW));
+    mix(static_cast<uint64_t>(s.anisotropyEnable));
+    // Bit-cast floats to uint32_t for hashing
+    uint32_t aniso;
+    std::memcpy(&aniso, &s.maxAnisotropy, sizeof(aniso));
+    mix(static_cast<uint64_t>(aniso));
+    uint32_t maxLodBits;
+    std::memcpy(&maxLodBits, &s.maxLod, sizeof(maxLodBits));
+    mix(static_cast<uint64_t>(maxLodBits));
+    uint32_t minLodBits;
+    std::memcpy(&minLodBits, &s.minLod, sizeof(minLodBits));
+    mix(static_cast<uint64_t>(minLodBits));
+    mix(static_cast<uint64_t>(s.compareEnable));
+    mix(static_cast<uint64_t>(s.compareOp));
+    mix(static_cast<uint64_t>(s.borderColor));
+    uint32_t biasBits;
+    std::memcpy(&biasBits, &s.mipLodBias, sizeof(biasBits));
+    mix(static_cast<uint64_t>(biasBits));
+    mix(static_cast<uint64_t>(s.unnormalizedCoordinates));
+    return h;
+}
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     [[maybe_unused]] VkDebugUtilsMessageTypeFlagsEXT type,
@@ -52,6 +90,14 @@ bool VkContext::initialize(SDL_Window* window) {
     if (!createSyncObjects()) return false;
     if (!createImGuiResources()) return false;
 
+    // Query anisotropy support from the physical device.
+    VkPhysicalDeviceFeatures supportedFeatures{};
+    vkGetPhysicalDeviceFeatures(physicalDevice, &supportedFeatures);
+    samplerAnisotropySupported_ = (supportedFeatures.samplerAnisotropy == VK_TRUE);
+    LOG_INFO("Sampler anisotropy supported: ", samplerAnisotropySupported_ ? "YES" : "NO");
+
+    sInstance_ = this;
+
     LOG_INFO("Vulkan context initialized successfully");
     return true;
 }
@@ -89,6 +135,7 @@ void VkContext::shutdown() {
 
     if (immFence) { vkDestroyFence(device, immFence, nullptr); immFence = VK_NULL_HANDLE; }
     if (immCommandPool) { vkDestroyCommandPool(device, immCommandPool, nullptr); immCommandPool = VK_NULL_HANDLE; }
+    if (transferCommandPool_) { vkDestroyCommandPool(device, transferCommandPool_, nullptr); transferCommandPool_ = VK_NULL_HANDLE; }
 
     // Persist pipeline cache to disk before tearing down the device.
     savePipelineCache();
@@ -96,6 +143,15 @@ void VkContext::shutdown() {
         vkDestroyPipelineCache(device, pipelineCache_, nullptr);
         pipelineCache_ = VK_NULL_HANDLE;
     }
+
+    // Destroy all cached samplers.
+    for (auto& [key, sampler] : samplerCache_) {
+        if (sampler) vkDestroySampler(device, sampler, nullptr);
+    }
+    samplerCache_.clear();
+    LOG_INFO("Sampler cache cleared");
+
+    sInstance_ = nullptr;
 
     LOG_WARNING("VkContext::shutdown - destroySwapchain...");
     destroySwapchain();
@@ -133,6 +189,46 @@ void VkContext::runDeferredCleanup(uint32_t frameIndex) {
         if (fn) fn();
     }
     q.clear();
+}
+
+VkSampler VkContext::getOrCreateSampler(const VkSamplerCreateInfo& info) {
+    // Clamp anisotropy if the device doesn't support the feature.
+    VkSamplerCreateInfo adjusted = info;
+    if (!samplerAnisotropySupported_) {
+        adjusted.anisotropyEnable = VK_FALSE;
+        adjusted.maxAnisotropy = 1.0f;
+    }
+
+    uint64_t key = hashSamplerCreateInfo(adjusted);
+
+    {
+        std::lock_guard<std::mutex> lock(samplerCacheMutex_);
+        auto it = samplerCache_.find(key);
+        if (it != samplerCache_.end()) {
+            return it->second;
+        }
+    }
+
+    // Create a new sampler outside the lock (vkCreateSampler is thread-safe
+    // for distinct create infos, but we re-lock to insert).
+    VkSampler sampler = VK_NULL_HANDLE;
+    if (vkCreateSampler(device, &adjusted, nullptr, &sampler) != VK_SUCCESS) {
+        LOG_ERROR("getOrCreateSampler: vkCreateSampler failed");
+        return VK_NULL_HANDLE;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(samplerCacheMutex_);
+        // Double-check: another thread may have inserted while we were creating.
+        auto [it, inserted] = samplerCache_.emplace(key, sampler);
+        if (!inserted) {
+            // Another thread won the race — destroy our duplicate and use theirs.
+            vkDestroySampler(device, sampler, nullptr);
+            return it->second;
+        }
+    }
+
+    return sampler;
 }
 
 bool VkContext::createInstance(SDL_Window* window) {
@@ -233,11 +329,52 @@ bool VkContext::selectPhysicalDevice() {
              VK_VERSION_MINOR(props.apiVersion), ".", VK_VERSION_PATCH(props.apiVersion));
     LOG_INFO("Depth resolve support: ", depthResolveSupported_ ? "YES" : "NO");
 
+    // Probe queue families to see if the graphics family supports multiple queues
+    // (used in createLogicalDevice to request a second queue for parallel uploads).
+    auto queueFamilies = vkbPhysicalDevice_.get_queue_families();
+    for (uint32_t i = 0; i < static_cast<uint32_t>(queueFamilies.size()); i++) {
+        if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            graphicsQueueFamilyQueueCount_ = queueFamilies[i].queueCount;
+            LOG_INFO("Graphics queue family ", i, " supports ", graphicsQueueFamilyQueueCount_, " queue(s)");
+            break;
+        }
+    }
+
     return true;
 }
 
 bool VkContext::createLogicalDevice() {
     vkb::DeviceBuilder deviceBuilder{vkbPhysicalDevice_};
+
+    // If the graphics queue family supports >= 2 queues, request a second one
+    // for parallel texture/buffer uploads.  Both queues share the same family
+    // so no queue-ownership-transfer barriers are needed.
+    const bool requestTransferQueue = (graphicsQueueFamilyQueueCount_ >= 2);
+
+    if (requestTransferQueue) {
+        // Build a custom queue description list: 2 queues from the graphics
+        // family, 1 queue from every other family (so present etc. still work).
+        auto families = vkbPhysicalDevice_.get_queue_families();
+        uint32_t gfxFamily = UINT32_MAX;
+        for (uint32_t i = 0; i < static_cast<uint32_t>(families.size()); i++) {
+            if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+                gfxFamily = i;
+                break;
+            }
+        }
+
+        std::vector<vkb::CustomQueueDescription> queueDescs;
+        for (uint32_t i = 0; i < static_cast<uint32_t>(families.size()); i++) {
+            if (i == gfxFamily) {
+                // Request 2 queues: [0] graphics, [1] transfer uploads
+                queueDescs.emplace_back(i, std::vector<float>{1.0f, 1.0f});
+            } else {
+                queueDescs.emplace_back(i, std::vector<float>{1.0f});
+            }
+        }
+        deviceBuilder.custom_queue_setup(queueDescs);
+    }
+
     auto devRet = deviceBuilder.build();
     if (!devRet) {
         LOG_ERROR("Failed to create Vulkan logical device: ", devRet.error().message());
@@ -247,22 +384,45 @@ bool VkContext::createLogicalDevice() {
     auto vkbDevice = devRet.value();
     device = vkbDevice.device;
 
-    auto gqRet = vkbDevice.get_queue(vkb::QueueType::graphics);
-    if (!gqRet) {
-        LOG_ERROR("Failed to get graphics queue");
-        return false;
-    }
-    graphicsQueue = gqRet.value();
-    graphicsQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
+    if (requestTransferQueue) {
+        // With custom_queue_setup, we must retrieve queues manually.
+        auto families = vkbPhysicalDevice_.get_queue_families();
+        uint32_t gfxFamily = UINT32_MAX;
+        for (uint32_t i = 0; i < static_cast<uint32_t>(families.size()); i++) {
+            if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+                gfxFamily = i;
+                break;
+            }
+        }
+        graphicsQueueFamily = gfxFamily;
+        vkGetDeviceQueue(device, gfxFamily, 0, &graphicsQueue);
+        vkGetDeviceQueue(device, gfxFamily, 1, &transferQueue_);
+        hasDedicatedTransfer_ = true;
 
-    auto pqRet = vkbDevice.get_queue(vkb::QueueType::present);
-    if (!pqRet) {
-        // Fall back to graphics queue for presentation
+        // Present queue: try the graphics family first (most common), otherwise
+        // find a family that supports presentation.
         presentQueue = graphicsQueue;
-        presentQueueFamily = graphicsQueueFamily;
+        presentQueueFamily = gfxFamily;
+
+        LOG_INFO("Dedicated transfer queue enabled (family ", gfxFamily, ", queue index 1)");
     } else {
-        presentQueue = pqRet.value();
-        presentQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::present).value();
+        // Standard path — let vkb resolve queues.
+        auto gqRet = vkbDevice.get_queue(vkb::QueueType::graphics);
+        if (!gqRet) {
+            LOG_ERROR("Failed to get graphics queue");
+            return false;
+        }
+        graphicsQueue = gqRet.value();
+        graphicsQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
+
+        auto pqRet = vkbDevice.get_queue(vkb::QueueType::present);
+        if (!pqRet) {
+            presentQueue = graphicsQueue;
+            presentQueueFamily = graphicsQueueFamily;
+        } else {
+            presentQueue = pqRet.value();
+            presentQueueFamily = vkbDevice.get_queue_index(vkb::QueueType::present).value();
+        }
     }
 
     LOG_INFO("Vulkan logical device created");
@@ -491,6 +651,19 @@ bool VkContext::createCommandPools() {
     if (vkCreateCommandPool(device, &immPoolInfo, nullptr, &immCommandPool) != VK_SUCCESS) {
         LOG_ERROR("Failed to create immediate command pool");
         return false;
+    }
+
+    // Separate command pool for the transfer queue (same family, different queue)
+    if (hasDedicatedTransfer_) {
+        VkCommandPoolCreateInfo transferPoolInfo{};
+        transferPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        transferPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        transferPoolInfo.queueFamilyIndex = graphicsQueueFamily;
+
+        if (vkCreateCommandPool(device, &transferPoolInfo, nullptr, &transferCommandPool_) != VK_SUCCESS) {
+            LOG_ERROR("Failed to create transfer command pool");
+            return false;
+        }
     }
 
     return true;
@@ -980,10 +1153,7 @@ void VkContext::destroyImGuiResources() {
         if (tex.memory) vkFreeMemory(device, tex.memory, nullptr);
     }
     uiTextures_.clear();
-    if (uiTextureSampler_) {
-        vkDestroySampler(device, uiTextureSampler_, nullptr);
-        uiTextureSampler_ = VK_NULL_HANDLE;
-    }
+    uiTextureSampler_ = VK_NULL_HANDLE; // Owned by sampler cache
 
     if (imguiDescriptorPool) {
         vkDestroyDescriptorPool(device, imguiDescriptorPool, nullptr);
@@ -1015,7 +1185,7 @@ VkDescriptorSet VkContext::uploadImGuiTexture(const uint8_t* rgba, int width, in
 
     VkDeviceSize imageSize = static_cast<VkDeviceSize>(width) * height * 4;
 
-    // Create shared sampler on first call
+    // Create shared sampler on first call (via sampler cache)
     if (!uiTextureSampler_) {
         VkSamplerCreateInfo si{};
         si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -1024,7 +1194,8 @@ VkDescriptorSet VkContext::uploadImGuiTexture(const uint8_t* rgba, int width, in
         si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        if (vkCreateSampler(device, &si, nullptr, &uiTextureSampler_) != VK_SUCCESS) {
+        uiTextureSampler_ = getOrCreateSampler(si);
+        if (!uiTextureSampler_) {
             LOG_ERROR("Failed to create UI texture sampler");
             return VK_NULL_HANDLE;
         }
@@ -1616,7 +1787,21 @@ void VkContext::beginUploadBatch() {
     uploadBatchDepth_++;
     if (inUploadBatch_) return; // already in a batch (nested call)
     inUploadBatch_ = true;
-    batchCmd_ = beginSingleTimeCommands();
+
+    // Allocate from transfer pool if available, otherwise from immCommandPool.
+    VkCommandPool pool = hasDedicatedTransfer_ ? transferCommandPool_ : immCommandPool;
+
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = pool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 1;
+    vkAllocateCommandBuffers(device, &allocInfo, &batchCmd_);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(batchCmd_, &beginInfo);
 }
 
 void VkContext::endUploadBatch() {
@@ -1626,10 +1811,12 @@ void VkContext::endUploadBatch() {
 
     inUploadBatch_ = false;
 
+    VkCommandPool pool = hasDedicatedTransfer_ ? transferCommandPool_ : immCommandPool;
+
     if (batchStagingBuffers_.empty()) {
         // No GPU copies were recorded — skip the submit entirely.
         vkEndCommandBuffer(batchCmd_);
-        vkFreeCommandBuffers(device, immCommandPool, 1, &batchCmd_);
+        vkFreeCommandBuffers(device, pool, 1, &batchCmd_);
         batchCmd_ = VK_NULL_HANDLE;
         return;
     }
@@ -1646,7 +1833,10 @@ void VkContext::endUploadBatch() {
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &batchCmd_;
-    vkQueueSubmit(graphicsQueue, 1, &submitInfo, fence);
+
+    // Submit to the dedicated transfer queue if available, otherwise graphics.
+    VkQueue targetQueue = hasDedicatedTransfer_ ? transferQueue_ : graphicsQueue;
+    vkQueueSubmit(targetQueue, 1, &submitInfo, fence);
 
     // Stash everything for later cleanup when fence signals
     InFlightBatch batch;
@@ -1666,15 +1856,30 @@ void VkContext::endUploadBatchSync() {
 
     inUploadBatch_ = false;
 
+    VkCommandPool pool = hasDedicatedTransfer_ ? transferCommandPool_ : immCommandPool;
+
     if (batchStagingBuffers_.empty()) {
         vkEndCommandBuffer(batchCmd_);
-        vkFreeCommandBuffers(device, immCommandPool, 1, &batchCmd_);
+        vkFreeCommandBuffers(device, pool, 1, &batchCmd_);
         batchCmd_ = VK_NULL_HANDLE;
         return;
     }
 
-    // Synchronous path for load screens — submit and wait
-    endSingleTimeCommands(batchCmd_);
+    // Synchronous path for load screens — submit and wait on the target queue.
+    VkQueue targetQueue = hasDedicatedTransfer_ ? transferQueue_ : graphicsQueue;
+
+    vkEndCommandBuffer(batchCmd_);
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &batchCmd_;
+
+    vkQueueSubmit(targetQueue, 1, &submitInfo, immFence);
+    vkWaitForFences(device, 1, &immFence, VK_TRUE, UINT64_MAX);
+    vkResetFences(device, 1, &immFence);
+
+    vkFreeCommandBuffers(device, pool, 1, &batchCmd_);
     batchCmd_ = VK_NULL_HANDLE;
 
     for (auto& staging : batchStagingBuffers_) {
@@ -1686,6 +1891,8 @@ void VkContext::endUploadBatchSync() {
 void VkContext::pollUploadBatches() {
     if (inFlightBatches_.empty()) return;
 
+    VkCommandPool pool = hasDedicatedTransfer_ ? transferCommandPool_ : immCommandPool;
+
     for (auto it = inFlightBatches_.begin(); it != inFlightBatches_.end(); ) {
         VkResult result = vkGetFenceStatus(device, it->fence);
         if (result == VK_SUCCESS) {
@@ -1693,7 +1900,7 @@ void VkContext::pollUploadBatches() {
             for (auto& staging : it->stagingBuffers) {
                 destroyBuffer(allocator, staging);
             }
-            vkFreeCommandBuffers(device, immCommandPool, 1, &it->cmd);
+            vkFreeCommandBuffers(device, pool, 1, &it->cmd);
             vkDestroyFence(device, it->fence, nullptr);
             it = inFlightBatches_.erase(it);
         } else {
@@ -1703,12 +1910,14 @@ void VkContext::pollUploadBatches() {
 }
 
 void VkContext::waitAllUploads() {
+    VkCommandPool pool = hasDedicatedTransfer_ ? transferCommandPool_ : immCommandPool;
+
     for (auto& batch : inFlightBatches_) {
         vkWaitForFences(device, 1, &batch.fence, VK_TRUE, UINT64_MAX);
         for (auto& staging : batch.stagingBuffers) {
             destroyBuffer(allocator, staging);
         }
-        vkFreeCommandBuffers(device, immCommandPool, 1, &batch.cmd);
+        vkFreeCommandBuffers(device, pool, 1, &batch.cmd);
         vkDestroyFence(device, batch.fence, nullptr);
     }
     inFlightBatches_.clear();

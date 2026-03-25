@@ -13,9 +13,11 @@ VkTexture::~VkTexture() {
 }
 
 VkTexture::VkTexture(VkTexture&& other) noexcept
-    : image_(other.image_), sampler_(other.sampler_), mipLevels_(other.mipLevels_) {
+    : image_(other.image_), sampler_(other.sampler_), mipLevels_(other.mipLevels_),
+      ownsSampler_(other.ownsSampler_) {
     other.image_ = {};
     other.sampler_ = VK_NULL_HANDLE;
+    other.ownsSampler_ = true;
 }
 
 VkTexture& VkTexture::operator=(VkTexture&& other) noexcept {
@@ -23,8 +25,10 @@ VkTexture& VkTexture::operator=(VkTexture&& other) noexcept {
         image_ = other.image_;
         sampler_ = other.sampler_;
         mipLevels_ = other.mipLevels_;
+        ownsSampler_ = other.ownsSampler_;
         other.image_ = {};
         other.sampler_ = VK_NULL_HANDLE;
+        other.ownsSampler_ = true;
     }
     return *this;
 }
@@ -214,11 +218,20 @@ bool VkTexture::createSampler(VkDevice device,
     samplerInfo.minLod = 0.0f;
     samplerInfo.maxLod = static_cast<float>(mipLevels_);
 
+    // Use sampler cache if VkContext is available.
+    auto* ctx = VkContext::globalInstance();
+    if (ctx) {
+        sampler_ = ctx->getOrCreateSampler(samplerInfo);
+        ownsSampler_ = false;
+        return sampler_ != VK_NULL_HANDLE;
+    }
+
+    // Fallback: no VkContext (shouldn't happen in normal use).
     if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler_) != VK_SUCCESS) {
         LOG_ERROR("Failed to create texture sampler");
         return false;
     }
-
+    ownsSampler_ = true;
     return true;
 }
 
@@ -246,11 +259,20 @@ bool VkTexture::createSampler(VkDevice device,
     samplerInfo.minLod = 0.0f;
     samplerInfo.maxLod = static_cast<float>(mipLevels_);
 
+    // Use sampler cache if VkContext is available.
+    auto* ctx = VkContext::globalInstance();
+    if (ctx) {
+        sampler_ = ctx->getOrCreateSampler(samplerInfo);
+        ownsSampler_ = false;
+        return sampler_ != VK_NULL_HANDLE;
+    }
+
+    // Fallback: no VkContext (shouldn't happen in normal use).
     if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler_) != VK_SUCCESS) {
         LOG_ERROR("Failed to create texture sampler");
         return false;
     }
-
+    ownsSampler_ = true;
     return true;
 }
 
@@ -269,19 +291,29 @@ bool VkTexture::createShadowSampler(VkDevice device) {
     samplerInfo.minLod = 0.0f;
     samplerInfo.maxLod = 1.0f;
 
+    // Use sampler cache if VkContext is available.
+    auto* ctx = VkContext::globalInstance();
+    if (ctx) {
+        sampler_ = ctx->getOrCreateSampler(samplerInfo);
+        ownsSampler_ = false;
+        return sampler_ != VK_NULL_HANDLE;
+    }
+
+    // Fallback: no VkContext (shouldn't happen in normal use).
     if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler_) != VK_SUCCESS) {
         LOG_ERROR("Failed to create shadow sampler");
         return false;
     }
-
+    ownsSampler_ = true;
     return true;
 }
 
 void VkTexture::destroy(VkDevice device, VmaAllocator allocator) {
-    if (sampler_ != VK_NULL_HANDLE) {
+    if (sampler_ != VK_NULL_HANDLE && ownsSampler_) {
         vkDestroySampler(device, sampler_, nullptr);
-        sampler_ = VK_NULL_HANDLE;
     }
+    sampler_ = VK_NULL_HANDLE;
+    ownsSampler_ = true;
     destroyImage(device, allocator, image_);
 }
 

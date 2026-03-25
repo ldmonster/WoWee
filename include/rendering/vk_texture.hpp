@@ -72,6 +72,7 @@ private:
     AllocatedImage image_{};
     VkSampler sampler_ = VK_NULL_HANDLE;
     uint32_t mipLevels_ = 1;
+    bool ownsSampler_ = true; // false when sampler comes from VkContext cache
 };
 
 } // namespace rendering

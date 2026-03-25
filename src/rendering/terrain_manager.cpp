@@ -179,7 +179,7 @@ void TerrainManager::update(const Camera& camera, float deltaTime) {
     }
 
     // Always process ready tiles each frame (GPU uploads from background thread)
-    // Time budget prevents frame spikes from heavy tiles
+    // Time-budgeted internally to prevent frame spikes.
     processReadyTiles();
 
     timeSinceLastUpdate += deltaTime;
@@ -1223,18 +1223,25 @@ void TerrainManager::processReadyTiles() {
     // Async upload batch: record GPU copies into a command buffer, submit with
     // a fence, but DON'T wait.  The fence is polled on subsequent frames.
     // This eliminates the main-thread stall from vkWaitForFences entirely.
-    const int maxSteps = taxiStreamingMode_ ? 4 : 1;
-    int steps = 0;
+    //
+    // Time-budgeted: yield after 8ms to prevent main-loop stalls. Each
+    // advanceFinalization step is designed to be small, but texture uploads
+    // and M2 model loads can occasionally spike. The budget ensures we
+    // spread heavy tiles across multiple frames instead of blocking.
+    const auto budgetStart = std::chrono::steady_clock::now();
+    const float budgetMs = taxiStreamingMode_ ? 16.0f : 8.0f;
 
     if (vkCtx) vkCtx->beginUploadBatch();
 
-    while (!finalizingTiles_.empty() && steps < maxSteps) {
+    while (!finalizingTiles_.empty()) {
         auto& ft = finalizingTiles_.front();
         bool done = advanceFinalization(ft);
         if (done) {
             finalizingTiles_.pop_front();
         }
-        steps++;
+        float elapsed = std::chrono::duration<float, std::milli>(
+            std::chrono::steady_clock::now() - budgetStart).count();
+        if (elapsed >= budgetMs) break;
     }
 
     if (vkCtx) vkCtx->endUploadBatch();  // Async — submits but doesn't wait

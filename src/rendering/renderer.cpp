@@ -343,7 +343,8 @@ bool Renderer::createPerFrameResources() {
     sampCI.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
     sampCI.compareEnable = VK_TRUE;
     sampCI.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-    if (vkCreateSampler(device, &sampCI, nullptr, &shadowSampler) != VK_SUCCESS) {
+    shadowSampler = vkCtx->getOrCreateSampler(sampCI);
+    if (shadowSampler == VK_NULL_HANDLE) {
         LOG_ERROR("Failed to create shadow sampler");
         return false;
     }
@@ -597,7 +598,7 @@ void Renderer::destroyPerFrameResources() {
         shadowDepthLayout_[i] = VK_IMAGE_LAYOUT_UNDEFINED;
     }
     if (shadowRenderPass) { vkDestroyRenderPass(device, shadowRenderPass, nullptr); shadowRenderPass = VK_NULL_HANDLE; }
-    if (shadowSampler) { vkDestroySampler(device, shadowSampler, nullptr); shadowSampler = VK_NULL_HANDLE; }
+    shadowSampler = VK_NULL_HANDLE; // Owned by VkContext sampler cache
 }
 
 void Renderer::updatePerFrameUBO() {
@@ -1214,6 +1215,11 @@ void Renderer::beginFrame() {
 void Renderer::endFrame() {
     if (!vkCtx || currentCmd == VK_NULL_HANDLE) return;
 
+    // Track whether a post-processing path switched to an INLINE render pass.
+    // beginFrame() may have started the scene pass with SECONDARY_COMMAND_BUFFERS;
+    // post-proc paths end it and begin a new INLINE pass for the swapchain output.
+    endFrameInlineMode_ = false;
+
     if (fsr2_.enabled && fsr2_.sceneFramebuffer) {
         // End the off-screen scene render pass
         vkCmdEndRenderPass(currentCmd);
@@ -1296,7 +1302,7 @@ void Renderer::endFrame() {
         rpInfo.clearValueCount = msaaOn ? (vkCtx->getDepthResolveImageView() ? 4u : 3u) : 2u;
         rpInfo.pClearValues = clearValues;
 
-        vkCmdBeginRenderPass(currentCmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
+        endFrameInlineMode_ = true; vkCmdBeginRenderPass(currentCmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
 
         VkExtent2D ext = vkCtx->getSwapchainExtent();
         VkViewport vp{};
@@ -1433,18 +1439,22 @@ void Renderer::endFrame() {
         renderFSRUpscale();
     }
 
-    // ImGui rendering — must respect subpass contents mode
-    // Parallel recording only applies when no post-process pass is active.
-    if (!fsr_.enabled && !fsr2_.enabled && !fxaa_.enabled && parallelRecordingEnabled_) {
-        // Scene pass was begun with VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS,
-        // so ImGui must be recorded into a secondary command buffer.
+    // ImGui rendering — must respect the subpass contents mode of the
+    // CURRENT render pass. Post-processing paths (FSR/FXAA) end the scene
+    // pass and begin a new INLINE pass; if none ran, we're still inside the
+    // scene pass which may be SECONDARY_COMMAND_BUFFERS when parallel recording
+    // is active. Track this via endFrameInlineMode_ (set true by any post-proc
+    // path that started an INLINE render pass).
+    if (parallelRecordingEnabled_ && !endFrameInlineMode_) {
+        // Still in the scene pass with SECONDARY_COMMAND_BUFFERS — record
+        // ImGui into a secondary command buffer.
         VkCommandBuffer imguiCmd = beginSecondary(SEC_IMGUI);
         setSecondaryViewportScissor(imguiCmd);
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), imguiCmd);
         vkEndCommandBuffer(imguiCmd);
         vkCmdExecuteCommands(currentCmd, 1, &imguiCmd);
     } else {
-        // FSR swapchain pass uses INLINE mode; non-parallel also uses INLINE.
+        // INLINE render pass (post-process pass or non-parallel mode).
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), currentCmd);
     }
 
@@ -4057,7 +4067,8 @@ bool Renderer::initFSRResources() {
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    if (vkCreateSampler(device, &samplerInfo, nullptr, &fsr_.sceneSampler) != VK_SUCCESS) {
+    fsr_.sceneSampler = vkCtx->getOrCreateSampler(samplerInfo);
+    if (fsr_.sceneSampler == VK_NULL_HANDLE) {
         LOG_ERROR("FSR: failed to create sampler");
         destroyFSRResources();
         return false;
@@ -4171,7 +4182,7 @@ void Renderer::destroyFSRResources() {
     if (fsr_.descPool) { vkDestroyDescriptorPool(device, fsr_.descPool, nullptr); fsr_.descPool = VK_NULL_HANDLE; fsr_.descSet = VK_NULL_HANDLE; }
     if (fsr_.descSetLayout) { vkDestroyDescriptorSetLayout(device, fsr_.descSetLayout, nullptr); fsr_.descSetLayout = VK_NULL_HANDLE; }
     if (fsr_.sceneFramebuffer) { vkDestroyFramebuffer(device, fsr_.sceneFramebuffer, nullptr); fsr_.sceneFramebuffer = VK_NULL_HANDLE; }
-    if (fsr_.sceneSampler) { vkDestroySampler(device, fsr_.sceneSampler, nullptr); fsr_.sceneSampler = VK_NULL_HANDLE; }
+    fsr_.sceneSampler = VK_NULL_HANDLE; // Owned by VkContext sampler cache
     destroyImage(device, alloc, fsr_.sceneDepthResolve);
     destroyImage(device, alloc, fsr_.sceneMsaaColor);
     destroyImage(device, alloc, fsr_.sceneDepth);
@@ -4350,11 +4361,11 @@ bool Renderer::initFSR2Resources() {
     samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    vkCreateSampler(device, &samplerInfo, nullptr, &fsr2_.linearSampler);
+    fsr2_.linearSampler = vkCtx->getOrCreateSampler(samplerInfo);
 
     samplerInfo.minFilter = VK_FILTER_NEAREST;
     samplerInfo.magFilter = VK_FILTER_NEAREST;
-    vkCreateSampler(device, &samplerInfo, nullptr, &fsr2_.nearestSampler);
+    fsr2_.nearestSampler = vkCtx->getOrCreateSampler(samplerInfo);
 
 #if WOWEE_HAS_AMD_FSR2
     // Initialize AMD FSR2 context; fall back to internal path on any failure.
@@ -4753,8 +4764,8 @@ void Renderer::destroyFSR2Resources() {
     if (fsr2_.motionVecDescSetLayout) { vkDestroyDescriptorSetLayout(device, fsr2_.motionVecDescSetLayout, nullptr); fsr2_.motionVecDescSetLayout = VK_NULL_HANDLE; }
 
     if (fsr2_.sceneFramebuffer) { vkDestroyFramebuffer(device, fsr2_.sceneFramebuffer, nullptr); fsr2_.sceneFramebuffer = VK_NULL_HANDLE; }
-    if (fsr2_.linearSampler) { vkDestroySampler(device, fsr2_.linearSampler, nullptr); fsr2_.linearSampler = VK_NULL_HANDLE; }
-    if (fsr2_.nearestSampler) { vkDestroySampler(device, fsr2_.nearestSampler, nullptr); fsr2_.nearestSampler = VK_NULL_HANDLE; }
+    fsr2_.linearSampler = VK_NULL_HANDLE;  // Owned by VkContext sampler cache
+    fsr2_.nearestSampler = VK_NULL_HANDLE; // Owned by VkContext sampler cache
 
     destroyImage(device, alloc, fsr2_.motionVectors);
     for (int i = 0; i < 2; i++) destroyImage(device, alloc, fsr2_.history[i]);
@@ -5273,7 +5284,8 @@ bool Renderer::initFXAAResources() {
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    if (vkCreateSampler(device, &samplerInfo, nullptr, &fxaa_.sceneSampler) != VK_SUCCESS) {
+    fxaa_.sceneSampler = vkCtx->getOrCreateSampler(samplerInfo);
+    if (fxaa_.sceneSampler == VK_NULL_HANDLE) {
         LOG_ERROR("FXAA: failed to create sampler");
         destroyFXAAResources();
         return false;
@@ -5383,7 +5395,7 @@ void Renderer::destroyFXAAResources() {
     if (fxaa_.descPool)       { vkDestroyDescriptorPool(device, fxaa_.descPool, nullptr);       fxaa_.descPool = VK_NULL_HANDLE; fxaa_.descSet = VK_NULL_HANDLE; }
     if (fxaa_.descSetLayout)  { vkDestroyDescriptorSetLayout(device, fxaa_.descSetLayout, nullptr); fxaa_.descSetLayout = VK_NULL_HANDLE; }
     if (fxaa_.sceneFramebuffer) { vkDestroyFramebuffer(device, fxaa_.sceneFramebuffer, nullptr); fxaa_.sceneFramebuffer = VK_NULL_HANDLE; }
-    if (fxaa_.sceneSampler)   { vkDestroySampler(device, fxaa_.sceneSampler, nullptr);          fxaa_.sceneSampler = VK_NULL_HANDLE; }
+    fxaa_.sceneSampler = VK_NULL_HANDLE; // Owned by VkContext sampler cache
     destroyImage(device, alloc, fxaa_.sceneDepthResolve);
     destroyImage(device, alloc, fxaa_.sceneMsaaColor);
     destroyImage(device, alloc, fxaa_.sceneDepth);

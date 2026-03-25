@@ -8,6 +8,8 @@
 #include <vector>
 #include <functional>
 #include <cstdint>
+#include <unordered_map>
+#include <mutex>
 
 namespace wowee {
 namespace rendering {
@@ -76,6 +78,7 @@ public:
     bool isNvidiaGpu() const { return gpuVendorId_ == 0x10DE; }
     VkQueue getGraphicsQueue() const { return graphicsQueue; }
     uint32_t getGraphicsQueueFamily() const { return graphicsQueueFamily; }
+    bool hasDedicatedTransferQueue() const { return hasDedicatedTransfer_; }
     VmaAllocator getAllocator() const { return allocator; }
     VkSurfaceKHR getSurface() const { return surface; }
     VkPipelineCache getPipelineCache() const { return pipelineCache_; }
@@ -119,6 +122,18 @@ public:
     VkImageView getDepthResolveImageView() const { return depthResolveImageView; }
     VkImageView getDepthImageView() const { return depthImageView; }
 
+    // Sampler cache: returns a shared VkSampler matching the given create info.
+    // Callers must NOT destroy the returned sampler — it is owned by VkContext.
+    // Automatically clamps anisotropy if the device doesn't support it.
+    VkSampler getOrCreateSampler(const VkSamplerCreateInfo& info);
+
+    // Whether the physical device supports sampler anisotropy.
+    bool isSamplerAnisotropySupported() const { return samplerAnisotropySupported_; }
+
+    // Global sampler cache accessor (set during VkContext::initialize, cleared on shutdown).
+    // Used by VkTexture and other code that only has a VkDevice handle.
+    static VkContext* globalInstance() { return sInstance_; }
+
     // UI texture upload: creates a Vulkan texture from RGBA data and returns
     // a VkDescriptorSet suitable for use as ImTextureID.
     // The caller does NOT need to free the result — resources are tracked and
@@ -160,6 +175,12 @@ private:
     VkQueue presentQueue = VK_NULL_HANDLE;
     uint32_t graphicsQueueFamily = 0;
     uint32_t presentQueueFamily = 0;
+
+    // Dedicated transfer queue (second queue from same graphics family)
+    VkQueue transferQueue_ = VK_NULL_HANDLE;
+    VkCommandPool transferCommandPool_ = VK_NULL_HANDLE;
+    bool hasDedicatedTransfer_ = false;
+    uint32_t graphicsQueueFamilyQueueCount_ = 1; // queried in selectPhysicalDevice
 
     // Swapchain
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
@@ -238,6 +259,13 @@ private:
         VkImageView view;
     };
     std::vector<UiTexture> uiTextures_;
+
+    // Sampler cache — deduplicates VkSamplers by configuration hash.
+    std::mutex samplerCacheMutex_;
+    std::unordered_map<uint64_t, VkSampler> samplerCache_;
+    bool samplerAnisotropySupported_ = false;
+
+    static VkContext* sInstance_;
 
 #ifndef NDEBUG
     bool enableValidation = true;

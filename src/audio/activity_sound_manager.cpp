@@ -52,18 +52,14 @@ bool ActivitySoundManager::initialize(pipeline::AssetManager* assets) {
     preloadLandingSet(FootstepSurface::SNOW, "Snow");
 
     preloadCandidates(meleeSwingClips, {
-        "Sound\\Item\\Weapons\\Sword\\SwordSwing1.wav",
-        "Sound\\Item\\Weapons\\Sword\\SwordSwing2.wav",
-        "Sound\\Item\\Weapons\\Sword\\SwordSwing3.wav",
-        "Sound\\Item\\Weapons\\Sword\\SwordHit1.wav",
-        "Sound\\Item\\Weapons\\Sword\\SwordHit2.wav",
-        "Sound\\Item\\Weapons\\Sword\\SwordHit3.wav",
-        "Sound\\Item\\Weapons\\OneHanded\\Sword\\SwordSwing1.wav",
-        "Sound\\Item\\Weapons\\OneHanded\\Sword\\SwordSwing2.wav",
-        "Sound\\Item\\Weapons\\OneHanded\\Sword\\SwordSwing3.wav",
-        "Sound\\Item\\Weapons\\Melee\\MeleeSwing1.wav",
-        "Sound\\Item\\Weapons\\Melee\\MeleeSwing2.wav",
-        "Sound\\Item\\Weapons\\Melee\\MeleeSwing3.wav"
+        "Sound\\Item\\Weapons\\WeaponSwings\\mWooshMedium1.wav",
+        "Sound\\Item\\Weapons\\WeaponSwings\\mWooshMedium2.wav",
+        "Sound\\Item\\Weapons\\WeaponSwings\\mWooshMedium3.wav",
+        "Sound\\Item\\Weapons\\WeaponSwings\\mWooshLarge1.wav",
+        "Sound\\Item\\Weapons\\WeaponSwings\\mWooshLarge2.wav",
+        "Sound\\Item\\Weapons\\WeaponSwings\\mWooshLarge3.wav",
+        "Sound\\Item\\Weapons\\MissSwings\\MissWhoosh1Handed.wav",
+        "Sound\\Item\\Weapons\\MissSwings\\MissWhoosh2Handed.wav"
     });
 
     initialized = true;
