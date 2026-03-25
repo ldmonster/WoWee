@@ -880,7 +880,7 @@ void GameHandler::update(float deltaTime) {
     }
 
     // Detect RX silence (server stopped sending packets but TCP still open)
-    if (state == WorldState::IN_WORLD && socket && socket->isConnected() &&
+    if (isInWorld() && socket->isConnected() &&
         lastRxTime_.time_since_epoch().count() > 0) {
         auto silenceMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - lastRxTime_).count();
@@ -975,7 +975,7 @@ void GameHandler::update(float deltaTime) {
     for (auto it = pendingGameObjectLootRetries_.begin(); it != pendingGameObjectLootRetries_.end();) {
         it->timer -= deltaTime;
         if (it->timer <= 0.0f) {
-            if (it->remainingRetries > 0 && state == WorldState::IN_WORLD && socket) {
+            if (it->remainingRetries > 0 && isInWorld()) {
                 // Keep server-side position/facing fresh before retrying GO use.
                 sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
                 auto usePacket = GameObjectUsePacket::build(it->guid);
@@ -998,7 +998,7 @@ void GameHandler::update(float deltaTime) {
     for (auto it = pendingGameObjectLootOpens_.begin(); it != pendingGameObjectLootOpens_.end();) {
         it->timer -= deltaTime;
         if (it->timer <= 0.0f) {
-            if (state == WorldState::IN_WORLD && socket) {
+            if (isInWorld()) {
                 // Avoid sending CMSG_LOOT while a timed cast is active (e.g. gathering).
                 // handleSpellGo will trigger loot after the cast completes.
                 if (casting && currentCastSpellId != 0) {
@@ -1017,7 +1017,7 @@ void GameHandler::update(float deltaTime) {
     // Periodically re-query names for players whose initial CMSG_NAME_QUERY was
     // lost (server didn't respond) or whose entity was recreated while the query
     // was still pending. Runs every 5 seconds to keep overhead minimal.
-    if (state == WorldState::IN_WORLD && socket) {
+    if (isInWorld()) {
         static float nameResyncTimer = 0.0f;
         nameResyncTimer += deltaTime;
         if (nameResyncTimer >= 5.0f) {
@@ -1084,7 +1084,7 @@ void GameHandler::update(float deltaTime) {
     if (inspectRateLimit_ > 0.0f) {
         inspectRateLimit_ = std::max(0.0f, inspectRateLimit_ - deltaTime);
     }
-    if (state == WorldState::IN_WORLD && socket && inspectRateLimit_ <= 0.0f && !pendingAutoInspect_.empty()) {
+    if (isInWorld() && inspectRateLimit_ <= 0.0f && !pendingAutoInspect_.empty()) {
         uint64_t guid = *pendingAutoInspect_.begin();
         pendingAutoInspect_.erase(pendingAutoInspect_.begin());
         if (guid != 0 && guid != playerGuid && entityManager.hasEntity(guid)) {
@@ -1368,7 +1368,7 @@ void GameHandler::update(float deltaTime) {
                 if (dist > 40.0f) {
                     stopAutoAttack();
                     LOG_INFO("Left combat: target too far (", dist, " yards)");
-                } else if (state == WorldState::IN_WORLD && socket) {
+                } else if (isInWorld()) {
                     bool allowResync = true;
                     const float meleeRange = classicLike ? 5.25f : 5.75f;
                     if (dist3d > meleeRange) {
@@ -10048,7 +10048,7 @@ bool GameHandler::supportsEquipmentSets() const {
 }
 
 void GameHandler::useEquipmentSet(uint32_t setId) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     uint16_t wire = wireOpcode(Opcode::CMSG_EQUIPMENT_SET_USE);
     if (wire == 0xFFFF) { addUIError("Equipment sets not supported."); return; }
     // Find the equipment set to get target item GUIDs per slot
@@ -12525,7 +12525,7 @@ void GameHandler::handleMessageChat(network::Packet& packet) {
 }
 
 void GameHandler::sendTextEmote(uint32_t textEmoteId, uint64_t targetGuid) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = TextEmotePacket::build(textEmoteId, targetGuid);
     socket->send(packet);
 }
@@ -12581,7 +12581,7 @@ void GameHandler::handleTextEmote(network::Packet& packet) {
 }
 
 void GameHandler::joinChannel(const std::string& channelName, const std::string& password) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = packetParsers_ ? packetParsers_->buildJoinChannel(channelName, password)
                                  : JoinChannelPacket::build(channelName, password);
     socket->send(packet);
@@ -12589,7 +12589,7 @@ void GameHandler::joinChannel(const std::string& channelName, const std::string&
 }
 
 void GameHandler::leaveChannel(const std::string& channelName) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = packetParsers_ ? packetParsers_->buildLeaveChannel(channelName)
                                  : LeaveChannelPacket::build(channelName);
     socket->send(packet);
@@ -12772,7 +12772,7 @@ void GameHandler::setTarget(uint64_t guid) {
     // (the new target's cast state is naturally fetched from unitCastStates_ by GUID)
 
     // Inform server of target selection (Phase 1)
-    if (state == WorldState::IN_WORLD && socket) {
+    if (isInWorld()) {
         auto packet = SetSelectionPacket::build(guid);
         socket->send(packet);
     }
@@ -12936,7 +12936,7 @@ void GameHandler::targetFriend(bool reverse) {
 }
 
 void GameHandler::inspectTarget() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot inspect: not in world or not connected");
         return;
     }
@@ -12968,7 +12968,7 @@ void GameHandler::inspectTarget() {
 }
 
 void GameHandler::queryServerTime() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot query time: not in world or not connected");
         return;
     }
@@ -12979,7 +12979,7 @@ void GameHandler::queryServerTime() {
 }
 
 void GameHandler::requestPlayedTime() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot request played time: not in world or not connected");
         return;
     }
@@ -12990,7 +12990,7 @@ void GameHandler::requestPlayedTime() {
 }
 
 void GameHandler::queryWho(const std::string& playerName) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot query who: not in world or not connected");
         return;
     }
@@ -13001,7 +13001,7 @@ void GameHandler::queryWho(const std::string& playerName) {
 }
 
 void GameHandler::addFriend(const std::string& playerName, const std::string& note) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot add friend: not in world or not connected");
         return;
     }
@@ -13018,7 +13018,7 @@ void GameHandler::addFriend(const std::string& playerName, const std::string& no
 }
 
 void GameHandler::removeFriend(const std::string& playerName) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot remove friend: not in world or not connected");
         return;
     }
@@ -13043,7 +13043,7 @@ void GameHandler::removeFriend(const std::string& playerName) {
 }
 
 void GameHandler::setFriendNote(const std::string& playerName, const std::string& note) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot set friend note: not in world or not connected");
         return;
     }
@@ -13067,7 +13067,7 @@ void GameHandler::setFriendNote(const std::string& playerName, const std::string
 }
 
 void GameHandler::randomRoll(uint32_t minRoll, uint32_t maxRoll) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot roll: not in world or not connected");
         return;
     }
@@ -13086,7 +13086,7 @@ void GameHandler::randomRoll(uint32_t minRoll, uint32_t maxRoll) {
 }
 
 void GameHandler::addIgnore(const std::string& playerName) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot add ignore: not in world or not connected");
         return;
     }
@@ -13103,7 +13103,7 @@ void GameHandler::addIgnore(const std::string& playerName) {
 }
 
 void GameHandler::removeIgnore(const std::string& playerName) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot remove ignore: not in world or not connected");
         return;
     }
@@ -13165,7 +13165,7 @@ void GameHandler::cancelLogout() {
 }
 
 void GameHandler::setStandState(uint8_t standState) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot change stand state: not in world or not connected");
         return;
     }
@@ -13176,7 +13176,7 @@ void GameHandler::setStandState(uint8_t standState) {
 }
 
 void GameHandler::toggleHelm() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot toggle helm: not in world or not connected");
         return;
     }
@@ -13189,7 +13189,7 @@ void GameHandler::toggleHelm() {
 }
 
 void GameHandler::toggleCloak() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot toggle cloak: not in world or not connected");
         return;
     }
@@ -13301,7 +13301,7 @@ void GameHandler::assistTarget() {
 }
 
 void GameHandler::togglePvp() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot toggle PvP: not in world or not connected");
         return;
     }
@@ -13325,7 +13325,7 @@ void GameHandler::togglePvp() {
 }
 
 void GameHandler::requestGuildInfo() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot request guild info: not in world or not connected");
         return;
     }
@@ -13336,7 +13336,7 @@ void GameHandler::requestGuildInfo() {
 }
 
 void GameHandler::requestGuildRoster() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot request guild roster: not in world or not connected");
         return;
     }
@@ -13348,7 +13348,7 @@ void GameHandler::requestGuildRoster() {
 }
 
 void GameHandler::setGuildMotd(const std::string& motd) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot set guild MOTD: not in world or not connected");
         return;
     }
@@ -13360,7 +13360,7 @@ void GameHandler::setGuildMotd(const std::string& motd) {
 }
 
 void GameHandler::promoteGuildMember(const std::string& playerName) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot promote guild member: not in world or not connected");
         return;
     }
@@ -13377,7 +13377,7 @@ void GameHandler::promoteGuildMember(const std::string& playerName) {
 }
 
 void GameHandler::demoteGuildMember(const std::string& playerName) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot demote guild member: not in world or not connected");
         return;
     }
@@ -13394,7 +13394,7 @@ void GameHandler::demoteGuildMember(const std::string& playerName) {
 }
 
 void GameHandler::leaveGuild() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot leave guild: not in world or not connected");
         return;
     }
@@ -13406,7 +13406,7 @@ void GameHandler::leaveGuild() {
 }
 
 void GameHandler::inviteToGuild(const std::string& playerName) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot invite to guild: not in world or not connected");
         return;
     }
@@ -13423,7 +13423,7 @@ void GameHandler::inviteToGuild(const std::string& playerName) {
 }
 
 void GameHandler::initiateReadyCheck() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot initiate ready check: not in world or not connected");
         return;
     }
@@ -13440,7 +13440,7 @@ void GameHandler::initiateReadyCheck() {
 }
 
 void GameHandler::respondToReadyCheck(bool ready) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot respond to ready check: not in world or not connected");
         return;
     }
@@ -13461,7 +13461,7 @@ void GameHandler::acceptDuel() {
 }
 
 void GameHandler::forfeitDuel() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot forfeit duel: not in world or not connected");
         return;
     }
@@ -13579,7 +13579,7 @@ void GameHandler::toggleDnd(const std::string& message) {
 }
 
 void GameHandler::replyToLastWhisper(const std::string& message) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot send whisper: not in world or not connected");
         return;
     }
@@ -13600,7 +13600,7 @@ void GameHandler::replyToLastWhisper(const std::string& message) {
 }
 
 void GameHandler::uninvitePlayer(const std::string& playerName) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot uninvite player: not in world or not connected");
         return;
     }
@@ -13617,7 +13617,7 @@ void GameHandler::uninvitePlayer(const std::string& playerName) {
 }
 
 void GameHandler::leaveParty() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot leave party: not in world or not connected");
         return;
     }
@@ -13629,7 +13629,7 @@ void GameHandler::leaveParty() {
 }
 
 void GameHandler::setMainTank(uint64_t targetGuid) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot set main tank: not in world or not connected");
         return;
     }
@@ -13647,7 +13647,7 @@ void GameHandler::setMainTank(uint64_t targetGuid) {
 }
 
 void GameHandler::setMainAssist(uint64_t targetGuid) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot set main assist: not in world or not connected");
         return;
     }
@@ -13665,7 +13665,7 @@ void GameHandler::setMainAssist(uint64_t targetGuid) {
 }
 
 void GameHandler::clearMainTank() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot clear main tank: not in world or not connected");
         return;
     }
@@ -13678,7 +13678,7 @@ void GameHandler::clearMainTank() {
 }
 
 void GameHandler::clearMainAssist() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot clear main assist: not in world or not connected");
         return;
     }
@@ -13691,7 +13691,7 @@ void GameHandler::clearMainAssist() {
 }
 
 void GameHandler::setRaidMark(uint64_t guid, uint8_t icon) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
 
     static const char* kMarkNames[] = {
         "Star", "Circle", "Diamond", "Triangle", "Moon", "Square", "Cross", "Skull"
@@ -13714,7 +13714,7 @@ void GameHandler::setRaidMark(uint64_t guid, uint8_t icon) {
 }
 
 void GameHandler::requestRaidInfo() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot request raid info: not in world or not connected");
         return;
     }
@@ -13726,7 +13726,7 @@ void GameHandler::requestRaidInfo() {
 }
 
 void GameHandler::proposeDuel(uint64_t targetGuid) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot propose duel: not in world or not connected");
         return;
     }
@@ -13743,7 +13743,7 @@ void GameHandler::proposeDuel(uint64_t targetGuid) {
 }
 
 void GameHandler::initiateTrade(uint64_t targetGuid) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot initiate trade: not in world or not connected");
         return;
     }
@@ -13760,7 +13760,7 @@ void GameHandler::initiateTrade(uint64_t targetGuid) {
 }
 
 void GameHandler::stopCasting() {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("Cannot stop casting: not in world or not connected");
         return;
     }
@@ -13860,7 +13860,7 @@ void GameHandler::useSelfRes() {
 }
 
 void GameHandler::activateSpiritHealer(uint64_t npcGuid) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     pendingSpiritHealerGuid_ = npcGuid;
     auto packet = SpiritHealerActivatePacket::build(npcGuid);
     socket->send(packet);
@@ -14018,7 +14018,7 @@ void GameHandler::queryPlayerName(uint64_t guid) {
         return;
     }
     if (pendingNameQueries.count(guid)) return;
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_INFO("queryPlayerName: skipped guid=0x", std::hex, guid, std::dec,
                  " state=", worldStateName(state), " socket=", (socket ? "yes" : "no"));
         return;
@@ -14032,7 +14032,7 @@ void GameHandler::queryPlayerName(uint64_t guid) {
 
 void GameHandler::queryCreatureInfo(uint32_t entry, uint64_t guid) {
     if (creatureInfoCache.count(entry) || pendingCreatureQueries.count(entry)) return;
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
 
     pendingCreatureQueries.insert(entry);
     auto packet = CreatureQueryPacket::build(entry, guid);
@@ -14041,7 +14041,7 @@ void GameHandler::queryCreatureInfo(uint32_t entry, uint64_t guid) {
 
 void GameHandler::queryGameObjectInfo(uint32_t entry, uint64_t guid) {
     if (gameObjectInfoCache_.count(entry) || pendingGameObjectQueries_.count(entry)) return;
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
 
     pendingGameObjectQueries_.insert(entry);
     auto packet = GameObjectQueryPacket::build(entry, guid);
@@ -14247,7 +14247,7 @@ void GameHandler::handlePageTextQueryResponse(network::Packet& packet) {
 
 void GameHandler::queryItemInfo(uint32_t entry, uint64_t guid) {
     if (itemInfoCache_.count(entry) || pendingItemQueries_.count(entry)) return;
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
 
     pendingItemQueries_.insert(entry);
     // Some cores reject CMSG_ITEM_QUERY_SINGLE when the GUID is 0.
@@ -15298,7 +15298,7 @@ void GameHandler::startAutoAttack(uint64_t targetGuid) {
     autoAttackOutOfRangeTime_ = 0.0f;
     autoAttackResendTimer_ = 0.0f;
     autoAttackFacingSyncTimer_ = 0.0f;
-    if (state == WorldState::IN_WORLD && socket) {
+    if (isInWorld()) {
         auto packet = AttackSwingPacket::build(targetGuid);
         socket->send(packet);
     }
@@ -15315,7 +15315,7 @@ void GameHandler::stopAutoAttack() {
     autoAttackOutOfRangeTime_ = 0.0f;
     autoAttackResendTimer_ = 0.0f;
     autoAttackFacingSyncTimer_ = 0.0f;
-    if (state == WorldState::IN_WORLD && socket) {
+    if (isInWorld()) {
         auto packet = AttackStopPacket::build();
         socket->send(packet);
     }
@@ -16555,7 +16555,7 @@ void GameHandler::handleLfgTeleportDenied(network::Packet& packet) {
 // ---------------------------------------------------------------------------
 
 void GameHandler::lfgJoin(uint32_t dungeonId, uint8_t roles) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
 
     network::Packet pkt(wireOpcode(Opcode::CMSG_LFG_JOIN));
     pkt.writeUInt8(roles);
@@ -16584,7 +16584,7 @@ void GameHandler::lfgLeave() {
 }
 
 void GameHandler::lfgSetRoles(uint8_t roles) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     const uint32_t wire = wireOpcode(Opcode::CMSG_LFG_SET_ROLES);
     if (wire == 0xFFFF) return;
 
@@ -16661,7 +16661,7 @@ void GameHandler::loadAreaTriggerDbc() {
 }
 
 void GameHandler::checkAreaTriggers() {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     if (onTaxiFlight_ || taxiClientActive_) return;
 
     loadAreaTriggerDbc();
@@ -16977,7 +16977,7 @@ void GameHandler::handleArenaError(network::Packet& packet) {
 }
 
 void GameHandler::requestPvpLog() {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     // MSG_PVP_LOG_DATA is bidirectional: client sends an empty packet to request
     network::Packet pkt(wireOpcode(Opcode::MSG_PVP_LOG_DATA));
     socket->send(pkt);
@@ -17057,9 +17057,9 @@ void GameHandler::handlePvpLogData(network::Packet& packet) {
         LOG_INFO("Arena log: ", bgScoreboard_.players.size(), " players, hasWinner=",
                  bgScoreboard_.hasWinner, " winner=", static_cast<int>(bgScoreboard_.winner),
                  " team0='", bgScoreboard_.arenaTeams[0].teamName,
-                 "' ratingChange=", (int32_t)bgScoreboard_.arenaTeams[0].ratingChange,
+                 "' ratingChange=", static_cast<int32_t>(bgScoreboard_.arenaTeams[0].ratingChange),
                  " team1='", bgScoreboard_.arenaTeams[1].teamName,
-                 "' ratingChange=", (int32_t)bgScoreboard_.arenaTeams[1].ratingChange);
+                 "' ratingChange=", static_cast<int32_t>(bgScoreboard_.arenaTeams[1].ratingChange));
     } else {
         LOG_INFO("PvP log: ", bgScoreboard_.players.size(), " players, hasWinner=",
                  bgScoreboard_.hasWinner, " winner=", static_cast<int>(bgScoreboard_.winner));
@@ -17952,7 +17952,7 @@ void GameHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
         return;
     }
 
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
 
     // Casting any spell while mounted → dismount instead
     if (isMounted()) {
@@ -18062,7 +18062,7 @@ void GameHandler::cancelCast() {
     if (!casting) return;
     // GameObject interaction cast is client-side timing only.
     if (pendingGameObjectInteractGuid_ == 0 &&
-        state == WorldState::IN_WORLD && socket &&
+        isInWorld() &&
         currentCastSpellId != 0) {
         auto packet = CancelCastPacket::build(currentCastSpellId);
         socket->send(packet);
@@ -18094,7 +18094,7 @@ void GameHandler::cancelCraftQueue() {
 }
 
 void GameHandler::cancelAura(uint32_t spellId) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = CancelAuraPacket::build(spellId);
     socket->send(packet);
 }
@@ -18302,7 +18302,7 @@ void GameHandler::setActionBarSlot(int slot, ActionBarSlot::Type type, uint32_t 
         fireAddonEvent("ACTIONBAR_SLOT_CHANGED", {std::to_string(slot + 1)});
         fireAddonEvent("ACTIONBAR_UPDATE_STATE", {});
     // Notify the server so the action bar persists across relogs.
-    if (state == WorldState::IN_WORLD && socket) {
+    if (isInWorld()) {
         const bool classic = isClassicLikeExpansion();
         auto pkt = SetActionButtonPacket::build(
             static_cast<uint8_t>(slot),
@@ -19012,7 +19012,7 @@ void GameHandler::handleTalentsInfo(network::Packet& packet) {
 }
 
 void GameHandler::learnTalent(uint32_t talentId, uint32_t requestedRank) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("learnTalent: Not in world or no socket connection");
         return;
     }
@@ -19039,7 +19039,7 @@ void GameHandler::switchTalentSpec(uint8_t newSpec) {
     // and respond with SMSG_TALENTS_INFO for the newly active group.
     // We optimistically update the local state so the UI reflects the change
     // immediately; the server response will correct us if needed.
-    if (state == WorldState::IN_WORLD && socket) {
+    if (isInWorld()) {
         auto pkt = ActivateTalentGroupPacket::build(static_cast<uint32_t>(newSpec));
         socket->send(pkt);
         LOG_INFO("Sent CMSG_SET_ACTIVE_TALENT_GROUP_OBSOLETE: group=", static_cast<int>(newSpec));
@@ -19062,7 +19062,7 @@ void GameHandler::switchTalentSpec(uint8_t newSpec) {
 void GameHandler::confirmPetUnlearn() {
     if (!petUnlearnPending_) return;
     petUnlearnPending_ = false;
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
 
     // Respond with CMSG_PET_UNLEARN_TALENTS (no payload in 3.3.5a)
     network::Packet pkt(wireOpcode(Opcode::CMSG_PET_UNLEARN_TALENTS));
@@ -19077,7 +19077,7 @@ void GameHandler::confirmTalentWipe() {
     if (!talentWipePending_) return;
     talentWipePending_ = false;
 
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
 
     // Respond to MSG_TALENT_WIPE_CONFIRM with the trainer GUID to trigger the reset.
     // Packet: opcode(2) + uint64 npcGuid = 10 bytes.
@@ -19092,7 +19092,7 @@ void GameHandler::confirmTalentWipe() {
 }
 
 void GameHandler::sendAlterAppearance(uint32_t hairStyle, uint32_t hairColor, uint32_t facialHair) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto pkt = AlterAppearancePacket::build(hairStyle, hairColor, facialHair);
     socket->send(pkt);
     LOG_INFO("sendAlterAppearance: hair=", hairStyle, " color=", hairColor, " facial=", facialHair);
@@ -19103,14 +19103,14 @@ void GameHandler::sendAlterAppearance(uint32_t hairStyle, uint32_t hairColor, ui
 // ============================================================
 
 void GameHandler::inviteToGroup(const std::string& playerName) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = GroupInvitePacket::build(playerName);
     socket->send(packet);
     LOG_INFO("Inviting ", playerName, " to group");
 }
 
 void GameHandler::acceptGroupInvite() {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     pendingGroupInvite = false;
     auto packet = GroupAcceptPacket::build();
     socket->send(packet);
@@ -19118,7 +19118,7 @@ void GameHandler::acceptGroupInvite() {
 }
 
 void GameHandler::declineGroupInvite() {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     pendingGroupInvite = false;
     auto packet = GroupDeclinePacket::build();
     socket->send(packet);
@@ -19126,7 +19126,7 @@ void GameHandler::declineGroupInvite() {
 }
 
 void GameHandler::leaveGroup() {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = GroupDisbandPacket::build();
     socket->send(packet);
     partyData = GroupListData{};
@@ -19483,42 +19483,42 @@ void GameHandler::handlePartyMemberStats(network::Packet& packet, bool isFull) {
 // ============================================================
 
 void GameHandler::kickGuildMember(const std::string& playerName) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = GuildRemovePacket::build(playerName);
     socket->send(packet);
     LOG_INFO("Kicking guild member: ", playerName);
 }
 
 void GameHandler::disbandGuild() {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = GuildDisbandPacket::build();
     socket->send(packet);
     LOG_INFO("Disbanding guild");
 }
 
 void GameHandler::setGuildLeader(const std::string& name) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = GuildLeaderPacket::build(name);
     socket->send(packet);
     LOG_INFO("Setting guild leader: ", name);
 }
 
 void GameHandler::setGuildPublicNote(const std::string& name, const std::string& note) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = GuildSetPublicNotePacket::build(name, note);
     socket->send(packet);
     LOG_INFO("Setting public note for ", name, ": ", note);
 }
 
 void GameHandler::setGuildOfficerNote(const std::string& name, const std::string& note) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = GuildSetOfficerNotePacket::build(name, note);
     socket->send(packet);
     LOG_INFO("Setting officer note for ", name, ": ", note);
 }
 
 void GameHandler::acceptGuildInvite() {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     pendingGuildInvite_ = false;
     auto packet = GuildAcceptPacket::build();
     socket->send(packet);
@@ -19526,7 +19526,7 @@ void GameHandler::acceptGuildInvite() {
 }
 
 void GameHandler::declineGuildInvite() {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     pendingGuildInvite_ = false;
     auto packet = GuildDeclineInvitationPacket::build();
     socket->send(packet);
@@ -19534,7 +19534,7 @@ void GameHandler::declineGuildInvite() {
 }
 
 void GameHandler::submitGmTicket(const std::string& text) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
 
     // CMSG_GMTICKET_CREATE (WotLK 3.3.5a):
     // string   ticket_text
@@ -19555,7 +19555,7 @@ void GameHandler::submitGmTicket(const std::string& text) {
 }
 
 void GameHandler::deleteGmTicket() {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     network::Packet pkt(wireOpcode(Opcode::CMSG_GMTICKET_DELETETICKET));
     socket->send(pkt);
     gmTicketActive_ = false;
@@ -19564,7 +19564,7 @@ void GameHandler::deleteGmTicket() {
 }
 
 void GameHandler::requestGmTicket() {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     // CMSG_GMTICKET_GETTICKET has no payload — server responds with SMSG_GMTICKET_GETTICKET
     network::Packet pkt(wireOpcode(Opcode::CMSG_GMTICKET_GETTICKET));
     socket->send(pkt);
@@ -19572,7 +19572,7 @@ void GameHandler::requestGmTicket() {
 }
 
 void GameHandler::queryGuildInfo(uint32_t guildId) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = GuildQueryPacket::build(guildId);
     socket->send(packet);
     LOG_INFO("Querying guild info: guildId=", guildId);
@@ -19601,14 +19601,14 @@ uint32_t GameHandler::getEntityGuildId(uint64_t guid) const {
 }
 
 void GameHandler::createGuild(const std::string& guildName) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = GuildCreatePacket::build(guildName);
     socket->send(packet);
     LOG_INFO("Creating guild: ", guildName);
 }
 
 void GameHandler::addGuildRank(const std::string& rankName) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = GuildAddRankPacket::build(rankName);
     socket->send(packet);
     LOG_INFO("Adding guild rank: ", rankName);
@@ -19617,7 +19617,7 @@ void GameHandler::addGuildRank(const std::string& rankName) {
 }
 
 void GameHandler::deleteGuildRank() {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = GuildDelRankPacket::build();
     socket->send(packet);
     LOG_INFO("Deleting last guild rank");
@@ -19626,13 +19626,13 @@ void GameHandler::deleteGuildRank() {
 }
 
 void GameHandler::requestPetitionShowlist(uint64_t npcGuid) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = PetitionShowlistPacket::build(npcGuid);
     socket->send(packet);
 }
 
 void GameHandler::buyPetition(uint64_t npcGuid, const std::string& guildName) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = PetitionBuyPacket::build(npcGuid, guildName);
     socket->send(packet);
     LOG_INFO("Buying guild petition: ", guildName);
@@ -20019,13 +20019,13 @@ void GameHandler::handleGuildCommandResult(network::Packet& packet) {
 // ============================================================
 
 void GameHandler::lootTarget(uint64_t guid) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = LootPacket::build(guid);
     socket->send(packet);
 }
 
 void GameHandler::lootItem(uint8_t slotIndex) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = AutostoreLootItemPacket::build(slotIndex);
     socket->send(packet);
 }
@@ -20038,7 +20038,7 @@ void GameHandler::closeLoot() {
     if (currentLoot.lootGuid != 0 && targetGuid == currentLoot.lootGuid) {
         clearTarget();
     }
-    if (state == WorldState::IN_WORLD && socket) {
+    if (isInWorld()) {
         auto packet = LootReleasePacket::build(currentLoot.lootGuid);
         socket->send(packet);
     }
@@ -20046,7 +20046,7 @@ void GameHandler::closeLoot() {
 }
 
 void GameHandler::lootMasterGive(uint8_t lootSlot, uint64_t targetGuid) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     // CMSG_LOOT_MASTER_GIVE: uint64 lootGuid + uint8 slotIndex + uint64 targetGuid
     network::Packet pkt(wireOpcode(Opcode::CMSG_LOOT_MASTER_GIVE));
     pkt.writeUInt64(currentLoot.lootGuid);
@@ -20056,14 +20056,14 @@ void GameHandler::lootMasterGive(uint8_t lootSlot, uint64_t targetGuid) {
 }
 
 void GameHandler::interactWithNpc(uint64_t guid) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = GossipHelloPacket::build(guid);
     socket->send(packet);
 }
 
 void GameHandler::interactWithGameObject(uint64_t guid) {
     if (guid == 0) return;
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     // Do not overlap an actual spell cast.
     if (casting && currentCastSpellId != 0) return;
     // Always clear melee intent before GO interactions.
@@ -20075,7 +20075,7 @@ void GameHandler::interactWithGameObject(uint64_t guid) {
 
 void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
     if (guid == 0) return;
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     // Rate-limit to prevent spamming the server
     static uint64_t lastInteractGuid = 0;
     static std::chrono::steady_clock::time_point lastInteractTime{};
@@ -20795,7 +20795,7 @@ void GameHandler::abandonQuest(uint32_t questId) {
     }
 
     if (slotIndex >= 0 && slotIndex < 25) {
-        if (state == WorldState::IN_WORLD && socket) {
+        if (isInWorld()) {
             network::Packet pkt(wireOpcode(Opcode::CMSG_QUESTLOG_REMOVE_QUEST));
             pkt.writeUInt8(static_cast<uint8_t>(slotIndex));
             socket->send(pkt);
@@ -20819,7 +20819,7 @@ void GameHandler::abandonQuest(uint32_t questId) {
 }
 
 void GameHandler::shareQuestWithParty(uint32_t questId) {
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         addSystemChatMessage("Cannot share quest: not in world.");
         return;
     }
@@ -20983,7 +20983,7 @@ void GameHandler::closeGossip() {
 }
 
 void GameHandler::offerQuestFromItem(uint64_t itemGuid, uint32_t questId) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     if (itemGuid == 0 || questId == 0) {
         addSystemChatMessage("Cannot start quest right now.");
         return;
@@ -21011,7 +21011,7 @@ uint64_t GameHandler::getBagItemGuid(int bagIndex, int slotIndex) const {
 }
 
 void GameHandler::openVendor(uint64_t npcGuid) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     buybackItems_.clear();
     auto packet = ListInventoryPacket::build(npcGuid);
     socket->send(packet);
@@ -21031,7 +21031,7 @@ void GameHandler::closeVendor() {
 }
 
 void GameHandler::buyItem(uint64_t vendorGuid, uint32_t itemId, uint32_t slot, uint32_t count) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     LOG_INFO("Buy request: vendorGuid=0x", std::hex, vendorGuid, std::dec,
              " itemId=", itemId, " slot=", slot, " count=", count,
              " wire=0x", std::hex, wireOpcode(Opcode::CMSG_BUY_ITEM), std::dec);
@@ -21076,7 +21076,7 @@ void GameHandler::buyBackItem(uint32_t buybackSlot) {
 }
 
 void GameHandler::repairItem(uint64_t vendorGuid, uint64_t itemGuid) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     // CMSG_REPAIR_ITEM: npcGuid(8) + itemGuid(8) + useGuildBank(uint8)
     network::Packet packet(wireOpcode(Opcode::CMSG_REPAIR_ITEM));
     packet.writeUInt64(vendorGuid);
@@ -21086,7 +21086,7 @@ void GameHandler::repairItem(uint64_t vendorGuid, uint64_t itemGuid) {
 }
 
 void GameHandler::repairAll(uint64_t vendorGuid, bool useGuildBank) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     // itemGuid = 0 signals "repair all equipped" to the server
     network::Packet packet(wireOpcode(Opcode::CMSG_REPAIR_ITEM));
     packet.writeUInt64(vendorGuid);
@@ -21096,7 +21096,7 @@ void GameHandler::repairAll(uint64_t vendorGuid, bool useGuildBank) {
 }
 
 void GameHandler::sellItem(uint64_t vendorGuid, uint64_t itemGuid, uint32_t count) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     LOG_INFO("Sell request: vendorGuid=0x", std::hex, vendorGuid,
              " itemGuid=0x", itemGuid, std::dec,
              " count=", count, " wire=0x", std::hex, wireOpcode(Opcode::CMSG_SELL_ITEM), std::dec);
@@ -21150,7 +21150,7 @@ void GameHandler::autoEquipItemBySlot(int backpackIndex) {
     const auto& slot = inventory.getBackpackSlot(backpackIndex);
     if (slot.empty()) return;
 
-    if (state == WorldState::IN_WORLD && socket) {
+    if (isInWorld()) {
         // WoW inventory: equipment 0-18, bags 19-22, backpack 23-38
         auto packet = AutoEquipItemPacket::build(0xFF, static_cast<uint8_t>(23 + backpackIndex));
         socket->send(packet);
@@ -21161,7 +21161,7 @@ void GameHandler::autoEquipItemInBag(int bagIndex, int slotIndex) {
     if (bagIndex < 0 || bagIndex >= inventory.NUM_BAG_SLOTS) return;
     if (slotIndex < 0 || slotIndex >= inventory.getBagSize(bagIndex)) return;
 
-    if (state == WorldState::IN_WORLD && socket) {
+    if (isInWorld()) {
         // Bag items: bag = equip slot 19+bagIndex, slot = index within bag
         auto packet = AutoEquipItemPacket::build(
             static_cast<uint8_t>(19 + bagIndex), static_cast<uint8_t>(slotIndex));
@@ -21216,7 +21216,7 @@ void GameHandler::sellItemInBag(int bagIndex, int slotIndex) {
 }
 
 void GameHandler::unequipToBackpack(EquipSlot equipSlot) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
 
     int freeSlot = inventory.findFreeBackpackSlot();
     if (freeSlot < 0) {
@@ -21273,7 +21273,7 @@ void GameHandler::swapBagSlots(int srcBagIndex, int dstBagIndex) {
 }
 
 void GameHandler::destroyItem(uint8_t bag, uint8_t slot, uint8_t count) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     if (count == 0) count = 1;
 
     // AzerothCore WotLK expects CMSG_DESTROYITEM(bag:u8, slot:u8, count:u32).
@@ -21289,7 +21289,7 @@ void GameHandler::destroyItem(uint8_t bag, uint8_t slot, uint8_t count) {
 }
 
 void GameHandler::splitItem(uint8_t srcBag, uint8_t srcSlot, uint8_t count) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     if (count == 0) return;
 
     // Find a free slot for the split destination: try backpack first, then bags
@@ -21332,7 +21332,7 @@ void GameHandler::useItemBySlot(int backpackIndex) {
         itemGuid = resolveOnlineItemGuid(slot.item.itemId);
     }
 
-    if (itemGuid != 0 && state == WorldState::IN_WORLD && socket) {
+    if (itemGuid != 0 && isInWorld()) {
         // Find the item's on-use spell ID from cached item info
         uint32_t useSpellId = 0;
         if (auto* info = getItemInfo(slot.item.itemId)) {
@@ -21377,7 +21377,7 @@ void GameHandler::useItemInBag(int bagIndex, int slotIndex) {
     LOG_INFO("useItemInBag: bag=", bagIndex, " slot=", slotIndex, " itemId=", slot.item.itemId,
              " itemGuid=0x", std::hex, itemGuid, std::dec);
 
-    if (itemGuid != 0 && state == WorldState::IN_WORLD && socket) {
+    if (itemGuid != 0 && isInWorld()) {
         // Find the item's on-use spell ID
         uint32_t useSpellId = 0;
         if (auto* info = getItemInfo(slot.item.itemId)) {
@@ -21407,7 +21407,7 @@ void GameHandler::useItemInBag(int bagIndex, int slotIndex) {
 void GameHandler::openItemBySlot(int backpackIndex) {
     if (backpackIndex < 0 || backpackIndex >= inventory.getBackpackSize()) return;
     if (inventory.getBackpackSlot(backpackIndex).empty()) return;
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = OpenItemPacket::build(0xFF, static_cast<uint8_t>(23 + backpackIndex));
     LOG_INFO("openItemBySlot: CMSG_OPEN_ITEM bag=0xFF slot=", (23 + backpackIndex));
     socket->send(packet);
@@ -21417,7 +21417,7 @@ void GameHandler::openItemInBag(int bagIndex, int slotIndex) {
     if (bagIndex < 0 || bagIndex >= inventory.NUM_BAG_SLOTS) return;
     if (slotIndex < 0 || slotIndex >= inventory.getBagSize(bagIndex)) return;
     if (inventory.getBagSlot(bagIndex, slotIndex).empty()) return;
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     uint8_t wowBag = static_cast<uint8_t>(19 + bagIndex);
     auto packet = OpenItemPacket::build(wowBag, static_cast<uint8_t>(slotIndex));
     LOG_INFO("openItemInBag: CMSG_OPEN_ITEM bag=", static_cast<int>(wowBag), " slot=", slotIndex);
@@ -21503,7 +21503,7 @@ void GameHandler::handleLootResponse(network::Packet& packet) {
     }
 
     if (currentLoot.gold > 0) {
-        if (state == WorldState::IN_WORLD && socket) {
+        if (isInWorld()) {
             // Auto-loot gold by sending CMSG_LOOT_MONEY (server handles the rest)
             bool suppressFallback = false;
             auto cooldownIt = recentLootMoneyAnnounceCooldowns_.find(currentLoot.lootGuid);
@@ -21520,7 +21520,7 @@ void GameHandler::handleLootResponse(network::Packet& packet) {
     }
 
     // Auto-loot items when enabled
-    if (autoLoot_ && state == WorldState::IN_WORLD && socket && !localLoot.itemAutoLootSent) {
+    if (autoLoot_ && isInWorld() && !localLoot.itemAutoLootSent) {
         for (const auto& item : currentLoot.items) {
             auto pkt = AutostoreLootItemPacket::build(item.slotIndex);
             socket->send(pkt);
@@ -21891,7 +21891,7 @@ void GameHandler::handleTrainerList(network::Packet& packet) {
 
 void GameHandler::trainSpell(uint32_t spellId) {
     LOG_INFO("trainSpell called: spellId=", spellId, " state=", static_cast<int>(state), " socket=", (socket ? "yes" : "no"));
-    if (state != WorldState::IN_WORLD || !socket) {
+    if (!isInWorld()) {
         LOG_WARNING("trainSpell: Not in world or no socket connection");
         return;
     }
@@ -24986,7 +24986,7 @@ void GameHandler::handleItemTextQueryResponse(network::Packet& packet) {
 }
 
 void GameHandler::queryItemText(uint64_t itemGuid) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     network::Packet pkt(wireOpcode(Opcode::CMSG_ITEM_TEXT_QUERY));
     pkt.writeUInt64(itemGuid);
     socket->send(pkt);
@@ -25448,7 +25448,7 @@ void GameHandler::handleLootRollWon(network::Packet& packet) {
 }
 
 void GameHandler::sendLootRoll(uint64_t objectGuid, uint32_t slot, uint8_t rollType) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     pendingLootRollActive_ = false;
 
     network::Packet pkt(wireOpcode(Opcode::CMSG_LOOT_ROLL));
@@ -25514,7 +25514,7 @@ std::string GameHandler::getFormattedTitle(uint32_t bit) const {
 }
 
 void GameHandler::sendSetTitle(int32_t bit) {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     auto packet = SetTitlePacket::build(bit);
     socket->send(packet);
     chosenTitleBit_ = bit;
@@ -25776,7 +25776,7 @@ uint32_t GameHandler::getRepListIdByFactionId(uint32_t factionId) const {
 
 void GameHandler::setWatchedFactionId(uint32_t factionId) {
     watchedFactionId_ = factionId;
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     // CMSG_SET_WATCHED_FACTION: int32 repListId (-1 = unwatch)
     int32_t repListId = -1;
     if (factionId != 0) {
@@ -26009,7 +26009,7 @@ void GameHandler::declineBfMgrInvite() {
 // ---- WotLK Calendar ----
 
 void GameHandler::requestCalendar() {
-    if (state != WorldState::IN_WORLD || !socket) return;
+    if (!isInWorld()) return;
     // CMSG_CALENDAR_GET_CALENDAR has no payload
     network::Packet pkt(wireOpcode(Opcode::CMSG_CALENDAR_GET_CALENDAR));
     socket->send(pkt);

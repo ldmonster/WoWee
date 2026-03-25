@@ -172,6 +172,7 @@ public:
      * Check if connected to world server
      */
     bool isConnected() const;
+    bool isInWorld() const { return state == WorldState::IN_WORLD && socket; }
 
     /**
      * Get current connection state
