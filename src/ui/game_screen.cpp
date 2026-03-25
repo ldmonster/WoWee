@@ -9415,7 +9415,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
                     float cd = slot.cooldownRemaining;
                     if (cd >= 60.0f)
                         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
-                            "Cooldown: %d min %d sec", (int)cd/60, (int)cd%60);
+                            "Cooldown: %d min %d sec", static_cast<int>(cd)/60, static_cast<int>(cd)%60);
                     else
                         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Cooldown: %.1f sec", cd);
                 }
@@ -9431,7 +9431,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
                         float cd = macroCooldownRemaining;
                         if (cd >= 60.0f)
                             ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
-                                "Cooldown: %d min %d sec", (int)cd/60, (int)cd%60);
+                                "Cooldown: %d min %d sec", static_cast<int>(cd)/60, static_cast<int>(cd)%60);
                         else
                             ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Cooldown: %.1f sec", cd);
                     }
@@ -9494,7 +9494,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
                     float cd = slot.cooldownRemaining;
                     if (cd >= 60.0f)
                         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
-                            "Cooldown: %d min %d sec", (int)cd/60, (int)cd%60);
+                            "Cooldown: %d min %d sec", static_cast<int>(cd)/60, static_cast<int>(cd)%60);
                     else
                         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Cooldown: %.1f sec", cd);
                 }
@@ -9533,9 +9533,9 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
 
             char cdText[16];
             float cd = effCdRemaining;
-            if (cd >= 3600.0f)    snprintf(cdText, sizeof(cdText), "%dh", (int)cd / 3600);
-            else if (cd >= 60.0f) snprintf(cdText, sizeof(cdText), "%dm%ds", (int)cd / 60, (int)cd % 60);
-            else if (cd >= 5.0f)  snprintf(cdText, sizeof(cdText), "%ds", (int)cd);
+            if (cd >= 3600.0f)    snprintf(cdText, sizeof(cdText), "%dh", static_cast<int>(cd) / 3600);
+            else if (cd >= 60.0f) snprintf(cdText, sizeof(cdText), "%dm%ds", static_cast<int>(cd) / 60, static_cast<int>(cd) % 60);
+            else if (cd >= 5.0f)  snprintf(cdText, sizeof(cdText), "%ds", static_cast<int>(cd));
             else                  snprintf(cdText, sizeof(cdText), "%.1f", cd);
             ImVec2 textSize = ImGui::CalcTextSize(cdText);
             float tx = cx - textSize.x * 0.5f;
@@ -10766,7 +10766,7 @@ void GameScreen::renderCooldownTracker(game::GameHandler& gameHandler) {
             // Name (truncated) + remaining time
             char timeStr[16];
             if (cd.remaining >= 60.0f)
-                snprintf(timeStr, sizeof(timeStr), "%dm%ds", (int)cd.remaining / 60, (int)cd.remaining % 60);
+                snprintf(timeStr, sizeof(timeStr), "%dm%ds", static_cast<int>(cd.remaining) / 60, static_cast<int>(cd.remaining) % 60);
             else
                 snprintf(timeStr, sizeof(timeStr), "%.0fs", cd.remaining);
 
@@ -12692,7 +12692,7 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                     snprintf(hpText, sizeof(hpText), "OOR");
                 } else if (maxHp >= 10000) {
                     snprintf(hpText, sizeof(hpText), "%dk/%dk",
-                             (int)hp / 1000, (int)maxHp / 1000);
+                             static_cast<int>(hp) / 1000, static_cast<int>(maxHp) / 1000);
                 } else {
                     snprintf(hpText, sizeof(hpText), "%u/%u", hp, maxHp);
                 }
@@ -13107,18 +13107,18 @@ void GameScreen::renderRepToasts(float deltaTime) {
         ImVec2 br(toastX + toastW, toastY + toastH);
 
         // Background
-        draw->AddRectFilled(tl, br, IM_COL32(15, 15, 20, (int)(alpha * 200)), 4.0f);
+        draw->AddRectFilled(tl, br, IM_COL32(15, 15, 20, static_cast<int>(alpha * 200)), 4.0f);
         // Border: green for gain, red for loss
         ImU32 borderCol = (e.delta > 0)
-            ? IM_COL32(80, 200, 80, (int)(alpha * 220))
-            : IM_COL32(200, 60, 60, (int)(alpha * 220));
+            ? IM_COL32(80, 200, 80, static_cast<int>(alpha * 220))
+            : IM_COL32(200, 60, 60, static_cast<int>(alpha * 220));
         draw->AddRect(tl, br, borderCol, 4.0f, 0, 1.5f);
 
         // Delta text: "+250" or "-250"
         char deltaBuf[16];
         snprintf(deltaBuf, sizeof(deltaBuf), "%+d", e.delta);
-        ImU32 deltaCol = (e.delta > 0) ? IM_COL32(80, 220, 80, (int)(alpha * 255))
-                                       : IM_COL32(220, 70, 70, (int)(alpha * 255));
+        ImU32 deltaCol = (e.delta > 0) ? IM_COL32(80, 220, 80, static_cast<int>(alpha * 255))
+                                       : IM_COL32(220, 70, 70, static_cast<int>(alpha * 255));
         draw->AddText(font, fontSize, ImVec2(tl.x + 6.0f, tl.y + (toastH - fontSize) * 0.5f),
                       deltaCol, deltaBuf);
 
@@ -13126,7 +13126,7 @@ void GameScreen::renderRepToasts(float deltaTime) {
         char nameBuf[64];
         snprintf(nameBuf, sizeof(nameBuf), "%s (%s)", e.factionName.c_str(), standingLabel(e.standing));
         draw->AddText(font, fontSize * 0.85f, ImVec2(tl.x + 44.0f, tl.y + (toastH - fontSize * 0.85f) * 0.5f),
-                      IM_COL32(210, 210, 210, (int)(alpha * 220)), nameBuf);
+                      IM_COL32(210, 210, 210, static_cast<int>(alpha * 220)), nameBuf);
     }
 }
 
@@ -13169,26 +13169,26 @@ void GameScreen::renderQuestCompleteToasts(float deltaTime) {
         ImVec2 br(toastX + toastW, toastY + toastH);
 
         // Background + gold border (quest completion)
-        draw->AddRectFilled(tl, br, IM_COL32(20, 18, 8, (int)(alpha * 210)), 5.0f);
-        draw->AddRect(tl, br, IM_COL32(220, 180, 30, (int)(alpha * 230)), 5.0f, 0, 1.5f);
+        draw->AddRectFilled(tl, br, IM_COL32(20, 18, 8, static_cast<int>(alpha * 210)), 5.0f);
+        draw->AddRect(tl, br, IM_COL32(220, 180, 30, static_cast<int>(alpha * 230)), 5.0f, 0, 1.5f);
 
         // Scroll icon placeholder (gold diamond)
         float iconCx = tl.x + 18.0f;
         float iconCy = tl.y + toastH * 0.5f;
-        draw->AddCircleFilled(ImVec2(iconCx, iconCy), 7.0f, IM_COL32(210, 170, 20, (int)(alpha * 230)));
-        draw->AddCircle      (ImVec2(iconCx, iconCy), 7.0f, IM_COL32(255, 220, 50, (int)(alpha * 200)));
+        draw->AddCircleFilled(ImVec2(iconCx, iconCy), 7.0f, IM_COL32(210, 170, 20, static_cast<int>(alpha * 230)));
+        draw->AddCircle      (ImVec2(iconCx, iconCy), 7.0f, IM_COL32(255, 220, 50, static_cast<int>(alpha * 200)));
 
         // "Quest Complete" header in gold
         const char* header = "Quest Complete";
         draw->AddText(font, fontSize * 0.78f,
                       ImVec2(tl.x + 34.0f, tl.y + 4.0f),
-                      IM_COL32(240, 200, 40, (int)(alpha * 240)), header);
+                      IM_COL32(240, 200, 40, static_cast<int>(alpha * 240)), header);
 
         // Quest title in off-white
         const char* titleStr = e.title.empty() ? "Unknown Quest" : e.title.c_str();
         draw->AddText(font, fontSize * 0.82f,
                       ImVec2(tl.x + 34.0f, tl.y + toastH * 0.5f + 1.0f),
-                      IM_COL32(220, 215, 195, (int)(alpha * 220)), titleStr);
+                      IM_COL32(220, 215, 195, static_cast<int>(alpha * 220)), titleStr);
     }
 }
 
@@ -13237,16 +13237,16 @@ void GameScreen::renderZoneToasts(float deltaTime) {
         ImVec2 tl(toastX, toastY);
         ImVec2 br(toastX + toastW, toastY + toastH);
 
-        draw->AddRectFilled(tl, br, IM_COL32(10, 10, 16, (int)(alpha * 200)), 6.0f);
-        draw->AddRect(tl, br, IM_COL32(160, 140, 80, (int)(alpha * 220)), 6.0f, 0, 1.2f);
+        draw->AddRectFilled(tl, br, IM_COL32(10, 10, 16, static_cast<int>(alpha * 200)), 6.0f);
+        draw->AddRect(tl, br, IM_COL32(160, 140, 80, static_cast<int>(alpha * 220)), 6.0f, 0, 1.2f);
 
         float cx = tl.x + toastW * 0.5f;
         draw->AddText(font, 11.0f,
             ImVec2(cx - hdrSz.x * 0.5f, tl.y + 5.0f),
-            IM_COL32(180, 170, 120, (int)(alpha * 200)), header);
+            IM_COL32(180, 170, 120, static_cast<int>(alpha * 200)), header);
         draw->AddText(font, 14.0f,
             ImVec2(cx - nameSz.x * 0.5f, tl.y + toastH * 0.5f + 1.0f),
-            IM_COL32(255, 230, 140, (int)(alpha * 240)), e.zoneName.c_str());
+            IM_COL32(255, 230, 140, static_cast<int>(alpha * 240)), e.zoneName.c_str());
     }
 }
 
@@ -13301,18 +13301,18 @@ void GameScreen::renderAreaTriggerToasts(float deltaTime, game::GameHandler& gam
         ImVec2 tl(toastX, toastY);
         ImVec2 br(toastX + toastW, toastY + toastH);
 
-        draw->AddRectFilled(tl, br, IM_COL32(8, 12, 22, (int)(alpha * 190)), 5.0f);
-        draw->AddRect(tl, br, IM_COL32(100, 160, 220, (int)(alpha * 200)), 5.0f, 0, 1.0f);
+        draw->AddRectFilled(tl, br, IM_COL32(8, 12, 22, static_cast<int>(alpha * 190)), 5.0f);
+        draw->AddRect(tl, br, IM_COL32(100, 160, 220, static_cast<int>(alpha * 200)), 5.0f, 0, 1.0f);
 
         float cx = tl.x + toastW * 0.5f;
         // Shadow
         draw->AddText(font, 13.0f,
             ImVec2(cx - txtSz.x * 0.5f + 1, tl.y + (toastH - txtSz.y) * 0.5f + 1),
-            IM_COL32(0, 0, 0, (int)(alpha * 180)), t.text.c_str());
+            IM_COL32(0, 0, 0, static_cast<int>(alpha * 180)), t.text.c_str());
         // Text in light blue
         draw->AddText(font, 13.0f,
             ImVec2(cx - txtSz.x * 0.5f, tl.y + (toastH - txtSz.y) * 0.5f),
-            IM_COL32(180, 220, 255, (int)(alpha * 240)), t.text.c_str());
+            IM_COL32(180, 220, 255, static_cast<int>(alpha * 240)), t.text.c_str());
     }
 }
 
@@ -14616,7 +14616,7 @@ void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
                     for (const auto& m : roster.members) {
                         if (m.online) ++onlineCount;
                     }
-                    ImGui::Text("%d members (%d online)", (int)roster.members.size(), onlineCount);
+                    ImGui::Text("%d members (%d online)", static_cast<int>(roster.members.size()), onlineCount);
                     ImGui::Separator();
 
                     const auto& rankNames = gameHandler.getGuildRankNames();
@@ -17239,7 +17239,7 @@ void GameScreen::renderTrainerWindow(game::GameHandler& gameHandler) {
                     }
                     if (logCount < 3) {
                         LOG_INFO("Trainer button debug: spellId=", spell->spellId,
-                                " alreadyKnown=", alreadyKnown, " state=", (int)spell->state,
+                                " alreadyKnown=", alreadyKnown, " state=", static_cast<int>(spell->state),
                                 " prereqsMet=", prereqsMet, " (", prereq1Met, ",", prereq2Met, ",", prereq3Met, ")",
                                 " levelMet=", levelMet,
                                 " reqLevel=", spell->reqLevel, " playerLevel=", playerLevel,
@@ -22855,10 +22855,10 @@ void GameScreen::renderDingEffect() {
 
     // Slight black outline for readability
     draw->AddText(font, fontSize, ImVec2(tx + 2, ty + 2),
-                  IM_COL32(0, 0, 0, (int)(alpha * 180)), buf);
+                  IM_COL32(0, 0, 0, static_cast<int>(alpha * 180)), buf);
     // Gold text
     draw->AddText(font, fontSize, ImVec2(tx, ty),
-                  IM_COL32(255, 210, 0, (int)(alpha * 255)), buf);
+                  IM_COL32(255, 210, 0, static_cast<int>(alpha * 255)), buf);
 
     // Stat gains below the main text (shown only if server sent deltas)
     bool hasStatGains = (dingHpDelta_ > 0 || dingManaDelta_ > 0 ||
@@ -22878,7 +22878,7 @@ void GameScreen::renderDingEffect() {
         if (dingManaDelta_ > 0)
             written += snprintf(statBuf + written, sizeof(statBuf) - written,
                                 "+%u Mana  ", dingManaDelta_);
-        for (int i = 0; i < 5 && written < (int)sizeof(statBuf) - 1; ++i) {
+        for (int i = 0; i < 5 && written < static_cast<int>(sizeof(statBuf)) - 1; ++i) {
             if (dingStats_[i] > 0)
                 written += snprintf(statBuf + written, sizeof(statBuf) - written,
                                     "+%u %s  ", dingStats_[i], kStatLabels[i]);
@@ -22891,9 +22891,9 @@ void GameScreen::renderDingEffect() {
             ImVec2 ssz = font->CalcTextSizeA(smallSize, FLT_MAX, 0.0f, statBuf);
             float stx = cx - ssz.x * 0.5f;
             draw->AddText(font, smallSize, ImVec2(stx + 1, yOff + 1),
-                          IM_COL32(0, 0, 0, (int)(alpha * 160)), statBuf);
+                          IM_COL32(0, 0, 0, static_cast<int>(alpha * 160)), statBuf);
             draw->AddText(font, smallSize, ImVec2(stx, yOff),
-                          IM_COL32(100, 220, 100, (int)(alpha * 230)), statBuf);
+                          IM_COL32(100, 220, 100, static_cast<int>(alpha * 230)), statBuf);
         }
     }
 }
@@ -22944,8 +22944,8 @@ void GameScreen::renderAchievementToast() {
     // Background panel (gold border, dark fill)
     ImVec2 tl(toastX,            toastY);
     ImVec2 br(toastX + TOAST_W,  toastY + TOAST_H);
-    draw->AddRectFilled(tl, br, IM_COL32(30, 20, 10, (int)(alpha * 230)), 6.0f);
-    draw->AddRect(tl, br, IM_COL32(200, 170, 50, (int)(alpha * 255)), 6.0f, 0, 2.0f);
+    draw->AddRectFilled(tl, br, IM_COL32(30, 20, 10, static_cast<int>(alpha * 230)), 6.0f);
+    draw->AddRect(tl, br, IM_COL32(200, 170, 50, static_cast<int>(alpha * 255)), 6.0f, 0, 2.0f);
 
     // Title
     ImFont* font = ImGui::GetFont();
@@ -22955,9 +22955,9 @@ void GameScreen::renderAchievementToast() {
     float titleW = font->CalcTextSizeA(titleSize, FLT_MAX, 0.0f, title).x;
     float titleX = toastX + (TOAST_W - titleW) * 0.5f;
     draw->AddText(font, titleSize, ImVec2(titleX + 1, toastY + 8 + 1),
-                  IM_COL32(0, 0, 0, (int)(alpha * 180)), title);
+                  IM_COL32(0, 0, 0, static_cast<int>(alpha * 180)), title);
     draw->AddText(font, titleSize, ImVec2(titleX, toastY + 8),
-                  IM_COL32(255, 215, 0, (int)(alpha * 255)), title);
+                  IM_COL32(255, 215, 0, static_cast<int>(alpha * 255)), title);
 
     // Achievement name (falls back to ID if name not available)
     char idBuf[256];
@@ -22971,7 +22971,7 @@ void GameScreen::renderAchievementToast() {
     float idW = font->CalcTextSizeA(bodySize, FLT_MAX, 0.0f, idBuf).x;
     float idX = toastX + (TOAST_W - idW) * 0.5f;
     draw->AddText(font, bodySize, ImVec2(idX, toastY + 28),
-                  IM_COL32(220, 200, 150, (int)(alpha * 255)), idBuf);
+                  IM_COL32(220, 200, 150, static_cast<int>(alpha * 255)), idBuf);
 }
 
 // ---------------------------------------------------------------------------
@@ -23028,22 +23028,22 @@ void GameScreen::renderDiscoveryToast() {
 
     // "Discovered!" in gold
     draw->AddText(font, headerSize, ImVec2(headerX + 1, headerY + 1),
-                  IM_COL32(0, 0, 0, (int)(alpha * 160)), header);
+                  IM_COL32(0, 0, 0, static_cast<int>(alpha * 160)), header);
     draw->AddText(font, headerSize, ImVec2(headerX, headerY),
-                  IM_COL32(255, 215, 0, (int)(alpha * 255)), header);
+                  IM_COL32(255, 215, 0, static_cast<int>(alpha * 255)), header);
 
     // Area name in white
     draw->AddText(font, nameSize, ImVec2(nameX + 1, nameY + 1),
-                  IM_COL32(0, 0, 0, (int)(alpha * 160)), discoveryToastName_.c_str());
+                  IM_COL32(0, 0, 0, static_cast<int>(alpha * 160)), discoveryToastName_.c_str());
     draw->AddText(font, nameSize, ImVec2(nameX, nameY),
-                  IM_COL32(255, 255, 255, (int)(alpha * 255)), discoveryToastName_.c_str());
+                  IM_COL32(255, 255, 255, static_cast<int>(alpha * 255)), discoveryToastName_.c_str());
 
     // XP gain in light green (if any)
     if (xpBuf[0] != '\0') {
         draw->AddText(font, xpSize, ImVec2(xpX + 1, xpY + 1),
-                      IM_COL32(0, 0, 0, (int)(alpha * 140)), xpBuf);
+                      IM_COL32(0, 0, 0, static_cast<int>(alpha * 140)), xpBuf);
         draw->AddText(font, xpSize, ImVec2(xpX, xpY),
-                      IM_COL32(100, 220, 100, (int)(alpha * 230)), xpBuf);
+                      IM_COL32(100, 220, 100, static_cast<int>(alpha * 230)), xpBuf);
     }
 }
 
@@ -23590,15 +23590,15 @@ void GameScreen::renderZoneText(game::GameHandler& gameHandler) {
 
     // "Entering:" in gold
     draw->AddText(font, headerSize, ImVec2(headerX + 1, headerY + 1),
-                  IM_COL32(0, 0, 0, (int)(alpha * 160)), header);
+                  IM_COL32(0, 0, 0, static_cast<int>(alpha * 160)), header);
     draw->AddText(font, headerSize, ImVec2(headerX, headerY),
-                  IM_COL32(255, 215, 0, (int)(alpha * 255)), header);
+                  IM_COL32(255, 215, 0, static_cast<int>(alpha * 255)), header);
 
     // Zone name in white
     draw->AddText(font, nameSize, ImVec2(nameX + 1, nameY + 1),
-                  IM_COL32(0, 0, 0, (int)(alpha * 160)), zoneTextName_.c_str());
+                  IM_COL32(0, 0, 0, static_cast<int>(alpha * 160)), zoneTextName_.c_str());
     draw->AddText(font, nameSize, ImVec2(nameX, nameY),
-                  IM_COL32(255, 255, 255, (int)(alpha * 255)), zoneTextName_.c_str());
+                  IM_COL32(255, 255, 255, static_cast<int>(alpha * 255)), zoneTextName_.c_str());
 }
 
 // ---------------------------------------------------------------------------
@@ -23937,14 +23937,14 @@ void GameScreen::renderDungeonFinderWindow(game::GameHandler& gameHandler) {
 
         // Find current index
         int curIdx = 0;
-        for (int i = 0; i < (int)(sizeof(kDungeons)/sizeof(kDungeons[0])); ++i) {
+        for (int i = 0; i < static_cast<int>(sizeof(kDungeons)/sizeof(kDungeons[0])); ++i) {
             if (kDungeons[i].id == lfgSelectedDungeon_) { curIdx = i; break; }
         }
 
         ImGui::SetNextItemWidth(-1);
         if (ImGui::BeginCombo("##dungeon", kDungeons[curIdx].name)) {
             uint8_t lastCat = 255;
-            for (int i = 0; i < (int)(sizeof(kDungeons)/sizeof(kDungeons[0])); ++i) {
+            for (int i = 0; i < static_cast<int>(sizeof(kDungeons)/sizeof(kDungeons[0])); ++i) {
                 if (kDungeons[i].cat != lastCat && kCatHeaders[kDungeons[i].cat]) {
                     if (lastCat != 255) ImGui::Separator();
                     ImGui::TextDisabled("%s", kCatHeaders[kDungeons[i].cat]);
@@ -24642,7 +24642,7 @@ void GameScreen::renderCombatLog(game::GameHandler& gameHandler) {
                                              : ImVec4(1.0f, 0.15f, 0.15f, 1.0f);
                     break;
                 default:
-                    snprintf(desc, sizeof(desc), "Combat event (type %d, amount %d)", (int)e.type, e.amount);
+                    snprintf(desc, sizeof(desc), "Combat event (type %d, amount %d)", static_cast<int>(e.type), e.amount);
                     color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
                     break;
             }
@@ -24701,7 +24701,7 @@ void GameScreen::renderAchievementWindow(game::GameHandler& gameHandler) {
     if (ImGui::BeginTabBar("##achtabs")) {
         // --- Earned tab ---
         char earnedLabel[32];
-        snprintf(earnedLabel, sizeof(earnedLabel), "Earned (%u)###earned", (unsigned)earned.size());
+        snprintf(earnedLabel, sizeof(earnedLabel), "Earned (%u)###earned", static_cast<unsigned>(earned.size()));
         if (ImGui::BeginTabItem(earnedLabel)) {
             if (earned.empty()) {
                 ImGui::TextDisabled("No achievements earned yet.");
@@ -24765,7 +24765,7 @@ void GameScreen::renderAchievementWindow(game::GameHandler& gameHandler) {
 
         // --- Criteria progress tab ---
         char critLabel[32];
-        snprintf(critLabel, sizeof(critLabel), "Criteria (%u)###crit", (unsigned)criteria.size());
+        snprintf(critLabel, sizeof(critLabel), "Criteria (%u)###crit", static_cast<unsigned>(criteria.size()));
         if (ImGui::BeginTabItem(critLabel)) {
             // Lazy-load AchievementCriteria.dbc for descriptions
             struct CriteriaEntry { uint32_t achievementId; uint64_t quantity; std::string description; };
@@ -25027,7 +25027,7 @@ void GameScreen::renderThreatWindow(game::GameHandler& gameHandler) {
         if (isPlayer && rank == 1) col = ImVec4(1.0f, 0.3f, 0.3f, 1.0f); // red — you have aggro
 
         // Threat bar
-        float pct = (maxThreat > 0) ? (float)entry.threat / (float)maxThreat : 0.0f;
+        float pct = (maxThreat > 0) ? static_cast<float>(entry.threat) / static_cast<float>(maxThreat) : 0.0f;
         ImGui::PushStyleColor(ImGuiCol_PlotHistogram,
             isPlayer ? ImVec4(0.8f, 0.2f, 0.2f, 0.7f) : ImVec4(0.2f, 0.5f, 0.8f, 0.5f));
         char barLabel[48];
@@ -25359,7 +25359,7 @@ void GameScreen::renderInspectWindow(game::GameHandler& gameHandler) {
     }
     if (result->talentGroups > 1) {
         ImGui::SameLine();
-        ImGui::TextDisabled("  Dual spec (active %u)", (unsigned)result->activeTalentGroup + 1);
+        ImGui::TextDisabled("  Dual spec (active %u)", static_cast<unsigned>(result->activeTalentGroup) + 1);
     }
 
     ImGui::Separator();

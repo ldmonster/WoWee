@@ -460,7 +460,7 @@ bool CharEnumParser::parse(network::Packet& packet, CharEnumResponse& response) 
     // Read character count
     uint8_t count = packet.readUInt8();
 
-    LOG_INFO("Parsing SMSG_CHAR_ENUM: ", (int)count, " characters");
+    LOG_INFO("Parsing SMSG_CHAR_ENUM: ", static_cast<int>(count), " characters");
 
     response.characters.clear();
     response.characters.reserve(count);
@@ -475,7 +475,7 @@ bool CharEnumParser::parse(network::Packet& packet, CharEnumResponse& response) 
         // petDisplayModel(4) + petLevel(4) + petFamily(4) + 23items*(dispModel(4)+invType(1)+enchant(4)) = 207 bytes
         const size_t minCharacterSize = 8 + 1 + 1 + 1 + 1 + 4 + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 4 + 1 + 4 + 4 + 4 + (23 * 9);
         if (packet.getReadPos() + minCharacterSize > packet.getSize()) {
-            LOG_WARNING("CharEnumParser: truncated character at index ", (int)i);
+            LOG_WARNING("CharEnumParser: truncated character at index ", static_cast<int>(i));
             break;
         }
 
@@ -484,14 +484,14 @@ bool CharEnumParser::parse(network::Packet& packet, CharEnumResponse& response) 
 
         // Read name (null-terminated string) - validate before reading
         if (packet.getReadPos() >= packet.getSize()) {
-            LOG_WARNING("CharEnumParser: no bytes for name at index ", (int)i);
+            LOG_WARNING("CharEnumParser: no bytes for name at index ", static_cast<int>(i));
             break;
         }
         character.name = packet.readString();
 
         // Validate remaining bytes before reading fixed-size fields
         if (packet.getReadPos() + 1 > packet.getSize()) {
-            LOG_WARNING("CharEnumParser: truncated before race/class/gender at index ", (int)i);
+            LOG_WARNING("CharEnumParser: truncated before race/class/gender at index ", static_cast<int>(i));
             character.race = Race::HUMAN;
             character.characterClass = Class::WARRIOR;
             character.gender = Gender::MALE;
@@ -595,9 +595,9 @@ bool CharEnumParser::parse(network::Packet& packet, CharEnumResponse& response) 
             character.equipment.push_back(item);
         }
 
-        LOG_DEBUG("  Character ", (int)(i + 1), ": ", character.name,
+        LOG_DEBUG("  Character ", static_cast<int>(i + 1), ": ", character.name,
                   " (", getRaceName(character.race), " ", getClassName(character.characterClass),
-                  " level ", (int)character.level, " zone ", character.zoneId, ")");
+                  " level ", static_cast<int>(character.level), " zone ", character.zoneId, ")");
 
         response.characters.push_back(character);
     }
@@ -672,7 +672,7 @@ bool AccountDataTimesParser::parse(network::Packet& packet, AccountDataTimesData
 
     LOG_DEBUG("Parsed SMSG_ACCOUNT_DATA_TIMES:");
     LOG_DEBUG("  Server time: ", data.serverTime);
-    LOG_DEBUG("  Unknown: ", (int)data.unknown);
+    LOG_DEBUG("  Unknown: ", static_cast<int>(data.unknown));
     LOG_DEBUG("  Mask: 0x", std::hex, mask, std::dec, " slotsInPacket=", slotWords);
 
     for (size_t i = 0; i < slotWords; ++i) {
@@ -1255,8 +1255,8 @@ bool UpdateObjectParser::parseUpdateFields(network::Packet& packet, UpdateBlock&
         ? ((block.objectType == ObjectType::PLAYER) ? 55 : 10)
         : 55;  // VALUES: allow PLAYER-sized masks
     if (blockCount > maxExpectedBlocks) {
-        LOG_WARNING("UpdateObjectParser: suspicious maskBlockCount=", (int)blockCount,
-                    " for objectType=", (int)block.objectType,
+        LOG_WARNING("UpdateObjectParser: suspicious maskBlockCount=", static_cast<int>(blockCount),
+                    " for objectType=", static_cast<int>(block.objectType),
                     " guid=0x", std::hex, block.guid, std::dec,
                     " updateFlags=0x", std::hex, block.updateFlags, std::dec,
                     " moveFlags=0x", std::hex, block.moveFlags, std::dec,
@@ -1265,7 +1265,7 @@ bool UpdateObjectParser::parseUpdateFields(network::Packet& packet, UpdateBlock&
 
     uint32_t fieldsCapacity = blockCount * 32;
     LOG_DEBUG("  UPDATE MASK PARSE:");
-    LOG_DEBUG("    maskBlockCount = ", (int)blockCount);
+    LOG_DEBUG("    maskBlockCount = ", static_cast<int>(blockCount));
     LOG_DEBUG("    fieldsCapacity (blocks * 32) = ", fieldsCapacity);
 
     // Read update mask into a reused scratch buffer to avoid per-block allocations.
@@ -1349,7 +1349,7 @@ bool UpdateObjectParser::parseUpdateBlock(network::Packet& packet, UpdateBlock& 
     uint8_t updateTypeVal = packet.readUInt8();
     block.updateType = static_cast<UpdateType>(updateTypeVal);
 
-    LOG_DEBUG("Update block: type=", (int)updateTypeVal);
+    LOG_DEBUG("Update block: type=", static_cast<int>(updateTypeVal));
 
     switch (block.updateType) {
         case UpdateType::VALUES: {
@@ -1381,7 +1381,7 @@ bool UpdateObjectParser::parseUpdateBlock(network::Packet& packet, UpdateBlock& 
             if (packet.getReadPos() >= packet.getSize()) return false;
             uint8_t objectTypeVal = packet.readUInt8();
             block.objectType = static_cast<ObjectType>(objectTypeVal);
-            LOG_DEBUG("  Object type: ", (int)objectTypeVal);
+            LOG_DEBUG("  Object type: ", static_cast<int>(objectTypeVal));
 
             // Parse movement if present
             bool hasMovement = parseMovementBlock(packet, block);
@@ -1406,7 +1406,7 @@ bool UpdateObjectParser::parseUpdateBlock(network::Packet& packet, UpdateBlock& 
         }
 
         default:
-            LOG_WARNING("Unknown update type: ", (int)updateTypeVal);
+            LOG_WARNING("Unknown update type: ", static_cast<int>(updateTypeVal));
             return false;
     }
 }
@@ -1737,7 +1737,7 @@ bool MessageChatParser::parse(network::Packet& packet, MessageChatData& data) {
         LOG_DEBUG("  Channel: ", data.channelName);
     }
     LOG_DEBUG("  Message: ", data.message);
-    LOG_DEBUG("  Chat tag: 0x", std::hex, (int)data.chatTag, std::dec);
+    LOG_DEBUG("  Chat tag: 0x", std::hex, static_cast<int>(data.chatTag), std::dec);
 
     return true;
 }
@@ -2004,7 +2004,7 @@ bool FriendStatusParser::parse(network::Packet& packet, FriendStatusData& data) 
             }
         }
     }
-    LOG_DEBUG("Parsed SMSG_FRIEND_STATUS: status=", (int)data.status, " guid=0x", std::hex, data.guid, std::dec);
+    LOG_DEBUG("Parsed SMSG_FRIEND_STATUS: status=", static_cast<int>(data.status), " guid=0x", std::hex, data.guid, std::dec);
     return true;
 }
 
@@ -2047,7 +2047,7 @@ bool LogoutResponseParser::parse(network::Packet& packet, LogoutResponseData& da
 
     data.result = packet.readUInt32();
     data.instant = packet.readUInt8();
-    LOG_DEBUG("Parsed SMSG_LOGOUT_RESPONSE: result=", data.result, " instant=", (int)data.instant);
+    LOG_DEBUG("Parsed SMSG_LOGOUT_RESPONSE: result=", data.result, " instant=", static_cast<int>(data.instant));
     return true;
 }
 
@@ -2058,7 +2058,7 @@ bool LogoutResponseParser::parse(network::Packet& packet, LogoutResponseData& da
 network::Packet StandStateChangePacket::build(uint8_t state) {
     network::Packet packet(wireOpcode(Opcode::CMSG_STANDSTATECHANGE));
     packet.writeUInt32(state);
-    LOG_DEBUG("Built CMSG_STANDSTATECHANGE: state=", (int)state);
+    LOG_DEBUG("Built CMSG_STANDSTATECHANGE: state=", static_cast<int>(state));
     return packet;
 }
 
@@ -2083,8 +2083,8 @@ network::Packet SetActionButtonPacket::build(uint8_t button, uint8_t type, uint3
         packet.writeUInt16(static_cast<uint16_t>(id));
         packet.writeUInt8(classicType);
         packet.writeUInt8(0); // misc
-        LOG_DEBUG("Built CMSG_SET_ACTION_BUTTON (Classic): button=", (int)button,
-                  " id=", id, " type=", (int)classicType);
+        LOG_DEBUG("Built CMSG_SET_ACTION_BUTTON (Classic): button=", static_cast<int>(button),
+                  " id=", id, " type=", static_cast<int>(classicType));
     } else {
         // TBC/WotLK: type in bits 24–31, id in bits 0–23; packed=0 clears slot
         uint8_t packedType = 0x00; // spell
@@ -2092,7 +2092,7 @@ network::Packet SetActionButtonPacket::build(uint8_t button, uint8_t type, uint3
         if (type == 3 /* MACRO */) packedType = 0x40;
         uint32_t packed = (id == 0) ? 0 : (static_cast<uint32_t>(packedType) << 24) | (id & 0x00FFFFFF);
         packet.writeUInt32(packed);
-        LOG_DEBUG("Built CMSG_SET_ACTION_BUTTON (TBC/WotLK): button=", (int)button,
+        LOG_DEBUG("Built CMSG_SET_ACTION_BUTTON (TBC/WotLK): button=", static_cast<int>(button),
                   " packed=0x", std::hex, packed, std::dec);
     }
     return packet;
@@ -2510,7 +2510,7 @@ bool GuildEventParser::parse(network::Packet& packet, GuildEventData& data) {
     if ((packet.getSize() - packet.getReadPos()) >= 8) {
         data.guid = packet.readUInt64();
     }
-    LOG_INFO("Parsed SMSG_GUILD_EVENT: type=", (int)data.eventType, " strings=", (int)data.numStrings);
+    LOG_INFO("Parsed SMSG_GUILD_EVENT: type=", static_cast<int>(data.eventType), " strings=", static_cast<int>(data.numStrings));
     return true;
 }
 
@@ -2591,7 +2591,7 @@ network::Packet RaidTargetUpdatePacket::build(uint8_t targetIndex, uint64_t targ
     network::Packet packet(wireOpcode(Opcode::MSG_RAID_TARGET_UPDATE));
     packet.writeUInt8(targetIndex);
     packet.writeUInt64(targetGuid);
-    LOG_DEBUG("Built MSG_RAID_TARGET_UPDATE, index: ", (uint32_t)targetIndex, ", guid: 0x", std::hex, targetGuid, std::dec);
+    LOG_DEBUG("Built MSG_RAID_TARGET_UPDATE, index: ", static_cast<uint32_t>(targetIndex), ", guid: 0x", std::hex, targetGuid, std::dec);
     return packet;
 }
 
@@ -2636,14 +2636,14 @@ network::Packet SetTradeItemPacket::build(uint8_t tradeSlot, uint8_t bag, uint8_
     packet.writeUInt8(tradeSlot);
     packet.writeUInt8(bag);
     packet.writeUInt8(bagSlot);
-    LOG_DEBUG("Built CMSG_SET_TRADE_ITEM slot=", (int)tradeSlot, " bag=", (int)bag, " bagSlot=", (int)bagSlot);
+    LOG_DEBUG("Built CMSG_SET_TRADE_ITEM slot=", static_cast<int>(tradeSlot), " bag=", static_cast<int>(bag), " bagSlot=", static_cast<int>(bagSlot));
     return packet;
 }
 
 network::Packet ClearTradeItemPacket::build(uint8_t tradeSlot) {
     network::Packet packet(wireOpcode(Opcode::CMSG_CLEAR_TRADE_ITEM));
     packet.writeUInt8(tradeSlot);
-    LOG_DEBUG("Built CMSG_CLEAR_TRADE_ITEM slot=", (int)tradeSlot);
+    LOG_DEBUG("Built CMSG_CLEAR_TRADE_ITEM slot=", static_cast<int>(tradeSlot));
     return packet;
 }
 
@@ -2768,8 +2768,8 @@ bool NameQueryResponseParser::parse(network::Packet& packet, NameQueryResponseDa
     data.gender = packet.readUInt8();
     data.classId = packet.readUInt8();
 
-    LOG_DEBUG("Name query response: ", data.name, " (race=", (int)data.race,
-             " class=", (int)data.classId, ")");
+    LOG_DEBUG("Name query response: ", data.name, " (race=", static_cast<int>(data.race),
+             " class=", static_cast<int>(data.classId), ")");
     return true;
 }
 
@@ -3284,7 +3284,7 @@ bool MonsterMoveParser::parse(network::Packet& packet, MonsterMoveData& data) {
     }
 
     LOG_DEBUG("MonsterMove: guid=0x", std::hex, data.guid, std::dec,
-              " type=", (int)data.moveType, " dur=", data.duration, "ms",
+              " type=", static_cast<int>(data.moveType), " dur=", data.duration, "ms",
               " dest=(", data.destX, ",", data.destY, ",", data.destZ, ")");
 
     return true;
@@ -3387,7 +3387,7 @@ bool MonsterMoveParser::parseVanilla(network::Packet& packet, MonsterMoveData& d
     }
 
     LOG_DEBUG("MonsterMove(turtle): guid=0x", std::hex, data.guid, std::dec,
-              " type=", (int)data.moveType, " dur=", data.duration, "ms",
+              " type=", static_cast<int>(data.moveType), " dur=", data.duration, "ms",
               " dest=(", data.destX, ",", data.destY, ",", data.destZ, ")");
 
     return true;
@@ -3785,7 +3785,7 @@ bool CastFailedParser::parse(network::Packet& packet, CastFailedData& data) {
     data.castCount = packet.readUInt8();
     data.spellId = packet.readUInt32();
     data.result = packet.readUInt8();
-    LOG_INFO("Cast failed: spell=", data.spellId, " result=", (int)data.result);
+    LOG_INFO("Cast failed: spell=", data.spellId, " result=", static_cast<int>(data.result));
     return true;
 }
 
@@ -3902,7 +3902,7 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
 
     const uint8_t rawHitCount = packet.readUInt8();
     if (rawHitCount > 128) {
-        LOG_WARNING("Spell go: hitCount capped (requested=", (int)rawHitCount, ")");
+        LOG_WARNING("Spell go: hitCount capped (requested=", static_cast<int>(rawHitCount), ")");
     }
     const uint8_t storedHitLimit = std::min<uint8_t>(rawHitCount, 128);
 
@@ -3912,7 +3912,7 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
     for (uint16_t i = 0; i < rawHitCount; ++i) {
         // WotLK 3.3.5a hit targets are full uint64 GUIDs (not PackedGuid).
         if (packet.getSize() - packet.getReadPos() < 8) {
-            LOG_WARNING("Spell go: truncated hit targets at index ", i, "/", (int)rawHitCount);
+            LOG_WARNING("Spell go: truncated hit targets at index ", i, "/", static_cast<int>(rawHitCount));
             truncatedTargets = true;
             break;
         }
@@ -3949,15 +3949,15 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
             if (i == missCountPos - 1) hexCtx += "[";
             if (i == missCountPos) hexCtx += "] ";
         }
-        LOG_WARNING("Spell go: suspect missCount=", (int)rawMissCount,
-                    " spell=", data.spellId, " hits=", (int)data.hitCount,
+        LOG_WARNING("Spell go: suspect missCount=", static_cast<int>(rawMissCount),
+                    " spell=", data.spellId, " hits=", static_cast<int>(data.hitCount),
                     " castFlags=0x", std::hex, data.castFlags, std::dec,
                     " missCountPos=", missCountPos, " pktSize=", packet.getSize(),
                     " ctx=", hexCtx);
     }
     if (rawMissCount > 128) {
-        LOG_WARNING("Spell go: missCount capped (requested=", (int)rawMissCount,
-                    ") spell=", data.spellId, " hits=", (int)data.hitCount,
+        LOG_WARNING("Spell go: missCount capped (requested=", static_cast<int>(rawMissCount),
+                    ") spell=", data.spellId, " hits=", static_cast<int>(data.hitCount),
                     " remaining=", packet.getSize() - packet.getReadPos());
     }
     const uint8_t storedMissLimit = std::min<uint8_t>(rawMissCount, 128);
@@ -3967,8 +3967,8 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
         // WotLK 3.3.5a miss targets are full uint64 GUIDs + uint8 missType.
         // REFLECT additionally appends uint8 reflectResult.
         if (packet.getSize() - packet.getReadPos() < 9) { // 8 GUID + 1 missType
-            LOG_WARNING("Spell go: truncated miss targets at index ", i, "/", (int)rawMissCount,
-                        " spell=", data.spellId, " hits=", (int)data.hitCount);
+            LOG_WARNING("Spell go: truncated miss targets at index ", i, "/", static_cast<int>(rawMissCount),
+                        " spell=", data.spellId, " hits=", static_cast<int>(data.hitCount));
             truncatedTargets = true;
             break;
         }
@@ -3977,7 +3977,7 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
         m.missType = packet.readUInt8();
         if (m.missType == 11) { // SPELL_MISS_REFLECT
             if (packet.getSize() - packet.getReadPos() < 1) {
-                LOG_WARNING("Spell go: truncated reflect payload at miss index ", i, "/", (int)rawMissCount);
+                LOG_WARNING("Spell go: truncated reflect payload at miss index ", i, "/", static_cast<int>(rawMissCount));
                 truncatedTargets = true;
                 break;
             }
@@ -3993,7 +3993,7 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
     // rather than discarding the entire spell. The server already applied effects;
     // we just need the hit list for UI feedback (combat text, health bars).
     if (truncatedTargets) {
-        LOG_DEBUG("Spell go: salvaging ", (int)data.hitCount, " hits despite miss truncation");
+        LOG_DEBUG("Spell go: salvaging ", static_cast<int>(data.hitCount), " hits despite miss truncation");
         packet.setReadPos(packet.getSize()); // consume remaining bytes
         return true;
     }
@@ -4042,8 +4042,8 @@ bool SpellGoParser::parse(network::Packet& packet, SpellGoData& data) {
         }
     }
 
-    LOG_DEBUG("Spell go: spell=", data.spellId, " hits=", (int)data.hitCount,
-             " misses=", (int)data.missCount);
+    LOG_DEBUG("Spell go: spell=", data.spellId, " hits=", static_cast<int>(data.hitCount),
+             " misses=", static_cast<int>(data.missCount));
     return true;
 }
 
@@ -4182,7 +4182,7 @@ bool GroupInviteResponseParser::parse(network::Packet& packet, GroupInviteRespon
     data.canAccept = packet.readUInt8();
     // Note: inviterName is a string, which is always safe to read even if empty
     data.inviterName = packet.readString();
-    LOG_INFO("Group invite from: ", data.inviterName, " (canAccept=", (int)data.canAccept, ")");
+    LOG_INFO("Group invite from: ", data.inviterName, " (canAccept=", static_cast<int>(data.canAccept), ")");
     return true;
 }
 
@@ -4294,7 +4294,7 @@ bool PartyCommandResultParser::parse(network::Packet& packet, PartyCommandResult
     }
 
     data.result = static_cast<PartyResult>(packet.readUInt32());
-    LOG_DEBUG("Party command result: ", (int)data.result);
+    LOG_DEBUG("Party command result: ", static_cast<int>(data.result));
     return true;
 }
 
@@ -4409,7 +4409,7 @@ bool LootResponseParser::parse(network::Packet& packet, LootResponseData& data, 
     // Short failure packet — no gold/item data follows.
     avail = packet.getSize() - packet.getReadPos();
     if (avail < 5) {
-        LOG_DEBUG("LootResponseParser: lootType=", (int)data.lootType, " (empty/failure response)");
+        LOG_DEBUG("LootResponseParser: lootType=", static_cast<int>(data.lootType), " (empty/failure response)");
         return false;
     }
 
@@ -4458,7 +4458,7 @@ bool LootResponseParser::parse(network::Packet& packet, LootResponseData& data, 
         }
     }
 
-    LOG_DEBUG("Loot response: ", (int)itemCount, " regular + ", (int)questItemCount,
+    LOG_DEBUG("Loot response: ", static_cast<int>(itemCount), " regular + ", static_cast<int>(questItemCount),
              " quest items, ", data.gold, " copper");
     return true;
 }
@@ -4990,7 +4990,7 @@ bool ListInventoryParser::parse(network::Packet& packet, ListInventoryData& data
     const size_t bytesPerItemWithExt = 32;
     bool hasExtendedCost = false;
     if (remaining < static_cast<size_t>(itemCount) * bytesPerItemNoExt) {
-        LOG_WARNING("ListInventoryParser: truncated packet (items=", (int)itemCount,
+        LOG_WARNING("ListInventoryParser: truncated packet (items=", static_cast<int>(itemCount),
                     ", remaining=", remaining, ")");
         return false;
     }
@@ -5002,7 +5002,7 @@ bool ListInventoryParser::parse(network::Packet& packet, ListInventoryData& data
     for (uint8_t i = 0; i < itemCount; ++i) {
         const size_t perItemBytes = hasExtendedCost ? bytesPerItemWithExt : bytesPerItemNoExt;
         if (packet.getSize() - packet.getReadPos() < perItemBytes) {
-            LOG_WARNING("ListInventoryParser: item ", (int)i, " truncated");
+            LOG_WARNING("ListInventoryParser: item ", static_cast<int>(i), " truncated");
             return false;
         }
         VendorItem item;
@@ -5017,7 +5017,7 @@ bool ListInventoryParser::parse(network::Packet& packet, ListInventoryData& data
         data.items.push_back(item);
     }
 
-    LOG_DEBUG("Vendor inventory: ", (int)itemCount, " items (extendedCost: ", hasExtendedCost ? "yes" : "no", ")");
+    LOG_DEBUG("Vendor inventory: ", static_cast<int>(itemCount), " items (extendedCost: ", hasExtendedCost ? "yes" : "no", ")");
     return true;
 }
 
@@ -5138,8 +5138,8 @@ bool TalentsInfoParser::parse(network::Packet& packet, TalentsInfoData& data) {
         return false;
     }
 
-    LOG_INFO("SMSG_TALENTS_INFO: spec=", (int)data.talentSpec,
-             " unspent=", (int)data.unspentPoints,
+    LOG_INFO("SMSG_TALENTS_INFO: spec=", static_cast<int>(data.talentSpec),
+             " unspent=", static_cast<int>(data.unspentPoints),
              " talentCount=", talentCount,
              " entryCount=", entryCount);
 
@@ -5157,7 +5157,7 @@ bool TalentsInfoParser::parse(network::Packet& packet, TalentsInfoData& data) {
         uint8_t rank = packet.readUInt8();
         data.talents.push_back({id, rank});
 
-        LOG_INFO("  Entry: id=", id, " rank=", (int)rank);
+        LOG_INFO("  Entry: id=", id, " rank=", static_cast<int>(rank));
     }
 
     // Parse glyph tail: glyphSlots + glyphIds[]
@@ -5170,11 +5170,11 @@ bool TalentsInfoParser::parse(network::Packet& packet, TalentsInfoData& data) {
 
     // Sanity check: Wrath has 6 glyph slots, cap at 12 for safety
     if (glyphSlots > 12) {
-        LOG_WARNING("SMSG_TALENTS_INFO: glyphSlots too large (", (int)glyphSlots, "), clamping to 12");
+        LOG_WARNING("SMSG_TALENTS_INFO: glyphSlots too large (", static_cast<int>(glyphSlots), "), clamping to 12");
         glyphSlots = 12;
     }
 
-    LOG_INFO("  GlyphSlots: ", (int)glyphSlots);
+    LOG_INFO("  GlyphSlots: ", static_cast<int>(glyphSlots));
 
     data.glyphs.clear();
     data.glyphs.reserve(glyphSlots);
@@ -5389,7 +5389,7 @@ bool PacketParsers::parseMailList(network::Packet& packet, std::vector<MailMessa
     uint8_t shownCount = packet.readUInt8();
     (void)totalCount;
 
-    LOG_INFO("SMSG_MAIL_LIST_RESULT (WotLK): total=", totalCount, " shown=", (int)shownCount);
+    LOG_INFO("SMSG_MAIL_LIST_RESULT (WotLK): total=", totalCount, " shown=", static_cast<int>(shownCount));
 
     inbox.clear();
     inbox.reserve(shownCount);
@@ -5593,14 +5593,14 @@ bool GuildBankListParser::parse(network::Packet& packet, GuildBankData& data) {
             uint8_t tabCount = packet.readUInt8();
             // Cap at 8 (normal guild bank tab limit in WoW)
             if (tabCount > 8) {
-                LOG_WARNING("GuildBankListParser: tabCount capped (requested=", (int)tabCount, ")");
+                LOG_WARNING("GuildBankListParser: tabCount capped (requested=", static_cast<int>(tabCount), ")");
                 tabCount = 8;
             }
             data.tabs.resize(tabCount);
             for (uint8_t i = 0; i < tabCount; ++i) {
                 // Validate before reading strings
                 if (packet.getReadPos() >= packet.getSize()) {
-                    LOG_WARNING("GuildBankListParser: truncated tab at index ", (int)i);
+                    LOG_WARNING("GuildBankListParser: truncated tab at index ", static_cast<int>(i));
                     break;
                 }
                 data.tabs[i].tabName = packet.readString();
@@ -5624,7 +5624,7 @@ bool GuildBankListParser::parse(network::Packet& packet, GuildBankData& data) {
     for (uint8_t i = 0; i < numSlots; ++i) {
         // Validate minimum bytes before reading slot (slotId(1) + itemEntry(4) = 5)
         if (packet.getReadPos() + 5 > packet.getSize()) {
-            LOG_WARNING("GuildBankListParser: truncated slot at index ", (int)i);
+            LOG_WARNING("GuildBankListParser: truncated slot at index ", static_cast<int>(i));
             break;
         }
         GuildBankItemSlot slot;

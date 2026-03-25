@@ -1569,7 +1569,7 @@ void GameHandler::registerOpcodeHandlers() {
         uint8_t result = packet.readUInt8();
         lastCharDeleteResult_ = result;
         bool success = (result == 0x00 || result == 0x47);
-        LOG_INFO("SMSG_CHAR_DELETE result: ", (int)result, success ? " (success)" : " (failed)");
+        LOG_INFO("SMSG_CHAR_DELETE result: ", static_cast<int>(result), success ? " (success)" : " (failed)");
         requestCharacterList();
         if (charDeleteCallback_) charDeleteCallback_(success);
     };
@@ -1680,7 +1680,7 @@ void GameHandler::registerOpcodeHandlers() {
             std::string ignName = packet.readString();
             if (!ignName.empty() && ignGuid != 0) ignoreCache[ignName] = ignGuid;
         }
-        LOG_DEBUG("SMSG_IGNORE_LIST: loaded ", (int)ignCount, " ignored players");
+        LOG_DEBUG("SMSG_IGNORE_LIST: loaded ", static_cast<int>(ignCount), " ignored players");
     };
     dispatchTable_[Opcode::MSG_RANDOM_ROLL] = [this](network::Packet& packet) { if (state == WorldState::IN_WORLD) handleRandomRoll(packet); };
 
@@ -2038,7 +2038,7 @@ void GameHandler::registerOpcodeHandlers() {
         pendingLootRoll_.voteMask        = voteMask;
         pendingLootRoll_.rollStartedAt   = std::chrono::steady_clock::now();
         LOG_INFO("SMSG_LOOT_START_ROLL: item=", itemId, " (", pendingLootRoll_.itemName,
-                 ") slot=", slot, " voteMask=0x", std::hex, (int)voteMask, std::dec);
+                 ") slot=", slot, " voteMask=0x", std::hex, static_cast<int>(voteMask), std::dec);
                     fireAddonEvent("START_LOOT_ROLL", {std::to_string(slot), std::to_string(countdown)});
     };
 
@@ -3986,7 +3986,7 @@ void GameHandler::registerOpcodeHandlers() {
         if (packet.getSize() - packet.getReadPos() < 8) return;
         uint32_t duration = packet.readUInt32();
         uint32_t spellId  = packet.readUInt32();
-        LOG_DEBUG("SMSG_TOTEM_CREATED: slot=", (int)slot,
+        LOG_DEBUG("SMSG_TOTEM_CREATED: slot=", static_cast<int>(slot),
                   " spellId=", spellId, " duration=", duration, "ms");
         if (slot < NUM_TOTEM_SLOTS) {
             activeTotemSlots_[slot].spellId    = spellId;
@@ -4410,7 +4410,7 @@ void GameHandler::registerOpcodeHandlers() {
                     if (auto* sfx = renderer->getUiSoundManager())
                         sfx->playError();
                 }
-                LOG_WARNING("SMSG_SELL_ITEM error: ", (int)result, " (", msg, ")");
+                LOG_WARNING("SMSG_SELL_ITEM error: ", static_cast<int>(result), " (", msg, ")");
             }
         }
     };
@@ -4420,7 +4420,7 @@ void GameHandler::registerOpcodeHandlers() {
         if ((packet.getSize() - packet.getReadPos()) >= 1) {
             uint8_t error = packet.readUInt8();
             if (error != 0) {
-                LOG_WARNING("SMSG_INVENTORY_CHANGE_FAILURE: error=", (int)error);
+                LOG_WARNING("SMSG_INVENTORY_CHANGE_FAILURE: error=", static_cast<int>(error));
                 // After error byte: item_guid1(8) + item_guid2(8) + bag_slot(1) = 17 bytes
                 uint32_t requiredLevel = 0;
                 if (packet.getSize() - packet.getReadPos() >= 17) {
@@ -5470,7 +5470,7 @@ void GameHandler::registerOpcodeHandlers() {
             }
         }
         LOG_DEBUG("MSG_INSPECT_ARENA_TEAMS: guid=0x", std::hex, inspGuid, std::dec,
-                  " teams=", (int)teamCount);
+                  " teams=", static_cast<int>(teamCount));
     };
     // auctionId(u32) + action(u32) + error(u32) + itemEntry(u32) + randomPropertyId(u32) + ...
     // action: 0=sold/won, 1=expired, 2=bid placed on your auction
@@ -5816,7 +5816,7 @@ void GameHandler::registerOpcodeHandlers() {
                     zoneId, levelMin, levelMax);
             addSystemChatMessage(buf);
             LOG_INFO("SMSG_MEETINGSTONE_SETQUEUE: zone=", zoneId,
-                     " levels=", (int)levelMin, "-", (int)levelMax);
+                     " levels=", static_cast<int>(levelMin), "-", static_cast<int>(levelMax));
         }
         packet.setReadPos(packet.getSize());
     };
@@ -5865,7 +5865,7 @@ void GameHandler::registerOpcodeHandlers() {
             const char* msg = (reason < 4) ? kMeetingstoneErrors[reason]
                                            : "Meeting Stone: Could not join group.";
             addSystemChatMessage(msg);
-            LOG_INFO("SMSG_MEETINGSTONE_JOINFAILED: reason=", (int)reason);
+            LOG_INFO("SMSG_MEETINGSTONE_JOINFAILED: reason=", static_cast<int>(reason));
         }
     };
     // Player was removed from the meeting stone queue (left, or group disbanded)
@@ -5949,7 +5949,7 @@ void GameHandler::registerOpcodeHandlers() {
             // Status 1 = no open ticket (default/no ticket)
             gmTicketActive_ = false;
             gmTicketText_.clear();
-            LOG_DEBUG("SMSG_GMTICKET_GETTICKET: no open ticket (status=", (int)gmStatus, ")");
+            LOG_DEBUG("SMSG_GMTICKET_GETTICKET: no open ticket (status=", static_cast<int>(gmStatus), ")");
         }
         packet.setReadPos(packet.getSize());
     };
@@ -7002,8 +7002,8 @@ void GameHandler::registerOpcodeHandlers() {
             if (modeGuid == petGuid_) {
                 petCommand_ = static_cast<uint8_t>(mode & 0xFF);
                 petReact_   = static_cast<uint8_t>((mode >> 8) & 0xFF);
-                LOG_DEBUG("SMSG_PET_MODE: command=", (int)petCommand_,
-                          " react=", (int)petReact_);
+                LOG_DEBUG("SMSG_PET_MODE: command=", static_cast<int>(petCommand_),
+                          " react=", static_cast<int>(petReact_));
             }
         }
         packet.setReadPos(packet.getSize());
@@ -7054,7 +7054,7 @@ void GameHandler::registerOpcodeHandlers() {
             uint8_t  reason    = (packet.getSize() - packet.getReadPos() >= 1)
                                      ? packet.readUInt8() : 0;
             LOG_DEBUG("SMSG_PET_CAST_FAILED: spell=", spellId,
-                      " reason=", (int)reason);
+                      " reason=", static_cast<int>(reason));
             if (reason != 0) {
                 const char* reasonStr = getSpellCastResultString(reason);
                 const std::string& sName = getSpellName(spellId);
@@ -7354,7 +7354,7 @@ void GameHandler::registerOpcodeHandlers() {
             addSystemChatMessage(isSafe ? "You are in the battlefield zone (safe area)."
                                         : "You have entered the battlefield!");
             if (onQueue) addSystemChatMessage("You are in the battlefield queue.");
-            LOG_INFO("SMSG_BATTLEFIELD_MGR_ENTERED: isSafe=", (int)isSafe, " onQueue=", (int)onQueue);
+            LOG_INFO("SMSG_BATTLEFIELD_MGR_ENTERED: isSafe=", static_cast<int>(isSafe), " onQueue=", static_cast<int>(onQueue));
         }
         packet.setReadPos(packet.getSize());
     };
@@ -7404,8 +7404,8 @@ void GameHandler::registerOpcodeHandlers() {
                                            : "Battlefield queue request failed.";
             addSystemChatMessage(std::string("Battlefield: ") + msg);
         }
-        LOG_INFO("SMSG_BATTLEFIELD_MGR_QUEUE_REQUEST_RESPONSE: accepted=", (int)accepted,
-                 " result=", (int)result);
+        LOG_INFO("SMSG_BATTLEFIELD_MGR_QUEUE_REQUEST_RESPONSE: accepted=", static_cast<int>(accepted),
+                 " result=", static_cast<int>(result));
         packet.setReadPos(packet.getSize());
     };
     // uint64 battlefieldGuid + uint8 remove
@@ -7418,7 +7418,7 @@ void GameHandler::registerOpcodeHandlers() {
             if (remove) {
                 addSystemChatMessage("You will be removed from the battlefield shortly.");
             }
-            LOG_INFO("SMSG_BATTLEFIELD_MGR_EJECT_PENDING: remove=", (int)remove);
+            LOG_INFO("SMSG_BATTLEFIELD_MGR_EJECT_PENDING: remove=", static_cast<int>(remove));
         }
         packet.setReadPos(packet.getSize());
     };
@@ -7439,7 +7439,7 @@ void GameHandler::registerOpcodeHandlers() {
                                            : "You have been ejected from the battlefield.";
             addSystemChatMessage(msg);
             if (relocated) addSystemChatMessage("You have been relocated outside the battlefield.");
-            LOG_INFO("SMSG_BATTLEFIELD_MGR_EJECTED: reason=", reason, " relocated=", (int)relocated);
+            LOG_INFO("SMSG_BATTLEFIELD_MGR_EJECTED: reason=", reason, " relocated=", static_cast<int>(relocated));
         }
         bfMgrActive_        = false;
         bfMgrInvitePending_ = false;
@@ -8370,7 +8370,7 @@ void GameHandler::handleCharEnum(network::Packet& packet) {
             LOG_INFO("      GUID: 0x", std::hex, character.guid, std::dec);
             LOG_INFO("      ", getRaceName(character.race), " ",
                      getClassName(character.characterClass));
-            LOG_INFO("      Level ", (int)character.level);
+            LOG_INFO("      Level ", static_cast<int>(character.level));
         }
     }
 
@@ -8528,7 +8528,7 @@ void GameHandler::handleCharLoginFailed(network::Packet& packet) {
     };
     const char* msg = (reason < 9) ? reasonNames[reason] : "Unknown reason";
 
-    LOG_ERROR("SMSG_CHARACTER_LOGIN_FAILED: reason=", (int)reason, " (", msg, ")");
+    LOG_ERROR("SMSG_CHARACTER_LOGIN_FAILED: reason=", static_cast<int>(reason), " (", msg, ")");
 
     // Allow the player to re-select a character
     setState(WorldState::CHAR_LIST_RECEIVED);
@@ -8540,7 +8540,7 @@ void GameHandler::handleCharLoginFailed(network::Packet& packet) {
 
 void GameHandler::selectCharacter(uint64_t characterGuid) {
     if (state != WorldState::CHAR_LIST_RECEIVED) {
-        LOG_WARNING("Cannot select character in state: ", (int)state);
+        LOG_WARNING("Cannot select character in state: ", static_cast<int>(state));
         return;
     }
 
@@ -8557,7 +8557,7 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     for (const auto& character : characters) {
         if (character.guid == characterGuid) {
             LOG_INFO("Character: ", character.name);
-            LOG_INFO("Level ", (int)character.level, " ",
+            LOG_INFO("Level ", static_cast<int>(character.level), " ",
                      getRaceName(character.race), " ",
                      getClassName(character.characterClass));
             playerRace_ = character.race;
@@ -9382,7 +9382,7 @@ void GameHandler::handleWardenData(network::Packet& packet) {
                                     pos += 4;
                                     uint8_t readLen = decrypted[pos++];
                                     LOG_WARNING("Warden:   MEM offset=0x", [&]{char s[12];snprintf(s,12,"%08x",offset);return std::string(s);}(),
-                                             " len=", (int)readLen,
+                                             " len=", static_cast<int>(readLen),
                                              (strIdx ? " module=\"" + moduleName + "\"" : ""));
                                     if (offset == 0x00CF0BC8 && readLen == 4 && wardenMemory_ && wardenMemory_->isLoaded()) {
                                         uint32_t now = static_cast<uint32_t>(
@@ -9401,9 +9401,9 @@ void GameHandler::handleWardenData(network::Packet& packet) {
                                         else if (offset >= 0x827000 && offset < 0x883000) region = ".data(raw)";
                                         else if (offset >= 0x883000 && offset < 0xD06000) region = ".data(BSS)";
                                         bool allZero = true;
-                                        for (int i = 0; i < (int)readLen; i++) { if (memBuf[i] != 0) { allZero = false; break; } }
+                                        for (int i = 0; i < static_cast<int>(readLen); i++) { if (memBuf[i] != 0) { allZero = false; break; } }
                                         std::string hexDump;
-                                        for (int i = 0; i < (int)readLen; i++) { char hx[4]; snprintf(hx,4,"%02x ",memBuf[i]); hexDump += hx; }
+                                        for (int i = 0; i < static_cast<int>(readLen); i++) { char hx[4]; snprintf(hx,4,"%02x ",memBuf[i]); hexDump += hx; }
                                         LOG_WARNING("Warden:   MEM_CHECK served: [", hexDump, "] region=", region,
                                                     (allZero && offset >= 0x883000 ? " \xe2\x98\x85""BSS_ZERO\xe2\x98\x85" : ""));
                                         if (offset == 0x7FFE026C && readLen == 12)
@@ -9463,7 +9463,7 @@ void GameHandler::handleWardenData(network::Packet& packet) {
                                     uint8_t pageResult = found ? 0x4A : 0x00;
                                     LOG_WARNING("Warden:   ", pageName, " offset=0x",
                                                 [&]{char s[12];snprintf(s,12,"%08x",off);return std::string(s);}(),
-                                                " patLen=", (int)patLen, " found=", found ? "yes" : "no",
+                                                " patLen=", static_cast<int>(patLen), " found=", found ? "yes" : "no",
                                                 turtleFallback ? " (turtle-fallback)" : "");
                                     pos += kPageSize;
                                     resultData.push_back(pageResult);
@@ -9737,7 +9737,7 @@ void GameHandler::handleWardenData(network::Packet& packet) {
                         pos += 4;
                         uint8_t readLen = decrypted[pos++];
                         LOG_WARNING("Warden:   (sync) MEM offset=0x", [&]{char s[12];snprintf(s,12,"%08x",offset);return std::string(s);}(),
-                                 " len=", (int)readLen,
+                                 " len=", static_cast<int>(readLen),
                                  moduleName.empty() ? "" : (" module=\"" + moduleName + "\""));
 
                         // Lazy-load WoW.exe PE image on first MEM_CHECK
@@ -9831,7 +9831,7 @@ void GameHandler::handleWardenData(network::Packet& packet) {
                             uint8_t len2 = (decrypted.data()+pos)[28];
                             LOG_WARNING("Warden:   (sync) PAGE_A offset=0x",
                                         [&]{char s[12];snprintf(s,12,"%08x",off2);return std::string(s);}(),
-                                        " patLen=", (int)len2,
+                                        " patLen=", static_cast<int>(len2),
                                         " result=0x", [&]{char s[4];snprintf(s,4,"%02x",pageResult);return std::string(s);}());
                         } else {
                             LOG_WARNING("Warden:   (sync) PAGE_A (short ", consume, "b) result=0x",
@@ -10073,8 +10073,8 @@ void GameHandler::handleWardenData(network::Packet& packet) {
             break;
 
         default:
-            LOG_DEBUG("Warden: Unknown opcode 0x", std::hex, (int)wardenOpcode, std::dec,
-                     " (state=", (int)wardenState_, ", size=", decrypted.size(), ")");
+            LOG_DEBUG("Warden: Unknown opcode 0x", std::hex, static_cast<int>(wardenOpcode), std::dec,
+                     " (state=", static_cast<int>(wardenState_), ", size=", decrypted.size(), ")");
             break;
     }
 }
@@ -10338,7 +10338,7 @@ uint32_t GameHandler::nextMovementTimestampMs() {
 
 void GameHandler::sendMovement(Opcode opcode) {
     if (state != WorldState::IN_WORLD) {
-        LOG_WARNING("Cannot send movement in state: ", (int)state);
+        LOG_WARNING("Cannot send movement in state: ", static_cast<int>(state));
         return;
     }
 
@@ -11661,7 +11661,7 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                             uint8_t newForm = static_cast<uint8_t>((val >> 24) & 0xFF);
                             if (newForm != shapeshiftFormId_) {
                                 shapeshiftFormId_ = newForm;
-                                LOG_INFO("Shapeshift form changed: ", (int)newForm);
+                                LOG_INFO("Shapeshift form changed: ", static_cast<int>(newForm));
                                 if (addonEventCallback_) {
                                     fireAddonEvent("UPDATE_SHAPESHIFT_FORM", {});
                                     fireAddonEvent("UPDATE_SHAPESHIFT_FORMS", {});
@@ -12474,7 +12474,7 @@ void GameHandler::handleDestroyObject(network::Packet& packet) {
 
 void GameHandler::sendChatMessage(ChatType type, const std::string& message, const std::string& target) {
     if (state != WorldState::IN_WORLD) {
-        LOG_WARNING("Cannot send chat in state: ", (int)state);
+        LOG_WARNING("Cannot send chat in state: ", static_cast<int>(state));
         return;
     }
 
@@ -13324,7 +13324,7 @@ void GameHandler::setStandState(uint8_t standState) {
 
     auto packet = StandStateChangePacket::build(standState);
     socket->send(packet);
-    LOG_INFO("Changed stand state to: ", (int)standState);
+    LOG_INFO("Changed stand state to: ", static_cast<int>(standState));
 }
 
 void GameHandler::toggleHelm() {
@@ -14226,8 +14226,8 @@ void GameHandler::handleNameQueryResponse(network::Packet& packet) {
     pendingNameQueries.erase(data.guid);
 
     LOG_INFO("Name query response: guid=0x", std::hex, data.guid, std::dec,
-             " found=", (int)data.found, " name='", data.name, "'",
-             " race=", (int)data.race, " class=", (int)data.classId);
+             " found=", static_cast<int>(data.found), " name='", data.name, "'",
+             " race=", static_cast<int>(data.race), " class=", static_cast<int>(data.classId));
 
     if (data.isValid()) {
         playerNameCache[data.guid] = data.name;
@@ -14549,7 +14549,7 @@ void GameHandler::handleInspectResults(network::Packet& packet) {
         }
 
         LOG_INFO("SMSG_TALENTS_INFO type=0: unspent=", unspentTalents,
-                 " groups=", (int)talentGroupCount, " active=", (int)activeTalentGroup,
+                 " groups=", static_cast<int>(talentGroupCount), " active=", static_cast<int>(activeTalentGroup),
                  " learned=", learnedTalents_[activeTalentGroup].size());
         return;
     }
@@ -14645,7 +14645,7 @@ void GameHandler::handleInspectResults(network::Packet& packet) {
     }
 
     LOG_INFO("Inspect results for ", playerName, ": ", totalTalents, " talents, ",
-             unspentTalents, " unspent, ", (int)talentGroupCount, " specs");
+             unspentTalents, " unspent, ", static_cast<int>(talentGroupCount), " specs");
     if (addonEventCallback_) {
         char guidBuf[32];
         snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", (unsigned long long)guid);
@@ -17079,7 +17079,7 @@ void GameHandler::handleArenaTeamEvent(network::Packet& packet) {
             break;
     }
     addSystemChatMessage(msg);
-    LOG_INFO("Arena team event: ", (int)event, " ", param1, " ", param2);
+    LOG_INFO("Arena team event: ", static_cast<int>(event), " ", param1, " ", param2);
 }
 
 void GameHandler::handleArenaTeamStats(network::Packet& packet) {
@@ -17217,14 +17217,14 @@ void GameHandler::handlePvpLogData(network::Packet& packet) {
 
     if (bgScoreboard_.isArena) {
         LOG_INFO("Arena log: ", bgScoreboard_.players.size(), " players, hasWinner=",
-                 bgScoreboard_.hasWinner, " winner=", (int)bgScoreboard_.winner,
+                 bgScoreboard_.hasWinner, " winner=", static_cast<int>(bgScoreboard_.winner),
                  " team0='", bgScoreboard_.arenaTeams[0].teamName,
                  "' ratingChange=", (int32_t)bgScoreboard_.arenaTeams[0].ratingChange,
                  " team1='", bgScoreboard_.arenaTeams[1].teamName,
                  "' ratingChange=", (int32_t)bgScoreboard_.arenaTeams[1].ratingChange);
     } else {
         LOG_INFO("PvP log: ", bgScoreboard_.players.size(), " players, hasWinner=",
-                 bgScoreboard_.hasWinner, " winner=", (int)bgScoreboard_.winner);
+                 bgScoreboard_.hasWinner, " winner=", static_cast<int>(bgScoreboard_.winner));
     }
 }
 
@@ -18339,7 +18339,7 @@ void GameHandler::handlePetSpells(network::Packet& packet) {
 
 done:
     LOG_INFO("SMSG_PET_SPELLS: petGuid=0x", std::hex, petGuid_, std::dec,
-             " react=", (int)petReact_, " command=", (int)petCommand_,
+             " react=", static_cast<int>(petReact_), " command=", static_cast<int>(petCommand_),
              " spells=", petSpellList_.size());
     if (addonEventCallback_) {
         fireAddonEvent("UNIT_PET", {"player"});
@@ -18376,7 +18376,7 @@ void GameHandler::togglePetSpellAutocast(uint32_t spellId) {
         petAutocastSpells_.insert(spellId);
     else
         petAutocastSpells_.erase(spellId);
-    LOG_DEBUG("togglePetSpellAutocast: spellId=", spellId, " autocast=", (int)newState);
+    LOG_DEBUG("togglePetSpellAutocast: spellId=", spellId, " autocast=", static_cast<int>(newState));
 }
 
 void GameHandler::renamePet(const std::string& newName) {
@@ -18451,7 +18451,7 @@ void GameHandler::handleListStabledPets(network::Packet& packet) {
 
     stableWindowOpen_ = true;
     LOG_INFO("MSG_LIST_STABLED_PETS: stableMasterGuid=0x", std::hex, stableMasterGuid_, std::dec,
-             " petCount=", (int)petCount, " numSlots=", (int)stableNumSlots_);
+             " petCount=", static_cast<int>(petCount), " numSlots=", static_cast<int>(stableNumSlots_));
     for (const auto& p : stabledPets_) {
         LOG_DEBUG("  Pet: number=", p.petNumber, " entry=", p.entry,
                   " level=", p.level, " name='", p.name, "' displayId=", p.displayId,
@@ -19008,8 +19008,8 @@ void GameHandler::handleLearnedSpell(network::Packet& packet) {
                 // Found the talent! Update the rank for the active spec
                 uint8_t newRank = rank + 1; // rank is 0-indexed in array, but stored as 1-indexed
                 learnedTalents_[activeTalentSpec_][talentId] = newRank;
-                LOG_INFO("Talent learned: id=", talentId, " rank=", (int)newRank,
-                         " (spell ", spellId, ") in spec ", (int)activeTalentSpec_);
+                LOG_INFO("Talent learned: id=", talentId, " rank=", static_cast<int>(newRank),
+                         " (spell ", spellId, ") in spec ", static_cast<int>(activeTalentSpec_));
                 isTalentSpell = true;
                 if (addonEventCallback_) {
                     fireAddonEvent("CHARACTER_POINTS_CHANGED", {});
@@ -19203,7 +19203,7 @@ void GameHandler::handleTalentsInfo(network::Packet& packet) {
         static_cast<uint8_t>(unspentTalents > 255 ? 255 : unspentTalents);
 
     LOG_INFO("handleTalentsInfo: unspent=", unspentTalents,
-             " groups=", (int)talentGroupCount, " active=", (int)activeTalentGroup,
+             " groups=", static_cast<int>(talentGroupCount), " active=", static_cast<int>(activeTalentGroup),
              " learned=", learnedTalents_[activeTalentGroup].size());
 
     // Fire talent-related events for addons
@@ -19236,12 +19236,12 @@ void GameHandler::learnTalent(uint32_t talentId, uint32_t requestedRank) {
 
 void GameHandler::switchTalentSpec(uint8_t newSpec) {
     if (newSpec > 1) {
-        LOG_WARNING("Invalid talent spec: ", (int)newSpec);
+        LOG_WARNING("Invalid talent spec: ", static_cast<int>(newSpec));
         return;
     }
 
     if (newSpec == activeTalentSpec_) {
-        LOG_INFO("Already on spec ", (int)newSpec);
+        LOG_INFO("Already on spec ", static_cast<int>(newSpec));
         return;
     }
 
@@ -19253,12 +19253,12 @@ void GameHandler::switchTalentSpec(uint8_t newSpec) {
     if (state == WorldState::IN_WORLD && socket) {
         auto pkt = ActivateTalentGroupPacket::build(static_cast<uint32_t>(newSpec));
         socket->send(pkt);
-        LOG_INFO("Sent CMSG_SET_ACTIVE_TALENT_GROUP_OBSOLETE: group=", (int)newSpec);
+        LOG_INFO("Sent CMSG_SET_ACTIVE_TALENT_GROUP_OBSOLETE: group=", static_cast<int>(newSpec));
     }
     activeTalentSpec_ = newSpec;
 
-    LOG_INFO("Switched to talent spec ", (int)newSpec,
-             " (unspent=", (int)unspentTalentPoints_[newSpec],
+    LOG_INFO("Switched to talent spec ", static_cast<int>(newSpec),
+             " (unspent=", static_cast<int>(unspentTalentPoints_[newSpec]),
              ", learned=", learnedTalents_[newSpec].size(), ")");
 
     std::string msg = "Switched to spec " + std::to_string(newSpec + 1);
@@ -20433,7 +20433,7 @@ void GameHandler::selectGossipOption(uint32_t optionId) {
 
     for (const auto& opt : currentGossip.options) {
         if (opt.id != optionId) continue;
-        LOG_INFO("  matched option: id=", opt.id, " icon=", (int)opt.icon, " text='", opt.text, "'");
+        LOG_INFO("  matched option: id=", opt.id, " icon=", static_cast<int>(opt.icon), " text='", opt.text, "'");
 
         // Icon-based NPC interaction fallbacks
         // Some servers need the specific activate packet in addition to gossip select
@@ -20474,7 +20474,7 @@ void GameHandler::selectGossipOption(uint32_t optionId) {
             auto pkt = ListInventoryPacket::build(currentGossip.npcGuid);
             socket->send(pkt);
             LOG_INFO("Sent CMSG_LIST_INVENTORY (gossip) to npc=0x", std::hex, currentGossip.npcGuid, std::dec,
-                     " vendor=", (int)isVendor, " repair=", (int)isArmorer);
+                     " vendor=", static_cast<int>(isVendor), " repair=", static_cast<int>(isArmorer));
         }
 
         if (textLower.find("make this inn your home") != std::string::npos ||
@@ -20895,7 +20895,7 @@ void GameHandler::applyPackedKillCountsFromFields(QuestLogEntry& quest) {
         if (counts[i] == 0 && quest.killCounts.count(entryKey)) continue;
         quest.killCounts[entryKey] = {counts[i], obj.required};
         LOG_DEBUG("Quest ", quest.questId, " objective[", i, "]: npcOrGo=",
-                  obj.npcOrGoId, " count=", (int)counts[i], "/", obj.required);
+                  obj.npcOrGoId, " count=", static_cast<int>(counts[i]), "/", obj.required);
     }
 
     // Apply item objective counts (only available in WotLK stride+3 positions 4-5).
@@ -21450,8 +21450,8 @@ void GameHandler::unequipToBackpack(EquipSlot equipSlot) {
     uint8_t dstBag = 0xFF;
     uint8_t dstSlot = static_cast<uint8_t>(23 + freeSlot);
 
-    LOG_INFO("UnequipToBackpack: equipSlot=", (int)srcSlot,
-             " -> backpackIndex=", freeSlot, " (dstSlot=", (int)dstSlot, ")");
+    LOG_INFO("UnequipToBackpack: equipSlot=", static_cast<int>(srcSlot),
+             " -> backpackIndex=", freeSlot, " (dstSlot=", static_cast<int>(dstSlot), ")");
 
     auto packet = SwapItemPacket::build(dstBag, dstSlot, srcBag, srcSlot);
     socket->send(packet);
@@ -21459,8 +21459,8 @@ void GameHandler::unequipToBackpack(EquipSlot equipSlot) {
 
 void GameHandler::swapContainerItems(uint8_t srcBag, uint8_t srcSlot, uint8_t dstBag, uint8_t dstSlot) {
     if (!socket || !socket->isConnected()) return;
-    LOG_INFO("swapContainerItems: src(bag=", (int)srcBag, " slot=", (int)srcSlot,
-             ") -> dst(bag=", (int)dstBag, " slot=", (int)dstSlot, ")");
+    LOG_INFO("swapContainerItems: src(bag=", static_cast<int>(srcBag), " slot=", static_cast<int>(srcSlot),
+             ") -> dst(bag=", static_cast<int>(dstBag), " slot=", static_cast<int>(dstSlot), ")");
     auto packet = SwapItemPacket::build(dstBag, dstSlot, srcBag, srcSlot);
     socket->send(packet);
 }
@@ -21485,8 +21485,8 @@ void GameHandler::swapBagSlots(int srcBagIndex, int dstBagIndex) {
     if (socket && socket->isConnected()) {
         uint8_t srcSlot = static_cast<uint8_t>(19 + srcBagIndex);
         uint8_t dstSlot = static_cast<uint8_t>(19 + dstBagIndex);
-        LOG_INFO("swapBagSlots: bag ", srcBagIndex, " (slot ", (int)srcSlot,
-                 ") <-> bag ", dstBagIndex, " (slot ", (int)dstSlot, ")");
+        LOG_INFO("swapBagSlots: bag ", srcBagIndex, " (slot ", static_cast<int>(srcSlot),
+                 ") <-> bag ", dstBagIndex, " (slot ", static_cast<int>(dstSlot), ")");
         auto packet = SwapItemPacket::build(255, dstSlot, 255, srcSlot);
         socket->send(packet);
     }
@@ -21503,8 +21503,8 @@ void GameHandler::destroyItem(uint8_t bag, uint8_t slot, uint8_t count) {
     packet.writeUInt8(bag);
     packet.writeUInt8(slot);
     packet.writeUInt32(static_cast<uint32_t>(count));
-    LOG_DEBUG("Destroy item request: bag=", (int)bag, " slot=", (int)slot,
-              " count=", (int)count, " wire=0x", std::hex, kCmsgDestroyItem, std::dec);
+    LOG_DEBUG("Destroy item request: bag=", static_cast<int>(bag), " slot=", static_cast<int>(slot),
+              " count=", static_cast<int>(count), " wire=0x", std::hex, kCmsgDestroyItem, std::dec);
     socket->send(packet);
 }
 
@@ -21517,8 +21517,8 @@ void GameHandler::splitItem(uint8_t srcBag, uint8_t srcSlot, uint8_t count) {
     if (freeBp >= 0) {
         uint8_t dstBag = 0xFF;
         uint8_t dstSlot = static_cast<uint8_t>(23 + freeBp);
-        LOG_INFO("splitItem: src(bag=", (int)srcBag, " slot=", (int)srcSlot,
-                 ") count=", (int)count, " -> dst(bag=0xFF slot=", (int)dstSlot, ")");
+        LOG_INFO("splitItem: src(bag=", static_cast<int>(srcBag), " slot=", static_cast<int>(srcSlot),
+                 ") count=", static_cast<int>(count), " -> dst(bag=0xFF slot=", static_cast<int>(dstSlot), ")");
         auto packet = SplitItemPacket::build(srcBag, srcSlot, dstBag, dstSlot, count);
         socket->send(packet);
         return;
@@ -21530,9 +21530,9 @@ void GameHandler::splitItem(uint8_t srcBag, uint8_t srcSlot, uint8_t count) {
             if (inventory.getBagSlot(b, s).empty()) {
                 uint8_t dstBag = static_cast<uint8_t>(19 + b);
                 uint8_t dstSlot = static_cast<uint8_t>(s);
-                LOG_INFO("splitItem: src(bag=", (int)srcBag, " slot=", (int)srcSlot,
-                         ") count=", (int)count, " -> dst(bag=", (int)dstBag,
-                         " slot=", (int)dstSlot, ")");
+                LOG_INFO("splitItem: src(bag=", static_cast<int>(srcBag), " slot=", static_cast<int>(srcSlot),
+                         ") count=", static_cast<int>(count), " -> dst(bag=", static_cast<int>(dstBag),
+                         " slot=", static_cast<int>(dstSlot), ")");
                 auto packet = SplitItemPacket::build(srcBag, srcSlot, dstBag, dstSlot, count);
                 socket->send(packet);
                 return;
@@ -21615,7 +21615,7 @@ void GameHandler::useItemInBag(int bagIndex, int slotIndex) {
         auto packet = packetParsers_
             ? packetParsers_->buildUseItem(wowBag, static_cast<uint8_t>(slotIndex), itemGuid, useSpellId)
             : UseItemPacket::build(wowBag, static_cast<uint8_t>(slotIndex), itemGuid, useSpellId);
-        LOG_INFO("useItemInBag: sending CMSG_USE_ITEM, bag=", (int)wowBag, " slot=", slotIndex,
+        LOG_INFO("useItemInBag: sending CMSG_USE_ITEM, bag=", static_cast<int>(wowBag), " slot=", slotIndex,
                  " packetSize=", packet.getSize());
         socket->send(packet);
     } else if (itemGuid == 0) {
@@ -21640,7 +21640,7 @@ void GameHandler::openItemInBag(int bagIndex, int slotIndex) {
     if (state != WorldState::IN_WORLD || !socket) return;
     uint8_t wowBag = static_cast<uint8_t>(19 + bagIndex);
     auto packet = OpenItemPacket::build(wowBag, static_cast<uint8_t>(slotIndex));
-    LOG_INFO("openItemInBag: CMSG_OPEN_ITEM bag=", (int)wowBag, " slot=", slotIndex);
+    LOG_INFO("openItemInBag: CMSG_OPEN_ITEM bag=", static_cast<int>(wowBag), " slot=", slotIndex);
     socket->send(packet);
 }
 
@@ -22101,8 +22101,8 @@ void GameHandler::handleTrainerList(network::Packet& packet) {
               " 25312=", knownSpells.count(25312u));
     for (size_t i = 0; i < std::min(size_t(5), currentTrainerList_.spells.size()); ++i) {
         const auto& s = currentTrainerList_.spells[i];
-        LOG_DEBUG("  Spell[", i, "]: id=", s.spellId, " state=", (int)s.state,
-                  " cost=", s.spellCost, " reqLvl=", (int)s.reqLevel,
+        LOG_DEBUG("  Spell[", i, "]: id=", s.spellId, " state=", static_cast<int>(s.state),
+                  " cost=", s.spellCost, " reqLvl=", static_cast<int>(s.reqLevel),
                   " chain=(", s.chainNode1, ",", s.chainNode2, ",", s.chainNode3, ")");
     }
 
@@ -22115,7 +22115,7 @@ void GameHandler::handleTrainerList(network::Packet& packet) {
 }
 
 void GameHandler::trainSpell(uint32_t spellId) {
-    LOG_INFO("trainSpell called: spellId=", spellId, " state=", (int)state, " socket=", (socket ? "yes" : "no"));
+    LOG_INFO("trainSpell called: spellId=", spellId, " state=", static_cast<int>(state), " socket=", (socket ? "yes" : "no"));
     if (state != WorldState::IN_WORLD || !socket) {
         LOG_WARNING("trainSpell: Not in world or no socket connection");
         return;
@@ -23780,7 +23780,7 @@ void GameHandler::handleFriendList(network::Packet& packet) {
     auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
     if (rem() < 1) return;
     uint8_t count = packet.readUInt8();
-    LOG_INFO("SMSG_FRIEND_LIST: ", (int)count, " entries");
+    LOG_INFO("SMSG_FRIEND_LIST: ", static_cast<int>(count), " entries");
 
     // Rebuild friend contacts (keep ignores from previous contact_ entries)
     contacts_.erase(std::remove_if(contacts_.begin(), contacts_.end(),
@@ -23802,10 +23802,10 @@ void GameHandler::handleFriendList(network::Packet& packet) {
         if (nit != playerNameCache.end()) {
             name = nit->second;
             friendsCache[name] = guid;
-            LOG_INFO("  Friend: ", name, " status=", (int)status);
+            LOG_INFO("  Friend: ", name, " status=", static_cast<int>(status));
         } else {
             LOG_INFO("  Friend guid=0x", std::hex, guid, std::dec,
-                     " status=", (int)status, " (name pending)");
+                     " status=", static_cast<int>(status), " (name pending)");
             queryPlayerName(guid);
         }
         ContactEntry entry;
@@ -23965,11 +23965,11 @@ void GameHandler::handleFriendStatus(network::Packet& packet) {
             addSystemChatMessage(playerName + " is ignoring you.");
             break;
         default:
-            LOG_INFO("Friend status: ", (int)data.status, " for ", playerName);
+            LOG_INFO("Friend status: ", static_cast<int>(data.status), " for ", playerName);
             break;
     }
 
-    LOG_INFO("Friend status update: ", playerName, " status=", (int)data.status);
+    LOG_INFO("Friend status update: ", playerName, " status=", static_cast<int>(data.status));
     fireAddonEvent("FRIENDLIST_UPDATE", {});
 }
 
@@ -24023,7 +24023,7 @@ void GameHandler::handleLogoutResponse(network::Packet& packet) {
             addSystemChatMessage("Logging out in 20 seconds...");
             logoutCountdown_ = 20.0f;
         }
-        LOG_INFO("Logout response: success, instant=", (int)data.instant);
+        LOG_INFO("Logout response: success, instant=", static_cast<int>(data.instant));
         fireAddonEvent("PLAYER_LOGOUT", {});
     } else {
         // Failure
@@ -24052,7 +24052,7 @@ uint32_t GameHandler::generateClientSeed() {
 
 void GameHandler::setState(WorldState newState) {
     if (state != newState) {
-        LOG_DEBUG("World state: ", (int)state, " -> ", (int)newState);
+        LOG_DEBUG("World state: ", static_cast<int>(state), " -> ", static_cast<int>(newState));
         state = newState;
     }
 }
@@ -25007,7 +25007,7 @@ void GameHandler::handleGuildBankList(network::Packet& packet) {
         if (item.itemEntry != 0) ensureItemInfo(item.itemEntry);
     }
 
-    LOG_INFO("SMSG_GUILD_BANK_LIST: tab=", (int)data.tabId,
+    LOG_INFO("SMSG_GUILD_BANK_LIST: tab=", static_cast<int>(data.tabId),
              " items=", data.tabItems.size(),
              " tabs=", data.tabs.size(),
              " money=", data.money);
@@ -25114,7 +25114,7 @@ void GameHandler::handleAuctionHello(network::Packet& packet) {
     auctionOwnerResults_ = AuctionListResult{};
     auctionBidderResults_ = AuctionListResult{};
     LOG_INFO("MSG_AUCTION_HELLO: auctioneer=0x", std::hex, data.auctioneerGuid, std::dec,
-             " house=", data.auctionHouseId, " enabled=", (int)data.enabled);
+             " house=", data.auctionHouseId, " enabled=", static_cast<int>(data.enabled));
 }
 
 void GameHandler::handleAuctionListResult(network::Packet& packet) {
@@ -25216,7 +25216,7 @@ void GameHandler::handleItemTextQueryResponse(network::Packet& packet) {
         itemText_    = packet.readString();
         itemTextOpen_= !itemText_.empty();
     }
-    LOG_DEBUG("SMSG_ITEM_TEXT_QUERY_RESPONSE: isEmpty=", (int)isEmpty,
+    LOG_DEBUG("SMSG_ITEM_TEXT_QUERY_RESPONSE: isEmpty=", static_cast<int>(isEmpty),
               " len=", itemText_.size());
 }
 
@@ -25547,7 +25547,7 @@ void GameHandler::handleTradeStatusExtended(network::Packet& packet) {
         if (s.occupied && s.itemId != 0) queryItemInfo(s.itemId, 0);
     }
 
-    LOG_DEBUG("SMSG_TRADE_STATUS_EXTENDED: isSelf=", (int)isSelf,
+    LOG_DEBUG("SMSG_TRADE_STATUS_EXTENDED: isSelf=", static_cast<int>(isSelf),
               " myGold=", myTradeGold_, " peerGold=", peerTradeGold_);
 }
 

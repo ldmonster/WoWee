@@ -82,7 +82,7 @@ void AuthHandler::requestRealmList() {
         return;
     }
     if (state != AuthState::AUTHENTICATED && state != AuthState::REALM_LIST_RECEIVED) {
-        LOG_ERROR("Cannot request realm list: not authenticated (state: ", (int)state, ")");
+        LOG_ERROR("Cannot request realm list: not authenticated (state: ", static_cast<int>(state), ")");
         return;
     }
 
@@ -182,11 +182,11 @@ void AuthHandler::handleLogonChallengeResponse(network::Packet& packet) {
         if (response.result == AuthResult::BUILD_INVALID || response.result == AuthResult::BUILD_UPDATE) {
             std::ostringstream ss;
             ss << "LOGON_CHALLENGE failed: version mismatch (client v"
-               << (int)clientInfo.majorVersion << "."
-               << (int)clientInfo.minorVersion << "."
-               << (int)clientInfo.patchVersion
+               << static_cast<int>(clientInfo.majorVersion) << "."
+               << static_cast<int>(clientInfo.minorVersion) << "."
+               << static_cast<int>(clientInfo.patchVersion)
                << " build " << clientInfo.build
-               << ", auth protocol " << (int)clientInfo.protocolVersion << ")";
+               << ", auth protocol " << static_cast<int>(clientInfo.protocolVersion) << ")";
             fail(ss.str());
         } else {
             fail(std::string("LOGON_CHALLENGE failed: ") + getAuthResultString(response.result));
@@ -195,14 +195,14 @@ void AuthHandler::handleLogonChallengeResponse(network::Packet& packet) {
     }
 
     if (response.securityFlags != 0) {
-        LOG_WARNING("Server sent security flags: 0x", std::hex, (int)response.securityFlags, std::dec);
+        LOG_WARNING("Server sent security flags: 0x", std::hex, static_cast<int>(response.securityFlags), std::dec);
         if (response.securityFlags & 0x01) LOG_WARNING("  PIN required");
         if (response.securityFlags & 0x02) LOG_WARNING("  Matrix card required (not supported)");
         if (response.securityFlags & 0x04) LOG_WARNING("  Authenticator required (not supported)");
     }
 
     LOG_INFO("Challenge: N=", response.N.size(), "B g=", response.g.size(), "B salt=",
-             response.salt.size(), "B secFlags=0x", std::hex, (int)response.securityFlags, std::dec);
+             response.salt.size(), "B secFlags=0x", std::hex, static_cast<int>(response.securityFlags), std::dec);
 
     // Feed SRP with server challenge data
     srp->feed(response.B, response.g, response.N, response.salt);
@@ -389,7 +389,7 @@ void AuthHandler::handleRealmListResponse(network::Packet& packet) {
         const auto& realm = realms[i];
         LOG_INFO("Realm ", (i + 1), ": ", realm.name);
         LOG_INFO("  Address: ", realm.address);
-        LOG_INFO("  ID: ", (int)realm.id);
+        LOG_INFO("  ID: ", static_cast<int>(realm.id));
         LOG_INFO("  Population: ", realm.population);
         LOG_INFO("  Characters: ", static_cast<int>(realm.characters));
         if (realm.hasVersionInfo()) {
@@ -421,9 +421,9 @@ void AuthHandler::handlePacket(network::Packet& packet) {
         const auto& raw = packet.getData();
         std::ostringstream hs;
         for (size_t i = 0; i < std::min<size_t>(raw.size(), 40); ++i)
-            hs << std::hex << std::setfill('0') << std::setw(2) << (int)raw[i];
+            hs << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(raw[i]);
         if (raw.size() > 40) hs << "...";
-        LOG_INFO("Auth pkt 0x", std::hex, (int)opcodeValue, std::dec,
+        LOG_INFO("Auth pkt 0x", std::hex, static_cast<int>(opcodeValue), std::dec,
                  " (", raw.size(), "B): ", hs.str());
     }
 
@@ -442,11 +442,11 @@ void AuthHandler::handlePacket(network::Packet& packet) {
                     }
                     if (response.result == AuthResult::BUILD_INVALID || response.result == AuthResult::BUILD_UPDATE) {
                         ss << ": version mismatch (client v"
-                           << (int)clientInfo.majorVersion << "."
-                           << (int)clientInfo.minorVersion << "."
-                           << (int)clientInfo.patchVersion
+                           << static_cast<int>(clientInfo.majorVersion) << "."
+                           << static_cast<int>(clientInfo.minorVersion) << "."
+                           << static_cast<int>(clientInfo.patchVersion)
                            << " build " << clientInfo.build
-                           << ", auth protocol " << (int)clientInfo.protocolVersion << ")";
+                           << ", auth protocol " << static_cast<int>(clientInfo.protocolVersion) << ")";
                     } else {
                         ss << ": " << getAuthResultString(response.result)
                            << " (code 0x" << std::hex << std::setw(2) << std::setfill('0')
@@ -454,7 +454,7 @@ void AuthHandler::handlePacket(network::Packet& packet) {
                     }
                     fail(ss.str());
                 } else {
-                    LOG_WARNING("Unexpected LOGON_CHALLENGE response in state: ", (int)state);
+                    LOG_WARNING("Unexpected LOGON_CHALLENGE response in state: ", static_cast<int>(state));
                 }
             }
             break;
@@ -463,7 +463,7 @@ void AuthHandler::handlePacket(network::Packet& packet) {
             if (state == AuthState::PROOF_SENT) {
                 handleLogonProofResponse(packet);
             } else {
-                LOG_WARNING("Unexpected LOGON_PROOF response in state: ", (int)state);
+                LOG_WARNING("Unexpected LOGON_PROOF response in state: ", static_cast<int>(state));
             }
             break;
 
@@ -471,12 +471,12 @@ void AuthHandler::handlePacket(network::Packet& packet) {
             if (state == AuthState::REALM_LIST_REQUESTED) {
                 handleRealmListResponse(packet);
             } else {
-                LOG_WARNING("Unexpected REALM_LIST response in state: ", (int)state);
+                LOG_WARNING("Unexpected REALM_LIST response in state: ", static_cast<int>(state));
             }
             break;
 
         default:
-            LOG_WARNING("Unhandled auth opcode: 0x", std::hex, (int)opcodeValue, std::dec);
+            LOG_WARNING("Unhandled auth opcode: 0x", std::hex, static_cast<int>(opcodeValue), std::dec);
             break;
     }
 }
@@ -503,7 +503,7 @@ void AuthHandler::update(float /*deltaTime*/) {
 
 void AuthHandler::setState(AuthState newState) {
     if (state != newState) {
-        LOG_DEBUG("Auth state: ", (int)state, " -> ", (int)newState);
+        LOG_DEBUG("Auth state: ", static_cast<int>(state), " -> ", static_cast<int>(newState));
         state = newState;
     }
 }

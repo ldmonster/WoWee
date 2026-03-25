@@ -403,7 +403,7 @@ glm::vec3 TransportManager::evalTimedCatmullRom(const TransportPath& path, uint3
     uint32_t t1Ms = path.points[p1Idx].tMs;
     uint32_t t2Ms = path.points[p2Idx].tMs;
     uint32_t segmentDurationMs = (t2Ms > t1Ms) ? (t2Ms - t1Ms) : 1;
-    float t = (float)(pathTimeMs - t1Ms) / (float)segmentDurationMs;
+    float t = (float)(pathTimeMs - t1Ms) / static_cast<float>(segmentDurationMs);
     t = glm::clamp(t, 0.0f, 1.0f);
 
     // Catmull-Rom spline formula
@@ -480,7 +480,7 @@ glm::quat TransportManager::orientationFromTangent(const TransportPath& path, ui
     uint32_t t1Ms = path.points[p1Idx].tMs;
     uint32_t t2Ms = path.points[p2Idx].tMs;
     uint32_t segmentDurationMs = (t2Ms > t1Ms) ? (t2Ms - t1Ms) : 1;
-    float t = (float)(pathTimeMs - t1Ms) / (float)segmentDurationMs;
+    float t = (float)(pathTimeMs - t1Ms) / static_cast<float>(segmentDurationMs);
     t = glm::clamp(t, 0.0f, 1.0f);
 
     // Tangent of Catmull-Rom spline (derivative)

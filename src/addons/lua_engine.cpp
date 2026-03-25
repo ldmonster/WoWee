@@ -21,6 +21,10 @@ extern "C" {
 
 namespace wowee::addons {
 
+static void toLowerInPlace(std::string& s) {
+    toLowerInPlace(s);
+}
+
 // Shared GetTime() epoch — all time-returning functions must use this same origin
 // so that addon calculations like (start + duration - GetTime()) are consistent.
 static const auto kLuaTimeEpoch = std::chrono::steady_clock::now();
@@ -133,7 +137,7 @@ static game::Unit* resolveUnit(lua_State* L, const char* unitId) {
     auto* gh = getGameHandler(L);
     if (!gh || !unitId) return nullptr;
     std::string uid(unitId);
-    for (char& c : uid) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uid);
 
     uint64_t guid = resolveUnitGuid(gh, uid);
     if (guid == 0) return nullptr;
@@ -162,7 +166,7 @@ static int lua_UnitName(lua_State* L) {
         // Fallback: party member name for out-of-range members
         auto* gh = getGameHandler(L);
         std::string uidStr(uid);
-        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
         if (pm && !pm->name.empty()) {
@@ -188,7 +192,7 @@ static int lua_UnitHealth(lua_State* L) {
         // Fallback: party member stats for out-of-range members
         auto* gh = getGameHandler(L);
         std::string uidStr(uid);
-        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
         lua_pushnumber(L, pm ? pm->curHealth : 0);
@@ -204,7 +208,7 @@ static int lua_UnitHealthMax(lua_State* L) {
     } else {
         auto* gh = getGameHandler(L);
         std::string uidStr(uid);
-        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
         lua_pushnumber(L, pm ? pm->maxHealth : 0);
@@ -220,7 +224,7 @@ static int lua_UnitPower(lua_State* L) {
     } else {
         auto* gh = getGameHandler(L);
         std::string uidStr(uid);
-        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
         lua_pushnumber(L, pm ? pm->curPower : 0);
@@ -236,7 +240,7 @@ static int lua_UnitPowerMax(lua_State* L) {
     } else {
         auto* gh = getGameHandler(L);
         std::string uidStr(uid);
-        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
         lua_pushnumber(L, pm ? pm->maxPower : 0);
@@ -252,7 +256,7 @@ static int lua_UnitLevel(lua_State* L) {
     } else {
         auto* gh = getGameHandler(L);
         std::string uidStr(uid);
-        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
         lua_pushnumber(L, pm ? pm->level : 0);
@@ -269,7 +273,7 @@ static int lua_UnitExists(lua_State* L) {
         // Party members in other zones don't have entities but still "exist"
         auto* gh = getGameHandler(L);
         std::string uidStr(uid);
-        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         lua_pushboolean(L, guid != 0 && findPartyMember(gh, guid) != nullptr);
     }
@@ -285,7 +289,7 @@ static int lua_UnitIsDead(lua_State* L) {
         // Fallback: party member stats for out-of-range members
         auto* gh = getGameHandler(L);
         std::string uidStr(uid);
-        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(uidStr);
         uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
         const auto* pm = findPartyMember(gh, guid);
         lua_pushboolean(L, pm ? (pm->curHealth == 0 && pm->maxHealth > 0) : 0);
@@ -302,7 +306,7 @@ static int lua_UnitClass(lua_State* L) {
             "Death Knight","Shaman","Mage","Warlock","","Druid"};
         uint8_t classId = 0;
         std::string uidStr(uid);
-        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(uidStr);
         if (uidStr == "player") {
             classId = gh->getPlayerClass();
         } else {
@@ -339,7 +343,7 @@ static int lua_UnitIsGhost(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushboolean(L, 0); return 1; }
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     if (uidStr == "player") {
         lua_pushboolean(L, gh->isPlayerGhost());
     } else {
@@ -366,7 +370,7 @@ static int lua_UnitIsDeadOrGhost(lua_State* L) {
     bool dead = (unit && unit->getHealth() == 0);
     if (!dead && gh) {
         std::string uidStr(uid);
-        for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(uidStr);
         if (uidStr == "player") dead = gh->isPlayerGhost() || gh->isPlayerDead();
     }
     lua_pushboolean(L, dead);
@@ -379,7 +383,7 @@ static int lua_UnitIsAFK(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushboolean(L, 0); return 1; }
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid != 0) {
         auto entity = gh->getEntityManager().getEntity(guid);
@@ -399,7 +403,7 @@ static int lua_UnitIsDND(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushboolean(L, 0); return 1; }
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid != 0) {
         auto entity = gh->getEntityManager().getEntity(guid);
@@ -419,7 +423,7 @@ static int lua_UnitPlayerControlled(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushboolean(L, 0); return 1; }
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid == 0) { lua_pushboolean(L, 0); return 1; }
     auto entity = gh->getEntityManager().getEntity(guid);
@@ -473,14 +477,14 @@ static int lua_UnitThreatSituation(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     const char* mobUid = luaL_optstring(L, 2, nullptr);
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t playerUnitGuid = resolveUnitGuid(gh, uidStr);
     if (playerUnitGuid == 0) { lua_pushnumber(L, 0); return 1; }
     // If no mob specified, check general combat threat against current target
     uint64_t mobGuid = 0;
     if (mobUid && *mobUid) {
         std::string mStr(mobUid);
-        for (char& c : mStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(mStr);
         mobGuid = resolveUnitGuid(gh, mStr);
     }
     // Approximate threat: check if the mob is targeting this unit
@@ -521,13 +525,13 @@ static int lua_UnitDetailedThreatSituation(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     const char* mobUid = luaL_optstring(L, 2, nullptr);
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t unitGuid = resolveUnitGuid(gh, uidStr);
     bool isTanking = false;
     int status = 0;
     if (unitGuid != 0 && mobUid && *mobUid) {
         std::string mStr(mobUid);
-        for (char& c : mStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(mStr);
         uint64_t mobGuid = resolveUnitGuid(gh, mStr);
         if (mobGuid != 0) {
             auto mobEnt = gh->getEntityManager().getEntity(mobGuid);
@@ -557,7 +561,7 @@ static int lua_UnitDistanceSquared(lua_State* L) {
     if (!gh) { lua_pushnumber(L, 0); lua_pushboolean(L, 0); return 2; }
     const char* uid = luaL_checkstring(L, 1);
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid == 0 || guid == gh->getPlayerGuid()) { lua_pushnumber(L, 0); lua_pushboolean(L, 0); return 2; }
     auto targetEnt = gh->getEntityManager().getEntity(guid);
@@ -579,7 +583,7 @@ static int lua_CheckInteractDistance(lua_State* L) {
     const char* uid = luaL_checkstring(L, 1);
     int distIdx = static_cast<int>(luaL_optnumber(L, 2, 4));
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid == 0) { lua_pushboolean(L, 0); return 1; }
     auto targetEnt = gh->getEntityManager().getEntity(guid);
@@ -613,10 +617,10 @@ static int lua_IsSpellInRange(lua_State* L) {
         spellId = static_cast<uint32_t>(strtoul(spellNameOrId, nullptr, 10));
     } else {
         std::string nameLow(spellNameOrId);
-        for (char& c : nameLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(nameLow);
         for (uint32_t sid : gh->getKnownSpells()) {
             std::string sn = gh->getSpellName(sid);
-            for (char& c : sn) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            toLowerInPlace(sn);
             if (sn == nameLow) { spellId = sid; break; }
         }
     }
@@ -628,7 +632,7 @@ static int lua_IsSpellInRange(lua_State* L) {
 
     // Resolve target position
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid == 0) { lua_pushnil(L); return 1; }
     auto targetEnt = gh->getEntityManager().getEntity(guid);
@@ -657,7 +661,7 @@ static int lua_UnitGroupRolesAssigned(lua_State* L) {
     if (!gh) { lua_pushstring(L, "NONE"); return 1; }
     const char* uid = luaL_optstring(L, 1, "player");
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid == 0) { lua_pushstring(L, "NONE"); return 1; }
     const auto& pd = gh->getPartyData();
@@ -681,8 +685,8 @@ static int lua_UnitCanAttack(lua_State* L) {
     const char* uid1 = luaL_checkstring(L, 1);
     const char* uid2 = luaL_checkstring(L, 2);
     std::string u1(uid1), u2(uid2);
-    for (char& c : u1) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    for (char& c : u2) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(u1);
+    toLowerInPlace(u2);
     uint64_t g1 = resolveUnitGuid(gh, u1);
     uint64_t g2 = resolveUnitGuid(gh, u2);
     if (g1 == 0 || g2 == 0 || g1 == g2) { lua_pushboolean(L, 0); return 1; }
@@ -714,7 +718,7 @@ static int lua_UnitCreatureFamily(lua_State* L) {
     if (!gh) { lua_pushnil(L); return 1; }
     const char* uid = luaL_optstring(L, 1, "target");
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid == 0) { lua_pushnil(L); return 1; }
     auto entity = gh->getEntityManager().getEntity(guid);
@@ -743,7 +747,7 @@ static int lua_UnitOnTaxi(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushboolean(L, 0); return 1; }
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     if (uidStr == "player") {
         lua_pushboolean(L, gh->isOnTaxiFlight());
     } else {
@@ -758,7 +762,7 @@ static int lua_UnitSex(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushnumber(L, 1); return 1; }
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid != 0) {
         auto entity = gh->getEntityManager().getEntity(guid);
@@ -1068,7 +1072,7 @@ static int lua_UnitRace(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushstring(L, "Unknown"); lua_pushstring(L, "Unknown"); lua_pushnumber(L, 0); return 3; }
     std::string uid(luaL_optstring(L, 1, "player"));
-    for (char& c : uid) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uid);
     static const char* kRaces[] = {"","Human","Orc","Dwarf","Night Elf","Undead",
         "Tauren","Gnome","Troll","","Blood Elf","Draenei"};
     uint8_t raceId = 0;
@@ -1108,7 +1112,7 @@ static int lua_UnitPowerType(lua_State* L) {
     // Fallback: party member stats for out-of-range members
     auto* gh = getGameHandler(L);
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = gh ? resolveUnitGuid(gh, uidStr) : 0;
     const auto* pm = findPartyMember(gh, guid);
     if (pm) {
@@ -1133,7 +1137,7 @@ static int lua_UnitGUID(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushnil(L); return 1; }
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid == 0) { lua_pushnil(L); return 1; }
     char buf[32];
@@ -1147,7 +1151,7 @@ static int lua_UnitIsPlayer(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushboolean(L, 0); return 1; }
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     auto entity = guid ? gh->getEntityManager().getEntity(guid) : nullptr;
     lua_pushboolean(L, entity && entity->getType() == game::ObjectType::PLAYER);
@@ -1249,7 +1253,7 @@ static int lua_UnitAura(lua_State* L, bool wantBuff) {
     if (index < 1) { lua_pushnil(L); return 1; }
 
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
 
     const std::vector<game::AuraSlot>* auras = nullptr;
     if (uidStr == "player")      auras = &gh->getPlayerAuras();
@@ -1453,19 +1457,19 @@ static int lua_CastSpellByName(lua_State* L) {
 
     // Find highest rank of spell by name (same logic as /cast)
     std::string nameLow(name);
-    for (char& c : nameLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(nameLow);
 
     uint32_t bestId = 0;
     int bestRank = -1;
     for (uint32_t sid : gh->getKnownSpells()) {
         std::string sn = gh->getSpellName(sid);
-        for (char& c : sn) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(sn);
         if (sn != nameLow) continue;
         int rank = 0;
         const std::string& rk = gh->getSpellRank(sid);
         if (!rk.empty()) {
             std::string rkl = rk;
-            for (char& c : rkl) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            toLowerInPlace(rkl);
             if (rkl.rfind("rank ", 0) == 0) {
                 try { rank = std::stoi(rkl.substr(5)); } catch (...) {}
             }
@@ -1748,10 +1752,10 @@ static int lua_GetSpellCooldown(lua_State* L) {
     } else {
         const char* name = luaL_checkstring(L, 1);
         std::string nameLow(name);
-        for (char& c : nameLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(nameLow);
         for (uint32_t sid : gh->getKnownSpells()) {
             std::string sn = gh->getSpellName(sid);
-            for (char& c : sn) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            toLowerInPlace(sn);
             if (sn == nameLow) { spellId = sid; break; }
         }
     }
@@ -1795,7 +1799,7 @@ static int lua_TargetUnit(lua_State* L) {
     if (!gh) return 0;
     const char* uid = luaL_checkstring(L, 1);
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid != 0) gh->setTarget(guid);
     return 0;
@@ -1815,7 +1819,7 @@ static int lua_FocusUnit(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, nullptr);
     if (!uid || !*uid) return 0;
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid != 0) gh->setFocus(guid);
     return 0;
@@ -1834,7 +1838,7 @@ static int lua_AssistUnit(lua_State* L) {
     if (!gh) return 0;
     const char* uid = luaL_optstring(L, 1, "target");
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid == 0) return 0;
     uint64_t theirTarget = getEntityTargetGuid(gh, guid);
@@ -1869,7 +1873,7 @@ static int lua_GetRaidTargetIndex(lua_State* L) {
     if (!gh) { lua_pushnil(L); return 1; }
     const char* uid = luaL_optstring(L, 1, "target");
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid == 0) { lua_pushnil(L); return 1; }
     uint8_t mark = gh->getEntityRaidMark(guid);
@@ -1885,7 +1889,7 @@ static int lua_SetRaidTarget(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "target");
     int index = static_cast<int>(luaL_checknumber(L, 2));
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid == 0) return 0;
     if (index >= 1 && index <= 8)
@@ -1929,17 +1933,17 @@ static int lua_GetSpellInfo(lua_State* L) {
         const char* name = lua_tostring(L, 1);
         if (!name || !*name) { lua_pushnil(L); return 1; }
         std::string nameLow(name);
-        for (char& c : nameLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(nameLow);
         int bestRank = -1;
         for (uint32_t sid : gh->getKnownSpells()) {
             std::string sn = gh->getSpellName(sid);
-            for (char& c : sn) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            toLowerInPlace(sn);
             if (sn != nameLow) continue;
             int rank = 0;
             const std::string& rk = gh->getSpellRank(sid);
             if (!rk.empty()) {
                 std::string rkl = rk;
-                for (char& c : rkl) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                toLowerInPlace(rkl);
                 if (rkl.rfind("rank ", 0) == 0) {
                     try { rank = std::stoi(rkl.substr(5)); } catch (...) {}
                 }
@@ -1979,10 +1983,10 @@ static int lua_GetSpellTexture(lua_State* L) {
         const char* name = lua_tostring(L, 1);
         if (!name || !*name) { lua_pushnil(L); return 1; }
         std::string nameLow(name);
-        for (char& c : nameLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(nameLow);
         for (uint32_t sid : gh->getKnownSpells()) {
             std::string sn = gh->getSpellName(sid);
-            for (char& c : sn) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            toLowerInPlace(sn);
             if (sn == nameLow) { spellId = sid; break; }
         }
     }
@@ -2642,7 +2646,7 @@ static int lua_GetInventoryItemLink(lua_State* L) {
     int slotId = static_cast<int>(luaL_checknumber(L, 2));
     if (!gh || slotId < 1 || slotId > 19) { lua_pushnil(L); return 1; }
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     if (uidStr != "player") { lua_pushnil(L); return 1; }
 
     const auto& inv = gh->getInventory();
@@ -2667,7 +2671,7 @@ static int lua_GetInventoryItemID(lua_State* L) {
     int slotId = static_cast<int>(luaL_checknumber(L, 2));
     if (!gh || slotId < 1 || slotId > 19) { lua_pushnil(L); return 1; }
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     if (uidStr != "player") { lua_pushnil(L); return 1; }
 
     const auto& inv = gh->getInventory();
@@ -2683,7 +2687,7 @@ static int lua_GetInventoryItemTexture(lua_State* L) {
     int slotId = static_cast<int>(luaL_checknumber(L, 2));
     if (!gh || slotId < 1 || slotId > 19) { lua_pushnil(L); return 1; }
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     if (uidStr != "player") { lua_pushnil(L); return 1; }
 
     const auto& inv = gh->getInventory();
@@ -2722,7 +2726,7 @@ static int lua_UnitXP(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushnumber(L, 0); return 1; }
     std::string u(uid);
-    for (char& c : u) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(u);
     if (u == "player") lua_pushnumber(L, gh->getPlayerXp());
     else lua_pushnumber(L, 0);
     return 1;
@@ -2733,7 +2737,7 @@ static int lua_UnitXPMax(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushnumber(L, 1); return 1; }
     std::string u(uid);
-    for (char& c : u) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(u);
     if (u == "player") {
         uint32_t nlxp = gh->getPlayerNextLevelXp();
         lua_pushnumber(L, nlxp > 0 ? nlxp : 1);
@@ -3438,7 +3442,7 @@ static int lua_UnitAffectingCombat(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushboolean(L, 0); return 1; }
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     if (uidStr == "player") {
         lua_pushboolean(L, gh->isInCombat());
     } else {
@@ -3483,7 +3487,7 @@ static int lua_UnitInParty(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushboolean(L, 0); return 1; }
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     if (uidStr == "player") {
         lua_pushboolean(L, gh->isInGroup());
     } else {
@@ -3504,7 +3508,7 @@ static int lua_UnitInRaid(lua_State* L) {
     auto* gh = getGameHandler(L);
     if (!gh) { lua_pushboolean(L, 0); return 1; }
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     const auto& pd = gh->getPartyData();
     if (pd.groupType != 1) { lua_pushboolean(L, 0); return 1; }
     if (uidStr == "player") {
@@ -3582,8 +3586,8 @@ static int lua_UnitIsUnit(lua_State* L) {
     const char* uid1 = luaL_checkstring(L, 1);
     const char* uid2 = luaL_checkstring(L, 2);
     std::string u1(uid1), u2(uid2);
-    for (char& c : u1) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    for (char& c : u2) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(u1);
+    toLowerInPlace(u2);
     uint64_t g1 = resolveUnitGuid(gh, u1);
     uint64_t g2 = resolveUnitGuid(gh, u2);
     lua_pushboolean(L, g1 != 0 && g1 == g2);
@@ -3609,7 +3613,7 @@ static int lua_UnitCreatureType(lua_State* L) {
     if (!gh) { lua_pushstring(L, "Unknown"); return 1; }
     const char* uid = luaL_optstring(L, 1, "target");
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid == 0) { lua_pushstring(L, "Unknown"); return 1; }
     auto entity = gh->getEntityManager().getEntity(guid);
@@ -3709,10 +3713,10 @@ static int lua_GetSpellLink(lua_State* L) {
         const char* name = lua_tostring(L, 1);
         if (!name || !*name) { lua_pushnil(L); return 1; }
         std::string nameLow(name);
-        for (char& c : nameLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(nameLow);
         for (uint32_t sid : gh->getKnownSpells()) {
             std::string sn = gh->getSpellName(sid);
-            for (char& c : sn) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            toLowerInPlace(sn);
             if (sn == nameLow) { spellId = sid; break; }
         }
     }
@@ -3737,10 +3741,10 @@ static int lua_IsUsableSpell(lua_State* L) {
         const char* name = lua_tostring(L, 1);
         if (!name || !*name) { lua_pushboolean(L, 0); lua_pushboolean(L, 0); return 2; }
         std::string nameLow(name);
-        for (char& c : nameLow) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        toLowerInPlace(nameLow);
         for (uint32_t sid : gh->getKnownSpells()) {
             std::string sn = gh->getSpellName(sid);
-            for (char& c : sn) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            toLowerInPlace(sn);
             if (sn == nameLow) { spellId = sid; break; }
         }
     }
@@ -3816,7 +3820,7 @@ static int lua_UnitClassification(lua_State* L) {
     if (!gh) { lua_pushstring(L, "normal"); return 1; }
     const char* uid = luaL_optstring(L, 1, "target");
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid == 0) { lua_pushstring(L, "normal"); return 1; }
     auto entity = gh->getEntityManager().getEntity(guid);
@@ -3855,9 +3859,9 @@ static int lua_UnitReaction(lua_State* L) {
     if (!unit2) { lua_pushnil(L); return 1; }
     // If unit2 is the player, always friendly to self
     std::string u1(uid1);
-    for (char& c : u1) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(u1);
     std::string u2(uid2);
-    for (char& c : u2) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(u2);
     uint64_t g1 = resolveUnitGuid(gh, u1);
     uint64_t g2 = resolveUnitGuid(gh, u2);
     if (g1 == g2) { lua_pushnumber(L, 5); return 1; } // same unit = friendly
@@ -3875,7 +3879,7 @@ static int lua_UnitIsConnected(lua_State* L) {
     if (!gh) { lua_pushboolean(L, 0); return 1; }
     const char* uid = luaL_optstring(L, 1, "player");
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     uint64_t guid = resolveUnitGuid(gh, uidStr);
     if (guid == 0) { lua_pushboolean(L, 0); return 1; }
     // Player is always connected
@@ -4164,7 +4168,7 @@ static int lua_CancelUnitBuff(lua_State* L) {
     if (!gh) return 0;
     const char* uid = luaL_optstring(L, 1, "player");
     std::string uidStr(uid);
-    for (char& c : uidStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(uidStr);
     if (uidStr != "player") return 0; // Can only cancel own buffs
     int index = static_cast<int>(luaL_checknumber(L, 2));
     const auto& auras = gh->getPlayerAuras();
@@ -7474,7 +7478,7 @@ bool LuaEngine::dispatchSlashCommand(const std::string& command, const std::stri
     if (!lua_istable(L_, -1)) { lua_pop(L_, 1); return false; }
 
     std::string cmdLower = command;
-    for (char& c : cmdLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    toLowerInPlace(cmdLower);
 
     lua_pushnil(L_);
     while (lua_next(L_, -2) != 0) {
@@ -7491,7 +7495,7 @@ bool LuaEngine::dispatchSlashCommand(const std::string& command, const std::stri
             lua_getglobal(L_, globalName.c_str());
             if (lua_isstring(L_, -1)) {
                 std::string slashStr = lua_tostring(L_, -1);
-                for (char& c : slashStr) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                toLowerInPlace(slashStr);
                 if (slashStr == cmdLower) {
                     lua_pop(L_, 1); // pop global
                     // Call the handler with args

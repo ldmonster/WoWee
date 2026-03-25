@@ -196,7 +196,7 @@ bool ClassicPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlo
     uint8_t updateFlags = packet.readUInt8();
     block.updateFlags = static_cast<uint16_t>(updateFlags);
 
-    LOG_DEBUG("  [Classic] UpdateFlags: 0x", std::hex, (int)updateFlags, std::dec);
+    LOG_DEBUG("  [Classic] UpdateFlags: 0x", std::hex, static_cast<int>(updateFlags), std::dec);
 
     const uint8_t UPDATEFLAG_TRANSPORT       = 0x02;
     const uint8_t UPDATEFLAG_MELEE_ATTACKING = 0x04;
@@ -613,13 +613,13 @@ bool ClassicPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& da
         }
         const uint8_t rawHitCount = packet.readUInt8();
         if (rawHitCount > 128) {
-            LOG_WARNING("[Classic] Spell go: hitCount capped (requested=", (int)rawHitCount, ")");
+            LOG_WARNING("[Classic] Spell go: hitCount capped (requested=", static_cast<int>(rawHitCount), ")");
         }
         if (rem() < static_cast<size_t>(rawHitCount) + 1u) {
             static uint32_t badHitCountTrunc = 0;
             ++badHitCountTrunc;
             if (badHitCountTrunc <= 10 || (badHitCountTrunc % 100) == 0) {
-                LOG_WARNING("[Classic] Spell go: invalid hitCount/remaining (hits=", (int)rawHitCount,
+                LOG_WARNING("[Classic] Spell go: invalid hitCount/remaining (hits=", static_cast<int>(rawHitCount),
                             " remaining=", rem(), " occurrence=", badHitCountTrunc, ")");
             }
             traceFailure("invalid_hit_count", packet.getReadPos(), rawHitCount);
@@ -654,7 +654,7 @@ bool ClassicPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& da
         };
 
         if (!parseHitList(false) && !parseHitList(true)) {
-            LOG_WARNING("[Classic] Spell go: truncated hit targets at index 0/", (int)rawHitCount);
+            LOG_WARNING("[Classic] Spell go: truncated hit targets at index 0/", static_cast<int>(rawHitCount));
             traceFailure("truncated_hit_target", packet.getReadPos(), rawHitCount);
             packet.setReadPos(startPos);
             return false;
@@ -673,7 +673,7 @@ bool ClassicPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& da
             }
             const uint8_t rawMissCount = packet.readUInt8();
             if (rawMissCount > 128) {
-                LOG_WARNING("[Classic] Spell go: missCount capped (requested=", (int)rawMissCount, ")");
+                LOG_WARNING("[Classic] Spell go: missCount capped (requested=", static_cast<int>(rawMissCount), ")");
                 traceFailure("miss_count_capped", packet.getReadPos() - 1, rawMissCount);
             }
             if (rem() < static_cast<size_t>(rawMissCount) * 2u) {
@@ -695,7 +695,7 @@ bool ClassicPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& da
                 static uint32_t badMissCountTrunc = 0;
                 ++badMissCountTrunc;
                 if (badMissCountTrunc <= 10 || (badMissCountTrunc % 100) == 0) {
-                    LOG_WARNING("[Classic] Spell go: invalid missCount/remaining (misses=", (int)rawMissCount,
+                    LOG_WARNING("[Classic] Spell go: invalid missCount/remaining (misses=", static_cast<int>(rawMissCount),
                                 " remaining=", rem(), " occurrence=", badMissCountTrunc, ")");
                 }
                 traceFailure("invalid_miss_count", packet.getReadPos(), rawMissCount);
@@ -727,7 +727,7 @@ bool ClassicPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& da
                     packet.setReadPos(missEntryPos);
                     if (!parseMissEntry(m, true)) {
                         LOG_WARNING("[Classic] Spell go: truncated miss targets at index ", i,
-                                    "/", (int)rawMissCount);
+                                    "/", static_cast<int>(rawMissCount));
                         traceFailure("truncated_miss_target", packet.getReadPos(), i);
                         truncatedMissTargets = true;
                         break;
@@ -735,7 +735,7 @@ bool ClassicPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& da
                 }
                 if (rem() < 1) {
                     LOG_WARNING("[Classic] Spell go: missing missType at miss index ", i,
-                                "/", (int)rawMissCount);
+                                "/", static_cast<int>(rawMissCount));
                     traceFailure("missing_miss_type", packet.getReadPos(), i);
                     truncatedMissTargets = true;
                     break;
@@ -744,7 +744,7 @@ bool ClassicPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& da
                 if (m.missType == 11) {
                     if (rem() < 1) {
                         LOG_WARNING("[Classic] Spell go: truncated reflect payload at miss index ", i,
-                                    "/", (int)rawMissCount);
+                                    "/", static_cast<int>(rawMissCount));
                         traceFailure("truncated_reflect", packet.getReadPos(), i);
                         truncatedMissTargets = true;
                         break;
@@ -774,8 +774,8 @@ bool ClassicPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& da
     // any subsequent fields (e.g. castFlags extras) are not misaligned.
     skipClassicSpellCastTargets(packet, &data.targetGuid);
 
-    LOG_DEBUG("[Classic] Spell go: spell=", data.spellId, " hits=", (int)data.hitCount,
-              " misses=", (int)data.missCount);
+    LOG_DEBUG("[Classic] Spell go: spell=", data.spellId, " hits=", static_cast<int>(data.hitCount),
+              " misses=", static_cast<int>(data.missCount));
     return true;
 }
 
@@ -1011,8 +1011,8 @@ bool ClassicPacketParsers::parseNameQueryResponse(network::Packet& packet, NameQ
     data.found   = 0;
 
     LOG_DEBUG("[Classic] Name query response: ", data.name,
-              " (race=", (int)data.race, " gender=", (int)data.gender,
-              " class=", (int)data.classId, ")");
+              " (race=", static_cast<int>(data.race), " gender=", static_cast<int>(data.gender),
+              " class=", static_cast<int>(data.classId), ")");
     return !data.name.empty();
 }
 
@@ -1028,7 +1028,7 @@ bool ClassicPacketParsers::parseCastFailed(network::Packet& packet, CastFailedDa
     // WotLK enum starts at 0=SUCCESS, 1=AFFECTING_COMBAT.
     // Shift +1 to align with WotLK result strings.
     data.result = vanillaResult + 1;
-    LOG_DEBUG("[Classic] Cast failed: spell=", data.spellId, " vanillaResult=", (int)vanillaResult);
+    LOG_DEBUG("[Classic] Cast failed: spell=", data.spellId, " vanillaResult=", static_cast<int>(vanillaResult));
     return true;
 }
 
@@ -1044,7 +1044,7 @@ bool ClassicPacketParsers::parseCastResult(network::Packet& packet, uint32_t& sp
     uint8_t vanillaResult = packet.readUInt8();
     // Shift +1: Vanilla result 0=AFFECTING_COMBAT maps to WotLK result 1=AFFECTING_COMBAT
     result = vanillaResult + 1;
-    LOG_DEBUG("[Classic] Cast result: spell=", spellId, " vanillaResult=", (int)vanillaResult);
+    LOG_DEBUG("[Classic] Cast result: spell=", spellId, " vanillaResult=", static_cast<int>(vanillaResult));
     return true;
 }
 
@@ -1068,12 +1068,12 @@ bool ClassicPacketParsers::parseCharEnum(network::Packet& packet, CharEnumRespon
     // Cap count to prevent excessive memory allocation
     constexpr uint8_t kMaxCharacters = 32;
     if (count > kMaxCharacters) {
-        LOG_WARNING("[Classic] Character count ", (int)count, " exceeds max ", (int)kMaxCharacters,
+        LOG_WARNING("[Classic] Character count ", static_cast<int>(count), " exceeds max ", static_cast<int>(kMaxCharacters),
                     ", capping");
         count = kMaxCharacters;
     }
 
-    LOG_INFO("[Classic] Parsing SMSG_CHAR_ENUM: ", (int)count, " characters");
+    LOG_INFO("[Classic] Parsing SMSG_CHAR_ENUM: ", static_cast<int>(count), " characters");
 
     response.characters.clear();
     response.characters.reserve(count);
@@ -1085,7 +1085,7 @@ bool ClassicPacketParsers::parseCharEnum(network::Packet& packet, CharEnumRespon
         //          + flags(4) + firstLogin(1) + pet(12) + equipment(20*5)
         constexpr size_t kMinCharacterSize = 8 + 1 + 1 + 1 + 1 + 4 + 1 + 1 + 4 + 4 + 12 + 4 + 4 + 1 + 12 + 100;
         if (packet.getReadPos() + kMinCharacterSize > packet.getSize()) {
-            LOG_WARNING("[Classic] Character enum packet truncated at character ", (int)(i + 1),
+            LOG_WARNING("[Classic] Character enum packet truncated at character ", static_cast<int>(i + 1),
                         ", pos=", packet.getReadPos(), " needed=", kMinCharacterSize,
                         " size=", packet.getSize());
             break;
@@ -1142,9 +1142,9 @@ bool ClassicPacketParsers::parseCharEnum(network::Packet& packet, CharEnumRespon
             character.equipment.push_back(item);
         }
 
-        LOG_DEBUG("  Character ", (int)(i + 1), ": ", character.name,
+        LOG_DEBUG("  Character ", static_cast<int>(i + 1), ": ", character.name,
                   " (", getRaceName(character.race), " ", getClassName(character.characterClass),
-                  " level ", (int)character.level, " zone ", character.zoneId, ")");
+                  " level ", static_cast<int>(character.level), " zone ", character.zoneId, ")");
 
         response.characters.push_back(character);
     }
@@ -1563,7 +1563,7 @@ bool ClassicPacketParsers::parseMailList(network::Packet& packet,
     if (remaining < 1) return false;
 
     uint8_t count = packet.readUInt8();
-    LOG_INFO("SMSG_MAIL_LIST_RESULT (Classic): count=", (int)count);
+    LOG_INFO("SMSG_MAIL_LIST_RESULT (Classic): count=", static_cast<int>(count));
 
     inbox.clear();
     inbox.reserve(count);
@@ -1932,7 +1932,7 @@ bool TurtlePacketParsers::parseMovementBlock(network::Packet& packet, UpdateBloc
     uint8_t updateFlags = packet.readUInt8();
     block.updateFlags = static_cast<uint16_t>(updateFlags);
 
-    LOG_DEBUG("  [Turtle] UpdateFlags: 0x", std::hex, (int)updateFlags, std::dec);
+    LOG_DEBUG("  [Turtle] UpdateFlags: 0x", std::hex, static_cast<int>(updateFlags), std::dec);
 
     const uint8_t UPDATEFLAG_TRANSPORT       = 0x02;
     const uint8_t UPDATEFLAG_MELEE_ATTACKING = 0x04;

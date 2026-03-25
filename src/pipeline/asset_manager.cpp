@@ -117,7 +117,7 @@ void AssetManager::shutdown() {
     LOG_INFO("Shutting down asset manager");
 
     if (fileCacheHits + fileCacheMisses > 0) {
-        float hitRate = (float)fileCacheHits / (fileCacheHits + fileCacheMisses) * 100.0f;
+        float hitRate = static_cast<float>(fileCacheHits) / (fileCacheHits + fileCacheMisses) * 100.0f;
         LOG_INFO("File cache stats: ", fileCacheHits, " hits, ", fileCacheMisses, " misses (",
                  (int)hitRate, "% hit rate), ", fileCacheTotalBytes / 1024 / 1024, " MB cached");
     }

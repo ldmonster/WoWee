@@ -3668,8 +3668,8 @@ void Application::spawnPlayerCharacter() {
                         charFaceId = (activeChar->appearanceBytes >> 8) & 0xFF;
                         charHairStyleId = (activeChar->appearanceBytes >> 16) & 0xFF;
                         charHairColorId = (activeChar->appearanceBytes >> 24) & 0xFF;
-                        LOG_INFO("Appearance: skin=", (int)charSkinId, " face=", (int)charFaceId,
-                                 " hairStyle=", (int)charHairStyleId, " hairColor=", (int)charHairColorId);
+                        LOG_INFO("Appearance: skin=", static_cast<int>(charSkinId), " face=", static_cast<int>(charFaceId),
+                                 " hairStyle=", static_cast<int>(charHairStyleId), " hairColor=", static_cast<int>(charHairColorId));
                     }
                 }
 
@@ -3699,7 +3699,7 @@ void Application::spawnPlayerCharacter() {
                                 if (!tex1.empty()) {
                                     bodySkinPath = tex1;
                                     foundSkin = true;
-                                    LOG_INFO("  DBC body skin: ", bodySkinPath, " (skin=", (int)charSkinId, ")");
+                                    LOG_INFO("  DBC body skin: ", bodySkinPath, " (skin=", static_cast<int>(charSkinId), ")");
                                 }
                             }
                             // Section 3 = hair: match variation=hairStyle, color=hairColor
@@ -3709,7 +3709,7 @@ void Application::spawnPlayerCharacter() {
                                 if (!hairTexturePath.empty()) {
                                     foundHair = true;
                                     LOG_INFO("  DBC hair texture: ", hairTexturePath,
-                                             " (style=", (int)charHairStyleId, " color=", (int)charHairColorId, ")");
+                                             " (style=", static_cast<int>(charHairStyleId), " color=", static_cast<int>(charHairColorId), ")");
                                 }
                             }
                             // Section 1 = face: match variation=faceId, colorIndex=skinId
@@ -3744,8 +3744,8 @@ void Application::spawnPlayerCharacter() {
                         }
 
                         if (!foundHair) {
-                            LOG_WARNING("No DBC hair match for style=", (int)charHairStyleId,
-                                        " color=", (int)charHairColorId,
+                            LOG_WARNING("No DBC hair match for style=", static_cast<int>(charHairStyleId),
+                                        " color=", static_cast<int>(charHairColorId),
                                         " race=", targetRaceId, " sex=", targetSexId);
                         }
                     } else {
@@ -4363,7 +4363,7 @@ void Application::buildFactionHostilityMap(uint8_t playerRace) {
                 }
             }
         }
-        LOG_INFO("Faction.dbc: ", hostileParentFactions.size(), " factions hostile to race ", (int)playerRace);
+        LOG_INFO("Faction.dbc: ", hostileParentFactions.size(), " factions hostile to race ", static_cast<int>(playerRace));
     }
 
     // Get player faction template data
@@ -4431,7 +4431,7 @@ void Application::buildFactionHostilityMap(uint8_t playerRace) {
     uint32_t hostileCount = 0;
     for (const auto& [fid, h] : factionMap) { if (h) hostileCount++; }
     gameHandler->setFactionHostileMap(std::move(factionMap));
-    LOG_INFO("Faction hostility for race ", (int)playerRace, " (FT ", playerFtId, "): ",
+    LOG_INFO("Faction hostility for race ", static_cast<int>(playerRace), " (FT ", playerFtId, "): ",
         hostileCount, "/", ftDbc->getRecordCount(),
         " hostile (friendGroup=0x", std::hex, playerFriendGroup, ", enemyGroup=0x", playerEnemyGroup, std::dec, ")");
 }
@@ -5679,7 +5679,7 @@ audio::VoiceType Application::detectVoiceTypeFromDisplayId(uint32_t displayId) c
         default: result = audio::VoiceType::GENERIC; break;
     }
 
-    LOG_INFO("Voice detection: displayId ", displayId, " -> ", raceName, " ", sexName, " (race=", (int)raceId, ", sex=", (int)sexId, ")");
+    LOG_INFO("Voice detection: displayId ", displayId, " -> ", raceName, " ", sexName, " (race=", static_cast<int>(raceId), ", sex=", static_cast<int>(sexId), ")");
     return result;
 }
 
@@ -5926,8 +5926,8 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
             auto itExtra = humanoidExtraMap_.find(dispData.extraDisplayId);
             if (itExtra != humanoidExtraMap_.end()) {
                 const auto& extra = itExtra->second;
-                LOG_DEBUG("  Found humanoid extra: raceId=", (int)extra.raceId, " sexId=", (int)extra.sexId,
-                          " hairStyle=", (int)extra.hairStyleId, " hairColor=", (int)extra.hairColorId,
+                LOG_DEBUG("  Found humanoid extra: raceId=", static_cast<int>(extra.raceId), " sexId=", static_cast<int>(extra.sexId),
+                          " hairStyle=", static_cast<int>(extra.hairStyleId), " hairColor=", static_cast<int>(extra.hairColorId),
                           " bakeName='", extra.bakeName, "'");
 
                 // Collect model texture slot info (type 1 = skin, type 6 = hair)
@@ -6459,9 +6459,9 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
             if (itFacial != facialHairGeosetMap_.end()) {
                 const auto& fhg = itFacial->second;
                 // DBC values are variation indices within each group; add group base
-                activeGeosets.insert(static_cast<uint16_t>(100 + std::max(fhg.geoset100, (uint16_t)1)));
-                activeGeosets.insert(static_cast<uint16_t>(300 + std::max(fhg.geoset300, (uint16_t)1)));
-                activeGeosets.insert(static_cast<uint16_t>(200 + std::max(fhg.geoset200, (uint16_t)1)));
+                activeGeosets.insert(static_cast<uint16_t>(100 + std::max(fhg.geoset100, static_cast<uint16_t>(1))));
+                activeGeosets.insert(static_cast<uint16_t>(300 + std::max(fhg.geoset300, static_cast<uint16_t>(1))));
+                activeGeosets.insert(static_cast<uint16_t>(200 + std::max(fhg.geoset200, static_cast<uint16_t>(1))));
             } else {
                 activeGeosets.insert(101); // Default group 1: no extra
                 activeGeosets.insert(201); // Default group 2: no facial hair
@@ -6658,7 +6658,7 @@ void Application::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float x
                     }
                 }
             }
-            LOG_DEBUG("Set humanoid geosets: hair=", (int)hairGeoset,
+            LOG_DEBUG("Set humanoid geosets: hair=", static_cast<int>(hairGeoset),
                       " sleeves=", geosetSleeves, " pants=", geosetPants,
                       " boots=", geosetBoots, " gloves=", geosetGloves);
 
@@ -7095,7 +7095,7 @@ void Application::spawnOnlinePlayer(uint64_t guid,
         std::string m2Path = game::getPlayerModelPath(race, gender);
         if (m2Path.empty()) {
             LOG_WARNING("spawnOnlinePlayer: unknown race/gender for guid 0x", std::hex, guid, std::dec,
-                        " race=", (int)raceId, " gender=", (int)genderId);
+                        " race=", static_cast<int>(raceId), " gender=", static_cast<int>(genderId));
             return;
         }
 
@@ -7173,9 +7173,9 @@ void Application::spawnOnlinePlayer(uint64_t guid,
         if (const auto* md = charRenderer->getModelData(modelId)) {
             for (size_t ti = 0; ti < md->textures.size(); ti++) {
                 uint32_t t = md->textures[ti].type;
-                if (t == 1 && slots.skin < 0) slots.skin = (int)ti;
-                else if (t == 6 && slots.hair < 0) slots.hair = (int)ti;
-                else if (t == 8 && slots.underwear < 0) slots.underwear = (int)ti;
+                if (t == 1 && slots.skin < 0) slots.skin = static_cast<int>(ti);
+                else if (t == 6 && slots.hair < 0) slots.hair = static_cast<int>(ti);
+                else if (t == 8 && slots.underwear < 0) slots.underwear = static_cast<int>(ti);
             }
         }
         playerTextureSlotsByModelId_[modelId] = slots;

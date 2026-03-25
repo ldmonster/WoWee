@@ -332,24 +332,24 @@ void WorldSocket::send(const Packet& packet) {
             rd8(skin) && rd8(face) && rd8(hairStyle) && rd8(hairColor) && rd8(facial) && rd8(outfit);
         if (ok) {
             LOG_INFO("CMSG_CHAR_CREATE payload: name='", name,
-                     "' race=", (int)race, " class=", (int)cls, " gender=", (int)gender,
-                     " skin=", (int)skin, " face=", (int)face,
-                     " hairStyle=", (int)hairStyle, " hairColor=", (int)hairColor,
-                     " facial=", (int)facial, " outfit=", (int)outfit,
+                     "' race=", static_cast<int>(race), " class=", static_cast<int>(cls), " gender=", static_cast<int>(gender),
+                     " skin=", static_cast<int>(skin), " face=", static_cast<int>(face),
+                     " hairStyle=", static_cast<int>(hairStyle), " hairColor=", static_cast<int>(hairColor),
+                     " facial=", static_cast<int>(facial), " outfit=", static_cast<int>(outfit),
                      " payloadLen=", payloadLen);
             // Persist to disk so we can compare TX vs DB even if the console scrolls away.
             std::ofstream f("charcreate_payload.log", std::ios::app);
             if (f.is_open()) {
                 f << "name='" << name << "'"
-                  << " race=" << (int)race
-                  << " class=" << (int)cls
-                  << " gender=" << (int)gender
-                  << " skin=" << (int)skin
-                  << " face=" << (int)face
-                  << " hairStyle=" << (int)hairStyle
-                  << " hairColor=" << (int)hairColor
-                  << " facial=" << (int)facial
-                  << " outfit=" << (int)outfit
+                  << " race=" << static_cast<int>(race)
+                  << " class=" << static_cast<int>(cls)
+                  << " gender=" << static_cast<int>(gender)
+                  << " skin=" << static_cast<int>(skin)
+                  << " face=" << static_cast<int>(face)
+                  << " hairStyle=" << static_cast<int>(hairStyle)
+                  << " hairColor=" << static_cast<int>(hairColor)
+                  << " facial=" << static_cast<int>(facial)
+                  << " outfit=" << static_cast<int>(outfit)
                   << " payloadLen=" << payloadLen
                   << "\n";
             }

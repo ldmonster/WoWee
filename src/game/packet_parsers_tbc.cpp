@@ -37,7 +37,7 @@ bool TbcPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlock& 
     uint8_t updateFlags = packet.readUInt8();
     block.updateFlags = static_cast<uint16_t>(updateFlags);
 
-    LOG_DEBUG("  [TBC] UpdateFlags: 0x", std::hex, (int)updateFlags, std::dec);
+    LOG_DEBUG("  [TBC] UpdateFlags: 0x", std::hex, static_cast<int>(updateFlags), std::dec);
 
     // TBC UpdateFlag bit values (same as lower byte of WotLK):
     // 0x01 = SELF
@@ -317,12 +317,12 @@ bool TbcPacketParsers::parseCharEnum(network::Packet& packet, CharEnumResponse& 
     // Cap count to prevent excessive memory allocation
     constexpr uint8_t kMaxCharacters = 32;
     if (count > kMaxCharacters) {
-        LOG_WARNING("[TBC] Character count ", (int)count, " exceeds max ", (int)kMaxCharacters,
+        LOG_WARNING("[TBC] Character count ", static_cast<int>(count), " exceeds max ", static_cast<int>(kMaxCharacters),
                     ", capping");
         count = kMaxCharacters;
     }
 
-    LOG_INFO("[TBC] Parsing SMSG_CHAR_ENUM: ", (int)count, " characters");
+    LOG_INFO("[TBC] Parsing SMSG_CHAR_ENUM: ", static_cast<int>(count), " characters");
 
     response.characters.clear();
     response.characters.reserve(count);
@@ -334,7 +334,7 @@ bool TbcPacketParsers::parseCharEnum(network::Packet& packet, CharEnumResponse& 
         //          + flags(4) + firstLogin(1) + pet(12) + equipment(20*9)
         constexpr size_t kMinCharacterSize = 8 + 1 + 1 + 1 + 1 + 4 + 1 + 1 + 4 + 4 + 12 + 4 + 4 + 1 + 12 + 180;
         if (packet.getReadPos() + kMinCharacterSize > packet.getSize()) {
-            LOG_WARNING("[TBC] Character enum packet truncated at character ", (int)(i + 1),
+            LOG_WARNING("[TBC] Character enum packet truncated at character ", static_cast<int>(i + 1),
                         ", pos=", packet.getReadPos(), " needed=", kMinCharacterSize,
                         " size=", packet.getSize());
             break;
@@ -391,9 +391,9 @@ bool TbcPacketParsers::parseCharEnum(network::Packet& packet, CharEnumResponse& 
             character.equipment.push_back(item);
         }
 
-        LOG_DEBUG("  Character ", (int)(i + 1), ": ", character.name,
+        LOG_DEBUG("  Character ", static_cast<int>(i + 1), ": ", character.name,
                   " (", getRaceName(character.race), " ", getClassName(character.characterClass),
-                  " level ", (int)character.level, " zone ", character.zoneId, ")");
+                  " level ", static_cast<int>(character.level), " zone ", character.zoneId, ")");
 
         response.characters.push_back(character);
     }
@@ -710,7 +710,7 @@ bool TbcPacketParsers::parseMonsterMove(network::Packet& packet, MonsterMoveData
     }
 
     LOG_DEBUG("[TBC] MonsterMove: guid=0x", std::hex, data.guid, std::dec,
-              " type=", (int)data.moveType, " dur=", data.duration, "ms",
+              " type=", static_cast<int>(data.moveType), " dur=", data.duration, "ms",
               " dest=(", data.destX, ",", data.destY, ",", data.destZ, ")");
     return true;
 }
@@ -1162,7 +1162,7 @@ bool TbcPacketParsers::parseMailList(network::Packet& packet, std::vector<MailMe
     if (remaining < 1) return false;
 
     uint8_t count = packet.readUInt8();
-    LOG_INFO("SMSG_MAIL_LIST_RESULT (TBC): count=", (int)count);
+    LOG_INFO("SMSG_MAIL_LIST_RESULT (TBC): count=", static_cast<int>(count));
 
     inbox.clear();
     inbox.reserve(count);
@@ -1361,7 +1361,7 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
 
     const uint8_t rawHitCount = packet.readUInt8();
     if (rawHitCount > 128) {
-        LOG_WARNING("[TBC] Spell go: hitCount capped (requested=", (int)rawHitCount, ")");
+        LOG_WARNING("[TBC] Spell go: hitCount capped (requested=", static_cast<int>(rawHitCount), ")");
     }
     const uint8_t storedHitLimit = std::min<uint8_t>(rawHitCount, 128);
     data.hitTargets.reserve(storedHitLimit);
@@ -1369,7 +1369,7 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
     for (uint16_t i = 0; i < rawHitCount; ++i) {
         if (packet.getReadPos() + 8 > packet.getSize()) {
             LOG_WARNING("[TBC] Spell go: truncated hit targets at index ", i,
-                        "/", (int)rawHitCount);
+                        "/", static_cast<int>(rawHitCount));
             truncatedTargets = true;
             break;
         }
@@ -1392,14 +1392,14 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
 
     const uint8_t rawMissCount = packet.readUInt8();
     if (rawMissCount > 128) {
-        LOG_WARNING("[TBC] Spell go: missCount capped (requested=", (int)rawMissCount, ")");
+        LOG_WARNING("[TBC] Spell go: missCount capped (requested=", static_cast<int>(rawMissCount), ")");
     }
     const uint8_t storedMissLimit = std::min<uint8_t>(rawMissCount, 128);
     data.missTargets.reserve(storedMissLimit);
     for (uint16_t i = 0; i < rawMissCount; ++i) {
         if (packet.getReadPos() + 9 > packet.getSize()) {
             LOG_WARNING("[TBC] Spell go: truncated miss targets at index ", i,
-                        "/", (int)rawMissCount);
+                        "/", static_cast<int>(rawMissCount));
             truncatedTargets = true;
             break;
         }
@@ -1409,7 +1409,7 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
         if (m.missType == 11) { // SPELL_MISS_REFLECT
             if (packet.getReadPos() + 1 > packet.getSize()) {
                 LOG_WARNING("[TBC] Spell go: truncated reflect payload at miss index ", i,
-                            "/", (int)rawMissCount);
+                            "/", static_cast<int>(rawMissCount));
                 truncatedTargets = true;
                 break;
             }
@@ -1429,8 +1429,8 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
     // any subsequent fields are not misaligned for ground-targeted AoE spells.
     skipTbcSpellCastTargets(packet, &data.targetGuid);
 
-    LOG_DEBUG("[TBC] Spell go: spell=", data.spellId, " hits=", (int)data.hitCount,
-              " misses=", (int)data.missCount);
+    LOG_DEBUG("[TBC] Spell go: spell=", data.spellId, " hits=", static_cast<int>(data.hitCount),
+              " misses=", static_cast<int>(data.missCount));
     return true;
 }
 
@@ -1463,7 +1463,7 @@ bool TbcPacketParsers::parseCastFailed(network::Packet& packet, CastFailedData& 
     data.castCount = 0;                      // not present in TBC
     data.spellId   = packet.readUInt32();
     data.result    = packet.readUInt8();     // same enum as WotLK
-    LOG_DEBUG("[TBC] Cast failed: spell=", data.spellId, " result=", (int)data.result);
+    LOG_DEBUG("[TBC] Cast failed: spell=", data.spellId, " result=", static_cast<int>(data.result));
     return true;
 }
 

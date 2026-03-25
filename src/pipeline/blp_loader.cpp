@@ -253,7 +253,7 @@ void BLPLoader::decompressDXT3(const uint8_t* src, uint8_t* dst, int width, int 
             // First 8 bytes: 4-bit alpha values
             uint64_t alphaBlock = 0;
             for (int i = 0; i < 8; i++) {
-                alphaBlock |= (uint64_t)block[i] << (i * 8);
+                alphaBlock |= static_cast<uint64_t>(block[i]) << (i * 8);
             }
 
             // Color block (same as DXT1) starts at byte 8
@@ -336,7 +336,7 @@ void BLPLoader::decompressDXT5(const uint8_t* src, uint8_t* dst, int width, int 
             // Alpha indices (48 bits for 16 pixels, 3 bits each)
             uint64_t alphaIndices = 0;
             for (int i = 2; i < 8; i++) {
-                alphaIndices |= (uint64_t)block[i] << ((i - 2) * 8);
+                alphaIndices |= static_cast<uint64_t>(block[i]) << ((i - 2) * 8);
             }
 
             // Color block (same as DXT1) starts at byte 8

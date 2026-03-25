@@ -748,7 +748,7 @@ void TalentScreen::renderGlyphs(game::GameHandler& gameHandler) {
         if (!name.empty()) {
             ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "%s", name.c_str());
         } else {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Glyph #%u", (uint32_t)glyphId);
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Glyph #%u", static_cast<uint32_t>(glyphId));
         }
     };
 

@@ -1583,7 +1583,7 @@ void Renderer::setMounted(uint32_t mountInstId, uint32_t mountDisplayId, float h
             int bestScore = -999;
             for (uint32_t id : loops) {
                 int sc = 0;
-                sc += scoreNear((int)id, 38);  // classic hint
+                sc += scoreNear(static_cast<int>(id), 38);  // classic hint
                 const auto* s = findSeqById(id);
                 if (s) sc += (s->duration >= 500 && s->duration <= 800) ? 5 : 0;
                 if (sc > bestScore) {
@@ -1607,10 +1607,10 @@ void Renderer::setMounted(uint32_t mountInstId, uint32_t mountDisplayId, float h
             // Start window
             if (seq.duration >= 450 && seq.duration <= 1100) {
                 int sc = 0;
-                if (loop) sc += scoreNear((int)seq.id, (int)loop);
+                if (loop) sc += scoreNear(static_cast<int>(seq.id), static_cast<int>(loop));
                 // Chain bonus: if this start points at loop or near it
-                if (loop && (seq.nextAnimation == (int16_t)loop || seq.aliasNext == loop)) sc += 30;
-                if (loop && scoreNear(seq.nextAnimation, (int)loop) > 0) sc += 10;
+                if (loop && (seq.nextAnimation == static_cast<int16_t>(loop) || seq.aliasNext == loop)) sc += 30;
+                if (loop && scoreNear(seq.nextAnimation, static_cast<int>(loop)) > 0) sc += 10;
                 // Penalize "stop/brake-ish": very long blendTime can be a stop transition
                 if (seq.blendTime > 400) sc -= 5;
 
@@ -1623,9 +1623,9 @@ void Renderer::setMounted(uint32_t mountInstId, uint32_t mountDisplayId, float h
             // End window
             if (seq.duration >= 650 && seq.duration <= 1600) {
                 int sc = 0;
-                if (loop) sc += scoreNear((int)seq.id, (int)loop);
+                if (loop) sc += scoreNear(static_cast<int>(seq.id), static_cast<int>(loop));
                 // Chain bonus: end often points to run/stand or has no next
-                if (seq.nextAnimation == (int16_t)runId || seq.nextAnimation == (int16_t)standId) sc += 10;
+                if (seq.nextAnimation == static_cast<int16_t>(runId) || seq.nextAnimation == static_cast<int16_t>(standId)) sc += 10;
                 if (seq.nextAnimation < 0) sc += 5; // no chain sometimes = terminal
                 if (sc > bestEnd) {
                     bestEnd = sc;
@@ -1698,7 +1698,7 @@ void Renderer::setMounted(uint32_t mountInstId, uint32_t mountDisplayId, float h
         if (!isLoop && (hasFrequency || hasReplay) && isStationary && reasonableDuration &&
             !isDeathOrWound && !isAttackOrCombat && !isSpecial) {
             // Bonus: chains back to stand (indicates idle behavior)
-            bool chainsToStand = (seq.nextAnimation == (int16_t)mountAnims_.stand) ||
+            bool chainsToStand = (seq.nextAnimation == static_cast<int16_t>(mountAnims_.stand)) ||
                                  (seq.aliasNext == mountAnims_.stand) ||
                                  (seq.nextAnimation == -1);
 

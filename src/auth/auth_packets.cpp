@@ -207,7 +207,7 @@ bool LogonChallengeResponseParser::parse(network::Packet& packet, LogonChallenge
     LOG_DEBUG("  g size: ", response.g.size(), " bytes");
     LOG_DEBUG("  N size: ", response.N.size(), " bytes");
     LOG_DEBUG("  salt size: ", response.salt.size(), " bytes");
-    LOG_DEBUG("  Security flags: ", (int)response.securityFlags);
+    LOG_DEBUG("  Security flags: ", static_cast<int>(response.securityFlags));
     if (response.securityFlags & 0x01) {
         LOG_DEBUG("  PIN grid seed: ", response.pinGridSeed);
     }
@@ -317,10 +317,10 @@ bool LogonProofResponseParser::parse(network::Packet& packet, LogonProofResponse
     // Status
     response.status = packet.readUInt8();
 
-    LOG_INFO("LOGON_PROOF response status: ", (int)response.status);
+    LOG_INFO("LOGON_PROOF response status: ", static_cast<int>(response.status));
 
     if (response.status != 0) {
-        LOG_ERROR("LOGON_PROOF failed with status: ", (int)response.status);
+        LOG_ERROR("LOGON_PROOF failed with status: ", static_cast<int>(response.status));
         return true;  // Valid packet, but proof failed
     }
 
@@ -428,13 +428,13 @@ bool RealmListResponseParser::parse(network::Packet& packet, RealmListResponse& 
         LOG_DEBUG("  Realm ", static_cast<int>(i), " details:");
         LOG_DEBUG("    Name: ", realm.name);
         LOG_DEBUG("    Address: ", realm.address);
-        LOG_DEBUG("    ID: ", (int)realm.id);
-        LOG_DEBUG("    Icon: ", (int)realm.icon);
-        LOG_DEBUG("    Lock: ", (int)realm.lock);
-        LOG_DEBUG("    Flags: ", (int)realm.flags);
+        LOG_DEBUG("    ID: ", static_cast<int>(realm.id));
+        LOG_DEBUG("    Icon: ", static_cast<int>(realm.icon));
+        LOG_DEBUG("    Lock: ", static_cast<int>(realm.lock));
+        LOG_DEBUG("    Flags: ", static_cast<int>(realm.flags));
         LOG_DEBUG("    Population: ", realm.population);
-        LOG_DEBUG("    Characters: ", (int)realm.characters);
-        LOG_DEBUG("    Timezone: ", (int)realm.timezone);
+        LOG_DEBUG("    Characters: ", static_cast<int>(realm.characters));
+        LOG_DEBUG("    Timezone: ", static_cast<int>(realm.timezone));
 
         response.realms.push_back(realm);
     }
