@@ -355,10 +355,10 @@ void ClassicPacketParsers::writeMovementPayload(network::Packet& packet, const M
     packet.writeUInt32(info.time);
 
     // Position
-    packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.x), sizeof(float));
-    packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.y), sizeof(float));
-    packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.z), sizeof(float));
-    packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.orientation), sizeof(float));
+    packet.writeFloat(info.x);
+    packet.writeFloat(info.y);
+    packet.writeFloat(info.z);
+    packet.writeFloat(info.orientation);
 
     // Transport data (Classic ONTRANSPORT = 0x02000000, no timestamp)
     if (wireFlags & ClassicMoveFlags::ONTRANSPORT) {
@@ -379,10 +379,10 @@ void ClassicPacketParsers::writeMovementPayload(network::Packet& packet, const M
         }
 
         // Transport local position
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.transportX), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.transportY), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.transportZ), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.transportO), sizeof(float));
+        packet.writeFloat(info.transportX);
+        packet.writeFloat(info.transportY);
+        packet.writeFloat(info.transportZ);
+        packet.writeFloat(info.transportO);
 
         // Classic: NO transport timestamp
         // Classic: NO transport seat byte
@@ -390,7 +390,7 @@ void ClassicPacketParsers::writeMovementPayload(network::Packet& packet, const M
 
     // Pitch (Classic: only SWIMMING)
     if (wireFlags & ClassicMoveFlags::SWIMMING) {
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.pitch), sizeof(float));
+        packet.writeFloat(info.pitch);
     }
 
     // Fall time (always present)
@@ -398,10 +398,10 @@ void ClassicPacketParsers::writeMovementPayload(network::Packet& packet, const M
 
     // Jump data (Classic JUMPING = 0x2000)
     if (wireFlags & ClassicMoveFlags::JUMPING) {
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.jumpVelocity), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.jumpSinAngle), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.jumpCosAngle), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.jumpXYSpeed), sizeof(float));
+        packet.writeFloat(info.jumpVelocity);
+        packet.writeFloat(info.jumpSinAngle);
+        packet.writeFloat(info.jumpCosAngle);
+        packet.writeFloat(info.jumpXYSpeed);
     }
 }
 

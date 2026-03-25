@@ -228,10 +228,10 @@ void TbcPacketParsers::writeMovementPayload(network::Packet& packet, const Movem
     packet.writeUInt32(info.time);
 
     // Position
-    packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.x), sizeof(float));
-    packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.y), sizeof(float));
-    packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.z), sizeof(float));
-    packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.orientation), sizeof(float));
+    packet.writeFloat(info.x);
+    packet.writeFloat(info.y);
+    packet.writeFloat(info.z);
+    packet.writeFloat(info.orientation);
 
     // Transport data (TBC ON_TRANSPORT = 0x200, same bit as WotLK)
     if (info.flags & TbcMoveFlags::ON_TRANSPORT) {
@@ -252,10 +252,10 @@ void TbcPacketParsers::writeMovementPayload(network::Packet& packet, const Movem
         }
 
         // Transport local position
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.transportX), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.transportY), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.transportZ), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.transportO), sizeof(float));
+        packet.writeFloat(info.transportX);
+        packet.writeFloat(info.transportY);
+        packet.writeFloat(info.transportZ);
+        packet.writeFloat(info.transportO);
 
         // Transport time
         packet.writeUInt32(info.transportTime);
@@ -266,9 +266,9 @@ void TbcPacketParsers::writeMovementPayload(network::Packet& packet, const Movem
 
     // Pitch: SWIMMING or else ONTRANSPORT (TBC flag positions)
     if (info.flags & TbcMoveFlags::SWIMMING) {
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.pitch), sizeof(float));
+        packet.writeFloat(info.pitch);
     } else if (info.flags & TbcMoveFlags::ONTRANSPORT) {
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.pitch), sizeof(float));
+        packet.writeFloat(info.pitch);
     }
 
     // Fall time (always present)
@@ -276,10 +276,10 @@ void TbcPacketParsers::writeMovementPayload(network::Packet& packet, const Movem
 
     // Jump data (TBC JUMPING = 0x2000, WotLK FALLING = 0x1000)
     if (info.flags & TbcMoveFlags::JUMPING) {
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.jumpVelocity), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.jumpSinAngle), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.jumpCosAngle), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.jumpXYSpeed), sizeof(float));
+        packet.writeFloat(info.jumpVelocity);
+        packet.writeFloat(info.jumpSinAngle);
+        packet.writeFloat(info.jumpCosAngle);
+        packet.writeFloat(info.jumpXYSpeed);
     }
 }
 

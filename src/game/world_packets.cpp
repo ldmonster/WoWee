@@ -761,12 +761,12 @@ void MovementPacket::writeMovementPayload(network::Packet& packet, const Movemen
     packet.writeUInt32(info.time);
 
     // Write position
-    packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.x), sizeof(float));
-    packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.y), sizeof(float));
-    packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.z), sizeof(float));
+    packet.writeFloat(info.x);
+    packet.writeFloat(info.y);
+    packet.writeFloat(info.z);
 
     // Write orientation
-    packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.orientation), sizeof(float));
+    packet.writeFloat(info.orientation);
 
     // Write transport data if on transport.
     // 3.3.5a ordering: transport block appears before pitch/fall/jump.
@@ -788,10 +788,10 @@ void MovementPacket::writeMovementPayload(network::Packet& packet, const Movemen
         }
 
         // Write transport local position
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.transportX), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.transportY), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.transportZ), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.transportO), sizeof(float));
+        packet.writeFloat(info.transportX);
+        packet.writeFloat(info.transportY);
+        packet.writeFloat(info.transportZ);
+        packet.writeFloat(info.transportO);
 
         // Write transport time
         packet.writeUInt32(info.transportTime);
@@ -807,7 +807,7 @@ void MovementPacket::writeMovementPayload(network::Packet& packet, const Movemen
 
     // Write pitch if swimming/flying
     if (info.hasFlag(MovementFlags::SWIMMING) || info.hasFlag(MovementFlags::FLYING)) {
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.pitch), sizeof(float));
+        packet.writeFloat(info.pitch);
     }
 
     // Fall time is ALWAYS present in the packet (server reads it unconditionally).
@@ -815,10 +815,10 @@ void MovementPacket::writeMovementPayload(network::Packet& packet, const Movemen
     packet.writeUInt32(info.fallTime);
 
     if (info.hasFlag(MovementFlags::FALLING)) {
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.jumpVelocity), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.jumpSinAngle), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.jumpCosAngle), sizeof(float));
-        packet.writeBytes(reinterpret_cast<const uint8_t*>(&info.jumpXYSpeed), sizeof(float));
+        packet.writeFloat(info.jumpVelocity);
+        packet.writeFloat(info.jumpSinAngle);
+        packet.writeFloat(info.jumpCosAngle);
+        packet.writeFloat(info.jumpXYSpeed);
     }
 }
 
