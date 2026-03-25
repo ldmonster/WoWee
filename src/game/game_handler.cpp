@@ -1461,55 +1461,22 @@ void GameHandler::update(float deltaTime) {
             }
         }
 
-        // Close vendor/gossip/taxi window if player walks too far from NPC
-        if (vendorWindowOpen && currentVendorItems.vendorGuid != 0) {
-            auto npc = entityManager.getEntity(currentVendorItems.vendorGuid);
-            if (npc) {
-                float dx = movementInfo.x - npc->getX();
-                float dy = movementInfo.y - npc->getY();
-                float dist = std::sqrt(dx * dx + dy * dy);
-                if (dist > 15.0f) {
-                    closeVendor();
-                    LOG_INFO("Vendor closed: walked too far from NPC");
-                }
+        // Close NPC windows if player walks too far (15 units)
+        auto closeIfTooFar = [&](bool windowOpen, uint64_t npcGuid, auto closeFn, const char* label) {
+            if (!windowOpen || npcGuid == 0) return;
+            auto npc = entityManager.getEntity(npcGuid);
+            if (!npc) return;
+            float dx = movementInfo.x - npc->getX();
+            float dy = movementInfo.y - npc->getY();
+            if (std::sqrt(dx * dx + dy * dy) > 15.0f) {
+                closeFn();
+                LOG_INFO(label, " closed: walked too far from NPC");
             }
-        }
-        if (gossipWindowOpen && currentGossip.npcGuid != 0) {
-            auto npc = entityManager.getEntity(currentGossip.npcGuid);
-            if (npc) {
-                float dx = movementInfo.x - npc->getX();
-                float dy = movementInfo.y - npc->getY();
-                float dist = std::sqrt(dx * dx + dy * dy);
-                if (dist > 15.0f) {
-                    closeGossip();
-                    LOG_INFO("Gossip closed: walked too far from NPC");
-                }
-            }
-        }
-        if (taxiWindowOpen_ && taxiNpcGuid_ != 0) {
-            auto npc = entityManager.getEntity(taxiNpcGuid_);
-            if (npc) {
-                float dx = movementInfo.x - npc->getX();
-                float dy = movementInfo.y - npc->getY();
-                float dist = std::sqrt(dx * dx + dy * dy);
-                if (dist > 15.0f) {
-                    closeTaxi();
-                    LOG_INFO("Taxi window closed: walked too far from NPC");
-                }
-            }
-        }
-        if (trainerWindowOpen_ && currentTrainerList_.trainerGuid != 0) {
-            auto npc = entityManager.getEntity(currentTrainerList_.trainerGuid);
-            if (npc) {
-                float dx = movementInfo.x - npc->getX();
-                float dy = movementInfo.y - npc->getY();
-                float dist = std::sqrt(dx * dx + dy * dy);
-                if (dist > 15.0f) {
-                    closeTrainer();
-                    LOG_INFO("Trainer closed: walked too far from NPC");
-                }
-            }
-        }
+        };
+        closeIfTooFar(vendorWindowOpen, currentVendorItems.vendorGuid, [this]{ closeVendor(); }, "Vendor");
+        closeIfTooFar(gossipWindowOpen, currentGossip.npcGuid, [this]{ closeGossip(); }, "Gossip");
+        closeIfTooFar(taxiWindowOpen_, taxiNpcGuid_, [this]{ closeTaxi(); }, "Taxi window");
+        closeIfTooFar(trainerWindowOpen_, currentTrainerList_.trainerGuid, [this]{ closeTrainer(); }, "Trainer");
 
         // Update entity movement interpolation (keeps targeting in sync with visuals)
         // Only update entities within reasonable distance for performance
