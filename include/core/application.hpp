@@ -73,6 +73,7 @@ public:
 
     // Weapon loading (called at spawn and on equipment change)
     void loadEquippedWeapons();
+    bool loadWeaponM2(const std::string& m2Path, pipeline::M2Model& outModel);
 
     // Logout to login screen
     void logoutToLogin();

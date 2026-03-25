@@ -4016,6 +4016,21 @@ void Application::spawnPlayerCharacter() {
     }
 }
 
+bool Application::loadWeaponM2(const std::string& m2Path, pipeline::M2Model& outModel) {
+    auto m2Data = assetManager->readFile(m2Path);
+    if (m2Data.empty()) return false;
+    outModel = pipeline::M2Loader::load(m2Data);
+    // Load skin (WotLK+ M2 format): strip .m2, append 00.skin
+    std::string skinPath = m2Path;
+    size_t dotPos = skinPath.rfind('.');
+    if (dotPos != std::string::npos) skinPath = skinPath.substr(0, dotPos);
+    skinPath += "00.skin";
+    auto skinData = assetManager->readFile(skinPath);
+    if (!skinData.empty() && outModel.version >= 264)
+        pipeline::M2Loader::loadSkin(skinData, outModel);
+    return outModel.isValid();
+}
+
 void Application::loadEquippedWeapons() {
     if (!renderer || !renderer->getCharacterRenderer() || !assetManager || !assetManager->isInitialized())
         return;
@@ -4090,38 +4105,14 @@ void Application::loadEquippedWeapons() {
 
         // Try Weapon directory first, then Shield
         std::string m2Path = "Item\\ObjectComponents\\Weapon\\" + modelFile;
-        auto m2Data = assetManager->readFile(m2Path);
-        if (m2Data.empty()) {
+        pipeline::M2Model weaponModel;
+        if (!loadWeaponM2(m2Path, weaponModel)) {
             m2Path = "Item\\ObjectComponents\\Shield\\" + modelFile;
-            m2Data = assetManager->readFile(m2Path);
-        }
-        if (m2Data.empty()) {
-            LOG_WARNING("loadEquippedWeapons: failed to read ", modelFile);
-            charRenderer->detachWeapon(charInstanceId, ws.attachmentId);
-            continue;
-        }
-
-        auto weaponModel = pipeline::M2Loader::load(m2Data);
-
-        // Load skin file
-        std::string skinFile = modelFile;
-        {
-            size_t dotPos = skinFile.rfind('.');
-            if (dotPos != std::string::npos) {
-                skinFile = skinFile.substr(0, dotPos) + "00.skin";
+            if (!loadWeaponM2(m2Path, weaponModel)) {
+                LOG_WARNING("loadEquippedWeapons: failed to load ", modelFile);
+                charRenderer->detachWeapon(charInstanceId, ws.attachmentId);
+                continue;
             }
-        }
-        // Try same directory as m2
-        std::string skinDir = m2Path.substr(0, m2Path.rfind('\\') + 1);
-        auto skinData = assetManager->readFile(skinDir + skinFile);
-        if (!skinData.empty() && weaponModel.version >= 264) {
-            pipeline::M2Loader::loadSkin(skinData, weaponModel);
-        }
-
-        if (!weaponModel.isValid()) {
-            LOG_WARNING("loadEquippedWeapons: invalid weapon model from ", m2Path);
-            charRenderer->detachWeapon(charInstanceId, ws.attachmentId);
-            continue;
         }
 
         // Build texture path
@@ -4228,22 +4219,9 @@ bool Application::tryAttachCreatureVirtualWeapons(uint64_t guid, uint32_t instan
         modelFile += ".m2";
 
         // Main-hand NPC weapon path: only use actual weapon models.
-        // This avoids shields/placeholder hilts being attached incorrectly.
         std::string m2Path = "Item\\ObjectComponents\\Weapon\\" + modelFile;
-        auto m2Data = assetManager->readFile(m2Path);
-        if (m2Data.empty()) return false;
-
-        auto weaponModel = pipeline::M2Loader::load(m2Data);
-        std::string skinFile = modelFile;
-        size_t skinDot = skinFile.rfind('.');
-        if (skinDot != std::string::npos) skinFile = skinFile.substr(0, skinDot);
-        skinFile += "00.skin";
-        std::string skinDir = m2Path.substr(0, m2Path.rfind('\\') + 1);
-        auto skinData = assetManager->readFile(skinDir + skinFile);
-        if (!skinData.empty() && weaponModel.version >= 264) {
-            pipeline::M2Loader::loadSkin(skinData, weaponModel);
-        }
-        if (!weaponModel.isValid()) return false;
+        pipeline::M2Model weaponModel;
+        if (!loadWeaponM2(m2Path, weaponModel)) return false;
 
         std::string texturePath;
         if (!textureName.empty()) {
