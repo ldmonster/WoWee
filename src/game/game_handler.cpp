@@ -928,6 +928,140 @@ void GameHandler::updateNetworking(float deltaTime) {
     }
 }
 
+void GameHandler::updateTaxiAndMountState(float deltaTime) {
+// Update taxi landing cooldown
+if (taxiLandingCooldown_ > 0.0f) {
+    taxiLandingCooldown_ -= deltaTime;
+}
+if (taxiStartGrace_ > 0.0f) {
+    taxiStartGrace_ -= deltaTime;
+}
+if (playerTransportStickyTimer_ > 0.0f) {
+    playerTransportStickyTimer_ -= deltaTime;
+    if (playerTransportStickyTimer_ <= 0.0f) {
+        playerTransportStickyTimer_ = 0.0f;
+        playerTransportStickyGuid_ = 0;
+    }
+}
+
+// Detect taxi flight landing: UNIT_FLAG_TAXI_FLIGHT (0x00000100) cleared
+if (onTaxiFlight_) {
+    updateClientTaxi(deltaTime);
+    auto playerEntity = entityManager.getEntity(playerGuid);
+    auto unit = std::dynamic_pointer_cast<Unit>(playerEntity);
+    if (unit &&
+        (unit->getUnitFlags() & 0x00000100) == 0 &&
+        !taxiClientActive_ &&
+        !taxiActivatePending_ &&
+        taxiStartGrace_ <= 0.0f) {
+        onTaxiFlight_ = false;
+        taxiLandingCooldown_ = 2.0f;  // 2 second cooldown to prevent re-entering
+        if (taxiMountActive_ && mountCallback_) {
+            mountCallback_(0);
+        }
+        taxiMountActive_ = false;
+        taxiMountDisplayId_ = 0;
+        currentMountDisplayId_ = 0;
+        taxiClientActive_ = false;
+        taxiClientPath_.clear();
+        taxiRecoverPending_ = false;
+        movementInfo.flags = 0;
+        movementInfo.flags2 = 0;
+        if (socket) {
+            sendMovement(Opcode::MSG_MOVE_STOP);
+            sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
+        }
+        LOG_INFO("Taxi flight landed");
+    }
+}
+
+// Safety: if taxi flight ended but mount is still active, force dismount.
+// Guard against transient taxi-state flicker.
+if (!onTaxiFlight_ && taxiMountActive_) {
+    bool serverStillTaxi = false;
+    auto playerEntity = entityManager.getEntity(playerGuid);
+    auto playerUnit = std::dynamic_pointer_cast<Unit>(playerEntity);
+    if (playerUnit) {
+        serverStillTaxi = (playerUnit->getUnitFlags() & 0x00000100) != 0;
+    }
+
+    if (taxiStartGrace_ > 0.0f || serverStillTaxi || taxiClientActive_ || taxiActivatePending_) {
+        onTaxiFlight_ = true;
+    } else {
+        if (mountCallback_) mountCallback_(0);
+        taxiMountActive_ = false;
+        taxiMountDisplayId_ = 0;
+        currentMountDisplayId_ = 0;
+        movementInfo.flags = 0;
+        movementInfo.flags2 = 0;
+        if (socket) {
+            sendMovement(Opcode::MSG_MOVE_STOP);
+            sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
+        }
+        LOG_INFO("Taxi dismount cleanup");
+    }
+}
+
+// Keep non-taxi mount state server-authoritative.
+// Some server paths don't emit explicit mount field updates in lockstep
+// with local visual state changes, so reconcile continuously.
+if (!onTaxiFlight_ && !taxiMountActive_) {
+    auto playerEntity = entityManager.getEntity(playerGuid);
+    auto playerUnit = std::dynamic_pointer_cast<Unit>(playerEntity);
+    if (playerUnit) {
+        uint32_t serverMountDisplayId = playerUnit->getMountDisplayId();
+        if (serverMountDisplayId != currentMountDisplayId_) {
+            LOG_INFO("Mount reconcile: server=", serverMountDisplayId,
+                     " local=", currentMountDisplayId_);
+            currentMountDisplayId_ = serverMountDisplayId;
+            if (mountCallback_) {
+                mountCallback_(serverMountDisplayId);
+            }
+        }
+    }
+}
+
+if (taxiRecoverPending_ && state == WorldState::IN_WORLD) {
+    auto playerEntity = entityManager.getEntity(playerGuid);
+    if (playerEntity) {
+        playerEntity->setPosition(taxiRecoverPos_.x, taxiRecoverPos_.y,
+                                  taxiRecoverPos_.z, movementInfo.orientation);
+        movementInfo.x = taxiRecoverPos_.x;
+        movementInfo.y = taxiRecoverPos_.y;
+        movementInfo.z = taxiRecoverPos_.z;
+        if (socket) {
+            sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
+        }
+        taxiRecoverPending_ = false;
+        LOG_INFO("Taxi recovery applied");
+    }
+}
+
+if (taxiActivatePending_) {
+    taxiActivateTimer_ += deltaTime;
+    if (taxiActivateTimer_ > 5.0f) {
+        // If client taxi simulation is already active, server reply may be missing/late.
+        // Do not cancel the flight in that case; clear pending state and continue.
+        if (onTaxiFlight_ || taxiClientActive_ || taxiMountActive_) {
+            taxiActivatePending_ = false;
+            taxiActivateTimer_ = 0.0f;
+        } else {
+        taxiActivatePending_ = false;
+        taxiActivateTimer_ = 0.0f;
+        if (taxiMountActive_ && mountCallback_) {
+            mountCallback_(0);
+        }
+        taxiMountActive_ = false;
+        taxiMountDisplayId_ = 0;
+        taxiClientActive_ = false;
+        taxiClientPath_.clear();
+        onTaxiFlight_ = false;
+        LOG_WARNING("Taxi activation timed out");
+        }
+    }
+}
+}
+
 void GameHandler::updateEntityInterpolation(float deltaTime) {
 // Update entity movement interpolation (keeps targeting in sync with visuals)
 // Only update entities within reasonable distance for performance
@@ -1272,137 +1406,8 @@ void GameHandler::update(float deltaTime) {
             if (logoutCountdown_ < 0.0f) logoutCountdown_ = 0.0f;
         }
 
-        // Update taxi landing cooldown
-        if (taxiLandingCooldown_ > 0.0f) {
-            taxiLandingCooldown_ -= deltaTime;
-        }
-        if (taxiStartGrace_ > 0.0f) {
-            taxiStartGrace_ -= deltaTime;
-        }
-        if (playerTransportStickyTimer_ > 0.0f) {
-            playerTransportStickyTimer_ -= deltaTime;
-            if (playerTransportStickyTimer_ <= 0.0f) {
-                playerTransportStickyTimer_ = 0.0f;
-                playerTransportStickyGuid_ = 0;
-            }
-        }
+        updateTaxiAndMountState(deltaTime);
 
-        // Detect taxi flight landing: UNIT_FLAG_TAXI_FLIGHT (0x00000100) cleared
-        if (onTaxiFlight_) {
-            updateClientTaxi(deltaTime);
-            auto playerEntity = entityManager.getEntity(playerGuid);
-            auto unit = std::dynamic_pointer_cast<Unit>(playerEntity);
-            if (unit &&
-                (unit->getUnitFlags() & 0x00000100) == 0 &&
-                !taxiClientActive_ &&
-                !taxiActivatePending_ &&
-                taxiStartGrace_ <= 0.0f) {
-                onTaxiFlight_ = false;
-                taxiLandingCooldown_ = 2.0f;  // 2 second cooldown to prevent re-entering
-                if (taxiMountActive_ && mountCallback_) {
-                    mountCallback_(0);
-                }
-                taxiMountActive_ = false;
-                taxiMountDisplayId_ = 0;
-                currentMountDisplayId_ = 0;
-                taxiClientActive_ = false;
-                taxiClientPath_.clear();
-                taxiRecoverPending_ = false;
-                movementInfo.flags = 0;
-                movementInfo.flags2 = 0;
-                if (socket) {
-                    sendMovement(Opcode::MSG_MOVE_STOP);
-                    sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
-                }
-                LOG_INFO("Taxi flight landed");
-            }
-        }
-
-        // Safety: if taxi flight ended but mount is still active, force dismount.
-        // Guard against transient taxi-state flicker.
-        if (!onTaxiFlight_ && taxiMountActive_) {
-            bool serverStillTaxi = false;
-            auto playerEntity = entityManager.getEntity(playerGuid);
-            auto playerUnit = std::dynamic_pointer_cast<Unit>(playerEntity);
-            if (playerUnit) {
-                serverStillTaxi = (playerUnit->getUnitFlags() & 0x00000100) != 0;
-            }
-
-            if (taxiStartGrace_ > 0.0f || serverStillTaxi || taxiClientActive_ || taxiActivatePending_) {
-                onTaxiFlight_ = true;
-            } else {
-                if (mountCallback_) mountCallback_(0);
-                taxiMountActive_ = false;
-                taxiMountDisplayId_ = 0;
-                currentMountDisplayId_ = 0;
-                movementInfo.flags = 0;
-                movementInfo.flags2 = 0;
-                if (socket) {
-                    sendMovement(Opcode::MSG_MOVE_STOP);
-                    sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
-                }
-                LOG_INFO("Taxi dismount cleanup");
-            }
-        }
-
-        // Keep non-taxi mount state server-authoritative.
-        // Some server paths don't emit explicit mount field updates in lockstep
-        // with local visual state changes, so reconcile continuously.
-        if (!onTaxiFlight_ && !taxiMountActive_) {
-            auto playerEntity = entityManager.getEntity(playerGuid);
-            auto playerUnit = std::dynamic_pointer_cast<Unit>(playerEntity);
-            if (playerUnit) {
-                uint32_t serverMountDisplayId = playerUnit->getMountDisplayId();
-                if (serverMountDisplayId != currentMountDisplayId_) {
-                    LOG_INFO("Mount reconcile: server=", serverMountDisplayId,
-                             " local=", currentMountDisplayId_);
-                    currentMountDisplayId_ = serverMountDisplayId;
-                    if (mountCallback_) {
-                        mountCallback_(serverMountDisplayId);
-                    }
-                }
-            }
-        }
-
-        if (taxiRecoverPending_ && state == WorldState::IN_WORLD) {
-            auto playerEntity = entityManager.getEntity(playerGuid);
-            if (playerEntity) {
-                playerEntity->setPosition(taxiRecoverPos_.x, taxiRecoverPos_.y,
-                                          taxiRecoverPos_.z, movementInfo.orientation);
-                movementInfo.x = taxiRecoverPos_.x;
-                movementInfo.y = taxiRecoverPos_.y;
-                movementInfo.z = taxiRecoverPos_.z;
-                if (socket) {
-                    sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
-                }
-                taxiRecoverPending_ = false;
-                LOG_INFO("Taxi recovery applied");
-            }
-        }
-
-        if (taxiActivatePending_) {
-            taxiActivateTimer_ += deltaTime;
-            if (taxiActivateTimer_ > 5.0f) {
-                // If client taxi simulation is already active, server reply may be missing/late.
-                // Do not cancel the flight in that case; clear pending state and continue.
-                if (onTaxiFlight_ || taxiClientActive_ || taxiMountActive_) {
-                    taxiActivatePending_ = false;
-                    taxiActivateTimer_ = 0.0f;
-                } else {
-                taxiActivatePending_ = false;
-                taxiActivateTimer_ = 0.0f;
-                if (taxiMountActive_ && mountCallback_) {
-                    mountCallback_(0);
-                }
-                taxiMountActive_ = false;
-                taxiMountDisplayId_ = 0;
-                taxiClientActive_ = false;
-                taxiClientPath_.clear();
-                onTaxiFlight_ = false;
-                LOG_WARNING("Taxi activation timed out");
-                }
-            }
-        }
 
         // Update transport manager
         if (transportManager_) {

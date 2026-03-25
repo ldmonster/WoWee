@@ -2317,6 +2317,7 @@ public:
     void updateNetworking(float deltaTime);
     void updateTimers(float deltaTime);
     void updateEntityInterpolation(float deltaTime);
+    void updateTaxiAndMountState(float deltaTime);
 
     /**
      * Reset DBC-backed caches so they reload from new expansion data.
