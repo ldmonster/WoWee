@@ -1684,8 +1684,8 @@ void GameHandler::registerOpcodeHandlers() {
     dispatchTable_[Opcode::SMSG_CREATURE_QUERY_RESPONSE]    = [this](network::Packet& packet) { handleCreatureQueryResponse(packet); };
     dispatchTable_[Opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE] = [this](network::Packet& packet) { handleItemQueryResponse(packet); };
     dispatchTable_[Opcode::SMSG_INSPECT_TALENT]             = [this](network::Packet& packet) { handleInspectResults(packet); };
-    dispatchTable_[Opcode::SMSG_ADDON_INFO]                 = [this](network::Packet& packet) { packet.skipAll(); };
-    dispatchTable_[Opcode::SMSG_EXPECTED_SPAM_RECORDS]      = [this](network::Packet& packet) { packet.skipAll(); };
+    registerSkipHandler(Opcode::SMSG_ADDON_INFO);
+    registerSkipHandler(Opcode::SMSG_EXPECTED_SPAM_RECORDS);
 
     // -----------------------------------------------------------------------
     // XP / exploration
@@ -2154,14 +2154,14 @@ void GameHandler::registerOpcodeHandlers() {
             }
         }
     };
-    // Multi-case group: consume silently
+    // Consume silently — opcodes we receive but don't need to act on
     for (auto op : {
         Opcode::SMSG_GAMEOBJECT_DESPAWN_ANIM, Opcode::SMSG_GAMEOBJECT_RESET_STATE,
         Opcode::SMSG_FLIGHT_SPLINE_SYNC, Opcode::SMSG_FORCE_DISPLAY_UPDATE,
         Opcode::SMSG_FORCE_SEND_QUEUED_PACKETS, Opcode::SMSG_FORCE_SET_VEHICLE_REC_ID,
         Opcode::SMSG_CORPSE_MAP_POSITION_QUERY_RESPONSE, Opcode::SMSG_DAMAGE_CALC_LOG,
         Opcode::SMSG_DYNAMIC_DROP_ROLL_RESULT, Opcode::SMSG_DESTRUCTIBLE_BUILDING_DAMAGE,
-    }) { dispatchTable_[op] = [this](network::Packet& packet) { packet.skipAll(); }; }
+    }) { registerSkipHandler(op); }
     dispatchTable_[Opcode::SMSG_FORCED_DEATH_UPDATE] = [this](network::Packet& packet) {
         playerDead_ = true;
         if (ghostStateCallback_) ghostStateCallback_(false);
@@ -3340,9 +3340,8 @@ void GameHandler::registerOpcodeHandlers() {
         packet.skipAll();
     };
     for (auto op : { Opcode::SMSG_LFG_UPDATE_SEARCH, Opcode::SMSG_UPDATE_LFG_LIST,
-                     Opcode::SMSG_LFG_PLAYER_INFO, Opcode::SMSG_LFG_PARTY_INFO }) {
-        dispatchTable_[op] = [](network::Packet& packet) { packet.skipAll(); };
-    }
+                     Opcode::SMSG_LFG_PLAYER_INFO, Opcode::SMSG_LFG_PARTY_INFO })
+        registerSkipHandler(op);
     dispatchTable_[Opcode::SMSG_OPEN_LFG_DUNGEON_FINDER] = [this](network::Packet& packet) {
         packet.skipAll();
         if (openLfgCallback_) openLfgCallback_();
@@ -7695,7 +7694,7 @@ void GameHandler::registerOpcodeHandlers() {
         Opcode::SMSG_VOICE_SESSION_LEAVE,
         Opcode::SMSG_VOICE_SESSION_ROSTER_UPDATE,
         Opcode::SMSG_VOICE_SET_TALKER_MUTED
-    }) { dispatchTable_[op] = [this](network::Packet& packet) { packet.skipAll(); }; }
+    }) { registerSkipHandler(op); }
 }
 
 void GameHandler::handlePacket(network::Packet& packet) {
