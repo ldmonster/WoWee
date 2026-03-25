@@ -1,4 +1,5 @@
 #include "ui/spellbook_screen.hpp"
+#include "ui/ui_colors.hpp"
 #include "ui/keybinding_manager.hpp"
 #include "core/input.hpp"
 #include "core/application.hpp"
@@ -585,7 +586,7 @@ void SpellbookScreen::renderSpellTooltip(const SpellInfo* info, game::GameHandle
     // Cooldown if active
     float cd = gameHandler.getSpellCooldown(info->spellId);
     if (cd > 0.0f) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Cooldown: %.1fs", cd);
+        ImGui::TextColored(ui::colors::kRed, "Cooldown: %.1fs", cd);
     }
 
     // Description
@@ -597,8 +598,8 @@ void SpellbookScreen::renderSpellTooltip(const SpellInfo* info, game::GameHandle
     // Usage hints — only shown when browsing the spellbook, not on action bar hover
     if (!info->isPassive() && showUsageHints) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Drag to action bar");
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Double-click to cast");
+        ImGui::TextColored(ui::colors::kBrightGreen, "Drag to action bar");
+        ImGui::TextColored(ui::colors::kBrightGreen, "Double-click to cast");
     }
 
     ImGui::PopTextWrapPos();

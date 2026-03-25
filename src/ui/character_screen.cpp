@@ -1,4 +1,5 @@
 #include "ui/character_screen.hpp"
+#include "ui/ui_colors.hpp"
 #include "rendering/character_preview.hpp"
 #include "rendering/renderer.hpp"
 #include "pipeline/asset_manager.hpp"
@@ -173,7 +174,7 @@ void CharacterScreen::render(game::GameHandler& gameHandler) {
 
     // Status message
     if (!statusMessage.empty()) {
-        ImVec4 color = statusIsError ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f) : ImVec4(0.3f, 1.0f, 0.3f, 1.0f);
+        ImVec4 color = statusIsError ? ui::colors::kRed : ui::colors::kBrightGreen;
         ImGui::PushStyleColor(ImGuiCol_Text, color);
         ImGui::TextWrapped("%s", statusMessage.c_str());
         ImGui::PopStyleColor();
@@ -462,7 +463,7 @@ void CharacterScreen::render(game::GameHandler& gameHandler) {
     if (ImGui::BeginPopupModal("DeleteConfirm2", nullptr,
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
         const auto& ch = characters[selectedCharacterIndex];
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::colors::kRed);
         ImGui::Text("THIS CANNOT BE UNDONE!");
         ImGui::PopStyleColor();
         ImGui::Spacing();
@@ -518,7 +519,7 @@ ImVec4 CharacterScreen::getFactionColor(game::Race race) const {
         race == game::Race::TAUREN ||
         race == game::Race::TROLL ||
         race == game::Race::BLOOD_ELF) {
-        return ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
+        return ui::colors::kRed;
     }
 
     return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);

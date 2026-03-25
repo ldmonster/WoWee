@@ -1572,9 +1572,9 @@ void InventoryScreen::renderReputationPanel(game::GameHandler& gameHandler) {
         ImGui::TextColored(tier.color, "[%s]", tier.name);
         ImGui::SameLine(90.0f);
         if (atWar) {
-            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", displayName);
+            ImGui::TextColored(ui::colors::kRed, "%s", displayName);
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "(At War)");
+            ImGui::TextColored(ui::colors::kRed, "(At War)");
         } else if (isWatched) {
             ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.5f, 1.0f), "%s", displayName);
             ImGui::SameLine();
@@ -2265,7 +2265,7 @@ void InventoryScreen::renderItemSlot(game::Inventory& inventory, const game::Ite
 
         if (label && ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", label);
+            ImGui::TextColored(ui::colors::kDarkGray, "%s", label);
             ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "Empty");
             ImGui::EndTooltip();
         }
@@ -2589,7 +2589,7 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
             }
             ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Home: %s", homeLocation.c_str());
         } else {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Home: not set");
+            ImGui::TextColored(ui::colors::kLightGray, "Home: not set");
         }
         ImGui::TextDisabled("Use: Teleport home");
     }
@@ -2627,9 +2627,9 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
         }
         if (slotName[0]) {
             if (!item.subclassName.empty()) {
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s  %s", slotName, item.subclassName.c_str());
+                ImGui::TextColored(ui::colors::kLightGray, "%s  %s", slotName, item.subclassName.c_str());
             } else {
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", slotName);
+                ImGui::TextColored(ui::colors::kLightGray, "%s", slotName);
             }
         }
 
@@ -2671,7 +2671,7 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
         ImGui::Text("%.0f - %.0f Damage", item.damageMin, item.damageMax);
         ImGui::SameLine(160.0f);
         ImGui::TextDisabled("Speed %.2f", speed);
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(%.1f damage per second)", dps);
+        ImGui::TextColored(ui::colors::kLightGray, "(%.1f damage per second)", dps);
     }
 
     // Armor appears before stat bonuses — matches WoW tooltip order
@@ -3104,8 +3104,8 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
                 else
                     std::snprintf(ilvlBuf, sizeof(ilvlBuf), "Item Level: %u (=)", item.itemLevel);
                 ImVec4 ilvlColor = (diff > 0.0f) ? ImVec4(0.0f, 1.0f, 0.0f, 1.0f)
-                                 : (diff < 0.0f) ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f)
-                                 : ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                                 : (diff < 0.0f) ? ui::colors::kRed
+                                 : ui::colors::kLightGray;
                 ImGui::TextColored(ilvlColor, "%s", ilvlBuf);
             }
 
@@ -3119,10 +3119,10 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
                     ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "%s", buf);
                 } else if (diff < 0.0f) {
                     std::snprintf(buf, sizeof(buf), "%s: %.0f (▼%.0f)", label, newVal, -diff);
-                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", buf);
+                    ImGui::TextColored(ui::colors::kRed, "%s", buf);
                 } else {
                     std::snprintf(buf, sizeof(buf), "%s: %.0f (=)", label, newVal);
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", buf);
+                    ImGui::TextColored(ui::colors::kLightGray, "%s", buf);
                 }
             };
 
@@ -3299,9 +3299,9 @@ void InventoryScreen::renderItemTooltip(const game::ItemQueryResponseData& info,
         }
         if (slotName[0]) {
             if (!info.subclassName.empty())
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s  %s", slotName, info.subclassName.c_str());
+                ImGui::TextColored(ui::colors::kLightGray, "%s  %s", slotName, info.subclassName.c_str());
             else
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", slotName);
+                ImGui::TextColored(ui::colors::kLightGray, "%s", slotName);
         }
 
         // Proficiency check for vendor/loot tooltips (ItemQueryResponseData has itemClass/subClass)
@@ -3327,7 +3327,7 @@ void InventoryScreen::renderItemTooltip(const game::ItemQueryResponseData& info,
         ImGui::Text("%.0f - %.0f Damage", info.damageMin, info.damageMax);
         ImGui::SameLine(160.0f);
         ImGui::TextDisabled("Speed %.2f", speed);
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(%.1f damage per second)", dps);
+        ImGui::TextColored(ui::colors::kLightGray, "(%.1f damage per second)", dps);
     }
 
     if (info.armor > 0) ImGui::Text("%d Armor", info.armor);

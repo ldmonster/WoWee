@@ -1460,9 +1460,9 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
             }
             if (slotName[0]) {
                 if (!info->subclassName.empty())
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s  %s", slotName, info->subclassName.c_str());
+                    ImGui::TextColored(ui::colors::kLightGray, "%s  %s", slotName, info->subclassName.c_str());
                 else
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", slotName);
+                    ImGui::TextColored(ui::colors::kLightGray, "%s", slotName);
             }
         }
         auto isWeaponInventoryType = [](uint32_t invType) {
@@ -4472,7 +4472,7 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
             // Level color matches the hostility/difficulty color
             ImVec4 levelColor = hostileColor;
             if (target->getType() == game::ObjectType::PLAYER) {
-                levelColor = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                levelColor = ui::colors::kLightGray;
             }
             if (unit->getLevel() == 0)
                 ImGui::TextColored(levelColor, "Lv ??");
@@ -4895,7 +4895,7 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                         char durBuf[32];
                         if (seconds < 60) snprintf(durBuf, sizeof(durBuf), "Remaining: %ds", seconds);
                         else snprintf(durBuf, sizeof(durBuf), "Remaining: %dm %ds", seconds / 60, seconds % 60);
-                        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", durBuf);
+                        ImGui::TextColored(ui::colors::kLightGray, "%s", durBuf);
                     }
                     ImGui::EndTooltip();
                 }
@@ -5127,7 +5127,7 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                                                 char db[32];
                                                 if (s < 60) snprintf(db, sizeof(db), "Remaining: %ds", s);
                                                 else snprintf(db, sizeof(db), "Remaining: %dm %ds", s / 60, s % 60);
-                                                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", db);
+                                                ImGui::TextColored(ui::colors::kLightGray, "%s", db);
                                             }
                                             ImGui::EndTooltip();
                                         }
@@ -5598,7 +5598,7 @@ void GameScreen::renderFocusFrame(game::GameHandler& gameHandler) {
                                 char db[32];
                                 if (s < 60) snprintf(db, sizeof(db), "Remaining: %ds", s);
                                 else snprintf(db, sizeof(db), "Remaining: %dm %ds", s / 60, s % 60);
-                                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", db);
+                                ImGui::TextColored(ui::colors::kLightGray, "%s", db);
                             }
                             ImGui::EndTooltip();
                         }
@@ -8373,7 +8373,7 @@ ImVec4 GameScreen::getChatTypeColor(game::ChatType type) const {
         case game::ChatType::DND:
             return ImVec4(0.85f, 0.85f, 0.85f, 0.8f); // Light gray
         default:
-            return ImVec4(0.7f, 0.7f, 0.7f, 1.0f);  // Gray
+            return ui::colors::kLightGray;  // Gray
     }
 }
 
@@ -13568,7 +13568,7 @@ void GameScreen::renderBossFrames(game::GameHandler& gameHandler) {
                                     char db[32];
                                     if (s < 60) snprintf(db, sizeof(db), "Remaining: %ds", s);
                                     else snprintf(db, sizeof(db), "Remaining: %dm %ds", s / 60, s % 60);
-                                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", db);
+                                    ImGui::TextColored(ui::colors::kLightGray, "%s", db);
                                 }
                                 ImGui::EndTooltip();
                             }
@@ -15688,7 +15688,7 @@ void GameScreen::renderBuffBar(game::GameHandler& gameHandler) {
                     char durBuf[32];
                     if (seconds < 60) snprintf(durBuf, sizeof(durBuf), "Remaining: %ds", seconds);
                     else snprintf(durBuf, sizeof(durBuf), "Remaining: %dm %ds", seconds / 60, seconds % 60);
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", durBuf);
+                    ImGui::TextColored(ui::colors::kLightGray, "%s", durBuf);
                 }
                 ImGui::EndTooltip();
             }
@@ -16253,7 +16253,7 @@ void GameScreen::renderQuestDetailsWindow(game::GameHandler& gameHandler) {
         }
 
         if (quest.suggestedPlayers > 1) {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+            ImGui::TextColored(ui::colors::kLightGray,
                 "Suggested players: %u", quest.suggestedPlayers);
         }
 
@@ -16696,7 +16696,7 @@ void GameScreen::renderVendorWindow(game::GameHandler& gameHandler) {
         }
         ImGui::Separator();
 
-        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Right-click bag items to sell");
+        ImGui::TextColored(ui::colors::kLightGray, "Right-click bag items to sell");
 
         // Count grey (POOR quality) sellable items across backpack and bags
         const auto& inv = gameHandler.getInventory();
@@ -17163,7 +17163,7 @@ void GameScreen::renderTrainerWindow(game::GameHandler& gameHandler) {
                         }
                         ImGui::TextDisabled("Status: %s", statusLabel);
                         if (spell->reqLevel > 0) {
-                            ImVec4 lvlColor = levelMet ? ImVec4(0.7f, 0.7f, 0.7f, 1.0f) : kColorRed;
+                            ImVec4 lvlColor = levelMet ? ui::colors::kLightGray : kColorRed;
                             ImGui::TextColored(lvlColor, "Required Level: %u", spell->reqLevel);
                         }
                         if (spell->reqSkill > 0) ImGui::Text("Required Skill: %u (value %u)", spell->reqSkill, spell->reqSkillValue);
@@ -17813,7 +17813,7 @@ void GameScreen::renderTaxiWindow(game::GameHandler& gameHandler) {
         }
 
         if (destCount == 0) {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No destinations available.");
+            ImGui::TextColored(ui::colors::kLightGray, "No destinations available.");
         }
 
         ImGui::Spacing();
@@ -21792,7 +21792,7 @@ void GameScreen::renderMailComposeWindow(game::GameHandler& gameHandler) {
                 if (ImGui::IsItemHovered()) {
                     ImGui::BeginTooltip();
                     ImGui::TextColored(qualColor, "%s", att.item.name.c_str());
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Click to remove");
+                    ImGui::TextColored(ui::colors::kLightGray, "Click to remove");
                     ImGui::EndTooltip();
                 }
             } else {
@@ -24623,7 +24623,7 @@ void GameScreen::renderCombatLog(game::GameHandler& gameHandler) {
                     break;
                 default:
                     snprintf(desc, sizeof(desc), "Combat event (type %d, amount %d)", static_cast<int>(e.type), e.amount);
-                    color = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                    color = ui::colors::kLightGray;
                     break;
             }
 

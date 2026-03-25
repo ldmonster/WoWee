@@ -1,4 +1,5 @@
 #include "ui/character_create_screen.hpp"
+#include "ui/ui_colors.hpp"
 #include "rendering/character_preview.hpp"
 #include "rendering/renderer.hpp"
 #include "core/application.hpp"
@@ -382,7 +383,7 @@ void CharacterCreateScreen::render(game::GameHandler& /*gameHandler*/) {
                 preview_->rotate(deltaX * 0.2f);
             }
 
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Drag to rotate");
+            ImGui::TextColored(ui::colors::kDarkGray, "Drag to rotate");
         }
         ImGui::EndChild();
 
@@ -424,7 +425,7 @@ void CharacterCreateScreen::render(game::GameHandler& /*gameHandler*/) {
         }
     }
     if (allianceRaceCount_ < raceCount) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Horde:");
+        ImGui::TextColored(ui::colors::kRed, "Horde:");
         ImGui::SameLine();
         for (int i = allianceRaceCount_; i < raceCount; ++i) {
             if (i > allianceRaceCount_) ImGui::SameLine();
@@ -517,7 +518,7 @@ void CharacterCreateScreen::render(game::GameHandler& /*gameHandler*/) {
     if (!statusMessage.empty()) {
         ImGui::Separator();
         ImGui::Spacing();
-        ImVec4 color = statusIsError ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f) : ImVec4(0.3f, 1.0f, 0.3f, 1.0f);
+        ImVec4 color = statusIsError ? ui::colors::kRed : ui::colors::kBrightGreen;
         ImGui::TextColored(color, "%s", statusMessage.c_str());
     }
 

@@ -1,4 +1,5 @@
 #include "ui/talent_screen.hpp"
+#include "ui/ui_colors.hpp"
 #include "ui/keybinding_manager.hpp"
 #include "core/input.hpp"
 #include "core/application.hpp"
@@ -141,10 +142,10 @@ void TalentScreen::renderTalentTrees(game::GameHandler& gameHandler) {
     // Unspent points
     ImGui::SameLine(0, 20);
     if (unspent > 0) {
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "%u point%s available",
+        ImGui::TextColored(ui::colors::kBrightGreen, "%u point%s available",
                           unspent, unspent > 1 ? "s" : "");
     } else {
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No points available");
+        ImGui::TextColored(ui::colors::kDarkGray, "No points available");
     }
 
     ImGui::Separator();
@@ -552,7 +553,7 @@ void TalentScreen::renderTalent(game::GameHandler& gameHandler,
             auto tooltipIt = spellTooltips.find(talent.rankSpells[currentRank]);
             if (tooltipIt != spellTooltips.end() && !tooltipIt->second.empty()) {
                 ImGui::Spacing();
-                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Next Rank:");
+                ImGui::TextColored(ui::colors::kBrightGreen, "Next Rank:");
                 ImGui::TextWrapped("%s", tooltipIt->second.c_str());
             }
         }
@@ -581,7 +582,7 @@ void TalentScreen::renderTalent(game::GameHandler& gameHandler,
             uint32_t requiredPoints = talent.row * 5;
             if (pointsInTree < requiredPoints) {
                 ImGui::Spacing();
-                ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+                ImGui::TextColored(ui::colors::kRed,
                     "Requires %u points in this tree (%u/%u)",
                     requiredPoints, pointsInTree, requiredPoints);
             }
@@ -590,7 +591,7 @@ void TalentScreen::renderTalent(game::GameHandler& gameHandler,
         // Action hint
         if (canLearn && prereqsMet) {
             ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Click to learn");
+            ImGui::TextColored(ui::colors::kBrightGreen, "Click to learn");
         }
 
         ImGui::PopTextWrapPos();
@@ -748,7 +749,7 @@ void TalentScreen::renderGlyphs(game::GameHandler& gameHandler) {
         if (!name.empty()) {
             ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "%s", name.c_str());
         } else {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Glyph #%u", static_cast<uint32_t>(glyphId));
+            ImGui::TextColored(ui::colors::kLightGray, "Glyph #%u", static_cast<uint32_t>(glyphId));
         }
     };
 

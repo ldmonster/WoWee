@@ -1,4 +1,5 @@
 #include "ui/realm_screen.hpp"
+#include "ui/ui_colors.hpp"
 #include <imgui.h>
 
 namespace wowee { namespace ui {
@@ -32,7 +33,7 @@ void RealmScreen::render(auth::AuthHandler& authHandler) {
 
     // Status message
     if (!statusMessage.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 1.0f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ui::colors::kBrightGreen);
         ImGui::TextWrapped("%s", statusMessage.c_str());
         ImGui::PopStyleColor();
         ImGui::Spacing();
@@ -153,9 +154,9 @@ void RealmScreen::render(auth::AuthHandler& authHandler) {
                 ImGui::TableSetColumnIndex(4);
                 const char* status = getRealmStatus(realm.flags);
                 if (realm.lock) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Locked");
+                    ImGui::TextColored(ui::colors::kRed, "Locked");
                 } else {
-                    ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "%s", status);
+                    ImGui::TextColored(ui::colors::kBrightGreen, "%s", status);
                 }
             }
 
@@ -202,7 +203,7 @@ void RealmScreen::render(auth::AuthHandler& authHandler) {
                 }
                 ImGui::PopStyleColor(2);
             } else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Button, ui::colors::kDarkGray);
                 ImGui::Button("Realm Locked", ImVec2(200, 40));
                 ImGui::PopStyleColor();
             }
@@ -237,13 +238,13 @@ const char* RealmScreen::getRealmStatus(uint8_t flags) const {
 
 ImVec4 RealmScreen::getPopulationColor(float population) const {
     if (population < 0.5f) {
-        return ImVec4(0.3f, 1.0f, 0.3f, 1.0f);  // Green - Low
+        return ui::colors::kBrightGreen;  // Green - Low
     } else if (population < 1.5f) {
         return ImVec4(1.0f, 1.0f, 0.3f, 1.0f);  // Yellow - Medium
     } else if (population < 2.5f) {
         return ImVec4(1.0f, 0.6f, 0.0f, 1.0f);  // Orange - High
     } else {
-        return ImVec4(1.0f, 0.3f, 0.3f, 1.0f);  // Red - Full
+        return ui::colors::kRed;  // Red - Full
     }
 }
 

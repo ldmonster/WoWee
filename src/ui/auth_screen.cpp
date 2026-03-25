@@ -1,4 +1,5 @@
 #include "ui/auth_screen.hpp"
+#include "ui/ui_colors.hpp"
 #include "auth/crypto.hpp"
 #include "core/application.hpp"
 #include "core/logger.hpp"
@@ -393,9 +394,9 @@ void AuthScreen::render(auth::AuthHandler& authHandler) {
     // Connection status
     if (!statusMessage.empty()) {
         if (statusIsError) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::colors::kRed);
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 1.0f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ui::colors::kBrightGreen);
         }
         ImGui::TextWrapped("%s", statusMessage.c_str());
         ImGui::PopStyleColor();
