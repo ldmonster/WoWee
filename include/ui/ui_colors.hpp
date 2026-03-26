@@ -15,6 +15,7 @@ namespace colors {
     constexpr ImVec4 kDarkGray    = {0.5f, 0.5f, 0.5f, 1.0f};
     constexpr ImVec4 kLightGray   = {0.7f, 0.7f, 0.7f, 1.0f};
     constexpr ImVec4 kWhite       = {1.0f, 1.0f, 1.0f, 1.0f};
+    constexpr ImVec4 kTooltipGold = {1.0f, 0.82f, 0.0f, 1.0f};
 
     // Coin colors
     constexpr ImVec4 kGold   = {1.00f, 0.82f, 0.00f, 1.0f};
@@ -95,7 +96,7 @@ inline const char* getInventorySlotName(uint32_t inventoryType) {
 
 // ---- Binding type display ----
 inline void renderBindingType(uint32_t bindType) {
-    constexpr ImVec4 kBindColor = {1.0f, 0.82f, 0.0f, 1.0f};
+    const auto& kBindColor = colors::kTooltipGold;
     switch (bindType) {
         case 1: ImGui::TextColored(kBindColor, "Binds when picked up"); break;
         case 2: ImGui::TextColored(kBindColor, "Binds when equipped"); break;

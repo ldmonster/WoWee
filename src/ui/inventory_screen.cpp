@@ -1344,14 +1344,14 @@ void InventoryScreen::renderCharacterScreen(game::GameHandler& gameHandler) {
                             // Gold name when maxed out, cyan when buffed above base, default otherwise
                             bool isMaxed  = (effective >= skill->maxValue && skill->maxValue > 0);
                             bool isBuffed = (bonus > 0);
-                            ImVec4 nameColor = isMaxed  ? ImVec4(1.0f, 0.82f, 0.0f, 1.0f)
+                            ImVec4 nameColor = isMaxed  ? ui::colors::kTooltipGold
                                              : isBuffed ? ImVec4(0.4f, 0.9f,  1.0f, 1.0f)
                                              :            ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
                             ImGui::TextColored(nameColor, "%s", label);
                             ImGui::SameLine(180.0f);
                             ImGui::SetNextItemWidth(-1.0f);
                             // Bar color: gold when maxed, green otherwise
-                            ImVec4 barColor = isMaxed ? ImVec4(1.0f, 0.82f, 0.0f, 1.0f) : ImVec4(0.2f, 0.7f, 0.2f, 1.0f);
+                            ImVec4 barColor = isMaxed ? ui::colors::kTooltipGold : ImVec4(0.2f, 0.7f, 0.2f, 1.0f);
                             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, barColor);
                             ImGui::ProgressBar(ratio, ImVec2(0, 14.0f), overlay);
                             ImGui::PopStyleColor();
@@ -2554,9 +2554,9 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
                 ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "Heroic");
             }
             if (qi->maxCount == 1) {
-                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Unique");
+                ImGui::TextColored(ui::colors::kTooltipGold, "Unique");
             } else if (qi->itemFlags & kFlagUniqueEquipped) {
-                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Unique-Equipped");
+                ImGui::TextColored(ui::colors::kTooltipGold, "Unique-Equipped");
             }
         }
     }
@@ -2995,10 +2995,10 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
                         }
                     }
                     if (total > 0) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f),
+                        ImGui::TextColored(ui::colors::kTooltipGold,
                             "%s (%d/%d)", se.name.empty() ? "Set" : se.name.c_str(), equipped, total);
                     } else if (!se.name.empty()) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "%s", se.name.c_str());
+                        ImGui::TextColored(ui::colors::kTooltipGold, "%s", se.name.c_str());
                     }
                     for (int i = 0; i < 10; ++i) {
                         if (se.spellIds[i] == 0 || se.thresholds[i] == 0) continue;
@@ -3012,7 +3012,7 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
                             ImGui::TextColored(col, "(%u) Set Bonus", se.thresholds[i]);
                     }
                 } else {
-                    ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Set (id %u)", qi2->itemSetId);
+                    ImGui::TextColored(ui::colors::kTooltipGold, "Set (id %u)", qi2->itemSetId);
                 }
             }
         }
@@ -3035,7 +3035,7 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
 
     // "Begins a Quest" line (shown in yellow-green like the game)
     if (item.startQuestId != 0) {
-        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Begins a Quest");
+        ImGui::TextColored(ui::colors::kTooltipGold, "Begins a Quest");
     }
 
     // Flavor / lore text (italic yellow in WoW, just yellow here)
@@ -3200,9 +3200,9 @@ void InventoryScreen::renderItemTooltip(const game::ItemQueryResponseData& info,
         ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "Heroic");
     }
     if (info.maxCount == 1) {
-        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Unique");
+        ImGui::TextColored(ui::colors::kTooltipGold, "Unique");
     } else if (info.itemFlags & kFlagUniqueEquipped) {
-        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Unique-Equipped");
+        ImGui::TextColored(ui::colors::kTooltipGold, "Unique-Equipped");
     }
 
     // Binding type
@@ -3615,11 +3615,11 @@ void InventoryScreen::renderItemTooltip(const game::ItemQueryResponseData& info,
                 }
             }
             if (total > 0) {
-                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f),
+                ImGui::TextColored(ui::colors::kTooltipGold,
                     "%s (%d/%d)", se.name.empty() ? "Set" : se.name.c_str(), equipped, total);
             } else {
                 if (!se.name.empty())
-                    ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "%s", se.name.c_str());
+                    ImGui::TextColored(ui::colors::kTooltipGold, "%s", se.name.c_str());
             }
             // Show set bonuses: gray if not reached, green if active
             if (gameHandler_) {
@@ -3636,12 +3636,12 @@ void InventoryScreen::renderItemTooltip(const game::ItemQueryResponseData& info,
                 }
             }
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Set (id %u)", info.itemSetId);
+            ImGui::TextColored(ui::colors::kTooltipGold, "Set (id %u)", info.itemSetId);
         }
     }
 
     if (info.startQuestId != 0) {
-        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Begins a Quest");
+        ImGui::TextColored(ui::colors::kTooltipGold, "Begins a Quest");
     }
     if (!info.description.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.5f, 0.9f), "\"%s\"", info.description.c_str());
