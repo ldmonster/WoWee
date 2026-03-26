@@ -543,7 +543,7 @@ void TalentScreen::renderTalent(game::GameHandler& gameHandler,
             auto tooltipIt = spellTooltips.find(talent.rankSpells[currentRank - 1]);
             if (tooltipIt != spellTooltips.end() && !tooltipIt->second.empty()) {
                 ImGui::Spacing();
-                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Current:");
+                ImGui::TextColored(ui::colors::kTooltipGold, "Current:");
                 ImGui::TextWrapped("%s", tooltipIt->second.c_str());
             }
         }

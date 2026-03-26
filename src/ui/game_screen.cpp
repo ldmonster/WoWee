@@ -1390,9 +1390,9 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
         }
         // Unique / Unique-Equipped
         if (info->maxCount == 1)
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Unique");
+            ImGui::TextColored(ui::colors::kTooltipGold, "Unique");
         else if (info->itemFlags & kFlagUniqueEquipped)
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Unique-Equipped");
+            ImGui::TextColored(ui::colors::kTooltipGold, "Unique-Equipped");
 
         // Slot type
         if (info->inventoryType > 0) {
@@ -1599,10 +1599,10 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                     }
                 }
                 if (total > 0)
-                    ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f),
+                    ImGui::TextColored(ui::colors::kTooltipGold,
                         "%s (%d/%d)", se.name.empty() ? "Set" : se.name.c_str(), equipped, total);
                 else if (!se.name.empty())
-                    ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "%s", se.name.c_str());
+                    ImGui::TextColored(ui::colors::kTooltipGold, "%s", se.name.c_str());
                 for (int i = 0; i < 10; ++i) {
                     if (se.spellIds[i] == 0 || se.thresholds[i] == 0) continue;
                     const std::string& bname = gameHandler.getSpellName(se.spellIds[i]);
@@ -1614,7 +1614,7 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                         ImGui::TextColored(col, "(%u) Set Bonus", se.thresholds[i]);
                 }
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Set (id %u)", info->itemSetId);
+                ImGui::TextColored(ui::colors::kTooltipGold, "Set (id %u)", info->itemSetId);
             }
         }
         // Item spell effects (Use / Equip / Chance on Hit / Teaches)
@@ -14712,7 +14712,7 @@ void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
 
                 // Guild name (large, gold)
                 ImGui::PushFont(nullptr);  // default font
-                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "<%s>", gameHandler.getGuildName().c_str());
+                ImGui::TextColored(ui::colors::kTooltipGold, "<%s>", gameHandler.getGuildName().c_str());
                 ImGui::PopFont();
                 ImGui::Separator();
 
@@ -14773,7 +14773,7 @@ void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
 
                 // Rank list
                 ImGui::Separator();
-                ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Ranks:");
+                ImGui::TextColored(ui::colors::kTooltipGold, "Ranks:");
                 for (size_t i = 0; i < rankNames.size(); ++i) {
                     if (rankNames[i].empty()) continue;
                     // Show rank permission summary from roster data
@@ -16104,7 +16104,7 @@ void GameScreen::renderQuestDetailsWindow(game::GameHandler& gameHandler) {
         if (!quest.objectives.empty()) {
             ImGui::Spacing();
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Objectives:");
+            ImGui::TextColored(ui::colors::kTooltipGold, "Objectives:");
             std::string processedObjectives = replaceGenderPlaceholders(quest.objectives, gameHandler);
             ImGui::TextWrapped("%s", processedObjectives.c_str());
         }
@@ -16152,7 +16152,7 @@ void GameScreen::renderQuestDetailsWindow(game::GameHandler& gameHandler) {
         if (!quest.rewardChoiceItems.empty()) {
             ImGui::Spacing();
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Choose one reward:");
+            ImGui::TextColored(ui::colors::kTooltipGold, "Choose one reward:");
             for (const auto& ri : quest.rewardChoiceItems) {
                 renderQuestRewardItem(ri);
             }
@@ -16162,7 +16162,7 @@ void GameScreen::renderQuestDetailsWindow(game::GameHandler& gameHandler) {
         if (!quest.rewardItems.empty()) {
             ImGui::Spacing();
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "You will receive:");
+            ImGui::TextColored(ui::colors::kTooltipGold, "You will receive:");
             for (const auto& ri : quest.rewardItems) {
                 renderQuestRewardItem(ri);
             }
@@ -16172,7 +16172,7 @@ void GameScreen::renderQuestDetailsWindow(game::GameHandler& gameHandler) {
         if (quest.rewardXp > 0 || quest.rewardMoney > 0) {
             ImGui::Spacing();
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Rewards:");
+            ImGui::TextColored(ui::colors::kTooltipGold, "Rewards:");
             if (quest.rewardXp > 0) {
                 ImGui::Text("  %u experience", quest.rewardXp);
             }
@@ -16251,7 +16251,7 @@ void GameScreen::renderQuestRequestItemsWindow(game::GameHandler& gameHandler) {
         if (!quest.requiredItems.empty()) {
             ImGui::Spacing();
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Required Items:");
+            ImGui::TextColored(ui::colors::kTooltipGold, "Required Items:");
             for (const auto& item : quest.requiredItems) {
                 uint32_t have = countItemInInventory(item.itemId);
                 bool enough = have >= item.count;
@@ -16381,7 +16381,7 @@ void GameScreen::renderQuestOfferRewardWindow(game::GameHandler& gameHandler) {
         if (!quest.choiceRewards.empty()) {
             ImGui::Spacing();
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Choose a reward:");
+            ImGui::TextColored(ui::colors::kTooltipGold, "Choose a reward:");
 
             for (size_t i = 0; i < quest.choiceRewards.size(); ++i) {
                 const auto& item = quest.choiceRewards[i];
@@ -16427,7 +16427,7 @@ void GameScreen::renderQuestOfferRewardWindow(game::GameHandler& gameHandler) {
         if (!quest.fixedRewards.empty()) {
             ImGui::Spacing();
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "You will also receive:");
+            ImGui::TextColored(ui::colors::kTooltipGold, "You will also receive:");
             for (const auto& item : quest.fixedRewards) {
                 auto* info = gameHandler.getItemInfo(item.itemId);
                 auto [iconTex, qualityColor] = resolveRewardItemVis(item);
@@ -16461,7 +16461,7 @@ void GameScreen::renderQuestOfferRewardWindow(game::GameHandler& gameHandler) {
         if (quest.rewardXp > 0 || quest.rewardMoney > 0) {
             ImGui::Spacing();
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Rewards:");
+            ImGui::TextColored(ui::colors::kTooltipGold, "Rewards:");
             if (quest.rewardXp > 0)
                 ImGui::Text("  %u experience", quest.rewardXp);
             if (quest.rewardMoney > 0) {
@@ -16657,7 +16657,7 @@ void GameScreen::renderVendorWindow(game::GameHandler& gameHandler) {
 
         const auto& buyback = gameHandler.getBuybackItems();
         if (!buyback.empty()) {
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Buy Back");
+            ImGui::TextColored(ui::colors::kTooltipGold, "Buy Back");
             if (ImGui::BeginTable("BuybackTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
                 ImGui::TableSetupColumn("##icon", ImGuiTableColumnFlags_WidthFixed, 22.0f);
                 ImGui::TableSetupColumn("Item", ImGuiTableColumnFlags_WidthStretch);
@@ -20314,7 +20314,7 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
         }
 
         if (ImGui::BeginPopup("##minimapContextMenu")) {
-            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.0f, 1.0f), "Minimap");
+            ImGui::TextColored(ui::colors::kTooltipGold, "Minimap");
             ImGui::Separator();
 
             // Zoom controls
@@ -24933,7 +24933,7 @@ void GameScreen::renderThreatWindow(game::GameHandler& gameHandler) {
 
         // Colour: gold for #1 (tank), red if player is highest, white otherwise
         ImVec4 col = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-        if (rank == 1) col = ImVec4(1.0f, 0.82f, 0.0f, 1.0f);      // gold
+        if (rank == 1) col = ui::colors::kTooltipGold;      // gold
         if (isPlayer && rank == 1) col = kColorRed; // red — you have aggro
 
         // Threat bar
@@ -25252,7 +25252,7 @@ void GameScreen::renderInspectWindow(game::GameHandler& gameHandler) {
     {
         auto ent = gameHandler.getEntityManager().getEntity(result->guid);
         uint8_t cid = entityClassId(ent.get());
-        ImVec4 nameColor = (cid != 0) ? classColorVec4(cid) : ImVec4(1.0f, 0.82f, 0.0f, 1.0f);
+        ImVec4 nameColor = (cid != 0) ? classColorVec4(cid) : ui::colors::kTooltipGold;
         ImGui::PushStyleColor(ImGuiCol_Text, nameColor);
         ImGui::Text("%s", result->playerName.c_str());
         ImGui::PopStyleColor();
