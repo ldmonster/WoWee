@@ -723,7 +723,6 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderBookWindow(gameHandler);
     renderThreatWindow(gameHandler);
     renderBgScoreboard(gameHandler);
-    // renderQuestMarkers(gameHandler);  // Disabled - using 3D billboard markers now
     if (showMinimap_) {
         renderMinimapMarkers(gameHandler);
     }
@@ -4533,7 +4532,7 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                 else
                     castBarColor = ImVec4(1.0f * pulse, 0.1f * pulse, 0.1f * pulse, 1.0f);  // red pulse
             } else {
-                castBarColor = interruptible ? ImVec4(0.2f, 0.75f, 0.2f, 1.0f)   // green = can interrupt
+                castBarColor = interruptible ? colors::kCastGreen   // green = can interrupt
                                              : ImVec4(0.85f, 0.15f, 0.15f, 1.0f); // red = uninterruptible
             }
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, castBarColor);
@@ -4600,7 +4599,7 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                             uint32_t totMaxHp = totUnit->getMaxHealth();
                             float totPct = static_cast<float>(totHp) / static_cast<float>(totMaxHp);
                             ImVec4 totBarColor =
-                                totPct > 0.5f ? ImVec4(0.2f, 0.75f, 0.2f, 1.0f) :
+                                totPct > 0.5f ? colors::kCastGreen :
                                 totPct > 0.2f ? ImVec4(0.75f, 0.75f, 0.2f, 1.0f) :
                                                ImVec4(0.75f, 0.2f, 0.2f, 1.0f);
                             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, totBarColor);
@@ -4906,7 +4905,7 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                                     : ImVec4(1.0f * pulse, 0.1f * pulse, 0.1f * pulse, 1.0f);
                             } else {
                                 tcColor = totCs->interruptible
-                                    ? ImVec4(0.2f, 0.75f, 0.2f, 1.0f)
+                                    ? colors::kCastGreen
                                     : ImVec4(0.85f, 0.15f, 0.15f, 1.0f);
                             }
                             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, tcColor);
@@ -5538,7 +5537,7 @@ void GameScreen::renderFocusFrame(game::GameHandler& gameHandler) {
                             float fofPct = static_cast<float>(fofUnit->getHealth()) /
                                            static_cast<float>(fofUnit->getMaxHealth());
                             ImVec4 fofBarColor =
-                                fofPct > 0.5f ? ImVec4(0.2f, 0.75f, 0.2f, 1.0f) :
+                                fofPct > 0.5f ? colors::kCastGreen :
                                 fofPct > 0.2f ? ImVec4(0.75f, 0.75f, 0.2f, 1.0f) :
                                                ImVec4(0.75f, 0.2f, 0.2f, 1.0f);
                             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, fofBarColor);
@@ -13289,7 +13288,7 @@ void GameScreen::renderBossFrames(game::GameHandler& gameHandler) {
                         : ImVec4(1.0f * pulse, 0.1f * pulse, 0.1f * pulse, 1.0f);
                 } else {
                     bcastColor = cs->interruptible
-                        ? ImVec4(0.2f, 0.75f, 0.2f, 1.0f)
+                        ? colors::kCastGreen
                         : ImVec4(0.9f, 0.15f, 0.15f, 1.0f);
                 }
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram, bcastColor);
@@ -16956,7 +16955,7 @@ void GameScreen::renderTrainerWindow(game::GameHandler& gameHandler) {
                     const char* statusLabel;
                     // WotLK trainer states: 0=available, 1=unavailable, 2=known
                     if (effectiveState == 2 || alreadyKnown) {
-                        color = ImVec4(0.3f, 0.9f, 0.3f, 1.0f);
+                        color = colors::kQueueGreen;
                         statusLabel = "Known";
                     } else if (effectiveState == 0) {
                         color = ui::colors::kWhite;
@@ -17018,7 +17017,7 @@ void GameScreen::renderTrainerWindow(game::GameHandler& gameHandler) {
                             if (node == 0) return;
                             bool met = isKnown(node);
                             const std::string& pname = gameHandler.getSpellName(node);
-                            ImVec4 pcolor = met ? ImVec4(0.3f, 0.9f, 0.3f, 1.0f) : kColorRed;
+                            ImVec4 pcolor = met ? colors::kQueueGreen : kColorRed;
                             if (!pname.empty())
                                 ImGui::TextColored(pcolor, "Requires: %s%s", pname.c_str(), met ? " (known)" : "");
                             else
@@ -23607,10 +23606,10 @@ void GameScreen::renderDungeonFinderWindow(game::GameHandler& gameHandler) {
             int      qSec   = static_cast<int>((qMs % 60000) / 1000);
             std::string dName = gameHandler.getCurrentLfgDungeonName();
             if (!dName.empty())
-                ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f),
+                ImGui::TextColored(colors::kQueueGreen,
                                    "Status: In queue for %s (%d:%02d)", dName.c_str(), qMin, qSec);
             else
-                ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), "Status: In queue (%d:%02d)", qMin, qSec);
+                ImGui::TextColored(colors::kQueueGreen, "Status: In queue (%d:%02d)", qMin, qSec);
             if (avgSec >= 0) {
                 int aMin = avgSec / 60;
                 int aSec = avgSec % 60;

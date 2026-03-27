@@ -42,6 +42,10 @@ namespace colors {
     constexpr ImVec4 kLowHealthRed   = {0.8f, 0.2f, 0.2f, 1.0f};
     constexpr ImVec4 kDangerRed      = {0.7f, 0.2f, 0.2f, 1.0f};
 
+    // Cast bar / status colors
+    constexpr ImVec4 kCastGreen      = {0.2f, 0.75f, 0.2f, 1.0f};
+    constexpr ImVec4 kQueueGreen     = {0.3f, 0.9f, 0.3f, 1.0f};
+
     // Button styling colors (accept/decline patterns)
     constexpr ImVec4 kBtnGreen       = {0.15f, 0.5f, 0.15f, 1.0f};
     constexpr ImVec4 kBtnGreenHover  = {0.2f, 0.7f, 0.2f, 1.0f};  // == kFriendlyGreen

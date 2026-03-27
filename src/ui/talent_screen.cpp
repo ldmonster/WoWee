@@ -522,8 +522,8 @@ void TalentScreen::renderTalent(game::GameHandler& gameHandler,
         // Rank display
         ImVec4 rankColor;
         switch (state) {
-            case MAXED:   rankColor = ImVec4(0.3f, 0.9f, 0.3f, 1); break;
-            case PARTIAL: rankColor = ImVec4(0.3f, 0.9f, 0.3f, 1); break;
+            case MAXED:   rankColor = ui::colors::kQueueGreen; break;
+            case PARTIAL: rankColor = ui::colors::kQueueGreen; break;
             default:      rankColor = ImVec4(0.7f, 0.7f, 0.7f, 1); break;
         }
         ImGui::TextColored(rankColor, "Rank %u/%u", currentRank, talent.maxRank);
@@ -556,7 +556,7 @@ void TalentScreen::renderTalent(game::GameHandler& gameHandler,
 
             uint8_t prereqCurrentRank = gameHandler.getTalentRank(talent.prereqTalent[i]);
             bool met = prereqCurrentRank > talent.prereqRank[i]; // storage 1-indexed, DBC 0-indexed
-            ImVec4 pColor = met ? ImVec4(0.3f, 0.9f, 0.3f, 1.0f) : ui::colors::kRed;
+            ImVec4 pColor = met ? ui::colors::kQueueGreen : ui::colors::kRed;
 
             const std::string& prereqName = gameHandler.getSpellName(prereq->rankSpells[0]);
             ImGui::Spacing();
