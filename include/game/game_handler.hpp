@@ -3406,6 +3406,7 @@ private:
     std::vector<TrainerTab> trainerTabs_;
     void handleTrainerList(network::Packet& packet);
     void loadSpellNameCache() const;
+    void preloadDBCCaches() const;
     void categorizeTrainerSpells();
 
     // Callbacks

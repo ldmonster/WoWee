@@ -737,6 +737,8 @@ private:
     std::vector<std::future<void>> cullFutures_;
     std::vector<size_t> visibleInstances_;      // reused per frame
     std::vector<InstanceDrawList> drawLists_;    // reused per frame
+    std::vector<uint32_t> portalVisibleGroups_; // reused per frame (portal culling scratch)
+    std::unordered_set<uint32_t> portalVisibleGroupSet_; // reused per frame (portal culling scratch)
 
     // Collision query profiling (per frame).
     mutable double queryTimeMs = 0.0;

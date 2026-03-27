@@ -8739,6 +8739,13 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
         }
     }
 
+    // Pre-load DBC name caches during world entry so the first packet that
+    // needs spell/title/achievement data doesn't stall mid-gameplay (the
+    // Spell.dbc cache alone is ~170ms on a cold load).
+    if (initialWorldEntry) {
+        preloadDBCCaches();
+    }
+
     // Fire PLAYER_ENTERING_WORLD — THE most important event for addon initialization.
     // Fires on initial login, teleports, instance transitions, and zone changes.
     if (addonEventCallback_) {
@@ -21905,6 +21912,22 @@ void GameHandler::closeTrainer() {
     fireAddonEvent("TRAINER_CLOSED", {});
     currentTrainerList_ = TrainerListData{};
     trainerTabs_.clear();
+}
+
+void GameHandler::preloadDBCCaches() const {
+    LOG_INFO("Pre-loading DBC caches during world entry...");
+    auto t0 = std::chrono::steady_clock::now();
+
+    loadSpellNameCache();   // Spell.dbc — largest, ~170ms cold
+    loadTitleNameCache();   // CharTitles.dbc
+    loadFactionNameCache(); // Faction.dbc
+    loadAreaNameCache();    // WorldMapArea.dbc
+    loadMapNameCache();     // Map.dbc
+    loadLfgDungeonDbc();    // LFGDungeons.dbc
+
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    LOG_INFO("DBC cache pre-load complete in ", elapsed, " ms");
 }
 
 void GameHandler::loadSpellNameCache() const {

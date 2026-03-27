@@ -975,21 +975,16 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
                 /*float finalAngle =*/ packet.readFloat();
             }
 
-            // Spline data layout varies by expansion:
-            //   Classic/Vanilla: timePassed(4)+duration(4)+splineId(4)+pointCount(4)+points+mode(1)+endPoint(12)
-            //   WotLK: timePassed(4)+duration(4)+splineId(4)+durationMod(4)+durationModNext(4)
-            //          +[ANIMATION(5)]+[PARABOLIC(8)]+pointCount(4)+points+mode(1)+endPoint(12)
-            // Since the parser has no expansion context, auto-detect by trying Classic first.
-            if (!bytesAvailable(16)) return false; // minimum: 12 common + 4 pointCount
+            // WotLK spline data layout:
+            //   timePassed(4)+duration(4)+splineId(4)+durationMod(4)+durationModNext(4)
+            //   +[ANIMATION(5)]+verticalAccel(4)+effectStartTime(4)+pointCount(4)+points+mode(1)+endPoint(12)
+            if (!bytesAvailable(12)) return false;
             /*uint32_t timePassed =*/ packet.readUInt32();
             /*uint32_t duration =*/ packet.readUInt32();
             /*uint32_t splineId =*/ packet.readUInt32();
-            const size_t afterSplineId = packet.getReadPos();
 
             // Helper: parse spline points + splineMode + endPoint.
             // WotLK uses compressed points by default (first=12 bytes, rest=4 bytes packed).
-            // Classic/Turtle uses all uncompressed (12 bytes each).
-            // The 'compressed' parameter selects which format.
             auto tryParseSplinePoints = [&](bool compressed, const char* tag) -> bool {
                 if (!bytesAvailable(4)) return false;
                 size_t prePointCount = packet.getReadPos();
@@ -1019,41 +1014,26 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
                 return true;
             };
 
-            // --- Try 1: WotLK format (durationMod+durationModNext+parabolic+compressed points) ---
-            // Try WotLK first since this is a WotLK parser; Classic auto-detect can false-positive
-            // when durationMod bytes happen to look like a valid Classic pointCount.
-            bool splineParsed = false;
-            {
-                bool wotlkOk = bytesAvailable(8); // durationMod + durationModNext
-                if (wotlkOk) {
-                    /*float durationMod =*/ packet.readFloat();
-                    /*float durationModNext =*/ packet.readFloat();
-                    if (splineFlags & 0x00400000) { // SPLINEFLAG_ANIMATION
-                        if (!bytesAvailable(5)) { wotlkOk = false; }
-                        else { packet.readUInt8(); packet.readUInt32(); }
-                    }
-                }
-                // AzerothCore/ChromieCraft always writes verticalAcceleration(float)
-                // + effectStartTime(uint32) unconditionally — NOT gated by PARABOLIC flag.
-                if (wotlkOk) {
-                    if (!bytesAvailable(8)) { wotlkOk = false; }
-                    else { /*float vertAccel =*/ packet.readFloat(); /*uint32_t effectStart =*/ packet.readUInt32(); }
-                }
-                if (wotlkOk) {
-                    // WotLK: compressed unless CYCLIC(0x80000) or ENTER_CYCLE(0x2000) set
-                    bool useCompressed = (splineFlags & (0x00080000 | 0x00002000)) == 0;
-                    splineParsed = tryParseSplinePoints(useCompressed, "wotlk-compressed");
-                    // Fallback: try uncompressed WotLK if compressed didn't work
-                    if (!splineParsed) {
-                        splineParsed = tryParseSplinePoints(false, "wotlk-uncompressed");
-                    }
-                }
+            // WotLK format: durationMod+durationModNext+[ANIMATION]+vertAccel+effectStart+points
+            if (!bytesAvailable(8)) return false; // durationMod + durationModNext
+            /*float durationMod =*/ packet.readFloat();
+            /*float durationModNext =*/ packet.readFloat();
+            if (splineFlags & 0x00400000) { // SPLINEFLAG_ANIMATION
+                if (!bytesAvailable(5)) return false;
+                packet.readUInt8(); packet.readUInt32();
             }
+            // AzerothCore/ChromieCraft always writes verticalAcceleration(float)
+            // + effectStartTime(uint32) unconditionally -- NOT gated by PARABOLIC flag.
+            if (!bytesAvailable(8)) return false;
+            /*float vertAccel =*/ packet.readFloat();
+            /*uint32_t effectStart =*/ packet.readUInt32();
 
-            // --- Try 2: Classic format (uncompressed points immediately after splineId) ---
+            // WotLK: compressed unless CYCLIC(0x80000) or ENTER_CYCLE(0x2000) set
+            bool useCompressed = (splineFlags & (0x00080000 | 0x00002000)) == 0;
+            bool splineParsed = tryParseSplinePoints(useCompressed, "wotlk-compressed");
+            // Fallback: try uncompressed WotLK if compressed didn't work
             if (!splineParsed) {
-                packet.setReadPos(afterSplineId);
-                splineParsed = tryParseSplinePoints(false, "classic");
+                splineParsed = tryParseSplinePoints(false, "wotlk-uncompressed");
             }
         }
     }

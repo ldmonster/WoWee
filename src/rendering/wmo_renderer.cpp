@@ -1395,21 +1395,21 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
         result.portalCulled = 0;
         result.distanceCulled = 0;
 
-        // Portal-based visibility — use a flat sorted vector instead of unordered_set
-        std::vector<uint32_t> portalVisibleGroups;
+        // Portal-based visibility — reuse member scratch buffers (avoid per-frame alloc)
+        portalVisibleGroups_.clear();
         bool usePortalCulling = doPortalCull && !model.portals.empty() && !model.portalRefs.empty();
         if (usePortalCulling) {
-            std::unordered_set<uint32_t> pvgSet;
+            portalVisibleGroupSet_.clear();
             glm::vec4 localCamPos = instance.invModelMatrix * glm::vec4(portalViewerPos, 1.0f);
             getVisibleGroupsViaPortals(model, glm::vec3(localCamPos), frustum,
-                                       instance.modelMatrix, pvgSet);
-            portalVisibleGroups.assign(pvgSet.begin(), pvgSet.end());
-            std::sort(portalVisibleGroups.begin(), portalVisibleGroups.end());
+                                       instance.modelMatrix, portalVisibleGroupSet_);
+            portalVisibleGroups_.assign(portalVisibleGroupSet_.begin(), portalVisibleGroupSet_.end());
+            std::sort(portalVisibleGroups_.begin(), portalVisibleGroups_.end());
         }
 
         for (size_t gi = 0; gi < model.groups.size(); ++gi) {
             if (usePortalCulling &&
-                !std::binary_search(portalVisibleGroups.begin(), portalVisibleGroups.end(),
+                !std::binary_search(portalVisibleGroups_.begin(), portalVisibleGroups_.end(),
                                     static_cast<uint32_t>(gi))) {
                 result.portalCulled++;
                 continue;
