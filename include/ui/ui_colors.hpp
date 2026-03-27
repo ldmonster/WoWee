@@ -34,6 +34,19 @@ namespace colors {
     constexpr ImVec4 kActiveGreen   = {0.5f, 1.0f, 0.5f, 1.0f};
     constexpr ImVec4 kSocketGreen   = {0.5f, 0.8f, 0.5f, 1.0f};
 
+    // UI element colors
+    constexpr ImVec4 kInactiveGray   = {0.55f, 0.55f, 0.55f, 1.0f};
+    constexpr ImVec4 kVeryLightGray  = {0.85f, 0.85f, 0.85f, 1.0f};
+    constexpr ImVec4 kSymbolGold     = {1.0f, 0.85f, 0.1f, 1.0f};
+    constexpr ImVec4 kLowHealthRed   = {0.8f, 0.2f, 0.2f, 1.0f};
+    constexpr ImVec4 kDangerRed      = {0.7f, 0.2f, 0.2f, 1.0f};
+
+    // Power-type colors (unit resource bars)
+    constexpr ImVec4 kEnergyYellow    = {0.9f, 0.9f, 0.2f, 1.0f};
+    constexpr ImVec4 kHappinessGreen  = {0.5f, 0.9f, 0.3f, 1.0f};
+    constexpr ImVec4 kRunicRed        = {0.8f, 0.1f, 0.2f, 1.0f};
+    constexpr ImVec4 kSoulShardPurple = {0.4f, 0.1f, 0.6f, 1.0f};
+
     // Coin colors
     constexpr ImVec4 kGold   = {1.00f, 0.82f, 0.00f, 1.0f};
     constexpr ImVec4 kSilver = {0.80f, 0.80f, 0.80f, 1.0f};

@@ -1346,7 +1346,7 @@ void InventoryScreen::renderCharacterScreen(game::GameHandler& gameHandler) {
                             bool isBuffed = (bonus > 0);
                             ImVec4 nameColor = isMaxed  ? ui::colors::kTooltipGold
                                              : isBuffed ? ImVec4(0.4f, 0.9f,  1.0f, 1.0f)
-                                             :            ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+                                             :            ui::colors::kVeryLightGray;
                             ImGui::TextColored(nameColor, "%s", label);
                             ImGui::SameLine(180.0f);
                             ImGui::SetNextItemWidth(-1.0f);
@@ -3005,7 +3005,7 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
                         const std::string& bname = gameHandler_->getSpellName(se.spellIds[i]);
                         bool active = (equipped >= static_cast<int>(se.thresholds[i]));
                         ImVec4 col = active ? ui::colors::kActiveGreen
-                                           : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
+                                           : ui::colors::kInactiveGray;
                         if (!bname.empty())
                             ImGui::TextColored(col, "(%u) %s", se.thresholds[i], bname.c_str());
                         else
@@ -3628,7 +3628,7 @@ void InventoryScreen::renderItemTooltip(const game::ItemQueryResponseData& info,
                     const std::string& bname = gameHandler_->getSpellName(se.spellIds[i]);
                     bool active = (equipped >= static_cast<int>(se.thresholds[i]));
                     ImVec4 col = active ? ui::colors::kActiveGreen
-                                       : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
+                                       : ui::colors::kInactiveGray;
                     if (!bname.empty())
                         ImGui::TextColored(col, "(%u) %s", se.thresholds[i], bname.c_str());
                     else

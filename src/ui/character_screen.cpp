@@ -50,7 +50,7 @@ static ImVec4 classColor(uint8_t classId) {
         case 8:  return ImVec4(0.41f, 0.80f, 0.94f, 1.0f); // Mage     #69CCF0
         case 9:  return ImVec4(0.58f, 0.51f, 0.79f, 1.0f); // Warlock  #9482C9
         case 11: return ImVec4(1.00f, 0.49f, 0.04f, 1.0f); // Druid    #FF7D0A
-        default: return ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+        default: return ui::colors::kVeryLightGray;
     }
 }
 
