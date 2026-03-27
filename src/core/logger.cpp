@@ -124,10 +124,11 @@ void Logger::log(LogLevel level, const std::string& message) {
         return;
     }
 
+    // Capture timestamp before acquiring lock to minimize critical section
+    auto nowSteady = std::chrono::steady_clock::now();
+
     std::lock_guard<std::mutex> lock(mutex);
     ensureFile();
-
-    auto nowSteady = std::chrono::steady_clock::now();
     if (dedupeEnabled_ && !lastMessage_.empty() &&
         level == lastLevel_ && message == lastMessage_) {
         auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(nowSteady - lastMessageTime_).count();

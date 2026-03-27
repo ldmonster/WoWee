@@ -5,6 +5,7 @@
 #include <string>
 #include <memory>
 #include <map>
+#include <unordered_map>
 #include <functional>
 
 // Forward declare unicorn types (will include in .cpp)
@@ -148,7 +149,7 @@ private:
     uint32_t apiStubBase_;           // API stub base address
 
     // API hooks: DLL name -> Function name -> stub address
-    std::map<std::string, std::map<std::string, uint32_t>> apiAddresses_;
+    std::unordered_map<std::string, std::unordered_map<std::string, uint32_t>> apiAddresses_;
 
     // API stub dispatch: stub address -> {argCount, handler}
     struct ApiHookEntry {

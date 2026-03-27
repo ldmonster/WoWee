@@ -13,6 +13,7 @@
 #include <utility>
 #include <future>
 #include <deque>
+#include <condition_variable>
 #include <mutex>
 #include <atomic>
 
@@ -325,6 +326,7 @@ private:
     };
     // Completed results ready for GPU upload (populated by background threads)
     std::mutex normalMapResultsMutex_;
+    std::condition_variable normalMapDoneCV_;  // signaled when pendingNormalMapCount_ reaches 0
     std::deque<NormalMapResult> completedNormalMaps_;
     std::atomic<int> pendingNormalMapCount_{0};  // in-flight background tasks
 

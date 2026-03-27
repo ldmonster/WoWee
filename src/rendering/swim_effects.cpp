@@ -542,7 +542,7 @@ void SwimEffects::update(const Camera& camera, const CameraController& cc,
         // Compute movement direction from camera yaw
         float yawRad = glm::radians(cc.getYaw());
         glm::vec3 moveDir(std::cos(yawRad), std::sin(yawRad), 0.0f);
-        if (glm::length(glm::vec2(moveDir)) > 0.001f) {
+        if (moveDir.x * moveDir.x + moveDir.y * moveDir.y > 1e-6f) {
             moveDir = glm::normalize(moveDir);
         }
 
@@ -676,6 +676,7 @@ void SwimEffects::update(const Camera& camera, const CameraController& cc,
 
     // --- Build vertex data ---
     rippleVertexData.clear();
+    rippleVertexData.reserve(ripples.size() * 5);
     for (const auto& p : ripples) {
         rippleVertexData.push_back(p.position.x);
         rippleVertexData.push_back(p.position.y);
@@ -685,6 +686,7 @@ void SwimEffects::update(const Camera& camera, const CameraController& cc,
     }
 
     bubbleVertexData.clear();
+    bubbleVertexData.reserve(bubbles.size() * 5);
     for (const auto& p : bubbles) {
         bubbleVertexData.push_back(p.position.x);
         bubbleVertexData.push_back(p.position.y);
@@ -694,6 +696,7 @@ void SwimEffects::update(const Camera& camera, const CameraController& cc,
     }
 
     insectVertexData.clear();
+    insectVertexData.reserve(insects.size() * 5);
     for (const auto& p : insects) {
         insectVertexData.push_back(p.position.x);
         insectVertexData.push_back(p.position.y);

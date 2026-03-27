@@ -319,8 +319,11 @@ void CharacterRenderer::shutdown() {
              " models=", models.size(), " override=", (void*)renderPassOverride_);
 
     // Wait for any in-flight background normal map generation threads
-    while (pendingNormalMapCount_.load(std::memory_order_relaxed) > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    {
+        std::unique_lock<std::mutex> lock(normalMapResultsMutex_);
+        normalMapDoneCV_.wait(lock, [this] {
+            return pendingNormalMapCount_.load(std::memory_order_acquire) == 0;
+        });
     }
 
     vkDeviceWaitIdle(vkCtx_->getDevice());
@@ -407,8 +410,11 @@ void CharacterRenderer::clear() {
              " models=", models.size());
 
     // Wait for any in-flight background normal map generation threads
-    while (pendingNormalMapCount_.load(std::memory_order_relaxed) > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    {
+        std::unique_lock<std::mutex> lock(normalMapResultsMutex_);
+        normalMapDoneCV_.wait(lock, [this] {
+            return pendingNormalMapCount_.load(std::memory_order_acquire) == 0;
+        });
     }
     // Discard any completed results that haven't been uploaded
     {
@@ -731,7 +737,9 @@ VkTexture* CharacterRenderer::loadTexture(const std::string& path) {
                 std::lock_guard<std::mutex> lock(self->normalMapResultsMutex_);
                 self->completedNormalMaps_.push_back(std::move(result));
             }
-            self->pendingNormalMapCount_.fetch_sub(1, std::memory_order_relaxed);
+            if (self->pendingNormalMapCount_.fetch_sub(1, std::memory_order_release) == 1) {
+                self->normalMapDoneCV_.notify_one();
+            }
         }).detach();
         e.normalMapPending = true;
     }
@@ -2825,11 +2833,12 @@ void CharacterRenderer::moveInstanceTo(uint32_t instanceId, const glm::vec3& des
         return 0;
     };
 
-    float planarDist = glm::length(glm::vec2(destination.x - inst.position.x,
-                                             destination.y - inst.position.y));
+    float pdx = destination.x - inst.position.x;
+    float pdy = destination.y - inst.position.y;
+    float planarDistSq = pdx * pdx + pdy * pdy;
     bool synthesizedDuration = false;
     if (durationSeconds <= 0.0f) {
-        if (planarDist < 0.01f) {
+        if (planarDistSq < 1e-4f) {
             // Stop at current location.
             inst.position = destination;
             inst.isMoving = false;
@@ -2840,7 +2849,7 @@ void CharacterRenderer::moveInstanceTo(uint32_t instanceId, const glm::vec3& des
         }
         // Some cores send movement-only deltas without spline duration.
         // Synthesize a tiny duration so movement anim/rotation still updates.
-        durationSeconds = std::clamp(planarDist / 7.0f, 0.05f, 0.20f);
+        durationSeconds = std::clamp(std::sqrt(planarDistSq) / 7.0f, 0.05f, 0.20f);
         synthesizedDuration = true;
     }
 
@@ -2852,14 +2861,14 @@ void CharacterRenderer::moveInstanceTo(uint32_t instanceId, const glm::vec3& des
 
     // Face toward destination (yaw around Z axis since Z is up)
     glm::vec3 dir = destination - inst.position;
-    if (glm::length(glm::vec2(dir.x, dir.y)) > 0.001f) {
+    if (dir.x * dir.x + dir.y * dir.y > 1e-6f) {
         float angle = std::atan2(dir.y, dir.x);
         inst.rotation.z = angle;
     }
 
     // Play movement animation while moving.
     // Prefer run only when speed is clearly above normal walk pace.
-    float moveSpeed = planarDist / std::max(durationSeconds, 0.001f);
+    float moveSpeed = std::sqrt(planarDistSq) / std::max(durationSeconds, 0.001f);
     bool preferRun = (!synthesizedDuration && moveSpeed >= 4.5f);
     uint32_t moveAnim = pickMoveAnim(preferRun);
     if (moveAnim != 0 && inst.currentAnimationId != moveAnim) {

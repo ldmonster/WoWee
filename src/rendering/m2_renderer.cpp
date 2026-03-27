@@ -947,6 +947,9 @@ void M2ModelGPU::CollisionMesh::getFloorTrisInRange(
     int cxMax = std::clamp(static_cast<int>((maxX - gridOrigin.x) / CELL_SIZE), 0, gridCellsX - 1);
     int cyMin = std::clamp(static_cast<int>((minY - gridOrigin.y) / CELL_SIZE), 0, gridCellsY - 1);
     int cyMax = std::clamp(static_cast<int>((maxY - gridOrigin.y) / CELL_SIZE), 0, gridCellsY - 1);
+    const size_t cellCount = static_cast<size_t>(cxMax - cxMin + 1) *
+                             static_cast<size_t>(cyMax - cyMin + 1);
+    out.reserve(cellCount * 8);
     for (int cy = cyMin; cy <= cyMax; cy++) {
         for (int cx = cxMin; cx <= cxMax; cx++) {
             const auto& cell = cellFloorTris[cy * gridCellsX + cx];
@@ -966,6 +969,9 @@ void M2ModelGPU::CollisionMesh::getWallTrisInRange(
     int cxMax = std::clamp(static_cast<int>((maxX - gridOrigin.x) / CELL_SIZE), 0, gridCellsX - 1);
     int cyMin = std::clamp(static_cast<int>((minY - gridOrigin.y) / CELL_SIZE), 0, gridCellsY - 1);
     int cyMax = std::clamp(static_cast<int>((maxY - gridOrigin.y) / CELL_SIZE), 0, gridCellsY - 1);
+    const size_t cellCount = static_cast<size_t>(cxMax - cxMin + 1) *
+                             static_cast<size_t>(cyMax - cyMin + 1);
+    out.reserve(cellCount * 8);
     for (int cy = cyMin; cy <= cyMax; cy++) {
         for (int cx = cxMin; cx <= cxMax; cx++) {
             const auto& cell = cellWallTris[cy * gridCellsX + cx];
@@ -3227,8 +3233,8 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             dir.x += distN(particleRng_) * hRange;
             dir.y += distN(particleRng_) * hRange;
             dir.z += distN(particleRng_) * vRange;
-            float len = glm::length(dir);
-            if (len > 0.001f) dir /= len;
+            float lenSq = glm::dot(dir, dir);
+            if (lenSq > 0.001f * 0.001f) dir *= glm::inversesqrt(lenSq);
 
             // Transform direction by bone + model orientation (rotation only)
             glm::mat3 rotMat = glm::mat3(inst.modelMatrix * boneXform);
@@ -4715,7 +4721,7 @@ float M2Renderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3&
         getTightCollisionBounds(model, localMin, localMax);
         // Skip tiny doodads for camera occlusion; they cause jitter and false hits.
         glm::vec3 extents = (localMax - localMin) * instance.scale;
-        if (glm::length(extents) < 0.75f) continue;
+        if (glm::dot(extents, extents) < 0.5625f) continue;
 
         glm::vec3 localOrigin = glm::vec3(instance.invModelMatrix * glm::vec4(origin, 1.0f));
         glm::vec3 localDir = glm::normalize(glm::vec3(instance.invModelMatrix * glm::vec4(direction, 0.0f)));

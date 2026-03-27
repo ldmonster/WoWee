@@ -156,8 +156,9 @@ void SkySystem::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 }
 
 glm::vec3 SkySystem::getSunPosition(const SkyParams& params) const {
-    glm::vec3 dir = glm::normalize(params.directionalDir);
-    if (glm::length(dir) < 0.0001f) {
+    float dirLenSq = glm::dot(params.directionalDir, params.directionalDir);
+    glm::vec3 dir = (dirLenSq > 1e-8f) ? params.directionalDir * glm::inversesqrt(dirLenSq) : glm::vec3(0.0f);
+    if (dirLenSq < 1e-8f) {
         dir = glm::vec3(0.0f, 0.0f, -1.0f);
     }
     glm::vec3 sunDir = -dir;

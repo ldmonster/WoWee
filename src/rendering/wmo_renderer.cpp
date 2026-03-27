@@ -2101,6 +2101,7 @@ void WMORenderer::getVisibleGroupsViaPortals(const ModelData& model,
     // BFS through portals from camera's group
     std::vector<bool> visited(model.groups.size(), false);
     std::vector<uint32_t> queue;
+    queue.reserve(model.groups.size());
     queue.push_back(static_cast<uint32_t>(cameraGroup));
     visited[cameraGroup] = true;
     outVisibleGroups.insert(static_cast<uint32_t>(cameraGroup));
@@ -2731,6 +2732,11 @@ void WMORenderer::GroupResources::getTrianglesInRange(
 
     if (cellMinX > cellMaxX || cellMinY > cellMaxY) return;
 
+    // Reserve estimate: cells queried * ~8 triangles per cell
+    const size_t cellCount = static_cast<size_t>(cellMaxX - cellMinX + 1) *
+                             static_cast<size_t>(cellMaxY - cellMinY + 1);
+    out.reserve(cellCount * 8);
+
     // Collect unique triangle indices using visited bitset (O(n) dedup)
     bool multiCell = (cellMinX != cellMaxX || cellMinY != cellMaxY);
     if (multiCell && !triVisited.empty()) {
@@ -2776,6 +2782,10 @@ void WMORenderer::GroupResources::getFloorTrianglesInRange(
 
     if (cellMinX > cellMaxX || cellMinY > cellMaxY) return;
 
+    const size_t cellCount = static_cast<size_t>(cellMaxX - cellMinX + 1) *
+                             static_cast<size_t>(cellMaxY - cellMinY + 1);
+    out.reserve(cellCount * 8);
+
     bool multiCell = (cellMinX != cellMaxX || cellMinY != cellMaxY);
     if (multiCell && !triVisited.empty()) {
         for (int cy = cellMinY; cy <= cellMaxY; ++cy) {
@@ -2818,6 +2828,10 @@ void WMORenderer::GroupResources::getWallTrianglesInRange(
     int cellMaxY = std::min(gridCellsY - 1, static_cast<int>((maxY - gridOrigin.y) * invCellH));
 
     if (cellMinX > cellMaxX || cellMinY > cellMaxY) return;
+
+    const size_t cellCount = static_cast<size_t>(cellMaxX - cellMinX + 1) *
+                             static_cast<size_t>(cellMaxY - cellMinY + 1);
+    out.reserve(cellCount * 8);
 
     bool multiCell = (cellMinX != cellMaxX || cellMinY != cellMaxY);
     if (multiCell && !triVisited.empty()) {
@@ -3112,8 +3126,9 @@ bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to,
     bool blocked = false;
 
     glm::vec3 moveDir = to - from;
-    float moveDist = glm::length(moveDir);
-    if (moveDist < 0.001f) return false;
+    float moveDistSq = glm::dot(moveDir, moveDir);
+    if (moveDistSq < 1e-6f) return false;
+    float moveDist = std::sqrt(moveDistSq);
 
     // Player collision parameters — WoW-style horizontal cylinder
     // Tighter radius when inside for more responsive indoor collision
@@ -3246,10 +3261,10 @@ bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to,
                                 glm::vec3 safeLocal = hitPoint + normal * side * (PLAYER_RADIUS + 0.05f);
                                 glm::vec3 pushLocal(safeLocal.x - localTo.x, safeLocal.y - localTo.y, 0.0f);
                                 // Cap swept pushback so walls don't shove the player violently
-                                float pushLen = glm::length(glm::vec2(pushLocal.x, pushLocal.y));
+                                float pushLenSq = pushLocal.x * pushLocal.x + pushLocal.y * pushLocal.y;
                                 const float MAX_SWEPT_PUSH = insideWMO ? 0.45f : 0.25f;
-                                if (pushLen > MAX_SWEPT_PUSH) {
-                                    float scale = MAX_SWEPT_PUSH / pushLen;
+                                if (pushLenSq > MAX_SWEPT_PUSH * MAX_SWEPT_PUSH) {
+                                    float scale = MAX_SWEPT_PUSH * glm::inversesqrt(pushLenSq);
                                     pushLocal.x *= scale;
                                     pushLocal.y *= scale;
                                 }
@@ -3268,9 +3283,9 @@ bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to,
                 // Horizontal cylinder collision: closest point + horizontal distance
                 glm::vec3 closest = closestPointOnTriangle(localTo, v0, v1, v2);
                 glm::vec3 delta = localTo - closest;
-                float horizDist = glm::length(glm::vec2(delta.x, delta.y));
+                float horizDistSq = delta.x * delta.x + delta.y * delta.y;
 
-                if (horizDist <= PLAYER_RADIUS) {
+                if (horizDistSq <= PLAYER_RADIUS * PLAYER_RADIUS) {
                     // Skip floor-like surfaces — grounding handles them, not wall collision.
                     // Threshold matches MAX_WALK_SLOPE (cos 50° ≈ 0.6428): surfaces steeper
                     // than 50° from horizontal must be tested as walls to prevent clip-through.
@@ -3280,16 +3295,17 @@ bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to,
                     const float SKIN = 0.005f;        // small separation so we don't re-collide immediately
                     // Push must cover full penetration to prevent gradual clip-through
                     const float MAX_PUSH = PLAYER_RADIUS;
+                    float horizDist = std::sqrt(horizDistSq);
                     float penetration = (PLAYER_RADIUS - horizDist);
                     float pushDist = glm::clamp(penetration + SKIN, 0.0f, MAX_PUSH);
                     glm::vec2 pushDir2;
-                    if (horizDist > 1e-4f) {
-                        pushDir2 = glm::normalize(glm::vec2(delta.x, delta.y));
+                    if (horizDistSq > 1e-8f) {
+                        pushDir2 = glm::vec2(delta.x, delta.y) * (1.0f / horizDist);
                     } else {
                         glm::vec2 n2(normal.x, normal.y);
-                        float n2Len = glm::length(n2);
-                        if (n2Len < 1e-4f) continue;
-                        pushDir2 = n2 / n2Len;
+                        float n2LenSq = glm::dot(n2, n2);
+                        if (n2LenSq < 1e-8f) continue;
+                        pushDir2 = n2 * glm::inversesqrt(n2LenSq);
                     }
                     glm::vec3 pushLocal(pushDir2.x * pushDist, pushDir2.y * pushDist, 0.0f);
 
@@ -3524,8 +3540,12 @@ float WMORenderer::raycastBoundingBoxes(const glm::vec3& origin, const glm::vec3
         }
 
         glm::vec3 center = (instance.worldBoundsMin + instance.worldBoundsMax) * 0.5f;
-        float radius = glm::length(instance.worldBoundsMax - center);
-        if (glm::length(center - origin) > (maxDistance + radius + 1.0f)) {
+        glm::vec3 halfExtent = instance.worldBoundsMax - center;
+        float radiusSq = glm::dot(halfExtent, halfExtent);
+        glm::vec3 toCenter = center - origin;
+        float distSq = glm::dot(toCenter, toCenter);
+        float maxR = maxDistance + std::sqrt(radiusSq) + 1.0f;
+        if (distSq > maxR * maxR) {
             continue;
         }
 

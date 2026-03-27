@@ -3242,7 +3242,7 @@ void Renderer::update(float deltaTime) {
         } else if (inCombat_ && targetPosition && !emoteActive && !isMounted()) {
             // Face target when in combat and idle
             glm::vec3 toTarget = *targetPosition - characterPosition;
-            if (glm::length(glm::vec2(toTarget.x, toTarget.y)) > 0.1f) {
+            if (toTarget.x * toTarget.x + toTarget.y * toTarget.y > 0.01f) {
                 float targetYaw = glm::degrees(std::atan2(toTarget.y, toTarget.x));
                 float diff = targetYaw - characterYaw;
                 while (diff > 180.0f) diff -= 360.0f;
@@ -6222,8 +6222,9 @@ glm::mat4 Renderer::computeLightSpaceMatrix() {
     glm::vec3 sunDir = glm::normalize(glm::vec3(-0.3f, -0.7f, -0.6f));
     if (lightingManager) {
         const auto& lighting = lightingManager->getLightingParams();
-        if (glm::length(lighting.directionalDir) > 0.001f) {
-            sunDir = glm::normalize(-lighting.directionalDir);
+        float ldirLenSq = glm::dot(lighting.directionalDir, lighting.directionalDir);
+        if (ldirLenSq > 1e-6f) {
+            sunDir = -lighting.directionalDir * glm::inversesqrt(ldirLenSq);
         }
     }
     // Shadow camera expects light rays pointing downward in render space (Z up).

@@ -3,6 +3,7 @@
 #include <vector>
 #include <map>
 #include <string>
+#include <string_view>
 #include <cstdint>
 #include <memory>
 
@@ -93,11 +94,21 @@ public:
     std::string getString(uint32_t recordIndex, uint32_t fieldIndex) const;
 
     /**
+     * Get a string field as a view (no allocation; valid while this DBCFile lives)
+     */
+    std::string_view getStringView(uint32_t recordIndex, uint32_t fieldIndex) const;
+
+    /**
      * Get string by offset in string block
      * @param offset Offset into string block
      * @return String value
      */
     std::string getStringByOffset(uint32_t offset) const;
+
+    /**
+     * Get string by offset as a view (no allocation; valid while this DBCFile lives)
+     */
+    std::string_view getStringViewByOffset(uint32_t offset) const;
 
     /**
      * Find a record by ID (assumes first field is ID)

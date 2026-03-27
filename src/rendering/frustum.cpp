@@ -63,10 +63,11 @@ void Frustum::extractFromMatrix(const glm::mat4& vp) {
 }
 
 void Frustum::normalizePlane(Plane& plane) {
-    float length = glm::length(plane.normal);
-    if (length > 0.0001f) {
-        plane.normal /= length;
-        plane.distance /= length;
+    float lenSq = glm::dot(plane.normal, plane.normal);
+    if (lenSq > 0.00000001f) {
+        float invLen = glm::inversesqrt(lenSq);
+        plane.normal *= invLen;
+        plane.distance *= invLen;
     }
 }
 

@@ -922,7 +922,8 @@ void WaterRenderer::loadFromWMO([[maybe_unused]] const pipeline::WMOLiquid& liqu
     float stepXLen = glm::length(surface.stepX);
     float stepYLen = glm::length(surface.stepY);
     glm::vec3 planeN = glm::cross(surface.stepX, surface.stepY);
-    float nz = (glm::length(planeN) > 1e-4f) ? std::abs(glm::normalize(planeN).z) : 0.0f;
+    float planeNLenSq = glm::dot(planeN, planeN);
+    float nz = (planeNLenSq > 1e-8f) ? std::abs(planeN.z * glm::inversesqrt(planeNLenSq)) : 0.0f;
     float spanX = stepXLen * static_cast<float>(surface.width);
     float spanY = stepYLen * static_cast<float>(surface.height);
     if (stepXLen < 0.2f || stepXLen > 12.0f ||

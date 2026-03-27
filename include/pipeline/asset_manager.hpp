@@ -8,7 +8,9 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <unordered_map>
 #include <mutex>
+#include <shared_mutex>
 
 namespace wowee {
 namespace pipeline {
@@ -164,15 +166,15 @@ private:
      */
     std::string resolveFile(const std::string& normalizedPath) const;
 
-    mutable std::mutex cacheMutex;
-    std::map<std::string, std::shared_ptr<DBCFile>> dbcCache;
+    mutable std::shared_mutex cacheMutex;
+    std::unordered_map<std::string, std::shared_ptr<DBCFile>> dbcCache;
 
     // File cache (LRU, dynamic budget based on system RAM)
     struct CachedFile {
         std::vector<uint8_t> data;
         uint64_t lastAccessTime;
     };
-    mutable std::map<std::string, CachedFile> fileCache;
+    mutable std::unordered_map<std::string, CachedFile> fileCache;
     mutable size_t fileCacheTotalBytes = 0;
     mutable uint64_t fileCacheAccessCounter = 0;
     mutable size_t fileCacheHits = 0;

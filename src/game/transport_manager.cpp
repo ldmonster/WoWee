@@ -66,7 +66,7 @@ void TransportManager::registerTransport(uint64_t guid, uint32_t wmoInstanceId, 
         // TransportAnimation paths are local offsets; first waypoint is expected near origin.
         // Warn only if the local path itself looks suspicious.
         glm::vec3 firstWaypoint = path.points[0].pos;
-        if (glm::length(firstWaypoint) > 10.0f) {
+        if (glm::dot(firstWaypoint, firstWaypoint) > 100.0f) {
             LOG_WARNING("Transport 0x", std::hex, guid, std::dec, " path ", pathId,
                         ": first local waypoint far from origin: (",
                         firstWaypoint.x, ",", firstWaypoint.y, ",", firstWaypoint.z, ")");
@@ -492,18 +492,18 @@ glm::quat TransportManager::orientationFromTangent(const TransportPath& path, ui
     );
 
     // Normalize tangent
-    float tangentLength = glm::length(tangent);
-    if (tangentLength < 0.001f) {
+    float tangentLenSq = glm::dot(tangent, tangent);
+    if (tangentLenSq < 1e-6f) {
         // Fallback to simple direction
         tangent = p2 - p1;
-        tangentLength = glm::length(tangent);
+        tangentLenSq = glm::dot(tangent, tangent);
     }
 
-    if (tangentLength < 0.001f) {
+    if (tangentLenSq < 1e-6f) {
         return glm::quat(1.0f, 0.0f, 0.0f, 0.0f);  // Identity
     }
 
-    tangent /= tangentLength;
+    tangent *= glm::inversesqrt(tangentLenSq);
 
     // Calculate rotation from forward direction
     glm::vec3 forward = tangent;
@@ -565,7 +565,7 @@ void TransportManager::updateServerTransport(uint64_t guid, const glm::vec3& pos
     const bool isWorldCoordPath = (hasPath && pathIt->second.worldCoords && pathIt->second.durationMs > 0);
 
     // Don't let (0,0,0) server updates override a TaxiPathNode world-coordinate path
-    if (isWorldCoordPath && glm::length(position) < 1.0f) {
+    if (isWorldCoordPath && glm::dot(position, position) < 1.0f) {
         transport->serverUpdateCount++;
         transport->lastServerUpdate = elapsedTime_;
         transport->serverYaw = orientation;
@@ -583,12 +583,13 @@ void TransportManager::updateServerTransport(uint64_t guid, const glm::vec3& pos
     if (isZOnlyPath || isWorldCoordPath) {
         transport->useClientAnimation = true;
     } else if (transport->useClientAnimation && hasPath && pathIt->second.fromDBC) {
-        float posDelta = glm::length(position - transport->position);
-        if (posDelta > 1.0f) {
+        glm::vec3 pd = position - transport->position;
+        float posDeltaSq = glm::dot(pd, pd);
+        if (posDeltaSq > 1.0f) {
             // Server sent a meaningfully different position — it's actively driving this transport
             transport->useClientAnimation = false;
             LOG_INFO("Transport 0x", std::hex, guid, std::dec,
-                     " switching to server-driven (posDelta=", posDelta, ")");
+                     " switching to server-driven (posDeltaSq=", posDeltaSq, ")");
         }
         // Otherwise keep client animation (server just echoed spawn pos or sent small jitter)
     } else if (!hasPath || !pathIt->second.fromDBC) {
@@ -632,16 +633,16 @@ void TransportManager::updateServerTransport(uint64_t guid, const glm::vec3& pos
         const float dt = elapsedTime_ - prevUpdateTime;
         if (dt > 0.001f) {
             glm::vec3 v = (position - prevPos) / dt;
-            const float speed = glm::length(v);
+            float speedSq = glm::dot(v, v);
             constexpr float kMinAuthoritativeSpeed = 0.15f;
             constexpr float kMaxSpeed = 60.0f;
-            if (speed >= kMinAuthoritativeSpeed) {
+            if (speedSq >= kMinAuthoritativeSpeed * kMinAuthoritativeSpeed) {
                 // Auto-detect 180-degree yaw mismatch by comparing heading to movement direction.
                 // Some transports appear to report yaw opposite their actual travel direction.
                 glm::vec2 horizontalV(v.x, v.y);
-                float hLen = glm::length(horizontalV);
-                if (hLen > 0.2f) {
-                    horizontalV /= hLen;
+                float hLenSq = glm::dot(horizontalV, horizontalV);
+                if (hLenSq > 0.04f) {
+                    horizontalV *= glm::inversesqrt(hLenSq);
                     glm::vec2 heading(std::cos(transport->serverYaw), std::sin(transport->serverYaw));
                     float alignDot = glm::dot(heading, horizontalV);
 
@@ -665,8 +666,8 @@ void TransportManager::updateServerTransport(uint64_t guid, const glm::vec3& pos
                     }
                 }
 
-                if (speed > kMaxSpeed) {
-                    v *= (kMaxSpeed / speed);
+                if (speedSq > kMaxSpeed * kMaxSpeed) {
+                    v *= (kMaxSpeed * glm::inversesqrt(speedSq));
                 }
 
                 transport->serverLinearVelocity = v;
@@ -738,10 +739,10 @@ void TransportManager::updateServerTransport(uint64_t guid, const glm::vec3& pos
                         float dtSeg = static_cast<float>(t1 - t0) / 1000.0f;
                         if (dtSeg <= 0.001f) return;
                         glm::vec3 v = seg / dtSeg;
-                        float speed = glm::length(v);
-                        if (speed < kMinBootstrapSpeed) return;
-                        if (speed > kMaxSpeed) {
-                            v *= (kMaxSpeed / speed);
+                        float speedSq = glm::dot(v, v);
+                        if (speedSq < kMinBootstrapSpeed * kMinBootstrapSpeed) return;
+                        if (speedSq > kMaxSpeed * kMaxSpeed) {
+                            v *= (kMaxSpeed * glm::inversesqrt(speedSq));
                         }
                         transport->serverLinearVelocity = v;
                         transport->serverAngularVelocity = 0.0f;
@@ -1136,7 +1137,7 @@ bool TransportManager::assignTaxiPathToTransport(uint32_t entry, uint32_t taxiPa
     // Find transport(s) with matching entry that are at (0,0,0)
     for (auto& [guid, transport] : transports_) {
         if (transport.entry != entry) continue;
-        if (glm::length(transport.position) > 1.0f) continue;  // Already has real position
+        if (glm::dot(transport.position, transport.position) > 1.0f) continue;  // Already has real position
 
         // Copy the taxi path into the main paths_ map (indexed by entry for this transport)
         TransportPath path = taxiIt->second;

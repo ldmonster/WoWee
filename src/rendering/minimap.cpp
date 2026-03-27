@@ -421,10 +421,11 @@ void Minimap::compositePass(VkCommandBuffer cmd, const glm::vec3& centerWorldPos
     const auto now = std::chrono::steady_clock::now();
     bool needsRefresh = !hasCachedFrame;
     if (!needsRefresh) {
-        float moved = glm::length(glm::vec2(centerWorldPos.x - lastUpdatePos.x,
-                                             centerWorldPos.y - lastUpdatePos.y));
+        float mdx = centerWorldPos.x - lastUpdatePos.x;
+        float mdy = centerWorldPos.y - lastUpdatePos.y;
+        float movedSq = mdx * mdx + mdy * mdy;
         float elapsed = std::chrono::duration<float>(now - lastUpdateTime).count();
-        needsRefresh = (moved >= updateDistance) || (elapsed >= updateIntervalSec);
+        needsRefresh = (movedSq >= updateDistance * updateDistance) || (elapsed >= updateIntervalSec);
     }
 
     // Also refresh if player crossed a tile boundary

@@ -1600,8 +1600,9 @@ void Application::update(float deltaTime) {
 
                     // Keep facing toward target and emit charge effect
                     glm::vec3 dir = chargeEndPos_ - chargeStartPos_;
-                    if (glm::length(dir) > 0.01f) {
-                        dir = glm::normalize(dir);
+                    float dirLenSq = glm::dot(dir, dir);
+                    if (dirLenSq > 1e-4f) {
+                        dir *= glm::inversesqrt(dirLenSq);
                         float yawDeg = glm::degrees(std::atan2(dir.x, dir.y));
                         renderer->setCharacterYaw(yawDeg);
                         renderer->emitChargeEffect(renderPos, dir);
@@ -1634,10 +1635,10 @@ void Application::update(float deltaTime) {
                                 glm::vec3 targetCanonical(targetEntity->getX(), targetEntity->getY(), targetEntity->getZ());
                                 glm::vec3 targetRender = core::coords::canonicalToRender(targetCanonical);
                                 glm::vec3 toTarget = targetRender - renderPos;
-                                float d = glm::length(toTarget);
-                                if (d > 1.5f) {
+                                float dSq = glm::dot(toTarget, toTarget);
+                                if (dSq > 2.25f) {
                                     // Place us 1.5 units from target (well within 8-unit melee range)
-                                    glm::vec3 snapPos = targetRender - glm::normalize(toTarget) * 1.5f;
+                                    glm::vec3 snapPos = targetRender - toTarget * (1.5f * glm::inversesqrt(dSq));
                                     renderer->getCharacterPosition() = snapPos;
                                     glm::vec3 snapCanonical = core::coords::renderToCanonical(snapPos);
                                     gameHandler->setPosition(snapCanonical.x, snapCanonical.y, snapCanonical.z);
@@ -1925,13 +1926,14 @@ void Application::update(float deltaTime) {
                         creatureRenderPosCache_[guid] = renderPos;
                     } else {
                         const glm::vec3 prevPos = posIt->second;
-                        const glm::vec2 delta2(renderPos.x - prevPos.x, renderPos.y - prevPos.y);
-                        float planarDist = glm::length(delta2);
+                        float ddx2 = renderPos.x - prevPos.x;
+                        float ddy2 = renderPos.y - prevPos.y;
+                        float planarDistSq = ddx2 * ddx2 + ddy2 * ddy2;
                         float dz = std::abs(renderPos.z - prevPos.z);
 
                         auto unitPtr = std::static_pointer_cast<game::Unit>(entity);
                         const bool deadOrCorpse = unitPtr->getHealth() == 0;
-                        const bool largeCorrection = (planarDist > 6.0f) || (dz > 3.0f);
+                        const bool largeCorrection = (planarDistSq > 36.0f) || (dz > 3.0f);
                         // isEntityMoving() reflects server-authoritative move state set by
                         // startMoveTo() in handleMonsterMove, regardless of distance-cull.
                         // This correctly detects movement for distant creatures (> 150u)
@@ -1941,11 +1943,13 @@ void Application::update(float deltaTime) {
                         // destination, rather than persisting through the dead-
                         // reckoning overrun window.
                         const bool entityIsMoving = entity->isActivelyMoving();
-                        const bool isMovingNow = !deadOrCorpse && (entityIsMoving || planarDist > 0.03f || dz > 0.08f);
+                        constexpr float kMoveThreshSq = 0.03f * 0.03f;
+                        const bool isMovingNow = !deadOrCorpse && (entityIsMoving || planarDistSq > kMoveThreshSq || dz > 0.08f);
                         if (deadOrCorpse || largeCorrection) {
                             charRenderer->setInstancePosition(instanceId, renderPos);
-                        } else if (planarDist > 0.03f || dz > 0.08f) {
+                        } else if (planarDistSq > kMoveThreshSq || dz > 0.08f) {
                             // Position changed in entity coords → drive renderer toward it.
+                            float planarDist = std::sqrt(planarDistSq);
                             float duration = std::clamp(planarDist / 5.5f, 0.05f, 0.22f);
                             charRenderer->moveInstanceTo(instanceId, renderPos, duration);
                         }
@@ -2045,19 +2049,22 @@ void Application::update(float deltaTime) {
                         creatureRenderPosCache_[guid] = renderPos;
                     } else {
                         const glm::vec3 prevPos = posIt->second;
-                        const glm::vec2 delta2(renderPos.x - prevPos.x, renderPos.y - prevPos.y);
-                        float planarDist = glm::length(delta2);
+                        float ddx2 = renderPos.x - prevPos.x;
+                        float ddy2 = renderPos.y - prevPos.y;
+                        float planarDistSq = ddx2 * ddx2 + ddy2 * ddy2;
                         float dz = std::abs(renderPos.z - prevPos.z);
 
                         auto unitPtr = std::static_pointer_cast<game::Unit>(entity);
                         const bool deadOrCorpse = unitPtr->getHealth() == 0;
-                        const bool largeCorrection = (planarDist > 6.0f) || (dz > 3.0f);
+                        const bool largeCorrection = (planarDistSq > 36.0f) || (dz > 3.0f);
                         const bool entityIsMoving = entity->isActivelyMoving();
-                        const bool isMovingNow = !deadOrCorpse && (entityIsMoving || planarDist > 0.03f || dz > 0.08f);
+                        constexpr float kMoveThreshSq2 = 0.03f * 0.03f;
+                        const bool isMovingNow = !deadOrCorpse && (entityIsMoving || planarDistSq > kMoveThreshSq2 || dz > 0.08f);
 
                         if (deadOrCorpse || largeCorrection) {
                             charRenderer->setInstancePosition(instanceId, renderPos);
-                        } else if (planarDist > 0.03f || dz > 0.08f) {
+                        } else if (planarDistSq > kMoveThreshSq2 || dz > 0.08f) {
+                            float planarDist = std::sqrt(planarDistSq);
                             float duration = std::clamp(planarDist / 5.5f, 0.05f, 0.22f);
                             charRenderer->moveInstanceTo(instanceId, renderPos, duration);
                         }
@@ -2810,9 +2817,10 @@ void Application::setupUICallbacks() {
 
         // Compute direction and stop 2.0 units short (melee reach)
         glm::vec3 dir = targetRender - startRender;
-        float dist = glm::length(dir);
-        if (dist < 3.0f) return; // Too close, nothing to do
-        glm::vec3 dirNorm = dir / dist;
+        float distSq = glm::dot(dir, dir);
+        if (distSq < 9.0f) return; // Too close, nothing to do
+        float invDist = glm::inversesqrt(distSq);
+        glm::vec3 dirNorm = dir * invDist;
         glm::vec3 endRender = targetRender - dirNorm * 2.0f;
 
         // Face toward target BEFORE starting charge
@@ -2827,7 +2835,7 @@ void Application::setupUICallbacks() {
         // Set charge state
         chargeActive_ = true;
         chargeTimer_ = 0.0f;
-        chargeDuration_ = std::max(dist / 25.0f, 0.3f); // ~25 units/sec
+        chargeDuration_ = std::max(std::sqrt(distSq) / 25.0f, 0.3f); // ~25 units/sec
         chargeStartPos_ = startRender;
         chargeEndPos_ = endRender;
         chargeTargetGuid_ = targetGuid;
@@ -8859,7 +8867,7 @@ void Application::processPendingTransportRegistrations() {
             pendingTransportMoves_.erase(moveIt);
         }
 
-        if (glm::length(canonicalSpawnPos) < 1.0f) {
+        if (glm::dot(canonicalSpawnPos, canonicalSpawnPos) < 1.0f) {
             auto goData = gameHandler->getCachedGameObjectInfo(pending.entry);
             if (goData && goData->type == 15 && goData->hasData && goData->data[0] != 0) {
                 uint32_t taxiPathId = goData->data[0];

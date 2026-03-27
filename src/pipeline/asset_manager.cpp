@@ -396,14 +396,15 @@ std::vector<uint8_t> AssetManager::readFile(const std::string& path) const {
 
     std::string normalized = normalizePath(path);
 
-    // Check cache first
+    // Check cache first (shared lock allows concurrent reads)
     {
-        std::lock_guard<std::mutex> cacheLock(cacheMutex);
+        std::shared_lock<std::shared_mutex> cacheLock(cacheMutex);
         auto it = fileCache.find(normalized);
         if (it != fileCache.end()) {
-            it->second.lastAccessTime = ++fileCacheAccessCounter;
+            auto data = it->second.data;
+            cacheLock.unlock();
             fileCacheHits++;
-            return it->second.data;
+            return data;
         }
     }
 
@@ -422,7 +423,7 @@ std::vector<uint8_t> AssetManager::readFile(const std::string& path) const {
     // Add to cache if within budget
     size_t fileSize = data.size();
     if (fileSize > 0 && fileSize < fileCacheBudget / 2) {
-        std::lock_guard<std::mutex> cacheLock(cacheMutex);
+        std::lock_guard<std::shared_mutex> cacheLock(cacheMutex);
         // Evict old entries if needed (LRU)
         while (fileCacheTotalBytes + fileSize > fileCacheBudget && !fileCache.empty()) {
             auto lru = fileCache.begin();
@@ -456,13 +457,13 @@ std::vector<uint8_t> AssetManager::readFileOptional(const std::string& path) con
 }
 
 void AssetManager::clearDBCCache() {
-    std::lock_guard<std::mutex> lock(cacheMutex);
+    std::lock_guard<std::shared_mutex> lock(cacheMutex);
     dbcCache.clear();
     LOG_INFO("Cleared DBC cache");
 }
 
 void AssetManager::clearCache() {
-    std::lock_guard<std::mutex> lock(cacheMutex);
+    std::lock_guard<std::shared_mutex> lock(cacheMutex);
     dbcCache.clear();
     fileCache.clear();
     fileCacheTotalBytes = 0;

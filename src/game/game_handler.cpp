@@ -11264,8 +11264,7 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                     if (sock1EnchIt != block.fields.end()) info.socketEnchantIds[0]  = sock1EnchIt->second;
                     if (sock2EnchIt != block.fields.end()) info.socketEnchantIds[1]  = sock2EnchIt->second;
                     if (sock3EnchIt != block.fields.end()) info.socketEnchantIds[2]  = sock3EnchIt->second;
-                    bool isNew = (onlineItems_.find(block.guid) == onlineItems_.end());
-                    onlineItems_[block.guid] = info;
+                    auto [itemIt, isNew] = onlineItems_.insert_or_assign(block.guid, info);
                     if (isNew) newItemCreated = true;
                     queryItemInfo(info.entry, block.guid);
                 }
@@ -22953,11 +22952,11 @@ void GameHandler::startClientTaxiPath(const std::vector<uint32_t>& pathNodes) {
     // Set initial orientation to face the first non-degenerate flight segment.
     glm::vec3 start = taxiClientPath_[0];
     glm::vec3 dir(0.0f);
-    float dirLen = 0.0f;
+    float dirLenSq = 0.0f;
     for (size_t i = 1; i < taxiClientPath_.size(); i++) {
         dir = taxiClientPath_[i] - start;
-        dirLen = glm::length(dir);
-        if (dirLen >= 0.001f) {
+        dirLenSq = glm::dot(dir, dir);
+        if (dirLenSq >= 1e-6f) {
             break;
         }
     }
@@ -22966,11 +22965,11 @@ void GameHandler::startClientTaxiPath(const std::vector<uint32_t>& pathNodes) {
     float initialRenderYaw = movementInfo.orientation;
     float initialPitch = 0.0f;
     float initialRoll = 0.0f;
-    if (dirLen >= 0.001f) {
+    if (dirLenSq >= 1e-6f) {
         initialOrientation = std::atan2(dir.y, dir.x);
         glm::vec3 renderDir = core::coords::canonicalToRender(dir);
         initialRenderYaw = std::atan2(renderDir.y, renderDir.x);
-        glm::vec3 dirNorm = dir / dirLen;
+        glm::vec3 dirNorm = dir * glm::inversesqrt(dirLenSq);
         initialPitch = std::asin(std::clamp(dirNorm.z, -1.0f, 1.0f));
     }
 
@@ -23056,12 +23055,13 @@ void GameHandler::updateClientTaxi(float deltaTime) {
         start = taxiClientPath_[taxiClientIndex_];
         end = taxiClientPath_[taxiClientIndex_ + 1];
         dir = end - start;
-        segmentLen = glm::length(dir);
+        float segLenSq = glm::dot(dir, dir);
 
-        if (segmentLen < 0.01f) {
+        if (segLenSq < 1e-4f) {
             taxiClientIndex_++;
             continue;
         }
+        segmentLen = std::sqrt(segLenSq);
 
         if (remainingDistance >= segmentLen) {
             remainingDistance -= segmentLen;
@@ -23099,13 +23099,13 @@ void GameHandler::updateClientTaxi(float deltaTime) {
         2.0f * (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t +
         3.0f * (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t2
     );
-    float tangentLen = glm::length(tangent);
-    if (tangentLen < 0.0001f) {
+    float tangentLenSq = glm::dot(tangent, tangent);
+    if (tangentLenSq < 1e-8f) {
         tangent = dir;
-        tangentLen = glm::length(tangent);
-        if (tangentLen < 0.0001f) {
+        tangentLenSq = glm::dot(tangent, tangent);
+        if (tangentLenSq < 1e-8f) {
             tangent = glm::vec3(std::cos(movementInfo.orientation), std::sin(movementInfo.orientation), 0.0f);
-            tangentLen = glm::length(tangent);
+            tangentLenSq = 1.0f; // unit vector
         }
     }
 
@@ -23113,7 +23113,7 @@ void GameHandler::updateClientTaxi(float deltaTime) {
     float targetOrientation = std::atan2(tangent.y, tangent.x);
 
     // Calculate pitch from vertical component (altitude change)
-    glm::vec3 tangentNorm = tangent / std::max(tangentLen, 0.0001f);
+    glm::vec3 tangentNorm = tangent * glm::inversesqrt(std::max(tangentLenSq, 1e-8f));
     float pitch = std::asin(std::clamp(tangentNorm.z, -1.0f, 1.0f));
 
     // Calculate roll (banking) from rate of yaw change

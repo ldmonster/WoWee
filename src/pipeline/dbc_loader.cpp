@@ -137,26 +137,32 @@ float DBCFile::getFloat(uint32_t recordIndex, uint32_t fieldIndex) const {
 }
 
 std::string DBCFile::getString(uint32_t recordIndex, uint32_t fieldIndex) const {
+    return std::string(getStringView(recordIndex, fieldIndex));
+}
+
+std::string_view DBCFile::getStringView(uint32_t recordIndex, uint32_t fieldIndex) const {
     uint32_t offset = getUInt32(recordIndex, fieldIndex);
-    return getStringByOffset(offset);
+    return getStringViewByOffset(offset);
 }
 
 std::string DBCFile::getStringByOffset(uint32_t offset) const {
+    return std::string(getStringViewByOffset(offset));
+}
+
+std::string_view DBCFile::getStringViewByOffset(uint32_t offset) const {
     if (!loaded || offset >= stringBlockSize) {
-        return "";
+        return {};
     }
 
-    // Find null terminator
     const char* str = reinterpret_cast<const char*>(stringBlock.data() + offset);
     const char* end = reinterpret_cast<const char*>(stringBlock.data() + stringBlockSize);
 
-    // Find string length (up to null terminator or end of block)
     size_t length = 0;
     while (str + length < end && str[length] != '\0') {
         length++;
     }
 
-    return std::string(str, length);
+    return std::string_view(str, length);
 }
 
 int32_t DBCFile::findRecordById(uint32_t id) const {

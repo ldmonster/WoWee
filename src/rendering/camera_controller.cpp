@@ -111,9 +111,11 @@ std::optional<float> CameraController::getCachedFloorHeight(float x, float y, fl
     // Check cache validity (position within threshold and frame count)
     glm::vec2 queryPos(x, y);
     glm::vec2 cachedPos(lastFloorQueryPos.x, lastFloorQueryPos.y);
-    float dist = glm::length(queryPos - cachedPos);
+    glm::vec2 dq = queryPos - cachedPos;
+    float distSq = glm::dot(dq, dq);
+    constexpr float kFloorThresholdSq = FLOOR_QUERY_DISTANCE_THRESHOLD * FLOOR_QUERY_DISTANCE_THRESHOLD;
 
-    if (dist < FLOOR_QUERY_DISTANCE_THRESHOLD && floorQueryFrameCounter < FLOOR_QUERY_FRAME_INTERVAL) {
+    if (distSq < kFloorThresholdSq && floorQueryFrameCounter < FLOOR_QUERY_FRAME_INTERVAL) {
         floorQueryFrameCounter++;
         return cachedFloorHeight;
     }
@@ -194,7 +196,7 @@ void CameraController::update(float deltaTime) {
             }
 
             // Smooth camera position
-            if (glm::length(smoothedCamPos) < 0.01f) {
+            if (glm::dot(smoothedCamPos, smoothedCamPos) < 1e-4f) {
                 smoothedCamPos = actualCam;
             }
             float camLerp = 1.0f - std::exp(-CAM_SMOOTH_SPEED * deltaTime);
@@ -516,9 +518,9 @@ void CameraController::update(float deltaTime) {
                         };
 
                         glm::vec2 fwd2(forward.x, forward.y);
-                        float fwdLen = glm::length(fwd2);
-                        if (fwdLen > 1e-4f) {
-                            fwd2 /= fwdLen;
+                        float fwdLenSq = glm::dot(fwd2, fwd2);
+                        if (fwdLenSq > 1e-8f) {
+                            fwd2 *= glm::inversesqrt(fwdLenSq);
                             std::optional<float> aheadFloor;
                             const float probeZ = targetPos.z + 2.0f;
                             const float dists[] = {0.45f, 0.90f, 1.25f};
@@ -566,7 +568,7 @@ void CameraController::update(float deltaTime) {
             } else {
                 // Manual control: use camera's 3D direction (swim where you look)
                 swimForward = glm::normalize(forward3D);
-                if (glm::length(swimForward) < 1e-4f) {
+                if (glm::dot(swimForward, swimForward) < 1e-8f) {
                     swimForward = forward;
                 }
             }
@@ -583,8 +585,9 @@ void CameraController::update(float deltaTime) {
             if (nowStrafeLeft) swimMove += swimRight;
             if (nowStrafeRight) swimMove -= swimRight;
 
-            if (glm::length(swimMove) > 0.001f) {
-                swimMove = glm::normalize(swimMove);
+            float swimMoveLenSq = glm::dot(swimMove, swimMove);
+            if (swimMoveLenSq > 1e-6f) {
+                swimMove *= glm::inversesqrt(swimMoveLenSq);
                 // Use backward swim speed when moving backwards only (not when combining with strafe)
                 float applySpeed = (nowBackward && !nowForward) ? swimBackSpeed : swimSpeed;
                 targetPos += swimMove * applySpeed * physicsDeltaTime;
@@ -623,10 +626,12 @@ void CameraController::update(float deltaTime) {
             // Prevent sinking/clipping through world floor while swimming.
             // Cache floor queries (update every 3 frames or 1 unit movement)
             std::optional<float> floorH;
-            float dist2D = glm::length(glm::vec2(targetPos.x - lastFloorQueryPos.x,
-                                                   targetPos.y - lastFloorQueryPos.y));
+            float dx2D = targetPos.x - lastFloorQueryPos.x;
+            float dy2D = targetPos.y - lastFloorQueryPos.y;
+            float dist2DSq = dx2D * dx2D + dy2D * dy2D;
+            constexpr float kFloorDistSq = FLOOR_QUERY_DISTANCE_THRESHOLD * FLOOR_QUERY_DISTANCE_THRESHOLD;
             bool updateFloorCache = (floorQueryFrameCounter++ >= FLOOR_QUERY_FRAME_INTERVAL) ||
-                                     (dist2D > FLOOR_QUERY_DISTANCE_THRESHOLD);
+                                     (dist2DSq > kFloorDistSq);
 
             if (updateFloorCache) {
                 floorQueryFrameCounter = 0;
@@ -685,10 +690,12 @@ void CameraController::update(float deltaTime) {
             {
                 glm::vec3 swimFrom = *followTarget;
                 glm::vec3 swimTo = targetPos;
-                float swimMoveDist = glm::length(swimTo - swimFrom);
+                glm::vec3 swimDelta = swimTo - swimFrom;
+                float swimMoveDistSq = glm::dot(swimDelta, swimDelta);
                 glm::vec3 stepPos = swimFrom;
 
-                if (swimMoveDist > 0.01f) {
+                if (swimMoveDistSq > 1e-4f) {
+                    float swimMoveDist = std::sqrt(swimMoveDistSq);
                     float swimStepSize = cachedInsideWMO ? 0.20f : 0.35f;
                     int swimSteps = std::max(1, std::min(8, static_cast<int>(std::ceil(swimMoveDist / swimStepSize))));
                     glm::vec3 stepDelta = (swimTo - swimFrom) / static_cast<float>(swimSteps);
@@ -746,7 +753,7 @@ void CameraController::update(float deltaTime) {
 
                 // Forward/back follows camera 3D direction (same as swim)
                 glm::vec3 flyFwd = glm::normalize(forward3D);
-                if (glm::length(flyFwd) < 1e-4f) flyFwd = forward;
+                if (glm::dot(flyFwd, flyFwd) < 1e-8f) flyFwd = forward;
                 glm::vec3 flyMove(0.0f);
                 if (nowForward)     flyMove += flyFwd;
                 if (nowBackward)    flyMove -= flyFwd;
@@ -756,8 +763,9 @@ void CameraController::update(float deltaTime) {
                 bool flyDescend = !uiWantsKeyboard && xDown && mounted_;
                 if (nowJump)       flyMove.z += 1.0f;
                 if (flyDescend)    flyMove.z -= 1.0f;
-                if (glm::length(flyMove) > 0.001f) {
-                    flyMove = glm::normalize(flyMove);
+                float flyMoveLenSq = glm::dot(flyMove, flyMove);
+                if (flyMoveLenSq > 1e-6f) {
+                    flyMove *= glm::inversesqrt(flyMoveLenSq);
                     float flyFwdSpeed = (flightSpeedOverride_ > 0.0f && flightSpeedOverride_ < 200.0f
                                          && !std::isnan(flightSpeedOverride_))
                                             ? flightSpeedOverride_ : speed;
@@ -771,8 +779,9 @@ void CameraController::update(float deltaTime) {
                 // Skip all ground physics — go straight to collision/WMO sections
             } else {
 
-            if (glm::length(movement) > 0.001f) {
-                movement = glm::normalize(movement);
+            float moveLenSq = glm::dot(movement, movement);
+            if (moveLenSq > 1e-6f) {
+                movement *= glm::inversesqrt(moveLenSq);
                 targetPos += movement * speed * physicsDeltaTime;
             }
 
@@ -784,7 +793,7 @@ void CameraController::update(float deltaTime) {
                 float drag = std::exp(-KNOCKBACK_HORIZ_DRAG * physicsDeltaTime);
                 knockbackHorizVel_ *= drag;
                 // Once negligible, clear the flag so collision/grounding work normally.
-                if (glm::length(knockbackHorizVel_) < 0.05f) {
+                if (glm::dot(knockbackHorizVel_, knockbackHorizVel_) < 0.0025f) {
                     knockbackActive_ = false;
                     knockbackHorizVel_ = glm::vec2(0.0f);
                 }
@@ -829,8 +838,9 @@ void CameraController::update(float deltaTime) {
         // Refresh inside-WMO state before collision/grounding so we don't use stale
         // terrain-first caches while entering enclosed tunnel/building spaces.
         if (wmoRenderer && !externalFollow_) {
-            const float insideDist = glm::length(targetPos - lastInsideStateCheckPos_);
-            if (++insideStateCheckCounter_ >= 2 || insideDist > 0.35f) {
+            glm::vec3 insideDelta = targetPos - lastInsideStateCheckPos_;
+            float insideDistSq = glm::dot(insideDelta, insideDelta);
+            if (++insideStateCheckCounter_ >= 2 || insideDistSq > 0.1225f) {
                 insideStateCheckCounter_ = 0;
                 lastInsideStateCheckPos_ = targetPos;
 
@@ -853,9 +863,11 @@ void CameraController::update(float deltaTime) {
         {
             glm::vec3 startPos = *followTarget;
             glm::vec3 desiredPos = targetPos;
-            float moveDist = glm::length(desiredPos - startPos);
+            glm::vec3 moveDelta = desiredPos - startPos;
+            float moveDistSq = glm::dot(moveDelta, moveDelta);
 
-            if (moveDist > 0.01f) {
+            if (moveDistSq > 1e-4f) {
+                float moveDist = std::sqrt(moveDistSq);
                 // Smaller step size when inside buildings for tighter collision
                 float stepSize = cachedInsideWMO ? 0.20f : 0.35f;
                 int sweepSteps = std::max(1, std::min(8, static_cast<int>(std::ceil(moveDist / stepSize))));
@@ -909,9 +921,11 @@ void CameraController::update(float deltaTime) {
             std::optional<float> centerM2H;
             {
                 // Collision cache: skip expensive checks if barely moved (15cm threshold)
-                float distMoved = glm::length(glm::vec2(targetPos.x, targetPos.y) -
-                                             glm::vec2(lastCollisionCheckPos_.x, lastCollisionCheckPos_.y));
-                bool useCached = grounded && hasCachedFloor_ && distMoved < COLLISION_CACHE_DISTANCE;
+                float dmx = targetPos.x - lastCollisionCheckPos_.x;
+                float dmy = targetPos.y - lastCollisionCheckPos_.y;
+                float distMovedSq = dmx * dmx + dmy * dmy;
+                constexpr float kCollisionCacheDistSq = COLLISION_CACHE_DISTANCE * COLLISION_CACHE_DISTANCE;
+                bool useCached = grounded && hasCachedFloor_ && distMovedSq < kCollisionCacheDistSq;
                 if (useCached) {
                     // Never trust cached ground while actively descending or when
                     // vertical drift from cached floor is meaningful.
@@ -1371,11 +1385,13 @@ void CameraController::update(float deltaTime) {
         float mountedOffset = mounted_ ? mountHeightOffset_ : 0.0f;
         float pivotLift = 0.0f;
         if (terrainManager && !externalFollow_ && !cachedInsideInteriorWMO) {
-            float moved = glm::length(glm::vec2(targetPos.x - lastPivotLiftQueryPos_.x,
-                                                targetPos.y - lastPivotLiftQueryPos_.y));
+            float plx = targetPos.x - lastPivotLiftQueryPos_.x;
+            float ply = targetPos.y - lastPivotLiftQueryPos_.y;
+            float movedSq = plx * plx + ply * ply;
+            constexpr float kPivotLiftPosSq = PIVOT_LIFT_POS_THRESHOLD * PIVOT_LIFT_POS_THRESHOLD;
             float distDelta = std::abs(currentDistance - lastPivotLiftDistance_);
             bool queryLift = (++pivotLiftQueryCounter_ >= PIVOT_LIFT_QUERY_INTERVAL) ||
-                             (moved >= PIVOT_LIFT_POS_THRESHOLD) ||
+                             (movedSq >= kPivotLiftPosSq) ||
                              (distDelta >= PIVOT_LIFT_DIST_THRESHOLD);
             if (queryLift) {
                 pivotLiftQueryCounter_ = 0;
@@ -1421,8 +1437,9 @@ void CameraController::update(float deltaTime) {
         // Limit max zoom when inside a WMO with a ceiling (building interior)
         // Throttle: only recheck every 10 frames or when position changes >2 units.
         if (wmoRenderer) {
-            float distFromLastCheck = glm::length(targetPos - lastInsideWMOCheckPos);
-            if (++insideWMOCheckCounter >= 10 || distFromLastCheck > 2.0f) {
+            glm::vec3 wmoCheckDelta = targetPos - lastInsideWMOCheckPos;
+            float distFromLastCheckSq = glm::dot(wmoCheckDelta, wmoCheckDelta);
+            if (++insideWMOCheckCounter >= 10 || distFromLastCheckSq > 4.0f) {
                 wmoRenderer->updateActiveGroup(targetPos.x, targetPos.y, targetPos.z + 1.0f);
                 insideWMOCheckCounter = 0;
                 lastInsideWMOCheckPos = targetPos;
@@ -1486,7 +1503,7 @@ void CameraController::update(float deltaTime) {
         }
 
         // Smooth camera position to avoid jitter
-        if (glm::length(smoothedCamPos) < 0.01f) {
+        if (glm::dot(smoothedCamPos, smoothedCamPos) < 1e-4f) {
             smoothedCamPos = actualCam;  // Initialize
         }
         float camLerp = 1.0f - std::exp(-CAM_SMOOTH_SPEED * deltaTime);
@@ -1503,9 +1520,10 @@ void CameraController::update(float deltaTime) {
             std::optional<float> camWmoH;
             if (wmoRenderer) {
                 // Skip expensive WMO floor query if camera barely moved
-                float camDelta = glm::length(glm::vec2(smoothedCamPos.x - lastCamFloorQueryPos.x,
-                                                         smoothedCamPos.y - lastCamFloorQueryPos.y));
-                if (camDelta < 0.3f && hasCachedCamFloor) {
+                float cdx = smoothedCamPos.x - lastCamFloorQueryPos.x;
+                float cdy = smoothedCamPos.y - lastCamFloorQueryPos.y;
+                float camDeltaSq = cdx * cdx + cdy * cdy;
+                if (camDeltaSq < 0.09f && hasCachedCamFloor) {
                     camWmoH = cachedCamWmoFloor;
                 } else {
                     float camFloorProbeZ = smoothedCamPos.z;
@@ -1618,8 +1636,9 @@ void CameraController::update(float deltaTime) {
             float waterSurfaceCamZ = waterH ? (*waterH - WATER_SURFACE_OFFSET + eyeHeight) : newPos.z;
             bool diveIntent = nowForward && (forward3D.z < -0.28f);
 
-            if (glm::length(movement) > 0.001f) {
-                movement = glm::normalize(movement);
+            float movLenSq = glm::dot(movement, movement);
+            if (movLenSq > 1e-6f) {
+                movement *= glm::inversesqrt(movLenSq);
                 newPos += movement * swimSpeed * physicsDeltaTime;
             }
 
@@ -1652,8 +1671,9 @@ void CameraController::update(float deltaTime) {
         } else {
             swimming = false;
 
-            if (glm::length(movement) > 0.001f) {
-                movement = glm::normalize(movement);
+            float movLenSq2 = glm::dot(movement, movement);
+            if (movLenSq2 > 1e-6f) {
+                movement *= glm::inversesqrt(movLenSq2);
                 newPos += movement * speed * physicsDeltaTime;
             }
 
@@ -1680,9 +1700,11 @@ void CameraController::update(float deltaTime) {
         if (wmoRenderer) {
             glm::vec3 startFeet = camera->getPosition() - glm::vec3(0, 0, eyeHeight);
             glm::vec3 desiredFeet = newPos - glm::vec3(0, 0, eyeHeight);
-            float moveDist = glm::length(desiredFeet - startFeet);
+            glm::vec3 feetDelta = desiredFeet - startFeet;
+            float moveDistSq2 = glm::dot(feetDelta, feetDelta);
 
-            if (moveDist > 0.01f) {
+            if (moveDistSq2 > 1e-4f) {
+                float moveDist = std::sqrt(moveDistSq2);
                 float stepSize = cachedInsideWMO ? 0.20f : 0.35f;
                 int sweepSteps = std::max(1, std::min(8, static_cast<int>(std::ceil(moveDist / stepSize))));
                 glm::vec3 stepPos = startFeet;

@@ -2990,10 +2990,11 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
     if (leftClickWasPress_ && input.isMouseButtonJustReleased(SDL_BUTTON_LEFT)) {
         leftClickWasPress_ = false;
         glm::vec2 releasePos = input.getMousePosition();
-        float dragDist = glm::length(releasePos - leftClickPressPos_);
+        glm::vec2 dragDelta = releasePos - leftClickPressPos_;
+        float dragDistSq = glm::dot(dragDelta, dragDelta);
         constexpr float CLICK_THRESHOLD = 5.0f;  // pixels
 
-        if (dragDist < CLICK_THRESHOLD) {
+        if (dragDistSq < CLICK_THRESHOLD * CLICK_THRESHOLD) {
             auto* renderer = core::Application::getInstance().getRenderer();
             auto* camera = renderer ? renderer->getCamera() : nullptr;
             auto* window = core::Application::getInstance().getWindow();
@@ -11557,9 +11558,10 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         renderPos.z += 2.3f;
 
         // Cull distance: target or other players up to 40 units; NPC others up to 20 units
-        float dist = glm::length(renderPos - camPos);
+        glm::vec3 nameDelta = renderPos - camPos;
+        float distSq = glm::dot(nameDelta, nameDelta);
         float cullDist = (isTarget || isPlayer) ? 40.0f : 20.0f;
-        if (dist > cullDist) continue;
+        if (distSq > cullDist * cullDist) continue;
 
         // Project to clip space
         glm::vec4 clipPos = viewProj * glm::vec4(renderPos, 1.0f);
@@ -11576,7 +11578,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         float sy = (ndc.y * 0.5f + 0.5f) * screenH;
 
         // Fade out in the last 5 units of cull range
-        float alpha = dist < (cullDist - 5.0f) ? 1.0f : 1.0f - (dist - (cullDist - 5.0f)) / 5.0f;
+        float fadeSq = (cullDist - 5.0f) * (cullDist - 5.0f);
+        float dist = std::sqrt(distSq);
+        float alpha = distSq < fadeSq ? 1.0f : 1.0f - (dist - (cullDist - 5.0f)) / 5.0f;
         auto A = [&](int v) { return static_cast<int>(v * alpha); };
 
         // Bar colour by hostility (grey for corpses)

@@ -221,6 +221,7 @@ void Weather::update(const Camera& camera, float deltaTime) {
 
     // Update position buffer
     particlePositions.clear();
+    particlePositions.reserve(particles.size());
     for (const auto& particle : particles) {
         particlePositions.push_back(particle.position);
     }
@@ -232,9 +233,10 @@ void Weather::updateParticle(Particle& particle, const Camera& camera, float del
 
     // Reset if lifetime exceeded or too far from camera
     glm::vec3 cameraPos = camera.getPosition();
-    float distance = glm::length(particle.position - cameraPos);
+    glm::vec3 toCamera = particle.position - cameraPos;
+    float distSq = glm::dot(toCamera, toCamera);
 
-    if (particle.lifetime >= particle.maxLifetime || distance > SPAWN_VOLUME_SIZE ||
+    if (particle.lifetime >= particle.maxLifetime || distSq > SPAWN_VOLUME_SIZE * SPAWN_VOLUME_SIZE ||
         particle.position.y < cameraPos.y - 20.0f) {
         // Respawn at top
         particle.position = getRandomPosition(cameraPos);

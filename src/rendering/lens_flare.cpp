@@ -301,10 +301,11 @@ void LensFlare::render(VkCommandBuffer cmd, const Camera& camera, const glm::vec
     // Sun billboard rendering is sky-locked (view translation removed), so anchor
     // flare projection to camera position along sun direction to avoid parallax drift.
     glm::vec3 sunDir = sunPosition;
-    if (glm::length(sunDir) < 0.0001f) {
+    float sunDirLenSq = glm::dot(sunDir, sunDir);
+    if (sunDirLenSq < 1e-8f) {
         return;
     }
-    sunDir = glm::normalize(sunDir);
+    sunDir *= glm::inversesqrt(sunDirLenSq);
     glm::vec3 anchoredSunPos = camera.getPosition() + sunDir * 800.0f;
 
     // Calculate sun visibility

@@ -2724,11 +2724,26 @@ bool CreatureQueryResponseParser::parse(network::Packet& packet, CreatureQueryRe
     data.family = packet.readUInt32();
     data.rank = packet.readUInt32();
 
-    // Skip remaining fields (kill credits, display IDs, modifiers, quest items, etc.)
-    // We've got what we need for display purposes
+    // killCredit[2] + displayId[4] = 6 × 4 = 24 bytes
+    if (!packet.hasRemaining(24)) {
+        LOG_WARNING("SMSG_CREATURE_QUERY_RESPONSE: truncated before displayIds (entry=", data.entry, ")");
+        LOG_DEBUG("Creature query response: ", data.name, " (type=", data.creatureType,
+                 " rank=", data.rank, ")");
+        return true;
+    }
+
+    packet.readUInt32();  // killCredit[0]
+    packet.readUInt32();  // killCredit[1]
+    data.displayId[0] = packet.readUInt32();
+    data.displayId[1] = packet.readUInt32();
+    data.displayId[2] = packet.readUInt32();
+    data.displayId[3] = packet.readUInt32();
+
+    // Skip remaining fields (healthMultiplier, powerMultiplier, racialLeader, questItems, movementId)
 
     LOG_DEBUG("Creature query response: ", data.name, " (type=", data.creatureType,
-             " rank=", data.rank, ")");
+             " rank=", data.rank, " displayIds=[", data.displayId[0], ",",
+             data.displayId[1], ",", data.displayId[2], ",", data.displayId[3], "])");
     return true;
 }
 

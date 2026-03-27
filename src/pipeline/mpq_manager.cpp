@@ -169,7 +169,7 @@ void MPQManager::shutdown() {
     archives.clear();
     archiveNames.clear();
     {
-        std::lock_guard<std::mutex> lock(fileArchiveCacheMutex_);
+        std::lock_guard<std::shared_mutex> lock(fileArchiveCacheMutex_);
         fileArchiveCache_.clear();
     }
     {
@@ -214,7 +214,7 @@ bool MPQManager::loadArchive(const std::string& path, int priority) {
 
     // Archive set/priority changed, so cached filename -> archive mappings may be stale.
     {
-        std::lock_guard<std::mutex> lock(fileArchiveCacheMutex_);
+        std::lock_guard<std::shared_mutex> lock(fileArchiveCacheMutex_);
         fileArchiveCache_.clear();
     }
 
@@ -383,7 +383,7 @@ HANDLE MPQManager::findFileArchive(const std::string& filename) const {
 #ifdef HAVE_STORMLIB
     std::string cacheKey = normalizeVirtualFilenameForLookup(filename);
     {
-        std::lock_guard<std::mutex> lock(fileArchiveCacheMutex_);
+        std::shared_lock<std::shared_mutex> lock(fileArchiveCacheMutex_);
         auto it = fileArchiveCache_.find(cacheKey);
         if (it != fileArchiveCache_.end()) {
             return it->second;
@@ -416,7 +416,7 @@ HANDLE MPQManager::findFileArchive(const std::string& filename) const {
     }
 
     {
-        std::lock_guard<std::mutex> lock(fileArchiveCacheMutex_);
+        std::lock_guard<std::shared_mutex> lock(fileArchiveCacheMutex_);
         if (fileArchiveCache_.size() >= fileArchiveCacheMaxEntries_) {
             // Simple safety valve: clear the cache rather than allowing an unbounded growth.
             LOG_WARNING("MPQ archive lookup cache cleared (size=", fileArchiveCache_.size(),

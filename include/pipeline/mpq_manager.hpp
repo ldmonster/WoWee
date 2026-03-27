@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <mutex>
+#include <shared_mutex>
 
 // Forward declare StormLib handle
 typedef void* HANDLE;
@@ -115,7 +116,7 @@ private:
     //
     // Important: caching misses can blow up memory if the game probes many unique non-existent filenames.
     // Miss caching is disabled by default and must be explicitly enabled.
-    mutable std::mutex fileArchiveCacheMutex_;
+    mutable std::shared_mutex fileArchiveCacheMutex_;
     mutable std::unordered_map<std::string, HANDLE> fileArchiveCache_;
     size_t fileArchiveCacheMaxEntries_ = 500000;
     bool fileArchiveCacheMisses_ = false;

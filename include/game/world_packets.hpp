@@ -1502,9 +1502,10 @@ struct CreatureQueryResponseData {
     std::string subName;
     std::string iconName;
     uint32_t typeFlags = 0;
-    uint32_t creatureType = 0;
+    uint32_t creatureType = 0;  // 1=Beast, 2=Dragonkin, 3=Demon, 4=Elemental, 5=Giant, 6=Undead, 7=Humanoid, ...
     uint32_t family = 0;
     uint32_t rank = 0;         // 0=Normal, 1=Elite, 2=Rare Elite, 3=Boss, 4=Rare
+    uint32_t displayId[4] = {};  // Up to 4 random display models (0 = unused)
 
     bool isValid() const { return entry != 0 && !name.empty(); }
 };

@@ -449,8 +449,9 @@ void ChargeEffect::emit(const glm::vec3& position, const glm::vec3& direction) {
     }
 
     // Only add a new trail point if we've moved enough
-    float dist = glm::length(position - lastEmitPos_);
-    if (dist >= TRAIL_SPAWN_DIST || trail_.empty()) {
+    glm::vec3 emitDelta = position - lastEmitPos_;
+    float distSq = glm::dot(emitDelta, emitDelta);
+    if (distSq >= TRAIL_SPAWN_DIST * TRAIL_SPAWN_DIST || trail_.empty()) {
         // Ribbon is vertical: side vector points straight up
         glm::vec3 side = glm::vec3(0.0f, 0.0f, 1.0f);
 
@@ -466,9 +467,10 @@ void ChargeEffect::emit(const glm::vec3& position, const glm::vec3& direction) {
 
     // Spawn dust puffs at feet
     glm::vec3 horizDir = glm::vec3(direction.x, direction.y, 0.0f);
-    float horizLen = glm::length(horizDir);
-    if (horizLen < 0.001f) return;
-    glm::vec3 backDir = -horizDir / horizLen;
+    float horizLenSq = glm::dot(horizDir, horizDir);
+    if (horizLenSq < 1e-6f) return;
+    float invHorizLen = glm::inversesqrt(horizLenSq);
+    glm::vec3 backDir = -horizDir * invHorizLen;
     glm::vec3 sideDir = glm::vec3(-backDir.y, backDir.x, 0.0f);
 
     dustAccum_ += 30.0f * 0.016f;

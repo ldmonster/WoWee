@@ -305,8 +305,9 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId,
         }
 
         // Normalize blended direction
-        if (glm::length(blendedDir) > 0.001f) {
-            newParams.directionalDir = glm::normalize(blendedDir);
+        float blendedDirLenSq = glm::dot(blendedDir, blendedDir);
+        if (blendedDirLenSq > 1e-6f) {
+            newParams.directionalDir = blendedDir * glm::inversesqrt(blendedDirLenSq);
         } else {
             // Fallback if all directions cancelled out
             newParams.directionalDir = glm::vec3(0.3f, -0.7f, 0.6f);
@@ -371,14 +372,16 @@ std::vector<LightingManager::WeightedVolume> LightingManager::findLightVolumes(c
     for (const auto& volume : volumes) {
         // Apply coordinate scaling (test with 1.0f, try 36.0f if distances are off)
         glm::vec3 scaledPos = volume.position * LIGHT_COORD_SCALE;
-        float dist = glm::length(playerPos - scaledPos);
+        glm::vec3 toPlayer = playerPos - scaledPos;
+        float distSq = glm::dot(toPlayer, toPlayer);
 
         float weight = 0.0f;
-        if (dist <= volume.innerRadius) {
+        if (distSq <= volume.innerRadius * volume.innerRadius) {
             // Inside inner radius: full weight
             weight = 1.0f;
-        } else if (dist < volume.outerRadius) {
-            // Between inner and outer: fade out with smoothstep
+        } else if (distSq < volume.outerRadius * volume.outerRadius) {
+            // Between inner and outer: fade out with smoothstep (sqrt needed for interpolation)
+            float dist = std::sqrt(distSq);
             float t = (dist - volume.innerRadius) / (volume.outerRadius - volume.innerRadius);
             t = glm::clamp(t, 0.0f, 1.0f);
             weight = 1.0f - (t * t * (3.0f - 2.0f * t));  // Smoothstep
@@ -389,7 +392,7 @@ std::vector<LightingManager::WeightedVolume> LightingManager::findLightVolumes(c
 
             // Debug logging for first few volumes
             if (weighted.size() <= 3) {
-                LOG_INFO("Light volume ", volume.lightId, ": dist=", dist,
+                LOG_INFO("Light volume ", volume.lightId, ": distSq=", distSq,
                          " inner=", volume.innerRadius, " outer=", volume.outerRadius,
                          " weight=", weight);
             }
@@ -400,15 +403,20 @@ std::vector<LightingManager::WeightedVolume> LightingManager::findLightVolumes(c
         return {};
     }
 
-    // Sort by weight descending
-    std::sort(weighted.begin(), weighted.end(),
-              [](const WeightedVolume& a, const WeightedVolume& b) {
-                  return a.weight > b.weight;
-              });
-
-    // Keep top N volumes
+    // Keep top N volumes by weight (partial sort is O(n) vs O(n log n) for full sort)
     if (weighted.size() > MAX_BLEND_VOLUMES) {
+        std::partial_sort(weighted.begin(),
+                          weighted.begin() + MAX_BLEND_VOLUMES,
+                          weighted.end(),
+                          [](const WeightedVolume& a, const WeightedVolume& b) {
+                              return a.weight > b.weight;
+                          });
         weighted.resize(MAX_BLEND_VOLUMES);
+    } else {
+        std::sort(weighted.begin(), weighted.end(),
+                  [](const WeightedVolume& a, const WeightedVolume& b) {
+                      return a.weight > b.weight;
+                  });
     }
 
     // Normalize weights to sum to 1.0
