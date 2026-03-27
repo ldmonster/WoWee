@@ -58,6 +58,10 @@ size_t approxTextureBytesWithMips(int w, int h) {
 static constexpr uint32_t MAX_MATERIAL_SETS = 4096;
 static constexpr uint32_t MAX_BONE_SETS = 8192;
 
+// Texture compositing sizes (NPC skin upscale)
+static constexpr int kBaseTexSize    = 256;  // NPC baked texture default
+static constexpr int kUpscaleTexSize = 512;  // Target size for region compositing
+
 // CharMaterial UBO layout (matches character.frag.glsl set=1 binding=1)
 struct CharMaterialUBO {
     float opacity;
@@ -1163,17 +1167,17 @@ VkTexture* CharacterRenderer::compositeWithRegions(const std::string& basePath,
 
     // If base texture is 256x256 (e.g., baked NPC texture), upscale to 512x512
     // so equipment regions can be composited at correct coordinates
-    if (width == 256 && height == 256 && !regionLayers.empty()) {
-        width = 512;
-        height = 512;
+    if (width == kBaseTexSize && height == kBaseTexSize && !regionLayers.empty()) {
+        width = kUpscaleTexSize;
+        height = kUpscaleTexSize;
         composite.resize(width * height * 4);
         // Simple 2x nearest-neighbor upscale
-        for (int y = 0; y < 512; y++) {
-            for (int x = 0; x < 512; x++) {
+        for (int y = 0; y < kUpscaleTexSize; y++) {
+            for (int x = 0; x < kUpscaleTexSize; x++) {
                 int srcX = x / 2;
                 int srcY = y / 2;
-                int srcIdx = (srcY * 256 + srcX) * 4;
-                int dstIdx = (y * 512 + x) * 4;
+                int srcIdx = (srcY * kBaseTexSize + srcX) * 4;
+                int dstIdx = (y * kUpscaleTexSize + x) * 4;
                 composite[dstIdx + 0] = base.data[srcIdx + 0];
                 composite[dstIdx + 1] = base.data[srcIdx + 1];
                 composite[dstIdx + 2] = base.data[srcIdx + 2];
@@ -1188,7 +1192,7 @@ VkTexture* CharacterRenderer::compositeWithRegions(const std::string& basePath,
     // Blend face + underwear overlays
     // If we upscaled from 256->512, scale coords and texels with blitOverlayScaled2x.
     // For native 512/1024 textures, face overlays are full atlas size (hit width==width branch).
-    bool upscaled = (base.width == 256 && base.height == 256 && width == 512);
+    bool upscaled = (base.width == kBaseTexSize && base.height == kBaseTexSize && width == kUpscaleTexSize);
     for (const auto& ul : baseLayers) {
         if (ul.empty()) continue;
         pipeline::BLPImage overlay;
