@@ -17,7 +17,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
-#include <filesystem>
 #include <algorithm>
 #include <iomanip>
 #include <array>

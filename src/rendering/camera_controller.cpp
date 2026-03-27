@@ -10,7 +10,6 @@
 #include "game/opcodes.hpp"
 #include "core/logger.hpp"
 #include <glm/glm.hpp>
-#include <imgui.h>
 #include <cmath>
 #include <limits>
 
