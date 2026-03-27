@@ -1303,7 +1303,7 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
     // Helper: parse WoW color code |cAARRGGBB → ImVec4
     auto parseWowColor = [](const std::string& text, size_t pos) -> ImVec4 {
         // |cAARRGGBB (10 chars total: |c + 8 hex)
-        if (pos + 10 > text.size()) return ImVec4(1, 1, 1, 1);
+        if (pos + 10 > text.size()) return colors::kWhite;
         auto hexByte = [&](size_t offset) -> float {
             const char* s = text.c_str() + pos + offset;
             char buf[3] = {s[0], s[1], '\0'};
@@ -4878,7 +4878,7 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar)) {
                     std::string totName = getEntityName(totEntity);
                     // Class color for players; gray for NPCs
-                    ImVec4 totNameColor = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+                    ImVec4 totNameColor = colors::kSilver;
                     if (totEntity->getType() == game::ObjectType::PLAYER) {
                         uint8_t cid = entityClassId(totEntity.get());
                         if (cid != 0) totNameColor = classColorVec4(cid);
@@ -10111,7 +10111,7 @@ void GameScreen::renderBagBar(game::GameHandler& gameHandler) {
                                    ImVec2(slotSize, slotSize),
                                    ImVec2(0, 0), ImVec2(1, 1),
                                    ImVec4(0.1f, 0.1f, 0.1f, 0.9f),
-                                   ImVec4(1, 1, 1, 1))) {
+                                   colors::kWhite)) {
                 if (inventoryScreen.isSeparateBags())
                     inventoryScreen.toggleBackpack();
                 else
@@ -14725,7 +14725,7 @@ void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
 
                 // Guild description / info text
                 if (!roster.guildInfo.empty()) {
-                    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Description:");
+                    ImGui::TextColored(colors::kSilver, "Description:");
                     ImGui::TextWrapped("%s", roster.guildInfo.c_str());
                 }
                 ImGui::Spacing();
@@ -23689,7 +23689,7 @@ void GameScreen::renderDungeonFinderWindow(game::GameHandler& gameHandler) {
             if (avgSec >= 0) {
                 int aMin = avgSec / 60;
                 int aSec = avgSec % 60;
-                ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
+                ImGui::TextColored(colors::kSilver,
                                    "Avg wait: %d:%02d", aMin, aSec);
             }
             break;
@@ -24393,7 +24393,7 @@ void GameScreen::renderCombatLog(game::GameHandler& gameHandler) {
                         snprintf(desc, sizeof(desc), "%s is immune to %s", tgt, spell);
                     else
                         snprintf(desc, sizeof(desc), "%s is immune", tgt);
-                    color = ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+                    color = colors::kSilver;
                     break;
                 case T::ABSORB:
                     if (spell && e.amount > 0)
@@ -25327,7 +25327,7 @@ void GameScreen::renderInspectWindow(game::GameHandler& gameHandler) {
                 if (iconTex) {
                     ImGui::Image((ImTextureID)(uintptr_t)iconTex, ImVec2(kIconSz, kIconSz),
                                  ImVec2(0,0), ImVec2(1,1),
-                                 ImVec4(1,1,1,1), qColor);
+                                 colors::kWhite, qColor);
                 } else {
                     ImGui::GetWindowDrawList()->AddRectFilled(
                         ImGui::GetCursorScreenPos(),

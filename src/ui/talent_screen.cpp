@@ -431,9 +431,9 @@ void TalentScreen::renderTalent(game::GameHandler& gameHandler,
     ImVec4 borderColor;
     ImVec4 tint;
     switch (state) {
-        case MAXED:    borderColor = ImVec4(0.2f, 0.9f, 0.2f, 1.0f); tint = ImVec4(1,1,1,1); break;
-        case PARTIAL:  borderColor = ImVec4(0.2f, 0.8f, 0.2f, 1.0f); tint = ImVec4(1,1,1,1); break;
-        case AVAILABLE:borderColor = ImVec4(1.0f, 1.0f, 1.0f, 0.8f); tint = ImVec4(1,1,1,1); break;
+        case MAXED:    borderColor = ImVec4(0.2f, 0.9f, 0.2f, 1.0f); tint = ui::colors::kWhite; break;
+        case PARTIAL:  borderColor = ui::colors::kHealthGreen; tint = ui::colors::kWhite; break;
+        case AVAILABLE:borderColor = ImVec4(1.0f, 1.0f, 1.0f, 0.8f); tint = ui::colors::kWhite; break;
         case LOCKED:   borderColor = ImVec4(0.4f, 0.4f, 0.4f, 0.8f); tint = ImVec4(0.4f,0.4f,0.4f,1); break;
     }
 
@@ -566,7 +566,7 @@ void TalentScreen::renderTalent(game::GameHandler& gameHandler,
 
             uint8_t prereqCurrentRank = gameHandler.getTalentRank(talent.prereqTalent[i]);
             bool met = prereqCurrentRank > talent.prereqRank[i]; // storage 1-indexed, DBC 0-indexed
-            ImVec4 pColor = met ? ImVec4(0.3f, 0.9f, 0.3f, 1) : ImVec4(1.0f, 0.3f, 0.3f, 1);
+            ImVec4 pColor = met ? ImVec4(0.3f, 0.9f, 0.3f, 1.0f) : ui::colors::kRed;
 
             const std::string& prereqName = gameHandler.getSpellName(prereq->rankSpells[0]);
             ImGui::Spacing();

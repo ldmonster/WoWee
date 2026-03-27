@@ -928,7 +928,7 @@ void InventoryScreen::renderAggregateBags(game::Inventory& inventory, uint64_t m
     uint64_t gold = moneyCopper / 10000;
     uint64_t silver = (moneyCopper / 100) % 100;
     uint64_t copper = moneyCopper % 100;
-    ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "%llug %llus %lluc",
+    ImGui::TextColored(ui::colors::kWarmGold, "%llug %llus %lluc",
                        static_cast<unsigned long long>(gold),
                        static_cast<unsigned long long>(silver),
                        static_cast<unsigned long long>(copper));
@@ -1146,7 +1146,7 @@ void InventoryScreen::renderBagWindow(const char* title, bool& isOpen,
             uint64_t gold   = moneyCopper / 10000;
             uint64_t silver = (moneyCopper / 100) % 100;
             uint64_t copper = moneyCopper % 100;
-            ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "%llug %llus %lluc",
+            ImGui::TextColored(ui::colors::kWarmGold, "%llug %llus %lluc",
                                static_cast<unsigned long long>(gold),
                                static_cast<unsigned long long>(silver),
                                static_cast<unsigned long long>(copper));
@@ -1351,7 +1351,7 @@ void InventoryScreen::renderCharacterScreen(game::GameHandler& gameHandler) {
                             ImGui::SameLine(180.0f);
                             ImGui::SetNextItemWidth(-1.0f);
                             // Bar color: gold when maxed, green otherwise
-                            ImVec4 barColor = isMaxed ? ui::colors::kTooltipGold : ImVec4(0.2f, 0.7f, 0.2f, 1.0f);
+                            ImVec4 barColor = isMaxed ? ui::colors::kTooltipGold : ui::colors::kFriendlyGreen;
                             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, barColor);
                             ImGui::ProgressBar(ratio, ImVec2(0, 14.0f), overlay);
                             ImGui::PopStyleColor();
@@ -1400,7 +1400,7 @@ void InventoryScreen::renderCharacterScreen(game::GameHandler& gameHandler) {
                     }
 
                     ImGui::PushID(static_cast<int>(id));
-                    ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "[Achievement]");
+                    ImGui::TextColored(ui::colors::kWarmGold, "[Achievement]");
                     ImGui::SameLine();
                     ImGui::Text("%s", displayName);
                     ImGui::PopID();
@@ -1527,10 +1527,10 @@ void InventoryScreen::renderReputationPanel(game::GameHandler& gameHandler) {
         { "Hostile",      -6000, -3001, ImVec4(0.8f, 0.2f, 0.1f, 1.0f) },
         { "Unfriendly",   -3000,    -1, ImVec4(0.9f, 0.5f, 0.1f, 1.0f) },
         { "Neutral",          0,  2999, ImVec4(0.8f, 0.8f, 0.2f, 1.0f) },
-        { "Friendly",      3000,  8999, ImVec4(0.2f, 0.7f, 0.2f, 1.0f) },
+        { "Friendly",      3000,  8999, ui::colors::kFriendlyGreen },
         { "Honored",       9000, 20999, ImVec4(0.2f, 0.8f, 0.5f, 1.0f) },
         { "Revered",      21000, 41999, ImVec4(0.3f, 0.6f, 1.0f, 1.0f) },
-        { "Exalted",      42000, 42000, ImVec4(1.0f, 0.84f, 0.0f, 1.0f) },
+        { "Exalted",      42000, 42000, ui::colors::kWarmGold },
     };
 
     constexpr int kNumTiers = static_cast<int>(sizeof(tiers) / sizeof(tiers[0]));
@@ -1626,7 +1626,7 @@ void InventoryScreen::renderReputationPanel(game::GameHandler& gameHandler) {
 }
 
 void InventoryScreen::renderEquipmentPanel(game::Inventory& inventory) {
-    ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "Equipment");
+    ImGui::TextColored(ui::colors::kWarmGold, "Equipment");
     ImGui::Separator();
 
     static const game::EquipSlot leftSlots[] = {
@@ -1985,7 +1985,7 @@ void InventoryScreen::renderStatsPanel(game::Inventory& inventory, uint32_t play
         if (hasAny) {
             ImGui::Spacing();
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "Combat");
+            ImGui::TextColored(ui::colors::kWarmGold, "Combat");
             ImVec4 cyan(0.5f, 0.9f, 1.0f, 1.0f);
             if (meleeAP  >= 0) ImGui::TextColored(cyan, "Attack Power: %d", meleeAP);
             if (rangedAP >= 0 && rangedAP != meleeAP)
@@ -2105,7 +2105,7 @@ void InventoryScreen::renderStatsPanel(game::Inventory& inventory, uint32_t play
             if (showRun || showFlight || showSwim) {
                 ImGui::Spacing();
                 ImGui::Separator();
-                ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "Movement");
+                ImGui::TextColored(ui::colors::kWarmGold, "Movement");
                 ImVec4 speedColor(0.6f, 1.0f, 0.8f, 1.0f);
                 if (showRun) {
                     float pct = (runSpeed / kBaseRun) * 100.0f;
@@ -2125,7 +2125,7 @@ void InventoryScreen::renderStatsPanel(game::Inventory& inventory, uint32_t play
 }
 
 void InventoryScreen::renderBackpackPanel(game::Inventory& inventory, bool collapseEmptySections) {
-    ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "Backpack");
+    ImGui::TextColored(ui::colors::kWarmGold, "Backpack");
     ImGui::Separator();
 
     constexpr float slotSize = 40.0f;
@@ -2927,9 +2927,9 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
                 if (hasSocket && qi2->socketBonus != 0) {
                     auto enchIt = s_enchLookupB.find(qi2->socketBonus);
                     if (enchIt != s_enchLookupB.end())
-                        ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Socket Bonus: %s", enchIt->second.c_str());
+                        ImGui::TextColored(ui::colors::kSocketGreen, "Socket Bonus: %s", enchIt->second.c_str());
                     else
-                        ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Socket Bonus: (id %u)", qi2->socketBonus);
+                        ImGui::TextColored(ui::colors::kSocketGreen, "Socket Bonus: (id %u)", qi2->socketBonus);
                 }
             }
             // Item set membership
@@ -3004,7 +3004,7 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
                         if (se.spellIds[i] == 0 || se.thresholds[i] == 0) continue;
                         const std::string& bname = gameHandler_->getSpellName(se.spellIds[i]);
                         bool active = (equipped >= static_cast<int>(se.thresholds[i]));
-                        ImVec4 col = active ? ImVec4(0.5f, 1.0f, 0.5f, 1.0f)
+                        ImVec4 col = active ? ui::colors::kActiveGreen
                                            : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
                         if (!bname.empty())
                             ImGui::TextColored(col, "(%u) %s", se.thresholds[i], bname.c_str());
@@ -3523,9 +3523,9 @@ void InventoryScreen::renderItemTooltip(const game::ItemQueryResponseData& info,
         if (hasSocket && info.socketBonus != 0) {
             auto enchIt = s_enchLookup.find(info.socketBonus);
             if (enchIt != s_enchLookup.end())
-                ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Socket Bonus: %s", enchIt->second.c_str());
+                ImGui::TextColored(ui::colors::kSocketGreen, "Socket Bonus: %s", enchIt->second.c_str());
             else
-                ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Socket Bonus: (id %u)", info.socketBonus);
+                ImGui::TextColored(ui::colors::kSocketGreen, "Socket Bonus: (id %u)", info.socketBonus);
         }
     }
 
@@ -3627,7 +3627,7 @@ void InventoryScreen::renderItemTooltip(const game::ItemQueryResponseData& info,
                     if (se.spellIds[i] == 0 || se.thresholds[i] == 0) continue;
                     const std::string& bname = gameHandler_->getSpellName(se.spellIds[i]);
                     bool active = (equipped >= static_cast<int>(se.thresholds[i]));
-                    ImVec4 col = active ? ImVec4(0.5f, 1.0f, 0.5f, 1.0f)
+                    ImVec4 col = active ? ui::colors::kActiveGreen
                                        : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
                     if (!bname.empty())
                         ImGui::TextColored(col, "(%u) %s", se.thresholds[i], bname.c_str());
