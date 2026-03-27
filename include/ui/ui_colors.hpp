@@ -26,6 +26,13 @@ namespace colors {
     constexpr ImVec4 kSoftRed     = {1.0f, 0.4f, 0.4f, 1.0f};
     constexpr ImVec4 kHostileRed  = {1.0f, 0.35f, 0.35f, 1.0f};
     constexpr ImVec4 kMediumGray  = {0.65f, 0.65f, 0.65f, 1.0f};
+    constexpr ImVec4 kWarmGold    = {1.0f, 0.84f, 0.0f, 1.0f};
+    constexpr ImVec4 kOrange      = {0.9f, 0.6f, 0.1f, 1.0f};
+    constexpr ImVec4 kFriendlyGreen = {0.2f, 0.7f, 0.2f, 1.0f};
+    constexpr ImVec4 kHealthGreen   = {0.2f, 0.8f, 0.2f, 1.0f};
+    constexpr ImVec4 kLightGreen    = {0.6f, 1.0f, 0.6f, 1.0f};
+    constexpr ImVec4 kActiveGreen   = {0.5f, 1.0f, 0.5f, 1.0f};
+    constexpr ImVec4 kSocketGreen   = {0.5f, 0.8f, 0.5f, 1.0f};
 
     // Coin colors
     constexpr ImVec4 kGold   = {1.00f, 0.82f, 0.00f, 1.0f};

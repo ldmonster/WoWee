@@ -1542,9 +1542,9 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                 }
                 auto enchIt = s_enchantNames.find(info->socketBonus);
                 if (enchIt != s_enchantNames.end())
-                    ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Socket Bonus: %s", enchIt->second.c_str());
+                    ImGui::TextColored(colors::kSocketGreen, "Socket Bonus: %s", enchIt->second.c_str());
                 else
-                    ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "Socket Bonus: (id %u)", info->socketBonus);
+                    ImGui::TextColored(colors::kSocketGreen, "Socket Bonus: (id %u)", info->socketBonus);
             }
         }
         // Item set membership
@@ -1607,7 +1607,7 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                     if (se.spellIds[i] == 0 || se.thresholds[i] == 0) continue;
                     const std::string& bname = gameHandler.getSpellName(se.spellIds[i]);
                     bool active = (equipped >= static_cast<int>(se.thresholds[i]));
-                    ImVec4 col = active ? ImVec4(0.5f, 1.0f, 0.5f, 1.0f) : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
+                    ImVec4 col = active ? colors::kActiveGreen : ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
                     if (!bname.empty())
                         ImGui::TextColored(col, "(%u) %s", se.thresholds[i], bname.c_str());
                     else
@@ -2004,14 +2004,14 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                     } else if (isQuestLink) {
                         // --- Quest link: |Hquest:QUESTID:QUESTLEVEL|h[Name]|h ---
                         std::string display = "[" + linkName + "]";
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.84f, 0.0f, 1.0f)); // gold
+                        ImGui::PushStyleColor(ImGuiCol_Text, colors::kWarmGold); // gold
                         ImGui::TextWrapped("%s", display.c_str());
                         ImGui::PopStyleColor();
 
                         if (ImGui::IsItemHovered()) {
                             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                             ImGui::BeginTooltip();
-                            ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "%s", linkName.c_str());
+                            ImGui::TextColored(colors::kWarmGold, "%s", linkName.c_str());
                             // Parse quest level (second field after questId)
                             if (entryEnd != std::string::npos) {
                                 size_t lvlEnd = text.find(':', entryEnd + 1);
@@ -3434,7 +3434,7 @@ void GameScreen::renderPlayerFrame(game::GameHandler& gameHandler) {
         if (isDead) {
             hpColor = kColorDarkGray;
         } else if (pct > 0.5f) {
-            hpColor = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);              // green
+            hpColor = colors::kHealthGreen;              // green
         } else if (pct > 0.2f) {
             float t = (pct - 0.2f) / 0.3f;  // 0 at 20%, 1 at 50%
             hpColor = ImVec4(0.9f - 0.7f * t, 0.4f + 0.4f * t, 0.0f, 1.0f); // orange→yellow
@@ -3473,7 +3473,7 @@ void GameScreen::renderPlayerFrame(game::GameHandler& gameHandler) {
                         break;
                     }
                     case 1: powerColor = colors::kDarkRed; break; // Rage (red)
-                    case 2: powerColor = ImVec4(0.9f, 0.6f, 0.1f, 1.0f); break; // Focus (orange)
+                    case 2: powerColor = colors::kOrange; break; // Focus (orange)
                     case 3: powerColor = ImVec4(0.9f, 0.9f, 0.2f, 1.0f); break; // Energy (yellow)
                     case 4: powerColor = ImVec4(0.5f, 0.9f, 0.3f, 1.0f); break; // Happiness (green)
                     case 6: powerColor = ImVec4(0.8f, 0.1f, 0.2f, 1.0f); break; // Runic Power (crimson)
@@ -3788,7 +3788,7 @@ void GameScreen::renderPetFrame(game::GameHandler& gameHandler) {
         uint32_t maxHp = petUnit->getMaxHealth();
         if (maxHp > 0) {
             float pct = static_cast<float>(hp) / static_cast<float>(maxHp);
-            ImVec4 petHpColor = pct > 0.5f ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f)
+            ImVec4 petHpColor = pct > 0.5f ? colors::kHealthGreen
                               : pct > 0.2f ? ImVec4(0.9f, 0.6f, 0.0f, 1.0f)
                               :              ImVec4(0.9f, 0.15f, 0.15f, 1.0f);
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, petHpColor);
@@ -3809,7 +3809,7 @@ void GameScreen::renderPetFrame(game::GameHandler& gameHandler) {
             switch (powerType) {
                 case 0: powerColor = colors::kManaBlue; break; // Mana
                 case 1: powerColor = colors::kDarkRed; break; // Rage
-                case 2: powerColor = ImVec4(0.9f, 0.6f, 0.1f, 1.0f); break; // Focus (hunter pets)
+                case 2: powerColor = colors::kOrange; break; // Focus (hunter pets)
                 case 3: powerColor = ImVec4(0.9f, 0.9f, 0.2f, 1.0f); break; // Energy
                 default: powerColor = colors::kManaBlue; break;
             }
@@ -3952,7 +3952,7 @@ void GameScreen::renderPetFrame(game::GameHandler& gameHandler) {
                 // Dim when on cooldown; tint green when autocast is on
                 ImVec4 tint = petOnCd
                     ? ImVec4(0.35f, 0.35f, 0.35f, 0.7f)
-                    : (autocastOn ? ImVec4(0.6f, 1.0f, 0.6f, 1.0f) : ui::colors::kWhite);
+                    : (autocastOn ? colors::kLightGreen : ui::colors::kWhite);
                 bool clicked = false;
                 if (iconTex) {
                     clicked = ImGui::ImageButton("##pa",
@@ -4472,7 +4472,7 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
             if (maxHp > 0) {
                 float pct = static_cast<float>(hp) / static_cast<float>(maxHp);
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram,
-                    pct > 0.5f ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f) :
+                    pct > 0.5f ? colors::kHealthGreen :
                     pct > 0.2f ? ImVec4(0.8f, 0.8f, 0.2f, 1.0f) :
                                  ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
 
@@ -4491,7 +4491,7 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                     switch (targetPowerType) {
                         case 0: targetPowerColor = colors::kManaBlue; break; // Mana (blue)
                         case 1: targetPowerColor = colors::kDarkRed; break; // Rage (red)
-                        case 2: targetPowerColor = ImVec4(0.9f, 0.6f, 0.1f, 1.0f); break; // Focus (orange)
+                        case 2: targetPowerColor = colors::kOrange; break; // Focus (orange)
                         case 3: targetPowerColor = ImVec4(0.9f, 0.9f, 0.2f, 1.0f); break; // Energy (yellow)
                         case 4: targetPowerColor = ImVec4(0.5f, 0.9f, 0.3f, 1.0f); break; // Happiness (green)
                         case 6: targetPowerColor = ImVec4(0.8f, 0.1f, 0.2f, 1.0f); break; // Runic Power (crimson)
@@ -4917,7 +4917,7 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                         if (maxHp > 0) {
                             float pct = static_cast<float>(hp) / static_cast<float>(maxHp);
                             ImGui::PushStyleColor(ImGuiCol_PlotHistogram,
-                                pct > 0.5f ? ImVec4(0.2f, 0.7f, 0.2f, 1.0f) :
+                                pct > 0.5f ? colors::kFriendlyGreen :
                                 pct > 0.2f ? ImVec4(0.7f, 0.7f, 0.2f, 1.0f) :
                                              ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
                             ImGui::ProgressBar(pct, ImVec2(-1, 10), "");
@@ -5346,7 +5346,7 @@ void GameScreen::renderFocusFrame(game::GameHandler& gameHandler) {
             if (maxHp > 0) {
                 float pct = static_cast<float>(hp) / static_cast<float>(maxHp);
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram,
-                    pct > 0.5f ? ImVec4(0.2f, 0.7f, 0.2f, 1.0f) :
+                    pct > 0.5f ? colors::kFriendlyGreen :
                     pct > 0.2f ? ImVec4(0.7f, 0.7f, 0.2f, 1.0f) :
                                  ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
                 char overlay[32];
@@ -8287,7 +8287,7 @@ ImVec4 GameScreen::getChatTypeColor(game::ChatType type) const {
         case game::ChatType::ACHIEVEMENT:
             return ImVec4(1.0f, 1.0f, 0.0f, 1.0f);  // Bright yellow
         case game::ChatType::GUILD_ACHIEVEMENT:
-            return ImVec4(1.0f, 0.84f, 0.0f, 1.0f); // Gold
+            return colors::kWarmGold; // Gold
         case game::ChatType::SKILL:
             return colors::kCyan;  // Cyan
         case game::ChatType::LOOT:
@@ -8300,7 +8300,7 @@ ImVec4 GameScreen::getChatTypeColor(game::ChatType type) const {
         case game::ChatType::MONSTER_PARTY:
             return ImVec4(0.5f, 0.5f, 1.0f, 1.0f);  // Light blue (same as PARTY)
         case game::ChatType::BG_SYSTEM_NEUTRAL:
-            return ImVec4(1.0f, 0.84f, 0.0f, 1.0f); // Gold
+            return colors::kWarmGold; // Gold
         case game::ChatType::BG_SYSTEM_ALLIANCE:
             return ImVec4(0.3f, 0.6f, 1.0f, 1.0f);  // Blue
         case game::ChatType::BG_SYSTEM_HORDE:
@@ -10700,7 +10700,7 @@ void GameScreen::renderCooldownTracker(game::GameHandler& gameHandler) {
             ImVec4 cdColor = cd.remaining > 30.0f ? kColorRed :
                              cd.remaining > 10.0f ? ImVec4(1.0f, 0.6f, 0.2f, 1.0f) :
                              cd.remaining > 5.0f  ? kColorYellow :
-                                                    ImVec4(0.5f, 1.0f, 0.5f, 1.0f);
+                                                    colors::kActiveGreen;
 
             // Truncate name to fit
             std::string displayName = name;
@@ -10785,7 +10785,7 @@ void GameScreen::renderQuestObjectiveTracker(game::GameHandler& gameHandler) {
 
             // Clickable quest title — opens quest log
             ImGui::PushID(q.questId);
-            ImVec4 titleCol = q.complete ? ImVec4(1.0f, 0.84f, 0.0f, 1.0f)
+            ImVec4 titleCol = q.complete ? colors::kWarmGold
                                          : ImVec4(1.0f, 1.0f, 0.85f, 1.0f);
             ImGui::PushStyleColor(ImGuiCol_Text, titleCol);
             if (ImGui::Selectable(q.title.c_str(), false,
@@ -10832,7 +10832,7 @@ void GameScreen::renderQuestObjectiveTracker(game::GameHandler& gameHandler) {
 
             // Objectives line (condensed)
             if (q.complete) {
-                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "  (Complete)");
+                ImGui::TextColored(colors::kActiveGreen, "  (Complete)");
             } else {
                 // Kill counts — green when complete, gray when in progress
                 for (const auto& [entry, progress] : q.killCounts) {
@@ -12609,7 +12609,7 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                 // Out-of-range: desaturate health bar to gray
                 ImVec4 hpBarColor = memberOutOfRange
                     ? ImVec4(0.45f, 0.45f, 0.45f, 0.7f)
-                    : (pct > 0.5f ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f) :
+                    : (pct > 0.5f ? colors::kHealthGreen :
                        pct > 0.2f ? ImVec4(0.8f, 0.8f, 0.2f, 1.0f) :
                                     ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram, hpBarColor);
@@ -12633,7 +12633,7 @@ void GameScreen::renderPartyFrames(game::GameHandler& gameHandler) {
                 switch (member.powerType) {
                     case 0: powerColor = colors::kManaBlue; break; // Mana (blue)
                     case 1: powerColor = colors::kDarkRed; break; // Rage (red)
-                    case 2: powerColor = ImVec4(0.9f, 0.6f, 0.1f, 1.0f); break; // Focus (orange)
+                    case 2: powerColor = colors::kOrange; break; // Focus (orange)
                     case 3: powerColor = ImVec4(0.9f, 0.9f, 0.2f, 1.0f); break; // Energy (yellow)
                     case 4: powerColor = ImVec4(0.5f, 0.9f, 0.3f, 1.0f); break; // Happiness (green)
                     case 6: powerColor = ImVec4(0.8f, 0.1f, 0.2f, 1.0f); break; // Runic Power (crimson)
@@ -13320,7 +13320,7 @@ void GameScreen::renderBossFrames(game::GameHandler& gameHandler) {
                 switch (bossPowerType) {
                     case 0: bpColor = ImVec4(0.2f, 0.3f, 0.9f, 1.0f); break; // Mana: blue
                     case 1: bpColor = colors::kDarkRed; break; // Rage: red
-                    case 2: bpColor = ImVec4(0.9f, 0.6f, 0.1f, 1.0f); break; // Focus: orange
+                    case 2: bpColor = colors::kOrange; break; // Focus: orange
                     case 3: bpColor = ImVec4(0.9f, 0.9f, 0.1f, 1.0f); break; // Energy: yellow
                     default: bpColor = ImVec4(0.4f, 0.8f, 0.4f, 1.0f); break;
                 }
@@ -14178,7 +14178,7 @@ void GameScreen::renderBgInvitePopup(game::GameHandler& gameHandler) {
         // Countdown progress bar
         float frac = static_cast<float>(remaining / static_cast<double>(slot->inviteTimeout));
         frac = std::clamp(frac, 0.0f, 1.0f);
-        ImVec4 barColor = frac > 0.5f ? ImVec4(0.2f, 0.8f, 0.2f, 1.0f)
+        ImVec4 barColor = frac > 0.5f ? colors::kHealthGreen
                         : frac > 0.25f ? ImVec4(0.9f, 0.7f, 0.1f, 1.0f)
                                        : colors::kDarkRed;
         ImGui::PushStyleColor(ImGuiCol_PlotHistogram, barColor);
@@ -14189,7 +14189,7 @@ void GameScreen::renderBgInvitePopup(game::GameHandler& gameHandler) {
         ImGui::Spacing();
 
         ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.15f, 0.5f, 0.15f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors::kFriendlyGreen);
         if (ImGui::Button("Enter Battleground", ImVec2(180, 30))) {
             gameHandler.acceptBattlefield(slot->queueSlot);
         }
@@ -14246,7 +14246,7 @@ void GameScreen::renderBfMgrInvitePopup(game::GameHandler& gameHandler) {
         ImGui::Spacing();
 
         ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.15f, 0.5f, 0.15f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors::kFriendlyGreen);
         if (ImGui::Button("Enter Battlefield", ImVec2(178, 28))) {
             gameHandler.acceptBfMgrInvite();
         }
@@ -14295,7 +14295,7 @@ void GameScreen::renderLfgProposalPopup(game::GameHandler& gameHandler) {
         ImGui::Spacing();
 
         ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.15f, 0.5f, 0.15f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors::kFriendlyGreen);
         if (ImGui::Button("Accept", ImVec2(155.0f, 30.0f))) {
             gameHandler.lfgAcceptProposal(gameHandler.getLfgProposalId(), true);
         }
@@ -15651,7 +15651,7 @@ void GameScreen::renderBuffBar(game::GameHandler& gameHandler) {
                 ImGui::Spacing();
                 ImGui::Separator();
                 static const ImVec4 kEnchantSlotColors[] = {
-                    ImVec4(0.9f, 0.6f, 0.1f, 1.0f),  // main-hand: gold
+                    colors::kOrange,  // main-hand: gold
                     ImVec4(0.5f, 0.8f, 0.9f, 1.0f),  // off-hand:  teal
                     ImVec4(0.7f, 0.5f, 0.9f, 1.0f),  // ranged:    purple
                 };
@@ -16255,7 +16255,7 @@ void GameScreen::renderQuestRequestItemsWindow(game::GameHandler& gameHandler) {
             for (const auto& item : quest.requiredItems) {
                 uint32_t have = countItemInInventory(item.itemId);
                 bool enough = have >= item.count;
-                ImVec4 textCol = enough ? ImVec4(0.6f, 1.0f, 0.6f, 1.0f) : ImVec4(1.0f, 0.6f, 0.6f, 1.0f);
+                ImVec4 textCol = enough ? colors::kLightGreen : ImVec4(1.0f, 0.6f, 0.6f, 1.0f);
                 auto* info = gameHandler.getItemInfo(item.itemId);
                 const char* name = (info && info->valid) ? info->name.c_str() : nullptr;
 
@@ -17673,7 +17673,7 @@ void GameScreen::renderTaxiWindow(game::GameHandler& gameHandler) {
         auto curIt = nodes.find(currentNode);
         if (curIt != nodes.end()) {
             currentMapId = curIt->second.mapId;
-            ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Current: %s", curIt->second.name.c_str());
+            ImGui::TextColored(colors::kActiveGreen, "Current: %s", curIt->second.name.c_str());
             ImGui::Separator();
         }
 
@@ -21433,7 +21433,7 @@ void GameScreen::renderMailWindow(game::GameHandler& gameHandler) {
                 ImGui::TextColored(kColorGray, "  From: %s", mail.senderName.c_str());
                 if (mail.money > 0) {
                     ImGui::SameLine();
-                    ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), " [G]");
+                    ImGui::TextColored(colors::kWarmGold, " [G]");
                 }
                 if (!mail.attachments.empty()) {
                     ImGui::SameLine();
@@ -21467,7 +21467,7 @@ void GameScreen::renderMailWindow(game::GameHandler& gameHandler) {
             if (sel >= 0 && sel < static_cast<int>(inbox.size())) {
                 const auto& mail = inbox[sel];
 
-                ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "%s",
+                ImGui::TextColored(colors::kWarmGold, "%s",
                     mail.subject.empty() ? "(No Subject)" : mail.subject.c_str());
                 ImGui::Text("From: %s", mail.senderName.c_str());
 
@@ -23716,9 +23716,9 @@ void GameScreen::renderDungeonFinderWindow(game::GameHandler& gameHandler) {
         case LfgState::FinishedDungeon: {
             std::string dName = gameHandler.getCurrentLfgDungeonName();
             if (!dName.empty())
-                ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "Status: %s complete", dName.c_str());
+                ImGui::TextColored(colors::kLightGreen, "Status: %s complete", dName.c_str());
             else
-                ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "Status: Dungeon complete");
+                ImGui::TextColored(colors::kLightGreen, "Status: Dungeon complete");
             break;
         }
         case LfgState::RaidBrowser:
@@ -24753,12 +24753,12 @@ void GameScreen::renderAchievementWindow(game::GameHandler& gameHandler) {
                         }
                         ImGui::SameLine();
                         if (ceIt->second.quantity > 0) {
-                            ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f),
+                            ImGui::TextColored(colors::kLightGreen,
                                 "%llu/%llu",
                                 static_cast<unsigned long long>(cval),
                                 static_cast<unsigned long long>(ceIt->second.quantity));
                         } else {
-                            ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f),
+                            ImGui::TextColored(colors::kLightGreen,
                                 "%llu", static_cast<unsigned long long>(cval));
                         }
                     } else {
