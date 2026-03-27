@@ -3167,9 +3167,11 @@ bool MonsterMoveParser::parse(network::Packet& packet, MonsterMoveData& data) {
     if (uncompressed) {
         // Read last point as destination
         // Skip to last point: each point is 12 bytes
-        for (uint32_t i = 0; i < pointCount - 1; i++) {
-            if (!packet.hasRemaining(12)) return true;
-            packet.readFloat(); packet.readFloat(); packet.readFloat();
+        if (pointCount > 1) {
+            for (uint32_t i = 0; i < pointCount - 1; i++) {
+                if (!packet.hasRemaining(12)) return true;
+                packet.readFloat(); packet.readFloat(); packet.readFloat();
+            }
         }
         if (!packet.hasRemaining(12)) return true;
         data.destX = packet.readFloat();
