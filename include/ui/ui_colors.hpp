@@ -136,4 +136,27 @@ inline void renderBindingType(uint32_t bindType) {
     }
 }
 
+// ---- WoW class colors (Blizzard canonical) ----
+inline ImVec4 getClassColor(uint8_t classId) {
+    switch (classId) {
+        case 1:  return {0.78f, 0.61f, 0.43f, 1.0f}; // Warrior  #C79C6E
+        case 2:  return {0.96f, 0.55f, 0.73f, 1.0f}; // Paladin  #F58CBA
+        case 3:  return {0.67f, 0.83f, 0.45f, 1.0f}; // Hunter   #ABD473
+        case 4:  return {1.00f, 0.96f, 0.41f, 1.0f}; // Rogue    #FFF569
+        case 5:  return {1.00f, 1.00f, 1.00f, 1.0f}; // Priest   #FFFFFF
+        case 6:  return {0.77f, 0.12f, 0.23f, 1.0f}; // DK       #C41F3B
+        case 7:  return {0.00f, 0.44f, 0.87f, 1.0f}; // Shaman   #0070DE
+        case 8:  return {0.41f, 0.80f, 0.94f, 1.0f}; // Mage     #69CCF0
+        case 9:  return {0.58f, 0.51f, 0.79f, 1.0f}; // Warlock  #9482C9
+        case 11: return {1.00f, 0.49f, 0.04f, 1.0f}; // Druid    #FF7D0A
+        default: return colors::kVeryLightGray;
+    }
+}
+
+inline ImU32 getClassColorU32(uint8_t classId, int alpha = 255) {
+    ImVec4 c = getClassColor(classId);
+    return IM_COL32(static_cast<int>(c.x * 255), static_cast<int>(c.y * 255),
+                    static_cast<int>(c.z * 255), alpha);
+}
+
 } // namespace wowee::ui

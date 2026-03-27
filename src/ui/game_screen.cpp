@@ -86,31 +86,9 @@ namespace {
 
     // Render gold/silver/copper amounts in WoW-canonical colors on the current ImGui line.
     // Skips zero-value denominations (except copper, which is always shown when gold=silver=0).
-    // Return the canonical Blizzard class color as ImVec4.
-    // classId is byte 1 of UNIT_FIELD_BYTES_0 (or CharacterData::classId).
-    // Returns a neutral light-gray for unknown / class 0.
-    ImVec4 classColorVec4(uint8_t classId) {
-        switch (classId) {
-            case 1:  return ImVec4(0.78f, 0.61f, 0.43f, 1.0f); // Warrior  #C79C6E
-            case 2:  return ImVec4(0.96f, 0.55f, 0.73f, 1.0f); // Paladin  #F58CBA
-            case 3:  return ImVec4(0.67f, 0.83f, 0.45f, 1.0f); // Hunter   #ABD473
-            case 4:  return ImVec4(1.00f, 0.96f, 0.41f, 1.0f); // Rogue    #FFF569
-            case 5:  return ImVec4(1.00f, 1.00f, 1.00f, 1.0f); // Priest   #FFFFFF
-            case 6:  return ImVec4(0.77f, 0.12f, 0.23f, 1.0f); // DeathKnight #C41F3B
-            case 7:  return ImVec4(0.00f, 0.44f, 0.87f, 1.0f); // Shaman   #0070DE
-            case 8:  return ImVec4(0.41f, 0.80f, 0.94f, 1.0f); // Mage     #69CCF0
-            case 9:  return ImVec4(0.58f, 0.51f, 0.79f, 1.0f); // Warlock  #9482C9
-            case 11: return ImVec4(1.00f, 0.49f, 0.04f, 1.0f); // Druid    #FF7D0A
-            default: return kVeryLightGray; // unknown
-        }
-    }
-
-    // ImU32 variant with alpha in [0,255].
-    ImU32 classColorU32(uint8_t classId, int alpha = 255) {
-        ImVec4 c = classColorVec4(classId);
-        return IM_COL32(static_cast<int>(c.x * 255), static_cast<int>(c.y * 255),
-                        static_cast<int>(c.z * 255), alpha);
-    }
+    // Aliases for shared class color helpers (wowee::ui namespace)
+    inline ImVec4 classColorVec4(uint8_t classId) { return wowee::ui::getClassColor(classId); }
+    inline ImU32 classColorU32(uint8_t classId, int alpha = 255) { return wowee::ui::getClassColorU32(classId, alpha); }
 
     // Extract class id from a unit's UNIT_FIELD_BYTES_0 update field.
     // Returns 0 if the entity pointer is null or field is unset.
