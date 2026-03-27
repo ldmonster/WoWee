@@ -1019,12 +1019,11 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
                 return true;
             };
 
-            // --- Try 1: Classic format (uncompressed points immediately after splineId) ---
-            bool splineParsed = tryParseSplinePoints(false, "classic");
-
-            // --- Try 2: WotLK format (durationMod+durationModNext+conditional+compressed points) ---
-            if (!splineParsed) {
-                packet.setReadPos(afterSplineId);
+            // --- Try 1: WotLK format (durationMod+durationModNext+parabolic+compressed points) ---
+            // Try WotLK first since this is a WotLK parser; Classic auto-detect can false-positive
+            // when durationMod bytes happen to look like a valid Classic pointCount.
+            bool splineParsed = false;
+            {
                 bool wotlkOk = bytesAvailable(8); // durationMod + durationModNext
                 if (wotlkOk) {
                     /*float durationMod =*/ packet.readFloat();
@@ -1049,6 +1048,12 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
                         splineParsed = tryParseSplinePoints(false, "wotlk-uncompressed");
                     }
                 }
+            }
+
+            // --- Try 2: Classic format (uncompressed points immediately after splineId) ---
+            if (!splineParsed) {
+                packet.setReadPos(afterSplineId);
+                splineParsed = tryParseSplinePoints(false, "classic");
             }
         }
     }

@@ -980,43 +980,68 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
 
     case FinalizationPhase::WMO_INSTANCES: {
         // Create WMO instances incrementally to avoid stalls on tiles with many WMOs.
+        // Liquid group loading is also budgeted (max 4 per call) to prevent stalls
+        // on WMOs with many liquid groups (e.g. Stormwind canals).
         if (wmoRenderer && ft.wmoInstanceIndex < pending->wmoModels.size()) {
             constexpr size_t kWmoInstancesPerStep = 4;
+            constexpr size_t kLiquidGroupsPerStep = 4;
             size_t created = 0;
+            size_t liquidGroupsLoaded = 0;
             while (ft.wmoInstanceIndex < pending->wmoModels.size() && created < kWmoInstancesPerStep) {
-                auto& wmoReady = pending->wmoModels[ft.wmoInstanceIndex++];
+                auto& wmoReady = pending->wmoModels[ft.wmoInstanceIndex];
+                // Skip duplicates and unloaded models
                 if (wmoReady.uniqueId != 0 && placedWmoIds.count(wmoReady.uniqueId)) {
+                    ft.wmoInstanceIndex++;
+                    ft.wmoLiquidGroupIndex = 0;
                     continue;
                 }
                 if (!wmoRenderer->isModelLoaded(wmoReady.modelId)) {
+                    ft.wmoInstanceIndex++;
+                    ft.wmoLiquidGroupIndex = 0;
                     continue;
                 }
-                uint32_t wmoInstId = wmoRenderer->createInstance(wmoReady.modelId, wmoReady.position, wmoReady.rotation);
-                if (wmoInstId) {
+                // Create the instance on first visit (liquidGroupIndex == 0)
+                if (ft.wmoLiquidGroupIndex == 0) {
+                    uint32_t wmoInstId = wmoRenderer->createInstance(wmoReady.modelId, wmoReady.position, wmoReady.rotation);
+                    if (!wmoInstId) {
+                        ft.wmoInstanceIndex++;
+                        continue;
+                    }
                     ft.wmoInstanceIds.push_back(wmoInstId);
                     if (wmoReady.uniqueId != 0) {
                         placedWmoIds.insert(wmoReady.uniqueId);
                         ft.tileWmoUniqueIds.push_back(wmoReady.uniqueId);
                     }
-                    // Load WMO liquids (canals, pools, etc.)
-                    if (waterRenderer) {
-                        glm::mat4 modelMatrix = glm::mat4(1.0f);
-                        modelMatrix = glm::translate(modelMatrix, wmoReady.position);
-                        modelMatrix = glm::rotate(modelMatrix, wmoReady.rotation.z, glm::vec3(0.0f, 0.0f, 1.0f));
-                        modelMatrix = glm::rotate(modelMatrix, wmoReady.rotation.y, glm::vec3(0.0f, 1.0f, 0.0f));
-                        modelMatrix = glm::rotate(modelMatrix, wmoReady.rotation.x, glm::vec3(1.0f, 0.0f, 0.0f));
-                        for (const auto& group : wmoReady.model.groups) {
-                            if (!group.liquid.hasLiquid()) continue;
-                            if (group.flags & 0x2000) {
-                                uint16_t lt = group.liquid.materialId;
-                                uint8_t basicType = (lt == 0) ? 0 : ((lt - 1) % 4);
-                                if (basicType < 2) continue;
-                            }
-                            waterRenderer->loadFromWMO(group.liquid, modelMatrix, wmoInstId);
-                        }
-                    }
-                    created++;
                 }
+                // Load WMO liquids incrementally (canals, pools, etc.)
+                if (waterRenderer) {
+                    uint32_t wmoInstId = ft.wmoInstanceIds.back();
+                    glm::mat4 modelMatrix = glm::mat4(1.0f);
+                    modelMatrix = glm::translate(modelMatrix, wmoReady.position);
+                    modelMatrix = glm::rotate(modelMatrix, wmoReady.rotation.z, glm::vec3(0.0f, 0.0f, 1.0f));
+                    modelMatrix = glm::rotate(modelMatrix, wmoReady.rotation.y, glm::vec3(0.0f, 1.0f, 0.0f));
+                    modelMatrix = glm::rotate(modelMatrix, wmoReady.rotation.x, glm::vec3(1.0f, 0.0f, 0.0f));
+                    const auto& groups = wmoReady.model.groups;
+                    while (ft.wmoLiquidGroupIndex < groups.size() && liquidGroupsLoaded < kLiquidGroupsPerStep) {
+                        const auto& group = groups[ft.wmoLiquidGroupIndex];
+                        ft.wmoLiquidGroupIndex++;
+                        if (!group.liquid.hasLiquid()) continue;
+                        if (group.flags & 0x2000) {
+                            uint16_t lt = group.liquid.materialId;
+                            uint8_t basicType = (lt == 0) ? 0 : ((lt - 1) % 4);
+                            if (basicType < 2) continue;
+                        }
+                        waterRenderer->loadFromWMO(group.liquid, modelMatrix, wmoInstId);
+                        liquidGroupsLoaded++;
+                    }
+                    // More liquid groups remain on this WMO — yield
+                    if (ft.wmoLiquidGroupIndex < groups.size()) {
+                        return false;
+                    }
+                }
+                ft.wmoInstanceIndex++;
+                ft.wmoLiquidGroupIndex = 0;
+                created++;
             }
             if (ft.wmoInstanceIndex < pending->wmoModels.size()) {
                 return false; // More WMO instances to create — yield
