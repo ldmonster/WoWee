@@ -38,6 +38,27 @@ static double luaGetTimeNow() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - kLuaTimeEpoch).count();
 }
 
+// Shared WoW class/race/power name tables (indexed by ID, element 0 = unknown)
+static constexpr const char* kLuaClasses[] = {
+    "","Warrior","Paladin","Hunter","Rogue","Priest",
+    "Death Knight","Shaman","Mage","Warlock","","Druid"
+};
+static constexpr const char* kLuaRaces[] = {
+    "","Human","Orc","Dwarf","Night Elf","Undead",
+    "Tauren","Gnome","Troll","","Blood Elf","Draenei"
+};
+static constexpr const char* kLuaPowerNames[] = {
+    "MANA","RAGE","FOCUS","ENERGY","HAPPINESS","","RUNIC_POWER"
+};
+// Quality hex strings (no alpha prefix — for item links)
+static constexpr const char* kQualHexNoAlpha[] = {
+    "9d9d9d","ffffff","1eff00","0070dd","a335ee","ff8000","e6cc80","e6cc80"
+};
+// Quality hex strings (with ff alpha prefix — for Lua color returns)
+static constexpr const char* kQualHexAlpha[] = {
+    "ff9d9d9d","ffffffff","ff1eff00","ff0070dd","ffa335ee","ffff8000","ffe6cc80","ff00ccff"
+};
+
 // Retrieve GameHandler pointer stored in Lua registry
 static game::GameHandler* getGameHandler(lua_State* L) {
     lua_getfield(L, LUA_REGISTRYINDEX, "wowee_game_handler");
@@ -307,8 +328,7 @@ static int lua_UnitClass(lua_State* L) {
     auto* gh = getGameHandler(L);
     auto* unit = resolveUnit(L, uid);
     if (unit && gh) {
-        static const char* kClasses[] = {"", "Warrior","Paladin","Hunter","Rogue","Priest",
-            "Death Knight","Shaman","Mage","Warlock","","Druid"};
+
         uint8_t classId = 0;
         std::string uidStr(uid);
         toLowerInPlace(uidStr);
@@ -330,7 +350,7 @@ static int lua_UnitClass(lua_State* L) {
                 classId = gh->lookupPlayerClass(guid);
             }
         }
-        const char* name = (classId > 0 && classId < 12) ? kClasses[classId] : "Unknown";
+        const char* name = (classId > 0 && classId < 12) ? kLuaClasses[classId] : "Unknown";
         lua_pushstring(L, name);
         lua_pushstring(L, name);  // WoW returns localized + English
         lua_pushnumber(L, classId);
@@ -834,8 +854,8 @@ static int lua_GetMerchantItemLink(lua_State* L) {
     const auto& vi = items[index - 1];
     const auto* info = gh->getItemInfo(vi.itemId);
     if (!info) { return luaReturnNil(L); }
-    static const char* kQH[] = {"ff9d9d9d","ffffffff","ff1eff00","ff0070dd","ffa335ee","ffff8000","ffe6cc80","ff00ccff"};
-    const char* ch = (info->quality < 8) ? kQH[info->quality] : "ffffffff";
+
+    const char* ch = (info->quality < 8) ? kQualHexAlpha[info->quality] : "ffffffff";
     char link[256];
     snprintf(link, sizeof(link), "|c%s|Hitem:%u:0:0:0:0:0:0:0|h[%s]|h|r", ch, vi.itemId, info->name.c_str());
     lua_pushstring(L, link);
@@ -1078,8 +1098,7 @@ static int lua_UnitRace(lua_State* L) {
     if (!gh) { lua_pushstring(L, "Unknown"); lua_pushstring(L, "Unknown"); lua_pushnumber(L, 0); return 3; }
     std::string uid(luaL_optstring(L, 1, "player"));
     toLowerInPlace(uid);
-    static const char* kRaces[] = {"","Human","Orc","Dwarf","Night Elf","Undead",
-        "Tauren","Gnome","Troll","","Blood Elf","Draenei"};
+
     uint8_t raceId = 0;
     if (uid == "player") {
         raceId = gh->getPlayerRace();
@@ -1097,7 +1116,7 @@ static int lua_UnitRace(lua_State* L) {
             if (raceId == 0) raceId = gh->lookupPlayerRace(guid);
         }
     }
-    const char* name = (raceId > 0 && raceId < 12) ? kRaces[raceId] : "Unknown";
+    const char* name = (raceId > 0 && raceId < 12) ? kLuaRaces[raceId] : "Unknown";
     lua_pushstring(L, name);      // 1: localized race
     lua_pushstring(L, name);      // 2: English race
     lua_pushnumber(L, raceId);    // 3: raceId (WoW returns 3 values)
@@ -1107,11 +1126,11 @@ static int lua_UnitRace(lua_State* L) {
 static int lua_UnitPowerType(lua_State* L) {
     const char* uid = luaL_optstring(L, 1, "player");
     auto* unit = resolveUnit(L, uid);
-    static const char* kPowerNames[] = {"MANA","RAGE","FOCUS","ENERGY","HAPPINESS","","RUNIC_POWER"};
+
     if (unit) {
         uint8_t pt = unit->getPowerType();
         lua_pushnumber(L, pt);
-        lua_pushstring(L, (pt < 7) ? kPowerNames[pt] : "MANA");
+        lua_pushstring(L, (pt < 7) ? kLuaPowerNames[pt] : "MANA");
         return 2;
     }
     // Fallback: party member stats for out-of-range members
@@ -1123,7 +1142,7 @@ static int lua_UnitPowerType(lua_State* L) {
     if (pm) {
         uint8_t pt = pm->powerType;
         lua_pushnumber(L, pt);
-        lua_pushstring(L, (pt < 7) ? kPowerNames[pt] : "MANA");
+        lua_pushstring(L, (pt < 7) ? kLuaPowerNames[pt] : "MANA");
         return 2;
     }
     lua_pushnumber(L, 0);
@@ -1917,8 +1936,8 @@ static int lua_GetSpellPowerCost(lua_State* L) {
         lua_setfield(L, -2, "type");
         lua_pushnumber(L, data.manaCost);
         lua_setfield(L, -2, "cost");
-        static const char* kPowerNames[] = {"MANA","RAGE","FOCUS","ENERGY","HAPPINESS","","RUNIC_POWER"};
-        lua_pushstring(L, data.powerType < 7 ? kPowerNames[data.powerType] : "MANA");
+    
+        lua_pushstring(L, data.powerType < 7 ? kLuaPowerNames[data.powerType] : "MANA");
         lua_setfield(L, -2, "name");
         lua_rawseti(L, -2, 1); // outer[1] = entry
     }
@@ -2529,11 +2548,11 @@ static int lua_GetContainerItemInfo(lua_State* L) {
     // Build item link with quality color
     std::string name = info ? info->name : ("Item #" + std::to_string(itemSlot->item.itemId));
     uint32_t q = info ? info->quality : 0;
-    static const char* kQH[] = {"9d9d9d","ffffff","1eff00","0070dd","a335ee","ff8000","e6cc80","e6cc80"};
+
     uint32_t qi = q < 8 ? q : 1u;
     char link[256];
     snprintf(link, sizeof(link), "|cff%s|Hitem:%u:0:0:0:0:0:0:0|h[%s]|h|r",
-             kQH[qi], itemSlot->item.itemId, name.c_str());
+             kQualHexNoAlpha[qi], itemSlot->item.itemId, name.c_str());
     lua_pushstring(L, link);  // link
     return 7;
 }
@@ -2562,10 +2581,10 @@ static int lua_GetContainerItemLink(lua_State* L) {
     std::string name = info ? info->name : ("Item #" + std::to_string(itemSlot->item.itemId));
     uint32_t q = info ? info->quality : 0;
     char link[256];
-    static const char* kQH[] = {"9d9d9d","ffffff","1eff00","0070dd","a335ee","ff8000","e6cc80","e6cc80"};
+
     uint32_t qi = q < 8 ? q : 1u;
     snprintf(link, sizeof(link), "|cff%s|Hitem:%u:0:0:0:0:0:0:0|h[%s]|h|r",
-             kQH[qi], itemSlot->item.itemId, name.c_str());
+             kQualHexNoAlpha[qi], itemSlot->item.itemId, name.c_str());
     lua_pushstring(L, link);
     return 1;
 }
@@ -2661,11 +2680,11 @@ static int lua_GetInventoryItemLink(lua_State* L) {
     const auto* info = gh->getItemInfo(slot.item.itemId);
     std::string name = info ? info->name : slot.item.name;
     uint32_t q = info ? info->quality : static_cast<uint32_t>(slot.item.quality);
-    static const char* kQH[] = {"9d9d9d","ffffff","1eff00","0070dd","a335ee","ff8000","e6cc80","e6cc80"};
+
     uint32_t qi = q < 8 ? q : 1u;
     char link[256];
     snprintf(link, sizeof(link), "|cff%s|Hitem:%u:0:0:0:0:0:0:0|h[%s]|h|r",
-             kQH[qi], slot.item.itemId, name.c_str());
+             kQualHexNoAlpha[qi], slot.item.itemId, name.c_str());
     lua_pushstring(L, link);
     return 1;
 }
@@ -3080,9 +3099,8 @@ static int lua_GetFriendInfo(lua_State* L) {
         if (++found == index) {
             lua_pushstring(L, c.name.c_str());      // 1: name
             lua_pushnumber(L, c.level);              // 2: level
-            static const char* kClasses[] = {"","Warrior","Paladin","Hunter","Rogue","Priest",
-                "Death Knight","Shaman","Mage","Warlock","","Druid"};
-            lua_pushstring(L, c.classId < 12 ? kClasses[c.classId] : "Unknown"); // 3: class
+
+            lua_pushstring(L, c.classId < 12 ? kLuaClasses[c.classId] : "Unknown"); // 3: class
             std::string area;
             if (c.areaId != 0) area = gh->getWhoAreaName(c.areaId);
             lua_pushstring(L, area.c_str());         // 4: area
@@ -3394,11 +3412,11 @@ static int lua_GetLootSlotLink(lua_State* L) {
     const auto& item = loot.items[slot - 1];
     const auto* info = gh->getItemInfo(item.itemId);
     if (!info || info->name.empty()) { return luaReturnNil(L); }
-    static const char* kQH[] = {"9d9d9d","ffffff","1eff00","0070dd","a335ee","ff8000","e6cc80","e6cc80"};
+
     uint32_t qi = info->quality < 8 ? info->quality : 1u;
     char link[256];
     snprintf(link, sizeof(link), "|cff%s|Hitem:%u:0:0:0:0:0:0:0|h[%s]|h|r",
-             kQH[qi], item.itemId, info->name.c_str());
+             kQualHexNoAlpha[qi], item.itemId, info->name.c_str());
     lua_pushstring(L, link);
     return 1;
 }
@@ -3547,9 +3565,9 @@ static int lua_GetRaidRosterInfo(lua_State* L) {
     if (entity) {
         uint32_t bytes0 = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_BYTES_0));
         uint8_t classId = static_cast<uint8_t>((bytes0 >> 8) & 0xFF);
-        static const char* kClasses[] = {"","Warrior","Paladin","Hunter","Rogue","Priest",
+        static const char* kLuaClasses[] = {"","Warrior","Paladin","Hunter","Rogue","Priest",
             "Death Knight","Shaman","Mage","Warlock","","Druid"};
-        if (classId > 0 && classId < 12) className = kClasses[classId];
+        if (classId > 0 && classId < 12) className = kLuaClasses[classId];
     }
     lua_pushstring(L, className.c_str());    // class (localized)
     lua_pushstring(L, className.c_str());    // fileName
@@ -3669,14 +3687,14 @@ static int lua_GetPlayerInfoByGUID(lua_State* L) {
     const char* className = "Unknown";
     const char* raceName = "Unknown";
     if (guid == gh->getPlayerGuid()) {
-        static const char* kClasses[] = {"","Warrior","Paladin","Hunter","Rogue","Priest",
+        static const char* kLuaClasses[] = {"","Warrior","Paladin","Hunter","Rogue","Priest",
             "Death Knight","Shaman","Mage","Warlock","","Druid"};
-        static const char* kRaces[] = {"","Human","Orc","Dwarf","Night Elf","Undead",
+        static const char* kLuaRaces[] = {"","Human","Orc","Dwarf","Night Elf","Undead",
             "Tauren","Gnome","Troll","","Blood Elf","Draenei"};
         uint8_t cid = gh->getPlayerClass();
         uint8_t rid = gh->getPlayerRace();
-        if (cid < 12) className = kClasses[cid];
-        if (rid < 12) raceName = kRaces[rid];
+        if (cid < 12) className = kLuaClasses[cid];
+        if (rid < 12) raceName = kLuaRaces[rid];
     }
 
     lua_pushstring(L, className);  // 1: localizedClass
@@ -3697,11 +3715,11 @@ static int lua_GetItemLink(lua_State* L) {
     if (itemId == 0) { return luaReturnNil(L); }
     const auto* info = gh->getItemInfo(itemId);
     if (!info || info->name.empty()) { return luaReturnNil(L); }
-    static const char* kQH[] = {"9d9d9d","ffffff","1eff00","0070dd","a335ee","ff8000","e6cc80","e6cc80"};
+
     uint32_t qi = info->quality < 8 ? info->quality : 1u;
     char link[256];
     snprintf(link, sizeof(link), "|cff%s|Hitem:%u:0:0:0:0:0:0:0|h[%s]|h|r",
-             kQH[qi], itemId, info->name.c_str());
+             kQualHexNoAlpha[qi], itemId, info->name.c_str());
     lua_pushstring(L, link);
     return 1;
 }
@@ -5588,10 +5606,10 @@ void LuaEngine::registerCoreAPI() {
             const auto& results = gh->getWhoResults();
             if (index > static_cast<int>(results.size())) { return luaReturnNil(L); }
             const auto& w = results[index - 1];
-            static const char* kRaces[] = {"","Human","Orc","Dwarf","Night Elf","Undead","Tauren","Gnome","Troll","","Blood Elf","Draenei"};
-            static const char* kClasses[] = {"","Warrior","Paladin","Hunter","Rogue","Priest","Death Knight","Shaman","Mage","Warlock","","Druid"};
-            const char* raceName = (w.raceId < 12) ? kRaces[w.raceId] : "Unknown";
-            const char* className = (w.classId < 12) ? kClasses[w.classId] : "Unknown";
+
+
+            const char* raceName = (w.raceId < 12) ? kLuaRaces[w.raceId] : "Unknown";
+            const char* className = (w.classId < 12) ? kLuaClasses[w.classId] : "Unknown";
             static const char* kClassFiles[] = {"","WARRIOR","PALADIN","HUNTER","ROGUE","PRIEST","DEATHKNIGHT","SHAMAN","MAGE","WARLOCK","","DRUID"};
             const char* classFile = (w.classId < 12) ? kClassFiles[w.classId] : "WARRIOR";
             lua_pushstring(L, w.name.c_str());
@@ -5896,8 +5914,8 @@ void LuaEngine::registerCoreAPI() {
             uint32_t itemId = r->auctions[index - 1].itemEntry;
             const auto* info = gh->getItemInfo(itemId);
             if (!info) { return luaReturnNil(L); }
-            static const char* kQH[] = {"ff9d9d9d","ffffffff","ff1eff00","ff0070dd","ffa335ee","ffff8000","ffe6cc80","ff00ccff"};
-            const char* ch = (info->quality < 8) ? kQH[info->quality] : "ffffffff";
+        
+            const char* ch = (info->quality < 8) ? kQualHexAlpha[info->quality] : "ffffffff";
             char link[256];
             snprintf(link, sizeof(link), "|c%s|Hitem:%u:0:0:0:0:0:0:0|h[%s]|h|r", ch, itemId, info->name.c_str());
             lua_pushstring(L, link);
@@ -6132,7 +6150,11 @@ void LuaEngine::registerCoreAPI() {
                         lua_rawgeti(L, -1, i);
                         if (lua_isfunction(L, -1)) {
                             lua_pushstring(L, "ACTIONBAR_PAGE_CHANGED");
-                            lua_pcall(L, 1, 0, 0);
+                            if (lua_pcall(L, 1, 0, 0) != 0) {
+                                LOG_ERROR("LuaEngine: ACTIONBAR_PAGE_CHANGED handler error: ",
+                                          lua_tostring(L, -1) ? lua_tostring(L, -1) : "(unknown)");
+                                lua_pop(L, 1);
+                            }
                         } else lua_pop(L, 1);
                     }
                 }
