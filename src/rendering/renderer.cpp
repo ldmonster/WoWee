@@ -5473,7 +5473,8 @@ void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
     static const bool skipSky = (std::getenv("WOWEE_SKIP_SKY") != nullptr);
 
     // Get time of day for sky-related rendering
-    float timeOfDay = (skySystem && skySystem->getSkybox()) ? skySystem->getSkybox()->getTimeOfDay() : 12.0f;
+    auto* skybox = skySystem ? skySystem->getSkybox() : nullptr;
+    float timeOfDay = skybox ? skybox->getTimeOfDay() : 12.0f;
 
     // ── Multithreaded secondary command buffer recording ──
     // Terrain, WMO, and M2 record on worker threads while main thread handles
@@ -6427,13 +6428,14 @@ void Renderer::renderReflectionPass() {
     bool canRenderScene = (vkCtx->getMsaaSamples() == VK_SAMPLE_COUNT_1_BIT);
 
     // Find dominant water height near camera
-    auto waterH = waterRenderer->getDominantWaterHeight(camera->getPosition());
+    const glm::vec3 camPos = camera->getPosition();
+    auto waterH = waterRenderer->getDominantWaterHeight(camPos);
     if (!waterH) return;
 
     float waterHeight = *waterH;
 
     // Skip reflection if camera is underwater (Z is up)
-    if (camera->getPosition().z < waterHeight + 0.5f) return;
+    if (camPos.z < waterHeight + 0.5f) return;
 
     // Compute reflected view and oblique projection
     glm::mat4 reflView = WaterRenderer::computeReflectedView(*camera, waterHeight);
@@ -6448,7 +6450,7 @@ void Renderer::renderReflectionPass() {
     reflData.view = reflView;
     reflData.projection = reflProj;
     // Reflected camera position (Z is up)
-    glm::vec3 reflPos = camera->getPosition();
+    glm::vec3 reflPos = camPos;
     reflPos.z = 2.0f * waterHeight - reflPos.z;
     reflData.viewPos = glm::vec4(reflPos, 1.0f);
     std::memcpy(reflPerFrameUBOMapped, &reflData, sizeof(GPUPerFrameData));
@@ -6460,7 +6462,8 @@ void Renderer::renderReflectionPass() {
         // Render scene into reflection texture (sky + terrain + WMO only for perf)
         if (skySystem) {
             rendering::SkyParams skyParams;
-            skyParams.timeOfDay = (skySystem->getSkybox()) ? skySystem->getSkybox()->getTimeOfDay() : 12.0f;
+            auto* reflSkybox = skySystem->getSkybox();
+            skyParams.timeOfDay = reflSkybox ? reflSkybox->getTimeOfDay() : 12.0f;
             if (lightingManager) {
                 const auto& lp = lightingManager->getLightingParams();
                 skyParams.directionalDir = lp.directionalDir;

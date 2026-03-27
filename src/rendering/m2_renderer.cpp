@@ -46,6 +46,7 @@ bool envFlagEnabled(const char* key, bool defaultValue) {
 
 static constexpr uint32_t kParticleFlagRandomized = 0x40;
 static constexpr uint32_t kParticleFlagTiled = 0x80;
+static constexpr float kSmokeEmitInterval = 1.0f / 48.0f;
 
 float computeGroundDetailDownOffset(const M2ModelGPU& model, float scale) {
     // Keep a tiny sink to avoid hovering, but cap pivot compensation so details
@@ -750,8 +751,7 @@ void M2Renderer::shutdown() {
     textureCache.clear();
     textureCacheBytes_ = 0;
     textureCacheCounter_ = 0;
-    textureHasAlphaByPtr_.clear();
-    textureColorKeyBlackByPtr_.clear();
+    texturePropsByPtr_.clear();
     failedTextureCache_.clear();
     failedTextureRetryAt_.clear();
     loggedTextureLoadFails_.clear();
@@ -1356,18 +1356,13 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
                  (!tcls.likelyFlame || modelLanternFamily));
             bgpu.glowCardLike = bgpu.lanternGlowHint && tcls.hasGlowCardToken;
             bgpu.glowTint = tcls.glowTint;
-            bool texHasAlpha = false;
             if (tex != nullptr && tex != whiteTexture_.get()) {
-                auto ait = textureHasAlphaByPtr_.find(tex);
-                texHasAlpha = (ait != textureHasAlphaByPtr_.end()) ? ait->second : false;
+                auto pit = texturePropsByPtr_.find(tex);
+                if (pit != texturePropsByPtr_.end()) {
+                    bgpu.hasAlpha = pit->second.hasAlpha;
+                    bgpu.colorKeyBlack = pit->second.colorKeyBlack;
+                }
             }
-            bgpu.hasAlpha = texHasAlpha;
-            bool colorKeyBlack = false;
-            if (tex != nullptr && tex != whiteTexture_.get()) {
-                auto cit = textureColorKeyBlackByPtr_.find(tex);
-                colorKeyBlack = (cit != textureColorKeyBlackByPtr_.end()) ? cit->second : false;
-            }
-            bgpu.colorKeyBlack = colorKeyBlack;
             // textureCoordIndex is an index into a texture coord combo table, not directly
             // a UV set selector. Most batches have index=0 (UV set 0). We always use UV set 0
             // since we don't have the full combo table — dual-UV effects are rare edge cases.
@@ -1443,18 +1438,13 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
         bgpu.indexStart = 0;
         bgpu.indexCount = gpuModel.indexCount;
         bgpu.texture = allTextures.empty() ? whiteTexture_.get() : allTextures[0];
-        bool texHasAlpha = false;
         if (bgpu.texture != nullptr && bgpu.texture != whiteTexture_.get()) {
-            auto ait = textureHasAlphaByPtr_.find(bgpu.texture);
-            texHasAlpha = (ait != textureHasAlphaByPtr_.end()) ? ait->second : false;
+            auto pit = texturePropsByPtr_.find(bgpu.texture);
+            if (pit != texturePropsByPtr_.end()) {
+                bgpu.hasAlpha = pit->second.hasAlpha;
+                bgpu.colorKeyBlack = pit->second.colorKeyBlack;
+            }
         }
-        bgpu.hasAlpha = texHasAlpha;
-        bool colorKeyBlack = false;
-        if (bgpu.texture != nullptr && bgpu.texture != whiteTexture_.get()) {
-            auto cit = textureColorKeyBlackByPtr_.find(bgpu.texture);
-            colorKeyBlack = (cit != textureColorKeyBlackByPtr_.end()) ? cit->second : false;
-        }
-        bgpu.colorKeyBlack = colorKeyBlack;
         gpuModel.batches.push_back(bgpu);
     }
 
@@ -1915,7 +1905,7 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
     std::uniform_real_distribution<float> distDrift(-0.2f, 0.2f);
 
     smokeEmitAccum += deltaTime;
-    float emitInterval = 1.0f / 48.0f;  // 48 particles per second per emitter (was 32; increased for denser lava/magma steam effects in sparse areas)
+    constexpr float emitInterval = kSmokeEmitInterval;  // 48 particles per second per emitter
 
     if (smokeEmitAccum >= emitInterval &&
         static_cast<int>(smokeParticles.size()) < MAX_SMOKE_PARTICLES) {
@@ -4285,8 +4275,7 @@ VkTexture* M2Renderer::loadTexture(const std::string& path, uint32_t texFlags) {
     textureCache[key] = std::move(e);
     failedTextureCache_.erase(key);
     failedTextureRetryAt_.erase(key);
-    textureHasAlphaByPtr_[texPtr] = hasAlpha;
-    textureColorKeyBlackByPtr_[texPtr] = colorKeyBlackHint;
+    texturePropsByPtr_[texPtr] = {hasAlpha, colorKeyBlackHint};
     LOG_DEBUG("M2: Loaded texture: ", path, " (", blp.width, "x", blp.height, ")");
 
     return texPtr;

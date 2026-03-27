@@ -483,8 +483,11 @@ private:
         bool colorKeyBlack = false;
     };
     std::unordered_map<std::string, TextureCacheEntry> textureCache;
-    std::unordered_map<VkTexture*, bool> textureHasAlphaByPtr_;
-    std::unordered_map<VkTexture*, bool> textureColorKeyBlackByPtr_;
+    struct TextureProperties {
+        bool hasAlpha = false;
+        bool colorKeyBlack = false;
+    };
+    std::unordered_map<VkTexture*, TextureProperties> texturePropsByPtr_;
     size_t textureCacheBytes_ = 0;
     uint64_t textureCacheCounter_ = 0;
     size_t textureCacheBudgetBytes_ = 2048ull * 1024 * 1024;

@@ -48,6 +48,10 @@ constexpr size_t  ALPHA_MAP_PACKED  = 2048;  // 64×64 packed 4-bit alpha (half 
 constexpr uint8_t ALPHA_FILL_FLAG   = 0x80;  // RLE command: fill vs. copy
 constexpr uint8_t ALPHA_COUNT_MASK  = 0x7F;  // RLE command: count bits
 
+// Placement transform constants
+constexpr float kDegToRad = 3.14159f / 180.0f;
+constexpr float kInv1024  = 1.0f / 1024.0f;
+
 int computeTerrainWorkerCount() {
     const char* raw = std::getenv("WOWEE_TERRAIN_WORKERS");
     if (raw && *raw) {
@@ -491,11 +495,11 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
         p.uniqueId = placement.uniqueId;
         p.position = glPos;
         p.rotation = glm::vec3(
-            -placement.rotation[2] * 3.14159f / 180.0f,
-            -placement.rotation[0] * 3.14159f / 180.0f,
-            (placement.rotation[1] + 180.0f) * 3.14159f / 180.0f
+            -placement.rotation[2] * kDegToRad,
+            -placement.rotation[0] * kDegToRad,
+            (placement.rotation[1] + 180.0f) * kDegToRad
         );
-        p.scale = placement.scale / 1024.0f;
+        p.scale = placement.scale * kInv1024;
         pending->m2Placements.push_back(p);
     }
 
@@ -561,9 +565,9 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
                                                        placement.position[2]);
 
                 glm::vec3 rot(
-                    -placement.rotation[2] * 3.14159f / 180.0f,
-                    -placement.rotation[0] * 3.14159f / 180.0f,
-                    (placement.rotation[1] + 180.0f) * 3.14159f / 180.0f
+                    -placement.rotation[2] * kDegToRad,
+                    -placement.rotation[0] * kDegToRad,
+                    (placement.rotation[1] + 180.0f) * kDegToRad
                 );
 
                 // Pre-load WMO doodads (M2 models inside WMO)

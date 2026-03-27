@@ -4540,6 +4540,8 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
             char castLabel[72];
             if (!castName.empty())
                 snprintf(castLabel, sizeof(castLabel), "%s (%.1fs)", castName.c_str(), castLeft);
+            else if (tspell != 0)
+                snprintf(castLabel, sizeof(castLabel), "Spell #%u (%.1fs)", tspell, castLeft);
             else
                 snprintf(castLabel, sizeof(castLabel), "Casting... (%.1fs)", castLeft);
             {
@@ -4709,8 +4711,12 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                     ImGui::PopStyleColor();
                 } else {
                     ImGui::PushStyleColor(ImGuiCol_Button, auraBorderColor);
-                    char label[8];
-                    snprintf(label, sizeof(label), "%u", aura.spellId);
+                    const std::string& tAuraName = gameHandler.getSpellName(aura.spellId);
+                    char label[32];
+                    if (!tAuraName.empty())
+                        snprintf(label, sizeof(label), "%.6s", tAuraName.c_str());
+                    else
+                        snprintf(label, sizeof(label), "%u", aura.spellId);
                     ImGui::Button(label, ImVec2(ICON_SIZE, ICON_SIZE));
                     ImGui::PopStyleColor();
                 }
@@ -15449,8 +15455,12 @@ void GameScreen::renderBuffBar(game::GameHandler& gameHandler) {
                 ImGui::PopStyleColor();
             } else {
                 ImGui::PushStyleColor(ImGuiCol_Button, borderColor);
-                char label[8];
-                snprintf(label, sizeof(label), "%u", aura.spellId);
+                const std::string& pAuraName = gameHandler.getSpellName(aura.spellId);
+                char label[32];
+                if (!pAuraName.empty())
+                    snprintf(label, sizeof(label), "%.6s", pAuraName.c_str());
+                else
+                    snprintf(label, sizeof(label), "%u", aura.spellId);
                 ImGui::Button(label, ImVec2(ICON_SIZE, ICON_SIZE));
                 ImGui::PopStyleColor();
             }
@@ -24142,7 +24152,13 @@ void GameScreen::renderWhoWindow(game::GameHandler& gameHandler) {
             ImGui::TableSetColumnIndex(4);
             if (e.zoneId != 0) {
                 std::string zoneName = gameHandler.getWhoAreaName(e.zoneId);
-                ImGui::TextUnformatted(zoneName.empty() ? "Unknown" : zoneName.c_str());
+                if (!zoneName.empty())
+                    ImGui::TextUnformatted(zoneName.c_str());
+                else {
+                    char zfb[32];
+                    snprintf(zfb, sizeof(zfb), "Zone #%u", e.zoneId);
+                    ImGui::TextUnformatted(zfb);
+                }
             }
 
             ImGui::PopID();

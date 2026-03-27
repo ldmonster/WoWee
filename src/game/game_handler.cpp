@@ -21962,12 +21962,21 @@ void GameHandler::loadSpellNameCache() const {
         if (f != 0xFFFFFFFF && f < dbc->getFieldCount()) tooltipField = f;
     }
 
+    // Cache field indices before the loop to avoid repeated layout lookups
+    const uint32_t idField   = spellL ? (*spellL)["ID"]   : 0;
+    const uint32_t nameField = spellL ? (*spellL)["Name"] : 136;
+    const uint32_t rankField = spellL ? (*spellL)["Rank"] : 153;
+    const uint32_t ebp0Field = spellL ? spellL->field("EffectBasePoints0") : 0xFFFFFFFF;
+    const uint32_t ebp1Field = spellL ? spellL->field("EffectBasePoints1") : 0xFFFFFFFF;
+    const uint32_t ebp2Field = spellL ? spellL->field("EffectBasePoints2") : 0xFFFFFFFF;
+    const uint32_t durIdxField = spellL ? spellL->field("DurationIndex") : 0xFFFFFFFF;
+
     uint32_t count = dbc->getRecordCount();
     for (uint32_t i = 0; i < count; ++i) {
-        uint32_t id = dbc->getUInt32(i, spellL ? (*spellL)["ID"] : 0);
+        uint32_t id = dbc->getUInt32(i, idField);
         if (id == 0) continue;
-        std::string name = dbc->getString(i, spellL ? (*spellL)["Name"] : 136);
-        std::string rank = dbc->getString(i, spellL ? (*spellL)["Rank"] : 153);
+        std::string name = dbc->getString(i, nameField);
+        std::string rank = dbc->getString(i, rankField);
         if (!name.empty()) {
             SpellNameEntry entry{std::move(name), std::move(rank), {}, 0, 0, 0};
             if (tooltipField != 0xFFFFFFFF) {
@@ -21988,20 +21997,12 @@ void GameHandler::loadSpellNameCache() const {
                 entry.attrEx = dbc->getUInt32(i, attrExField);
             }
             // Load effect base points for $s1/$s2/$s3 tooltip substitution
-            if (spellL) {
-                uint32_t f0 = spellL->field("EffectBasePoints0");
-                uint32_t f1 = spellL->field("EffectBasePoints1");
-                uint32_t f2 = spellL->field("EffectBasePoints2");
-                if (f0 != 0xFFFFFFFF) entry.effectBasePoints[0] = static_cast<int32_t>(dbc->getUInt32(i, f0));
-                if (f1 != 0xFFFFFFFF) entry.effectBasePoints[1] = static_cast<int32_t>(dbc->getUInt32(i, f1));
-                if (f2 != 0xFFFFFFFF) entry.effectBasePoints[2] = static_cast<int32_t>(dbc->getUInt32(i, f2));
-            }
+            if (ebp0Field != 0xFFFFFFFF) entry.effectBasePoints[0] = static_cast<int32_t>(dbc->getUInt32(i, ebp0Field));
+            if (ebp1Field != 0xFFFFFFFF) entry.effectBasePoints[1] = static_cast<int32_t>(dbc->getUInt32(i, ebp1Field));
+            if (ebp2Field != 0xFFFFFFFF) entry.effectBasePoints[2] = static_cast<int32_t>(dbc->getUInt32(i, ebp2Field));
             // Duration: read DurationIndex and resolve via SpellDuration.dbc later
-            if (spellL) {
-                uint32_t durF = spellL->field("DurationIndex");
-                if (durF != 0xFFFFFFFF)
-                    entry.durationSec = static_cast<float>(dbc->getUInt32(i, durF)); // store index temporarily
-            }
+            if (durIdxField != 0xFFFFFFFF)
+                entry.durationSec = static_cast<float>(dbc->getUInt32(i, durIdxField)); // store index temporarily
             spellNameCache_[id] = std::move(entry);
         }
     }
@@ -22036,9 +22037,11 @@ void GameHandler::loadSkillLineAbilityDbc() {
     auto slaDbc = am->loadDBC("SkillLineAbility.dbc");
     if (slaDbc && slaDbc->isLoaded()) {
         const auto* slaL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("SkillLineAbility") : nullptr;
+        const uint32_t slaSkillField = slaL ? (*slaL)["SkillLineID"] : 1;
+        const uint32_t slaSpellField = slaL ? (*slaL)["SpellID"]     : 2;
         for (uint32_t i = 0; i < slaDbc->getRecordCount(); i++) {
-            uint32_t skillLineId = slaDbc->getUInt32(i, slaL ? (*slaL)["SkillLineID"] : 1);
-            uint32_t spellId = slaDbc->getUInt32(i, slaL ? (*slaL)["SpellID"] : 2);
+            uint32_t skillLineId = slaDbc->getUInt32(i, slaSkillField);
+            uint32_t spellId = slaDbc->getUInt32(i, slaSpellField);
             if (spellId > 0 && skillLineId > 0) {
                 spellToSkillLine_[spellId] = skillLineId;
             }
@@ -22233,16 +22236,23 @@ void GameHandler::loadTalentDbc() {
         // 23-39: BackgroundFile (16 localized strings + flags = 17 fields)
 
         const auto* ttL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("TalentTab") : nullptr;
+        // Cache field indices before the loop
+        const uint32_t ttIdField    = ttL ? (*ttL)["ID"]             : 0;
+        const uint32_t ttNameField  = ttL ? (*ttL)["Name"]           : 1;
+        const uint32_t ttClassField = ttL ? (*ttL)["ClassMask"]      : 20;
+        const uint32_t ttOrderField = ttL ? (*ttL)["OrderIndex"]     : 22;
+        const uint32_t ttBgField    = ttL ? (*ttL)["BackgroundFile"] : 23;
+
         uint32_t count = tabDbc->getRecordCount();
         for (uint32_t i = 0; i < count; ++i) {
             TalentTabEntry entry;
-            entry.tabId = tabDbc->getUInt32(i, ttL ? (*ttL)["ID"] : 0);
+            entry.tabId = tabDbc->getUInt32(i, ttIdField);
             if (entry.tabId == 0) continue;
 
-            entry.name = tabDbc->getString(i, ttL ? (*ttL)["Name"] : 1);
-            entry.classMask = tabDbc->getUInt32(i, ttL ? (*ttL)["ClassMask"] : 20);
-            entry.orderIndex = static_cast<uint8_t>(tabDbc->getUInt32(i, ttL ? (*ttL)["OrderIndex"] : 22));
-            entry.backgroundFile = tabDbc->getString(i, ttL ? (*ttL)["BackgroundFile"] : 23);
+            entry.name = tabDbc->getString(i, ttNameField);
+            entry.classMask = tabDbc->getUInt32(i, ttClassField);
+            entry.orderIndex = static_cast<uint8_t>(tabDbc->getUInt32(i, ttOrderField));
+            entry.backgroundFile = tabDbc->getString(i, ttBgField);
 
             talentTabCache_[entry.tabId] = entry;
 
@@ -22694,19 +22704,26 @@ void GameHandler::loadTaxiDbc() {
     auto nodesDbc = am->loadDBC("TaxiNodes.dbc");
     if (nodesDbc && nodesDbc->isLoaded()) {
         const auto* tnL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("TaxiNodes") : nullptr;
+        // Cache field indices before the loop
+        const uint32_t tnIdField   = tnL ? (*tnL)["ID"]    : 0;
+        const uint32_t tnMapField  = tnL ? (*tnL)["MapID"] : 1;
+        const uint32_t tnXField    = tnL ? (*tnL)["X"]     : 2;
+        const uint32_t tnYField    = tnL ? (*tnL)["Y"]     : 3;
+        const uint32_t tnZField    = tnL ? (*tnL)["Z"]     : 4;
+        const uint32_t tnNameField = tnL ? (*tnL)["Name"]  : 5;
+        const uint32_t mountAllianceField = tnL ? (*tnL)["MountDisplayIdAlliance"]         : 22;
+        const uint32_t mountHordeField    = tnL ? (*tnL)["MountDisplayIdHorde"]            : 23;
+        const uint32_t mountAllianceFB    = tnL ? (*tnL)["MountDisplayIdAllianceFallback"] : 20;
+        const uint32_t mountHordeFB       = tnL ? (*tnL)["MountDisplayIdHordeFallback"]    : 21;
         uint32_t fieldCount = nodesDbc->getFieldCount();
         for (uint32_t i = 0; i < nodesDbc->getRecordCount(); i++) {
             TaxiNode node;
-            node.id = nodesDbc->getUInt32(i, tnL ? (*tnL)["ID"] : 0);
-            node.mapId = nodesDbc->getUInt32(i, tnL ? (*tnL)["MapID"] : 1);
-            node.x = nodesDbc->getFloat(i, tnL ? (*tnL)["X"] : 2);
-            node.y = nodesDbc->getFloat(i, tnL ? (*tnL)["Y"] : 3);
-            node.z = nodesDbc->getFloat(i, tnL ? (*tnL)["Z"] : 4);
-            node.name = nodesDbc->getString(i, tnL ? (*tnL)["Name"] : 5);
-            const uint32_t mountAllianceField = tnL ? (*tnL)["MountDisplayIdAlliance"] : 22;
-            const uint32_t mountHordeField = tnL ? (*tnL)["MountDisplayIdHorde"] : 23;
-            const uint32_t mountAllianceFB = tnL ? (*tnL)["MountDisplayIdAllianceFallback"] : 20;
-            const uint32_t mountHordeFB = tnL ? (*tnL)["MountDisplayIdHordeFallback"] : 21;
+            node.id = nodesDbc->getUInt32(i, tnIdField);
+            node.mapId = nodesDbc->getUInt32(i, tnMapField);
+            node.x = nodesDbc->getFloat(i, tnXField);
+            node.y = nodesDbc->getFloat(i, tnYField);
+            node.z = nodesDbc->getFloat(i, tnZField);
+            node.name = nodesDbc->getString(i, tnNameField);
             if (fieldCount > mountHordeField) {
                 node.mountDisplayIdAlliance = nodesDbc->getUInt32(i, mountAllianceField);
                 node.mountDisplayIdHorde = nodesDbc->getUInt32(i, mountHordeField);
@@ -22735,12 +22752,16 @@ void GameHandler::loadTaxiDbc() {
     auto pathDbc = am->loadDBC("TaxiPath.dbc");
     if (pathDbc && pathDbc->isLoaded()) {
         const auto* tpL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("TaxiPath") : nullptr;
+        const uint32_t tpIdField   = tpL ? (*tpL)["ID"]       : 0;
+        const uint32_t tpFromField = tpL ? (*tpL)["FromNode"] : 1;
+        const uint32_t tpToField   = tpL ? (*tpL)["ToNode"]   : 2;
+        const uint32_t tpCostField = tpL ? (*tpL)["Cost"]     : 3;
         for (uint32_t i = 0; i < pathDbc->getRecordCount(); i++) {
             TaxiPathEdge edge;
-            edge.pathId = pathDbc->getUInt32(i, tpL ? (*tpL)["ID"] : 0);
-            edge.fromNode = pathDbc->getUInt32(i, tpL ? (*tpL)["FromNode"] : 1);
-            edge.toNode = pathDbc->getUInt32(i, tpL ? (*tpL)["ToNode"] : 2);
-            edge.cost = pathDbc->getUInt32(i, tpL ? (*tpL)["Cost"] : 3);
+            edge.pathId = pathDbc->getUInt32(i, tpIdField);
+            edge.fromNode = pathDbc->getUInt32(i, tpFromField);
+            edge.toNode = pathDbc->getUInt32(i, tpToField);
+            edge.cost = pathDbc->getUInt32(i, tpCostField);
             taxiPathEdges_.push_back(edge);
         }
         LOG_INFO("Loaded ", taxiPathEdges_.size(), " taxi path edges from TaxiPath.dbc");
@@ -22751,15 +22772,22 @@ void GameHandler::loadTaxiDbc() {
     auto pathNodeDbc = am->loadDBC("TaxiPathNode.dbc");
     if (pathNodeDbc && pathNodeDbc->isLoaded()) {
         const auto* tpnL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("TaxiPathNode") : nullptr;
+        const uint32_t tpnIdField    = tpnL ? (*tpnL)["ID"]        : 0;
+        const uint32_t tpnPathField  = tpnL ? (*tpnL)["PathID"]    : 1;
+        const uint32_t tpnIndexField = tpnL ? (*tpnL)["NodeIndex"] : 2;
+        const uint32_t tpnMapField   = tpnL ? (*tpnL)["MapID"]     : 3;
+        const uint32_t tpnXField     = tpnL ? (*tpnL)["X"]         : 4;
+        const uint32_t tpnYField     = tpnL ? (*tpnL)["Y"]         : 5;
+        const uint32_t tpnZField     = tpnL ? (*tpnL)["Z"]         : 6;
         for (uint32_t i = 0; i < pathNodeDbc->getRecordCount(); i++) {
             TaxiPathNode node;
-            node.id = pathNodeDbc->getUInt32(i, tpnL ? (*tpnL)["ID"] : 0);
-            node.pathId = pathNodeDbc->getUInt32(i, tpnL ? (*tpnL)["PathID"] : 1);
-            node.nodeIndex = pathNodeDbc->getUInt32(i, tpnL ? (*tpnL)["NodeIndex"] : 2);
-            node.mapId = pathNodeDbc->getUInt32(i, tpnL ? (*tpnL)["MapID"] : 3);
-            node.x = pathNodeDbc->getFloat(i, tpnL ? (*tpnL)["X"] : 4);
-            node.y = pathNodeDbc->getFloat(i, tpnL ? (*tpnL)["Y"] : 5);
-            node.z = pathNodeDbc->getFloat(i, tpnL ? (*tpnL)["Z"] : 6);
+            node.id = pathNodeDbc->getUInt32(i, tpnIdField);
+            node.pathId = pathNodeDbc->getUInt32(i, tpnPathField);
+            node.nodeIndex = pathNodeDbc->getUInt32(i, tpnIndexField);
+            node.mapId = pathNodeDbc->getUInt32(i, tpnMapField);
+            node.x = pathNodeDbc->getFloat(i, tpnXField);
+            node.y = pathNodeDbc->getFloat(i, tpnYField);
+            node.z = pathNodeDbc->getFloat(i, tpnZField);
             taxiPathNodes_[node.pathId].push_back(node);
         }
         // Sort waypoints by nodeIndex for each path
@@ -23857,10 +23885,13 @@ void GameHandler::loadSkillLineDbc() {
     }
 
     const auto* slL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("SkillLine") : nullptr;
+    const uint32_t slIdField   = slL ? (*slL)["ID"]       : 0;
+    const uint32_t slCatField  = slL ? (*slL)["Category"] : 1;
+    const uint32_t slNameField = slL ? (*slL)["Name"]     : 3;
     for (uint32_t i = 0; i < dbc->getRecordCount(); i++) {
-        uint32_t id = dbc->getUInt32(i, slL ? (*slL)["ID"] : 0);
-        uint32_t category = dbc->getUInt32(i, slL ? (*slL)["Category"] : 1);
-        std::string name = dbc->getString(i, slL ? (*slL)["Name"] : 3);
+        uint32_t id = dbc->getUInt32(i, slIdField);
+        uint32_t category = dbc->getUInt32(i, slCatField);
+        std::string name = dbc->getString(i, slNameField);
         if (id > 0 && !name.empty()) {
             skillLineNames_[id] = name;
             skillLineCategories_[id] = category;

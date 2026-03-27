@@ -18,6 +18,8 @@ namespace rendering {
 
 namespace {
 
+constexpr float kMaxPhysicsDelta = 1.0f / 30.0f;
+
 std::optional<float> selectReachableFloor(const std::optional<float>& terrainH,
                                           const std::optional<float>& wmoH,
                                           float refZ,
@@ -157,7 +159,7 @@ void CameraController::update(float deltaTime) {
         return;
     }
     // Keep physics integration stable during render hitches to avoid floor tunneling.
-    const float physicsDeltaTime = std::min(deltaTime, 1.0f / 30.0f);
+    const float physicsDeltaTime = std::min(deltaTime, kMaxPhysicsDelta);
 
     // During taxi flights, skip movement logic but keep camera orbit/zoom controls.
     if (externalFollow_) {

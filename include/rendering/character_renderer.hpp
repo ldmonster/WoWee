@@ -293,8 +293,11 @@ private:
         bool normalMapPending = false;  // deferred normal map generation
     };
     std::unordered_map<std::string, TextureCacheEntry> textureCache;
-    std::unordered_map<VkTexture*, bool> textureHasAlphaByPtr_;
-    std::unordered_map<VkTexture*, bool> textureColorKeyBlackByPtr_;
+    struct TextureProperties {
+        bool hasAlpha = false;
+        bool colorKeyBlack = false;
+    };
+    std::unordered_map<VkTexture*, TextureProperties> texturePropsByPtr_;
     std::unordered_map<std::string, VkTexture*> compositeCache_;  // key → texture for reuse
     std::unordered_set<std::string> failedTextureCache_;  // negative cache for budget exhaustion
     std::unordered_map<std::string, uint64_t> failedTextureRetryAt_;

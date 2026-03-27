@@ -342,8 +342,7 @@ void CharacterRenderer::shutdown() {
 
     // Clean up texture cache (VkTexture unique_ptrs auto-destroy)
     textureCache.clear();
-    textureHasAlphaByPtr_.clear();
-    textureColorKeyBlackByPtr_.clear();
+    texturePropsByPtr_.clear();
     textureCacheBytes_ = 0;
     textureCacheCounter_ = 0;
 
@@ -437,8 +436,7 @@ void CharacterRenderer::clear() {
 
     // Clear texture cache (VkTexture unique_ptrs auto-destroy)
     textureCache.clear();
-    textureHasAlphaByPtr_.clear();
-    textureColorKeyBlackByPtr_.clear();
+    texturePropsByPtr_.clear();
     textureCacheBytes_ = 0;
     textureCacheCounter_ = 0;
     loggedTextureLoadFails_.clear();
@@ -745,8 +743,7 @@ VkTexture* CharacterRenderer::loadTexture(const std::string& path) {
     }
 
     textureCacheBytes_ += e.approxBytes;
-    textureHasAlphaByPtr_[texPtr] = hasAlpha;
-    textureColorKeyBlackByPtr_[texPtr] = colorKeyBlackHint;
+    texturePropsByPtr_[texPtr] = {hasAlpha, colorKeyBlackHint};
     textureCache[key] = std::move(e);
     failedTextureCache_.erase(key);
     failedTextureRetryAt_.erase(key);
@@ -2297,10 +2294,11 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 bool alphaCutout = false;
                 bool colorKeyBlack = false;
                 if (texPtr != nullptr && texPtr != whiteTexture_.get()) {
-                    auto ait = textureHasAlphaByPtr_.find(texPtr);
-                    alphaCutout = (ait != textureHasAlphaByPtr_.end()) ? ait->second : false;
-                    auto cit = textureColorKeyBlackByPtr_.find(texPtr);
-                    colorKeyBlack = (cit != textureColorKeyBlackByPtr_.end()) ? cit->second : false;
+                    auto pit = texturePropsByPtr_.find(texPtr);
+                    if (pit != texturePropsByPtr_.end()) {
+                        alphaCutout = pit->second.hasAlpha;
+                        colorKeyBlack = pit->second.colorKeyBlack;
+                    }
                 }
                 const bool blendNeedsCutout = (blendMode == 1) || (blendMode >= 2 && !alphaCutout);
                 const bool unlit = ((materialFlags & 0x01) != 0) || (blendMode >= 3);
