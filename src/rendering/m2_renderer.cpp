@@ -463,12 +463,12 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
     rendering::VkShaderModule particleVert, particleFrag;
     rendering::VkShaderModule smokeVert, smokeFrag;
 
-    m2Vert.loadFromFile(device, "assets/shaders/m2.vert.spv");
-    m2Frag.loadFromFile(device, "assets/shaders/m2.frag.spv");
-    particleVert.loadFromFile(device, "assets/shaders/m2_particle.vert.spv");
-    particleFrag.loadFromFile(device, "assets/shaders/m2_particle.frag.spv");
-    smokeVert.loadFromFile(device, "assets/shaders/m2_smoke.vert.spv");
-    smokeFrag.loadFromFile(device, "assets/shaders/m2_smoke.frag.spv");
+    (void)m2Vert.loadFromFile(device, "assets/shaders/m2.vert.spv");
+    (void)m2Frag.loadFromFile(device, "assets/shaders/m2.frag.spv");
+    (void)particleVert.loadFromFile(device, "assets/shaders/m2_particle.vert.spv");
+    (void)particleFrag.loadFromFile(device, "assets/shaders/m2_particle.frag.spv");
+    (void)smokeVert.loadFromFile(device, "assets/shaders/m2_smoke.vert.spv");
+    (void)smokeFrag.loadFromFile(device, "assets/shaders/m2_smoke.frag.spv");
 
     if (!m2Vert.isValid() || !m2Frag.isValid()) {
         LOG_ERROR("M2: Missing required shaders, cannot initialize");
@@ -583,8 +583,8 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
     // Vertex format: pos(3) + color(3) + alpha(1) + uv(2) = 9 floats = 36 bytes
     {
         rendering::VkShaderModule ribVert, ribFrag;
-        ribVert.loadFromFile(device, "assets/shaders/m2_ribbon.vert.spv");
-        ribFrag.loadFromFile(device, "assets/shaders/m2_ribbon.frag.spv");
+        (void)ribVert.loadFromFile(device, "assets/shaders/m2_ribbon.vert.spv");
+        (void)ribFrag.loadFromFile(device, "assets/shaders/m2_ribbon.frag.spv");
         if (ribVert.isValid() && ribFrag.isValid()) {
             // Reuse particleTexLayout_ for set 1 (single texture sampler)
             VkDescriptorSetLayout ribLayouts[] = {perFrameLayout, particleTexLayout_};
@@ -4766,12 +4766,12 @@ void M2Renderer::recreatePipelines() {
     rendering::VkShaderModule particleVert, particleFrag;
     rendering::VkShaderModule smokeVert, smokeFrag;
 
-    m2Vert.loadFromFile(device, "assets/shaders/m2.vert.spv");
-    m2Frag.loadFromFile(device, "assets/shaders/m2.frag.spv");
-    particleVert.loadFromFile(device, "assets/shaders/m2_particle.vert.spv");
-    particleFrag.loadFromFile(device, "assets/shaders/m2_particle.frag.spv");
-    smokeVert.loadFromFile(device, "assets/shaders/m2_smoke.vert.spv");
-    smokeFrag.loadFromFile(device, "assets/shaders/m2_smoke.frag.spv");
+    (void)m2Vert.loadFromFile(device, "assets/shaders/m2.vert.spv");
+    (void)m2Frag.loadFromFile(device, "assets/shaders/m2.frag.spv");
+    (void)particleVert.loadFromFile(device, "assets/shaders/m2_particle.vert.spv");
+    (void)particleFrag.loadFromFile(device, "assets/shaders/m2_particle.frag.spv");
+    (void)smokeVert.loadFromFile(device, "assets/shaders/m2_smoke.vert.spv");
+    (void)smokeFrag.loadFromFile(device, "assets/shaders/m2_smoke.frag.spv");
 
     if (!m2Vert.isValid() || !m2Frag.isValid()) {
         LOG_ERROR("M2Renderer::recreatePipelines: missing required shaders");
@@ -4882,8 +4882,8 @@ void M2Renderer::recreatePipelines() {
     // --- Ribbon pipelines ---
     {
         rendering::VkShaderModule ribVert, ribFrag;
-        ribVert.loadFromFile(device, "assets/shaders/m2_ribbon.vert.spv");
-        ribFrag.loadFromFile(device, "assets/shaders/m2_ribbon.frag.spv");
+        (void)ribVert.loadFromFile(device, "assets/shaders/m2_ribbon.vert.spv");
+        (void)ribFrag.loadFromFile(device, "assets/shaders/m2_ribbon.frag.spv");
         if (ribVert.isValid() && ribFrag.isValid()) {
             VkVertexInputBindingDescription rBind{};
             rBind.binding = 0;

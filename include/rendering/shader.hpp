@@ -13,8 +13,8 @@ public:
     Shader() = default;
     ~Shader();
 
-    bool loadFromFile(const std::string& vertexPath, const std::string& fragmentPath);
-    bool loadFromSource(const std::string& vertexSource, const std::string& fragmentSource);
+    [[nodiscard]] bool loadFromFile(const std::string& vertexPath, const std::string& fragmentPath);
+    [[nodiscard]] bool loadFromSource(const std::string& vertexSource, const std::string& fragmentSource);
 
     void use() const;
     void unuse() const;

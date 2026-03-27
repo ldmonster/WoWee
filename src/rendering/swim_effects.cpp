@@ -348,9 +348,9 @@ void SwimEffects::recreatePipelines() {
     // ---- Rebuild ripple pipeline ----
     {
         VkShaderModule vertModule;
-        vertModule.loadFromFile(device, "assets/shaders/swim_ripple.vert.spv");
+        (void)vertModule.loadFromFile(device, "assets/shaders/swim_ripple.vert.spv");
         VkShaderModule fragModule;
-        fragModule.loadFromFile(device, "assets/shaders/swim_ripple.frag.spv");
+        (void)fragModule.loadFromFile(device, "assets/shaders/swim_ripple.frag.spv");
 
         VkPipelineShaderStageCreateInfo vertStage = vertModule.stageInfo(VK_SHADER_STAGE_VERTEX_BIT);
         VkPipelineShaderStageCreateInfo fragStage = fragModule.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -375,9 +375,9 @@ void SwimEffects::recreatePipelines() {
     // ---- Rebuild bubble pipeline ----
     {
         VkShaderModule vertModule;
-        vertModule.loadFromFile(device, "assets/shaders/swim_bubble.vert.spv");
+        (void)vertModule.loadFromFile(device, "assets/shaders/swim_bubble.vert.spv");
         VkShaderModule fragModule;
-        fragModule.loadFromFile(device, "assets/shaders/swim_bubble.frag.spv");
+        (void)fragModule.loadFromFile(device, "assets/shaders/swim_bubble.frag.spv");
 
         VkPipelineShaderStageCreateInfo vertStage = vertModule.stageInfo(VK_SHADER_STAGE_VERTEX_BIT);
         VkPipelineShaderStageCreateInfo fragStage = fragModule.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -402,9 +402,9 @@ void SwimEffects::recreatePipelines() {
     // ---- Rebuild insect pipeline ----
     {
         VkShaderModule vertModule;
-        vertModule.loadFromFile(device, "assets/shaders/swim_ripple.vert.spv");
+        (void)vertModule.loadFromFile(device, "assets/shaders/swim_ripple.vert.spv");
         VkShaderModule fragModule;
-        fragModule.loadFromFile(device, "assets/shaders/swim_insect.frag.spv");
+        (void)fragModule.loadFromFile(device, "assets/shaders/swim_insect.frag.spv");
 
         VkPipelineShaderStageCreateInfo vertStage = vertModule.stageInfo(VK_SHADER_STAGE_VERTEX_BIT);
         VkPipelineShaderStageCreateInfo fragStage = fragModule.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT);

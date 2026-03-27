@@ -18,7 +18,7 @@ public:
     VkShaderModule& operator=(VkShaderModule&& other) noexcept;
 
     // Load a SPIR-V file from disk
-    bool loadFromFile(VkDevice device, const std::string& path);
+    [[nodiscard]] bool loadFromFile(VkDevice device, const std::string& path);
 
     // Load from raw SPIR-V bytes
     bool loadFromMemory(VkDevice device, const uint32_t* code, size_t sizeBytes);

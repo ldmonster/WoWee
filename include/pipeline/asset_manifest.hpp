@@ -29,7 +29,7 @@ public:
      * @param manifestPath Full path to manifest.json
      * @return true if loaded successfully
      */
-    bool load(const std::string& manifestPath);
+    [[nodiscard]] bool load(const std::string& manifestPath);
 
     /**
      * Lookup an entry by normalized WoW path (lowercase, backslash)

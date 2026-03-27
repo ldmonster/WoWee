@@ -26,7 +26,7 @@ public:
      * @param dbcData Raw DBC file data
      * @return true if loaded successfully
      */
-    bool load(const std::vector<uint8_t>& dbcData);
+    [[nodiscard]] bool load(const std::vector<uint8_t>& dbcData);
 
     /**
      * Check if DBC is loaded
