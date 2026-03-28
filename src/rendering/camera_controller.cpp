@@ -371,9 +371,22 @@ void CameraController::update(float deltaTime) {
         facingYaw = yaw;
     }
 
+    // Tick down gravity suspension timer (used after world entry to prevent
+    // falling through WMO floors before collision is loaded)
+    if (gravitySuspendTimer_ > 0.0f) {
+        gravitySuspendTimer_ -= deltaTime;
+    }
+
     // Select physics constants based on mode
     float gravity = useWoWSpeed ? WOW_GRAVITY : GRAVITY;
     float jumpVel = useWoWSpeed ? WOW_JUMP_VELOCITY : JUMP_VELOCITY;
+
+    // Suspend gravity after world entry — hold Z position until timer expires
+    // OR a floor is detected. This prevents falling through unloaded WMO floors.
+    if (gravitySuspendTimer_ > 0.0f) {
+        gravity = 0.0f;
+        verticalVelocity = 0.0f;
+    }
 
     // Calculate movement speed based on direction and modifiers
     float speed;
@@ -1093,6 +1106,8 @@ void CameraController::update(float deltaTime) {
                     if (groundH) {
                         cachedFloorHeight_ = *groundH;
                         hasCachedFloor_ = true;
+                        // Ground found — cancel gravity suspension (WMO floor loaded)
+                        if (gravitySuspendTimer_ > 0.0f) gravitySuspendTimer_ = 0.0f;
                     } else {
                         hasCachedFloor_ = false;
                     }

@@ -162,9 +162,12 @@ void ChatHandler::handleMessageChat(network::Packet& packet) {
 
     MessageChatData data;
     if (!owner_.packetParsers_->parseMessageChat(packet, data)) {
-        LOG_WARNING("Failed to parse SMSG_MESSAGECHAT");
+        LOG_WARNING("Failed to parse SMSG_MESSAGECHAT, size=", packet.getSize());
         return;
     }
+    LOG_WARNING("SMSG_MESSAGECHAT: type=", static_cast<int>(data.type),
+                " sender='", data.senderName, "' msg='",
+                data.message.substr(0, 60), "'");
 
     // Skip server echo of our own messages (we already added a local echo)
     if (data.senderGuid == owner_.playerGuid && data.senderGuid != 0) {

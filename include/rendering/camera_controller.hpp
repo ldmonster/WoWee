@@ -126,6 +126,7 @@ public:
     void setFacingYaw(float yaw) { facingYaw = yaw; }  // For taxi/scripted movement
     void clearMovementInputs();
     void suppressMovementFor(float seconds) { movementSuppressTimer_ = seconds; }
+    void suspendGravityFor(float seconds) { gravitySuspendTimer_ = seconds; }
 
     // Auto-follow: walk toward a target position each frame (WoW /follow).
     // The caller updates *targetPos every frame with the followed entity's render position.
@@ -270,6 +271,8 @@ private:
 
     // Movement input suppression (after teleport/portal, ignore held keys)
     float movementSuppressTimer_ = 0.0f;
+    // Gravity suspension (after world entry, hold Z until ground detected)
+    float gravitySuspendTimer_ = 0.0f;
 
     // State
     bool enabled = true;

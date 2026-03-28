@@ -2175,6 +2175,7 @@ void Application::update(float deltaTime) {
         if (renderer && renderer->getCameraController()) {
             renderer->getCameraController()->clearMovementInputs();
             renderer->getCameraController()->suppressMovementFor(1.0f);
+                renderer->getCameraController()->suspendGravityFor(10.0f);
         }
         loadOnlineWorldTerrain(entry.mapId, entry.x, entry.y, entry.z);
     }
@@ -2419,6 +2420,7 @@ void Application::setupUICallbacks() {
                 if (ft) *ft = renderPos;
                 renderer->getCameraController()->clearMovementInputs();
                 renderer->getCameraController()->suppressMovementFor(1.0f);
+                renderer->getCameraController()->suspendGravityFor(10.0f);
             }
             worldEntryMovementGraceTimer_ = 2.0f;
             taxiLandingClampTimer_ = 0.0f;
@@ -2457,6 +2459,7 @@ void Application::setupUICallbacks() {
                     if (ft) *ft = renderPos;
                     renderer->getCameraController()->clearMovementInputs();
                     renderer->getCameraController()->suppressMovementFor(1.0f);
+                renderer->getCameraController()->suspendGravityFor(10.0f);
                 }
                 pendingWorldEntry_ = PendingWorldEntry{mapId, x, y, z};
                 return;
