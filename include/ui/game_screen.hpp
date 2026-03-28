@@ -201,8 +201,8 @@ private:
     float pendingMouseSensitivity = 0.2f;
     bool pendingInvertMouse = false;
     bool pendingExtendedZoom = false;
-    float pendingCameraStiffness = 20.0f;  // Camera smooth speed (higher = tighter, less sway)
-    float pendingPivotHeight = 1.8f;       // Camera pivot height above feet (lower = less detached feel)
+    float pendingCameraStiffness = 30.0f;  // Camera smooth speed (higher = tighter, less sway)
+    float pendingPivotHeight = 1.6f;       // Camera pivot height above feet (lower = less detached feel)
     float pendingFov = 70.0f;  // degrees, default matches WoW's ~70° horizontal FOV
     int pendingUiOpacity = 65;
     bool pendingMinimapRotate = false;

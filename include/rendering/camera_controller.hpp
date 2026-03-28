@@ -192,7 +192,7 @@ private:
     static constexpr float MAX_DISTANCE_INTERIOR = 12.0f;  // Max zoom inside WMOs
     bool extendedZoom_ = false;
     static constexpr float ZOOM_SMOOTH_SPEED = 15.0f;  // How fast zoom eases
-    static constexpr float CAM_SMOOTH_SPEED_DEFAULT = 20.0f;
+    static constexpr float CAM_SMOOTH_SPEED_DEFAULT = 30.0f;
     float camSmoothSpeed_ = CAM_SMOOTH_SPEED_DEFAULT;  // User-configurable camera smoothing (higher = tighter)
 public:
     void setCameraSmoothSpeed(float speed) { camSmoothSpeed_ = std::clamp(speed, 5.0f, 100.0f); }
@@ -200,7 +200,7 @@ public:
     void setPivotHeight(float h) { pivotHeight_ = std::clamp(h, 0.0f, 3.0f); }
     float getPivotHeight() const { return pivotHeight_; }
 private:
-    static constexpr float PIVOT_HEIGHT_DEFAULT = 1.8f;
+    static constexpr float PIVOT_HEIGHT_DEFAULT = 1.6f;
     float pivotHeight_ = PIVOT_HEIGHT_DEFAULT;  // User-configurable pivot height
     static constexpr float CAM_SPHERE_RADIUS = 0.32f;  // Keep camera farther from geometry to avoid clipping-through surfaces
     static constexpr float CAM_EPSILON = 0.22f;        // Extra wall offset to avoid near-plane clipping artifacts

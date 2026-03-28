@@ -18455,7 +18455,7 @@ if (ImGui::SliderFloat("Camera Stiffness", &pendingCameraStiffness, 5.0f, 100.0f
     }
     saveSettings();
 }
-ImGui::SetItemTooltip("Higher = tighter camera with less sway. Default: 20");
+ImGui::SetItemTooltip("Higher = tighter camera with less sway. Default: 30");
 if (ImGui::SliderFloat("Camera Pivot Height", &pendingPivotHeight, 0.0f, 3.0f, "%.1f")) {
     if (renderer) {
         if (auto* cameraController = renderer->getCameraController()) {
