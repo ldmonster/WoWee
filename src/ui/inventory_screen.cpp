@@ -989,7 +989,7 @@ void InventoryScreen::renderSeparateBags(game::Inventory& inventory, uint64_t mo
         int bpUsed = 0;
         for (int i = 0; i < bpTotal; ++i) if (!inventory.getBackpackSlot(i).empty()) ++bpUsed;
         char bpTitle[64];
-        snprintf(bpTitle, sizeof(bpTitle), "Backpack (%d/%d)", bpUsed, bpTotal);
+        snprintf(bpTitle, sizeof(bpTitle), "Backpack (%d/%d)##backpack", bpUsed, bpTotal);
         int bpRows = (bpTotal + columns - 1) / columns;
         float bpH = bpRows * (slotSize + 4.0f) + 80.0f; // header + money + padding
         float defaultY = stackBottom - bpH;
