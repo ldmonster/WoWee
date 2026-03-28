@@ -604,6 +604,15 @@ std::string AssetManager::normalizePath(const std::string& path) const {
     std::replace(normalized.begin(), normalized.end(), '/', '\\');
     std::transform(normalized.begin(), normalized.end(), normalized.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    // Reject path traversal sequences
+    if (normalized.find("..\\") != std::string::npos ||
+        normalized.find("../") != std::string::npos ||
+        normalized == "..") {
+        LOG_WARNING("Path traversal rejected: ", path);
+        return {};
+    }
+
     return normalized;
 }
 

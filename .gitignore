@@ -1,5 +1,6 @@
 # Build directories
 build/
+build-debug/
 build-sanitize/
 bin/
 lib/
@@ -33,6 +34,9 @@ Makefile
 *.out
 *.app
 wowee
+
+# Claude Code internal state
+.claude/
 
 # IDE files
 .vscode/

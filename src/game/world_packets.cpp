@@ -1517,6 +1517,7 @@ bool MessageChatParser::parse(network::Packet& packet, MessageChatData& data) {
         case ChatType::RAID_BOSS_WHISPER: {
             // Read sender name (SizedCString: uint32 len including null + chars)
             uint32_t nameLen = packet.readUInt32();
+            if (nameLen > packet.getRemainingSize()) return false;
             if (nameLen > 0 && nameLen < 256) {
                 data.senderName.resize(nameLen);
                 for (uint32_t i = 0; i < nameLen; ++i) {
@@ -1597,6 +1598,7 @@ bool MessageChatParser::parse(network::Packet& packet, MessageChatData& data) {
 
     // Read message length
     uint32_t messageLen = packet.readUInt32();
+    if (messageLen > packet.getRemainingSize()) return false;
 
     // Read message
     if (messageLen > 0 && messageLen < 8192) {
