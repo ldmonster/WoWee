@@ -5230,7 +5230,7 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
     // (character clothed, NPCs placed, game objects loaded) when the screen drops.
     {
         const float kMinWarmupSeconds = 2.0f;   // minimum time to drain network packets
-        const float kMaxWarmupSeconds = 15.0f;  // hard cap to avoid infinite stall
+        const float kMaxWarmupSeconds = 25.0f;  // hard cap to avoid infinite stall
         const auto warmupStart = std::chrono::high_resolution_clock::now();
         // Track consecutive idle iterations (all queues empty) to detect convergence
         int idleIterations = 0;
@@ -5315,10 +5315,22 @@ void Application::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
                 idleIterations = 0;
             }
 
-            // Exit when: (min time passed AND queues drained for several iterations) OR hard cap
-            bool readyToExit = (elapsed >= kMinWarmupSeconds && idleIterations >= kIdleThreshold);
+            // Don't exit warmup until the terrain tile under the player's feet is loaded.
+            // This prevents falling through the world on spawn.
+            bool terrainReady = true;
+            if (renderer && renderer->getTerrainManager()) {
+                auto* tm = renderer->getTerrainManager();
+                float px = renderer->getCharacterPosition().x;
+                float py = renderer->getCharacterPosition().y;
+                terrainReady = tm->getHeightAt(px, py).has_value();
+            }
+
+            // Exit when: (min time passed AND queues drained AND terrain ready) OR hard cap
+            bool readyToExit = (elapsed >= kMinWarmupSeconds && idleIterations >= kIdleThreshold && terrainReady);
             if (readyToExit || elapsed >= kMaxWarmupSeconds) {
-                if (elapsed >= kMaxWarmupSeconds) {
+                if (elapsed >= kMaxWarmupSeconds && !terrainReady) {
+                    LOG_WARNING("Warmup hit hard cap (", kMaxWarmupSeconds, "s), terrain NOT ready — may fall through world");
+                } else if (elapsed >= kMaxWarmupSeconds) {
                     LOG_WARNING("Warmup hit hard cap (", kMaxWarmupSeconds, "s), entering world with pending work");
                 }
                 break;
