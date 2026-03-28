@@ -196,6 +196,24 @@ void ChatHandler::handleMessageChat(network::Packet& packet) {
         }
     }
 
+    // Filter officer chat if player doesn't have officer chat permission.
+    // Some servers send officer chat to all guild members regardless of rank.
+    // WoW guild right bit 0x40 = GR_RIGHT_OFFCHATSPEAK, 0x80 = GR_RIGHT_OFFCHATLISTEN
+    if (data.type == ChatType::OFFICER) {
+        const auto& roster = owner_.getGuildRoster();
+        uint64_t myGuid = owner_.getPlayerGuid();
+        uint32_t myRankIdx = 0;
+        for (const auto& m : roster.members) {
+            if (m.guid == myGuid) { myRankIdx = m.rankIndex; break; }
+        }
+        if (myRankIdx < roster.ranks.size()) {
+            uint32_t rights = roster.ranks[myRankIdx].rights;
+            if (!(rights & 0x80)) { // GR_RIGHT_OFFCHATLISTEN = 0x80
+                return; // Don't show officer chat to non-officers
+            }
+        }
+    }
+
     // Filter addon-to-addon whispers (GearScore, DBM, oRA, etc.) from player chat.
     // These are invisible in the real WoW client.
     if (data.type == ChatType::WHISPER || data.type == ChatType::WHISPER_INFORM) {
