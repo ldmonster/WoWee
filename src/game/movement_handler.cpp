@@ -654,6 +654,13 @@ void MovementHandler::sendMovement(Opcode opcode) {
     wireInfo.y = serverPos.y;
     wireInfo.z = serverPos.z;
 
+    // Log outgoing position periodically to detect coordinate bugs
+    static int heartbeatLogCounter = 0;
+    if (opcode == Opcode::MSG_MOVE_HEARTBEAT && ++heartbeatLogCounter % 30 == 0) {
+        LOG_WARNING("HEARTBEAT pos canonical=(", movementInfo.x, ",", movementInfo.y, ",", movementInfo.z,
+                    ") wire=(", wireInfo.x, ",", wireInfo.y, ",", wireInfo.z, ")");
+    }
+
     wireInfo.orientation = core::coords::canonicalToServerYaw(wireInfo.orientation);
 
     if (includeTransportInWire) {

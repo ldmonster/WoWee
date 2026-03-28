@@ -120,7 +120,7 @@ void ChatHandler::sendChatMessage(ChatType type, const std::string& message, con
         return;
     }
 
-    LOG_INFO("Sending chat message: [", getChatTypeString(type), "] ", message);
+    LOG_WARNING("OUTGOING CHAT: type=", static_cast<int>(type), " msg='", message.substr(0, 60), "'");
 
     // Use the player's faction language. AzerothCore rejects wrong language.
     // Alliance races: Human(1), Dwarf(3), NightElf(4), Gnome(7), Draenei(11) → COMMON (7)
@@ -205,12 +205,11 @@ void ChatHandler::handleMessageChat(network::Packet& packet) {
     }
 
     // Filter BG queue announcer spam (server-side module on ChromieCraft/AzerothCore).
-    // Only filter SYSTEM messages to avoid suppressing player chat.
-    if (data.type == ChatType::SYSTEM) {
+    // Arrives as SAY (type=0) with color codes: |cffff0000[BG Queue Announcer]:|r ...
+    {
         const auto& msg = data.message;
-        if (msg.find("Queue status") != std::string::npos ||
-            msg.find("BG Queue") != std::string::npos ||
-            msg.find("BGAnnouncer") != std::string::npos) {
+        if (msg.find("BG Queue Announcer") != std::string::npos ||
+            msg.find("Queue status") != std::string::npos) {
             return;
         }
     }
