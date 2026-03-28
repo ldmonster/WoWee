@@ -2159,12 +2159,13 @@ std::unique_ptr<VkTexture> WMORenderer::generateNormalHeightMap(
     const uint32_t totalPixels = width * height;
 
     // Step 1: Compute height from luminance
+    constexpr float kInv255 = 1.0f / 255.0f;
     std::vector<float> heightMap(totalPixels);
     double sumH = 0.0, sumH2 = 0.0;
     for (uint32_t i = 0; i < totalPixels; i++) {
-        float r = pixels[i * 4 + 0] / 255.0f;
-        float g = pixels[i * 4 + 1] / 255.0f;
-        float b = pixels[i * 4 + 2] / 255.0f;
+        float r = pixels[i * 4 + 0] * kInv255;
+        float g = pixels[i * 4 + 1] * kInv255;
+        float b = pixels[i * 4 + 2] * kInv255;
         float h = 0.299f * r + 0.587f * g + 0.114f * b;
         heightMap[i] = h;
         sumH += h;

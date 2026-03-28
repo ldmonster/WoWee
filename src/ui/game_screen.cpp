@@ -3681,7 +3681,7 @@ void GameScreen::renderPetFrame(game::GameHandler& gameHandler) {
 
     auto petEntity = gameHandler.getEntityManager().getEntity(petGuid);
     if (!petEntity) return;
-    auto* petUnit = dynamic_cast<game::Unit*>(petEntity.get());
+    auto* petUnit = petEntity->isUnit() ? static_cast<game::Unit*>(petEntity.get()) : nullptr;
     if (!petUnit) return;
 
     // Position below player frame. If in a group, push below party frames
@@ -11255,7 +11255,7 @@ void GameScreen::renderCombatText(game::GameHandler& gameHandler) {
                 // Fallback to entity canonical position
                 auto entity = gameHandler.getEntityManager().getEntity(entry.dstGuid);
                 if (entity) {
-                    auto* unit = dynamic_cast<game::Unit*>(entity.get());
+                    auto* unit = entity->isUnit() ? static_cast<game::Unit*>(entity.get()) : nullptr;
                     if (unit) {
                         renderPos = core::coords::canonicalToRender(
                             glm::vec3(unit->getX(), unit->getY(), unit->getZ()));
@@ -11540,8 +11540,9 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     for (const auto& [guid, entityPtr] : gameHandler.getEntityManager().getEntities()) {
         if (!entityPtr || guid == playerGuid) continue;
 
-        auto* unit = dynamic_cast<game::Unit*>(entityPtr.get());
-        if (!unit || unit->getMaxHealth() == 0) continue;
+        if (!entityPtr->isUnit()) continue;
+        auto* unit = static_cast<game::Unit*>(entityPtr.get());
+        if (unit->getMaxHealth() == 0) continue;
 
         bool isPlayer = (entityPtr->getType() == game::ObjectType::PLAYER);
         bool isTarget = (guid == targetGuid);
@@ -14403,7 +14404,7 @@ void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
                 if (sig.playerGuid != 0) {
                     auto entity = gameHandler.getEntityManager().getEntity(sig.playerGuid);
                     if (entity) {
-                        auto* unit = dynamic_cast<game::Unit*>(entity.get());
+                        auto* unit = entity->isUnit() ? static_cast<game::Unit*>(entity.get()) : nullptr;
                         if (unit) sigName = unit->getName();
                     }
                 }
@@ -15801,7 +15802,7 @@ void GameScreen::renderLootWindow(game::GameHandler& gameHandler) {
                     const auto& candidates = gameHandler.getMasterLootCandidates();
                     for (uint64_t candidateGuid : candidates) {
                         auto entity = gameHandler.getEntityManager().getEntity(candidateGuid);
-                        auto* unit = entity ? dynamic_cast<game::Unit*>(entity.get()) : nullptr;
+                        auto* unit = (entity && entity->isUnit()) ? static_cast<game::Unit*>(entity.get()) : nullptr;
                         const char* cName = unit ? unit->getName().c_str() : nullptr;
                         char nameBuf[64];
                         if (!cName || cName[0] == '\0') {

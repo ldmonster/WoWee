@@ -7155,17 +7155,20 @@ void Application::spawnOnlinePlayer(uint64_t guid,
     }
 
     // Determine texture slots once per model
-    if (!playerTextureSlotsByModelId_.count(modelId)) {
-        PlayerTextureSlots slots;
-        if (const auto* md = charRenderer->getModelData(modelId)) {
-            for (size_t ti = 0; ti < md->textures.size(); ti++) {
-                uint32_t t = md->textures[ti].type;
-                if (t == 1 && slots.skin < 0) slots.skin = static_cast<int>(ti);
-                else if (t == 6 && slots.hair < 0) slots.hair = static_cast<int>(ti);
-                else if (t == 8 && slots.underwear < 0) slots.underwear = static_cast<int>(ti);
+    {
+        auto [slotIt, inserted] = playerTextureSlotsByModelId_.try_emplace(modelId);
+        if (inserted) {
+            PlayerTextureSlots slots;
+            if (const auto* md = charRenderer->getModelData(modelId)) {
+                for (size_t ti = 0; ti < md->textures.size(); ti++) {
+                    uint32_t t = md->textures[ti].type;
+                    if (t == 1 && slots.skin < 0) slots.skin = static_cast<int>(ti);
+                    else if (t == 6 && slots.hair < 0) slots.hair = static_cast<int>(ti);
+                    else if (t == 8 && slots.underwear < 0) slots.underwear = static_cast<int>(ti);
+                }
             }
+            slotIt->second = slots;
         }
-        playerTextureSlotsByModelId_[modelId] = slots;
     }
 
     // Create instance at server position
@@ -7330,14 +7333,13 @@ void Application::setOnlinePlayerEquipment(uint64_t guid,
     }
 
     // If the player isn't spawned yet, store equipment until spawn.
-    if (!playerInstances_.count(guid) || !onlinePlayerAppearance_.count(guid)) {
+    auto appIt = onlinePlayerAppearance_.find(guid);
+    if (!playerInstances_.count(guid) || appIt == onlinePlayerAppearance_.end()) {
         pendingOnlinePlayerEquipment_[guid] = {displayInfoIds, inventoryTypes};
         return;
     }
 
-    auto it = onlinePlayerAppearance_.find(guid);
-    if (it == onlinePlayerAppearance_.end()) return;
-    const OnlinePlayerAppearanceState& st = it->second;
+    const OnlinePlayerAppearanceState& st = appIt->second;
 
     auto* charRenderer = renderer->getCharacterRenderer();
     if (!charRenderer) return;
@@ -7533,9 +7535,10 @@ void Application::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_t 
     }
     if (!gameObjectLookupsBuilt_) return;
 
-    if (gameObjectInstances_.count(guid)) {
+    auto goIt = gameObjectInstances_.find(guid);
+    if (goIt != gameObjectInstances_.end()) {
         // Already have a render instance — update its position (e.g. transport re-creation)
-        auto& info = gameObjectInstances_[guid];
+        auto& info = goIt->second;
         glm::vec3 renderPos = core::coords::canonicalToRender(glm::vec3(x, y, z));
         LOG_DEBUG("GameObject position update: displayId=", displayId, " guid=0x", std::hex, guid, std::dec,
                  " pos=(", x, ", ", y, ", ", z, ")");

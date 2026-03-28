@@ -153,6 +153,9 @@ public:
     ObjectType getType() const { return type; }
     void setType(ObjectType t) { type = t; }
 
+    /// True if this entity is a Unit or Player (both derive from Unit).
+    bool isUnit() const { return type == ObjectType::UNIT || type == ObjectType::PLAYER; }
+
     // Fields (for update values)
     void setField(uint16_t index, uint32_t value) {
         fields[index] = value;
