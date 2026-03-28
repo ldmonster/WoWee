@@ -2140,34 +2140,35 @@ void InventoryHandler::handleTradeStatus(network::Packet& packet) {
 void InventoryHandler::handleTradeStatusExtended(network::Packet& packet) {
     LOG_WARNING("SMSG_TRADE_STATUS_EXTENDED: size=", packet.getSize(),
                 " readPos=", packet.getReadPos());
-    // Parse trade items from both players
-    // WotLK: whichPlayer(1) + tradeCount(4) + 7 items × (slot(1) + 52 bytes per item) + gold(4)
-    if (packet.getSize() - packet.getReadPos() < 1) return;
-    uint8_t whichPlayer = packet.readUInt8();
-    // 0 = own items, 1 = peer items
-    auto& slots = (whichPlayer == 0) ? myTradeSlots_ : peerTradeSlots_;
-
-    // Read trader item count (up to 7, but we only track TRADE_SLOT_COUNT = 6)
+    // WotLK format: whichPlayer(4) + tradeCount(4) + N items × (slot(1)+64bytes) + gold(4)
+    // Total for empty trade: 8 + 8×65 + 4 = 532 (matches observed packet size)
+    if (packet.getSize() - packet.getReadPos() < 8) return;
+    uint32_t whichPlayer = packet.readUInt32();   // 0=self, 1=peer (uint32 not uint8!)
     uint32_t tradeCount = packet.readUInt32();
-    if (tradeCount > 7) tradeCount = 7;
+    auto& slots = (whichPlayer == 0) ? myTradeSlots_ : peerTradeSlots_;
+    if (tradeCount > 8) tradeCount = 8;  // 7 trade slots + 1 "will not be traded" slot
+    LOG_WARNING("  whichPlayer=", whichPlayer, " tradeCount=", tradeCount);
 
     for (uint32_t i = 0; i < tradeCount; ++i) {
         if (packet.getSize() - packet.getReadPos() < 1) break;
         uint8_t slotNum = packet.readUInt8();
-        // Per-slot: uint32(item)+uint32(display)+uint32(stack)+uint32(wrapped)+uint64(creator)
-        //           +uint32(enchant)+3×uint32(gems)+uint32(maxDur)+uint32(dur)+uint32(spellCharges) = 52 bytes
-        if (packet.getSize() - packet.getReadPos() < 52) { packet.setReadPos(packet.getSize()); return; }
+        // Per-slot: 4(item)+4(display)+4(stack)+4(wrapped)+8(creator)
+        //           +4(enchant)+3×4(gems)+4(maxDur)+4(dur)+4(spellCharges)
+        //           +4(suffixFactor)+4(randomPropId)+4(lockId) = 64 bytes
+        if (packet.getSize() - packet.getReadPos() < 64) { packet.setReadPos(packet.getSize()); return; }
         uint32_t itemId    = packet.readUInt32();
         uint32_t displayId = packet.readUInt32();
         uint32_t stackCnt  = packet.readUInt32();
-        /*uint32_t unk1 =*/ packet.readUInt32(); // wrapped?
-        uint64_t giftCreator = packet.readUInt64();
-        uint32_t enchant    = packet.readUInt32();
-        for (int g = 0; g < 3; ++g) packet.readUInt32(); // gem enchant IDs
+        /*uint32_t wrapped =*/ packet.readUInt32();
+        /*uint64_t giftCreator =*/ packet.readUInt64();
+        /*uint32_t enchant =*/ packet.readUInt32();
+        for (int g = 0; g < 3; ++g) packet.readUInt32(); // socket enchant IDs
         /*uint32_t maxDur =*/ packet.readUInt32();
         /*uint32_t curDur =*/ packet.readUInt32();
-        /*uint32_t unk3 =*/ packet.readUInt32();
-        (void)enchant; (void)giftCreator;
+        /*uint32_t spellCharges =*/ packet.readUInt32();
+        /*uint32_t suffixFactor =*/ packet.readUInt32();
+        /*uint32_t randomPropId =*/ packet.readUInt32();
+        /*uint32_t lockId =*/ packet.readUInt32();
 
         if (slotNum < TRADE_SLOT_COUNT) {
             slots[slotNum].itemId = itemId;
