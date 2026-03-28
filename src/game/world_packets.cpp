@@ -1060,6 +1060,17 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
                 }
             }
 
+            // Try 3: bare points (no WotLK header at all — some spline types skip everything)
+            if (!splineParsed) {
+                packet.setReadPos(beforeSplineHeader);
+                splineParsed = tryParseSplinePoints(false, "bare-uncompressed");
+                if (!splineParsed) {
+                    packet.setReadPos(beforeSplineHeader);
+                    bool useComp = (splineFlags & (0x00080000 | 0x00002000)) == 0;
+                    splineParsed = tryParseSplinePoints(useComp, "bare-compressed");
+                }
+            }
+
             if (!splineParsed) {
                 LOG_WARNING("WotLK spline parse failed for guid=0x", std::hex, block.guid, std::dec,
                             " splineFlags=0x", std::hex, splineFlags, std::dec,
