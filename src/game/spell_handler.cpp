@@ -267,7 +267,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
             return;
         }
         // Face the target before sending the cast packet
-        float yaw = std::atan2(dy, dx);
+        float yaw = std::atan2(-dy, dx);
         owner_.movementInfo.orientation = yaw;
         owner_.sendMovement(Opcode::MSG_MOVE_SET_FACING);
         if (owner_.chargeCallback_) {
@@ -294,7 +294,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
                     owner_.addSystemChatMessage("Out of range.");
                     return;
                 }
-                float yaw = std::atan2(dy, dx);
+                float yaw = std::atan2(-dy, dx);
                 owner_.movementInfo.orientation = yaw;
                 owner_.sendMovement(Opcode::MSG_MOVE_SET_FACING);
             }
@@ -311,13 +311,9 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
             float dy = entity->getY() - owner_.movementInfo.y;
             float lenSq = dx * dx + dy * dy;
             if (lenSq > 0.01f) {
-                float canonYaw = std::atan2(dy, dx);
-                float serverYaw = core::coords::canonicalToServerYaw(canonYaw);
+                // Canonical yaw convention: atan2(-dy, dx) where X=north, Y=west
+                float canonYaw = std::atan2(-dy, dx);
                 owner_.movementInfo.orientation = canonYaw;
-                LOG_WARNING("Pre-cast facing: target=(", entity->getX(), ",", entity->getY(),
-                            ") me=(", owner_.movementInfo.x, ",", owner_.movementInfo.y,
-                            ") canonYaw=", canonYaw, " serverYaw=", serverYaw,
-                            " dx=", dx, " dy=", dy);
                 owner_.sendMovement(Opcode::MSG_MOVE_SET_FACING);
                 owner_.sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
             }
