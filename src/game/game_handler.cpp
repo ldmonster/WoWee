@@ -1,4 +1,12 @@
 #include "game/game_handler.hpp"
+#include "game/chat_handler.hpp"
+#include "game/movement_handler.hpp"
+#include "game/combat_handler.hpp"
+#include "game/spell_handler.hpp"
+#include "game/inventory_handler.hpp"
+#include "game/social_handler.hpp"
+#include "game/quest_handler.hpp"
+#include "game/warden_handler.hpp"
 #include "game/packet_parsers.hpp"
 #include "game/transport_manager.hpp"
 #include "game/warden_crypto.hpp"
@@ -80,6 +88,8 @@ bool isAuthCharPipelineOpcode(LogicalOpcode op) {
     }
 }
 
+} // end anonymous namespace
+
 // Build a WoW-format item link for use in system chat messages.
 // The chat renderer in game_screen.cpp parses this format and draws the
 // item name in its quality colour with a small icon and tooltip.
@@ -101,6 +111,8 @@ std::string buildItemLink(uint32_t itemId, uint32_t quality, const std::string& 
              kQualHex[qi], itemId, name.c_str());
     return buf;
 }
+
+namespace {
 
 bool isActiveExpansion(const char* expansionId) {
     auto& app = core::Application::getInstance();
@@ -192,6 +204,8 @@ CombatTextEntry::Type combatTextTypeFromSpellMissInfo(uint8_t missInfo) {
     }
 }
 
+} // end anonymous namespace
+
 std::string formatCopperAmount(uint32_t amount) {
     uint32_t gold = amount / 10000;
     uint32_t silver = (amount / 100) % 100;
@@ -214,6 +228,8 @@ std::string formatCopperAmount(uint32_t amount) {
     }
     return oss.str();
 }
+
+namespace {
 
 std::string displaySpellName(GameHandler& handler, uint32_t spellId) {
     if (spellId == 0) return {};
@@ -660,6 +676,17 @@ GameHandler::GameHandler() {
     // Initialize Warden module manager
     wardenModuleManager_ = std::make_unique<WardenModuleManager>();
 
+    // Initialize domain handlers
+    chatHandler_      = std::make_unique<ChatHandler>(*this);
+    movementHandler_  = std::make_unique<MovementHandler>(*this);
+    combatHandler_    = std::make_unique<CombatHandler>(*this);
+    spellHandler_     = std::make_unique<SpellHandler>(*this);
+    inventoryHandler_ = std::make_unique<InventoryHandler>(*this);
+    socialHandler_    = std::make_unique<SocialHandler>(*this);
+    questHandler_     = std::make_unique<QuestHandler>(*this);
+    wardenHandler_    = std::make_unique<WardenHandler>(*this);
+    wardenHandler_->initModuleManager();
+
     // Default spells always available
     knownSpells.insert(6603);  // Attack
     knownSpells.insert(8690);  // Hearthstone
@@ -804,9 +831,9 @@ void GameHandler::disconnect() {
     otherPlayerVisibleItemEntries_.clear();
     otherPlayerVisibleDirty_.clear();
     otherPlayerMoveTimeMs_.clear();
-    unitCastStates_.clear();
-    unitAurasCache_.clear();
-    combatText.clear();
+    if (spellHandler_) spellHandler_->unitCastStates_.clear();
+    if (spellHandler_) spellHandler_->unitAurasCache_.clear();
+    if (combatHandler_) combatHandler_->clearCombatText();
     entityManager.clear();
     setState(WorldState::DISCONNECTED);
     LOG_INFO("Disconnected from world server");
@@ -846,8 +873,10 @@ bool GameHandler::isConnected() const {
 
 void GameHandler::updateNetworking(float deltaTime) {
     // Reset per-tick monster-move budget tracking (Classic/Turtle flood protection).
-    monsterMovePacketsThisTick_ = 0;
-    monsterMovePacketsDroppedThisTick_ = 0;
+    if (movementHandler_) {
+        movementHandler_->monsterMovePacketsThisTick_ = 0;
+        movementHandler_->monsterMovePacketsDroppedThisTick_ = 0;
+    }
 
     // Update socket (processes incoming data and triggers callbacks)
     if (socket) {
@@ -1063,102 +1092,7 @@ if (taxiActivatePending_) {
 }
 
 void GameHandler::updateAutoAttack(float deltaTime) {
-// Leave combat if auto-attack target is too far away (leash range)
-// and keep melee intent tightly synced while stationary.
-if (autoAttackRequested_ && autoAttackTarget != 0) {
-    auto targetEntity = entityManager.getEntity(autoAttackTarget);
-    if (targetEntity) {
-        // Use latest server-authoritative target position to avoid stale
-        // interpolation snapshots masking out-of-range states.
-        const float targetX = targetEntity->getLatestX();
-        const float targetY = targetEntity->getLatestY();
-        const float targetZ = targetEntity->getLatestZ();
-        float dx = movementInfo.x - targetX;
-        float dy = movementInfo.y - targetY;
-        float dz = movementInfo.z - targetZ;
-        float dist = std::sqrt(dx * dx + dy * dy);
-        float dist3d = std::sqrt(dx * dx + dy * dy + dz * dz);
-        const bool classicLike = isPreWotlk();
-        if (dist > 40.0f) {
-            stopAutoAttack();
-            LOG_INFO("Left combat: target too far (", dist, " yards)");
-        } else if (isInWorld()) {
-            bool allowResync = true;
-            const float meleeRange = classicLike ? 5.25f : 5.75f;
-            if (dist3d > meleeRange) {
-                autoAttackOutOfRange_ = true;
-                autoAttackOutOfRangeTime_ += deltaTime;
-                if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-                    addSystemChatMessage("Target is too far away.");
-                    addUIError("Target is too far away.");
-                    autoAttackRangeWarnCooldown_ = 1.25f;
-                }
-                // Stop chasing stale swings when the target remains out of range.
-                if (autoAttackOutOfRangeTime_ > 2.0f && dist3d > 9.0f) {
-                    stopAutoAttack();
-                    addSystemChatMessage("Auto-attack stopped: target out of range.");
-                    allowResync = false;
-                }
-            } else {
-                autoAttackOutOfRange_ = false;
-                autoAttackOutOfRangeTime_ = 0.0f;
-            }
-
-            if (allowResync) {
-                autoAttackResendTimer_ += deltaTime;
-                autoAttackFacingSyncTimer_ += deltaTime;
-
-                // Classic/Turtle servers do not tolerate steady attack-start
-                // reissues well. Only retry once after local start or an
-                // explicit server-side attack stop while intent is still set.
-                const float resendInterval = classicLike ? 1.0f : 0.50f;
-                if (!autoAttacking && !autoAttackOutOfRange_ && autoAttackRetryPending_ &&
-                    autoAttackResendTimer_ >= resendInterval) {
-                    autoAttackResendTimer_ = 0.0f;
-                    autoAttackRetryPending_ = false;
-                    auto pkt = AttackSwingPacket::build(autoAttackTarget);
-                    socket->send(pkt);
-                }
-
-                // Keep server-facing aligned while trying to acquire melee.
-                // Once the server confirms auto-attack, rely on explicit
-                // bad-facing feedback instead of periodic steady-state facing spam.
-                const float facingSyncInterval = classicLike ? 0.25f : 0.20f;
-                const bool allowPeriodicFacingSync = !classicLike || !autoAttacking;
-                if (allowPeriodicFacingSync &&
-                    autoAttackFacingSyncTimer_ >= facingSyncInterval) {
-                    autoAttackFacingSyncTimer_ = 0.0f;
-                    float toTargetX = targetX - movementInfo.x;
-                    float toTargetY = targetY - movementInfo.y;
-                    if (std::abs(toTargetX) > 0.01f || std::abs(toTargetY) > 0.01f) {
-                        float desired = std::atan2(-toTargetY, toTargetX);
-                        float diff = desired - movementInfo.orientation;
-                        while (diff > static_cast<float>(M_PI)) diff -= 2.0f * static_cast<float>(M_PI);
-                        while (diff < -static_cast<float>(M_PI)) diff += 2.0f * static_cast<float>(M_PI);
-                        const float facingThreshold = classicLike ? 0.035f : 0.12f; // ~2deg / ~7deg
-                        if (std::abs(diff) > facingThreshold) {
-                            movementInfo.orientation = desired;
-                            sendMovement(Opcode::MSG_MOVE_SET_FACING);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Keep active melee attackers visually facing the player as positions change.
-// Some servers don't stream frequent orientation updates during combat.
-if (!hostileAttackers_.empty()) {
-    for (uint64_t attackerGuid : hostileAttackers_) {
-        auto attacker = entityManager.getEntity(attackerGuid);
-        if (!attacker) continue;
-        float dx = movementInfo.x - attacker->getX();
-        float dy = movementInfo.y - attacker->getY();
-        if (std::abs(dx) < 0.01f && std::abs(dy) < 0.01f) continue;
-        attacker->setOrientation(std::atan2(-dy, dx));
-    }
-}
+    if (combatHandler_) combatHandler_->updateAutoAttack(deltaTime);
 
 // Close NPC windows if player walks too far (15 units)
 }
@@ -1177,7 +1111,7 @@ for (auto& [guid, entity] : entityManager.getEntities()) {
         continue;
     }
     // Keep selected/engaged target interpolation exact for UI targeting circle.
-    if (guid == targetGuid || guid == autoAttackTarget) {
+    if (guid == targetGuid || (combatHandler_ && guid == combatHandler_->getAutoAttackTargetGuid())) {
         entity->updateMovement(deltaTime);
         continue;
     }
@@ -1218,9 +1152,7 @@ void GameHandler::updateTimers(float deltaTime) {
             pendingMoneyDelta_ = 0;
         }
     }
-    if (autoAttackRangeWarnCooldown_ > 0.0f) {
-        autoAttackRangeWarnCooldown_ = std::max(0.0f, autoAttackRangeWarnCooldown_ - deltaTime);
-    }
+    // autoAttackRangeWarnCooldown_ decrement moved into CombatHandler::updateAutoAttack()
 
     if (pendingLoginQuestResync_) {
         pendingLoginQuestResyncTimeout_ -= deltaTime;
@@ -1263,7 +1195,7 @@ void GameHandler::updateTimers(float deltaTime) {
             if (isInWorld()) {
                 // Avoid sending CMSG_LOOT while a timed cast is active (e.g. gathering).
                 // handleSpellGo will trigger loot after the cast completes.
-                if (casting && currentCastSpellId != 0) {
+                if (spellHandler_ && spellHandler_->casting_ && spellHandler_->currentCastSpellId_ != 0) {
                     it->timer = 0.20f;
                     ++it;
                     continue;
@@ -1401,11 +1333,10 @@ void GameHandler::update(float deltaTime) {
 
     updateTimers(deltaTime);
 
-
     // Send periodic heartbeat if in world
     if (state == WorldState::IN_WORLD) {
         timeSinceLastPing += deltaTime;
-        timeSinceLastMoveHeartbeat_ += deltaTime;
+        if (movementHandler_) movementHandler_->timeSinceLastMoveHeartbeat_ += deltaTime;
 
         const float currentPingInterval =
             (isPreWotlk()) ? 10.0f : pingInterval;
@@ -1417,7 +1348,7 @@ void GameHandler::update(float deltaTime) {
         }
 
         const bool classicLikeCombatSync =
-            autoAttackRequested_ && (isPreWotlk());
+            (combatHandler_ && combatHandler_->hasAutoAttackIntent()) && (isPreWotlk());
         const uint32_t locomotionFlags =
             static_cast<uint32_t>(MovementFlags::FORWARD) |
             static_cast<uint32_t>(MovementFlags::BACKWARD) |
@@ -1439,9 +1370,9 @@ void GameHandler::update(float deltaTime) {
                                       : (classicLikeStationaryCombatSync ? 0.75f
                                                                          : (classicLikeCombatSync ? 0.20f
                                                                                                   : moveHeartbeatInterval_));
-        if (timeSinceLastMoveHeartbeat_ >= heartbeatInterval) {
+        if (movementHandler_ && movementHandler_->timeSinceLastMoveHeartbeat_ >= heartbeatInterval) {
             sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
-            timeSinceLastMoveHeartbeat_ = 0.0f;
+            movementHandler_->timeSinceLastMoveHeartbeat_ = 0.0f;
         }
 
         // Check area triggers (instance portals, tavern rests, etc.)
@@ -1453,50 +1384,51 @@ void GameHandler::update(float deltaTime) {
 
         // Update cast timer (Phase 3)
         if (pendingGameObjectInteractGuid_ != 0 &&
-            (autoAttacking || autoAttackRequested_)) {
+            combatHandler_ && (combatHandler_->isAutoAttacking() || combatHandler_->hasAutoAttackIntent())) {
             pendingGameObjectInteractGuid_ = 0;
-            casting = false;
-            castIsChannel = false;
-            currentCastSpellId = 0;
-            castTimeRemaining = 0.0f;
+            if (spellHandler_) { spellHandler_->casting_ = false; spellHandler_->castIsChannel_ = false; spellHandler_->currentCastSpellId_ = 0; spellHandler_->castTimeRemaining_ = 0.0f; }
             addUIError("Interrupted.");
             addSystemChatMessage("Interrupted.");
         }
-        if (casting && castTimeRemaining > 0.0f) {
-            castTimeRemaining -= deltaTime;
-            if (castTimeRemaining <= 0.0f) {
+        if (spellHandler_ && spellHandler_->casting_ && spellHandler_->castTimeRemaining_ > 0.0f) {
+            spellHandler_->castTimeRemaining_ -= deltaTime;
+            if (spellHandler_->castTimeRemaining_ <= 0.0f) {
                 if (pendingGameObjectInteractGuid_ != 0) {
                     uint64_t interactGuid = pendingGameObjectInteractGuid_;
                     pendingGameObjectInteractGuid_ = 0;
                     performGameObjectInteractionNow(interactGuid);
                 }
-                casting = false;
-                castIsChannel = false;
-                currentCastSpellId = 0;
-                castTimeRemaining = 0.0f;
+                spellHandler_->casting_ = false;
+                spellHandler_->castIsChannel_ = false;
+                spellHandler_->currentCastSpellId_ = 0;
+                spellHandler_->castTimeRemaining_ = 0.0f;
             }
         }
 
-        // Tick down all tracked unit cast bars
-        for (auto it = unitCastStates_.begin(); it != unitCastStates_.end(); ) {
-            auto& s = it->second;
-            if (s.casting && s.timeRemaining > 0.0f) {
-                s.timeRemaining -= deltaTime;
-                if (s.timeRemaining <= 0.0f) {
-                    it = unitCastStates_.erase(it);
-                    continue;
+        // Tick down all tracked unit cast bars (in SpellHandler)
+        if (spellHandler_) {
+            for (auto it = spellHandler_->unitCastStates_.begin(); it != spellHandler_->unitCastStates_.end(); ) {
+                auto& s = it->second;
+                if (s.casting && s.timeRemaining > 0.0f) {
+                    s.timeRemaining -= deltaTime;
+                    if (s.timeRemaining <= 0.0f) {
+                        it = spellHandler_->unitCastStates_.erase(it);
+                        continue;
+                    }
                 }
+                ++it;
             }
-            ++it;
         }
 
-        // Update spell cooldowns (Phase 3)
-        for (auto it = spellCooldowns.begin(); it != spellCooldowns.end(); ) {
-            it->second -= deltaTime;
-            if (it->second <= 0.0f) {
-                it = spellCooldowns.erase(it);
-            } else {
-                ++it;
+        // Update spell cooldowns (in SpellHandler)
+        if (spellHandler_) {
+            for (auto it = spellHandler_->spellCooldowns_.begin(); it != spellHandler_->spellCooldowns_.end(); ) {
+                it->second -= deltaTime;
+                if (it->second <= 0.0f) {
+                    it = spellHandler_->spellCooldowns_.erase(it);
+                } else {
+                    ++it;
+                }
             }
         }
 
@@ -1513,13 +1445,9 @@ void GameHandler::update(float deltaTime) {
         tickMinimapPings(deltaTime);
 
         // Tick logout countdown
-        if (loggingOut_ && logoutCountdown_ > 0.0f) {
-            logoutCountdown_ -= deltaTime;
-            if (logoutCountdown_ < 0.0f) logoutCountdown_ = 0.0f;
-        }
+        if (socialHandler_) socialHandler_->updateLogoutCountdown(deltaTime);
 
         updateTaxiAndMountState(deltaTime);
-
 
         // Update transport manager
         if (transportManager_) {
@@ -1592,7 +1520,6 @@ void GameHandler::registerOpcodeHandlers() {
     registerHandler(Opcode::SMSG_LOGIN_SETTIMESPEED, &GameHandler::handleLoginSetTimeSpeed);
     registerHandler(Opcode::SMSG_CLIENTCACHE_VERSION, &GameHandler::handleClientCacheVersion);
     registerHandler(Opcode::SMSG_TUTORIAL_FLAGS, &GameHandler::handleTutorialFlags);
-    registerHandler(Opcode::SMSG_WARDEN_DATA, &GameHandler::handleWardenData);
     registerHandler(Opcode::SMSG_ACCOUNT_DATA_TIMES, &GameHandler::handleAccountDataTimes);
     registerHandler(Opcode::SMSG_MOTD, &GameHandler::handleMotd);
     registerHandler(Opcode::SMSG_NOTIFICATION, &GameHandler::handleNotification);
@@ -1614,118 +1541,10 @@ void GameHandler::registerOpcodeHandlers() {
     };
 
     // -----------------------------------------------------------------------
-    // Chat
-    // -----------------------------------------------------------------------
-    registerWorldHandler(Opcode::SMSG_MESSAGECHAT, &GameHandler::handleMessageChat);
-    registerWorldHandler(Opcode::SMSG_GM_MESSAGECHAT, &GameHandler::handleMessageChat);
-    registerWorldHandler(Opcode::SMSG_TEXT_EMOTE, &GameHandler::handleTextEmote);
-    dispatchTable_[Opcode::SMSG_EMOTE] = [this](network::Packet& packet) {
-        if (state != WorldState::IN_WORLD) return;
-        if (!packet.hasRemaining(12)) return;
-        uint32_t emoteAnim  = packet.readUInt32();
-        uint64_t sourceGuid = packet.readUInt64();
-        if (emoteAnimCallback_ && sourceGuid != 0) emoteAnimCallback_(sourceGuid, emoteAnim);
-    };
-    dispatchTable_[Opcode::SMSG_CHANNEL_NOTIFY] = [this](network::Packet& packet) {
-        if (state == WorldState::IN_WORLD || state == WorldState::ENTERING_WORLD)
-            handleChannelNotify(packet);
-    };
-    dispatchTable_[Opcode::SMSG_CHAT_PLAYER_NOT_FOUND] = [this](network::Packet& packet) {
-        std::string name = packet.readString();
-        if (!name.empty()) addSystemChatMessage("No player named '" + name + "' is currently playing.");
-    };
-    dispatchTable_[Opcode::SMSG_CHAT_PLAYER_AMBIGUOUS] = [this](network::Packet& packet) {
-        std::string name = packet.readString();
-        if (!name.empty()) addSystemChatMessage("Player name '" + name + "' is ambiguous.");
-    };
-    registerErrorHandler(Opcode::SMSG_CHAT_WRONG_FACTION, "You cannot send messages to members of that faction.");
-    registerErrorHandler(Opcode::SMSG_CHAT_NOT_IN_PARTY, "You are not in a party.");
-    registerErrorHandler(Opcode::SMSG_CHAT_RESTRICTED, "You cannot send chat messages in this area.");
-
-    // -----------------------------------------------------------------------
-    // Player info queries / social
-    // -----------------------------------------------------------------------
-    registerWorldHandler(Opcode::SMSG_QUERY_TIME_RESPONSE, &GameHandler::handleQueryTimeResponse);
-    registerWorldHandler(Opcode::SMSG_PLAYED_TIME, &GameHandler::handlePlayedTime);
-    registerWorldHandler(Opcode::SMSG_WHO, &GameHandler::handleWho);
-    dispatchTable_[Opcode::SMSG_WHOIS] = [this](network::Packet& packet) {
-        if (packet.hasData()) {
-            std::string whoisText = packet.readString();
-            if (!whoisText.empty()) {
-                std::string line;
-                for (char c : whoisText) {
-                    if (c == '\n') { if (!line.empty()) addSystemChatMessage("[Whois] " + line); line.clear(); }
-                    else line += c;
-                }
-                if (!line.empty()) addSystemChatMessage("[Whois] " + line);
-                LOG_INFO("SMSG_WHOIS: ", whoisText);
-            }
-        }
-    };
-    registerWorldHandler(Opcode::SMSG_FRIEND_STATUS, &GameHandler::handleFriendStatus);
-    registerHandler(Opcode::SMSG_CONTACT_LIST, &GameHandler::handleContactList);
-    registerHandler(Opcode::SMSG_FRIEND_LIST, &GameHandler::handleFriendList);
-    dispatchTable_[Opcode::SMSG_IGNORE_LIST] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(1)) return;
-        uint8_t ignCount = packet.readUInt8();
-        for (uint8_t i = 0; i < ignCount; ++i) {
-            if (!packet.hasRemaining(8)) break;
-            uint64_t ignGuid = packet.readUInt64();
-            std::string ignName = packet.readString();
-            if (!ignName.empty() && ignGuid != 0) ignoreCache[ignName] = ignGuid;
-        }
-        LOG_DEBUG("SMSG_IGNORE_LIST: loaded ", static_cast<int>(ignCount), " ignored players");
-    };
-    registerWorldHandler(Opcode::MSG_RANDOM_ROLL, &GameHandler::handleRandomRoll);
-
-    // -----------------------------------------------------------------------
     // Item push / logout / entity queries
     // -----------------------------------------------------------------------
-    dispatchTable_[Opcode::SMSG_ITEM_PUSH_RESULT] = [this](network::Packet& packet) {
-        constexpr size_t kMinSize = 8 + 1 + 1 + 1 + 1 + 4 + 4 + 4 + 4 + 4 + 4;
-        if (packet.hasRemaining(kMinSize)) {
-            /*uint64_t recipientGuid =*/ packet.readUInt64();
-            /*uint8_t received =*/  packet.readUInt8();
-            /*uint8_t created =*/   packet.readUInt8();
-            uint8_t  showInChat = packet.readUInt8();
-            /*uint8_t bagSlot =*/   packet.readUInt8();
-            /*uint32_t itemSlot =*/ packet.readUInt32();
-            uint32_t itemId     = packet.readUInt32();
-            /*uint32_t suffixFactor =*/ packet.readUInt32();
-            int32_t  randomProp = static_cast<int32_t>(packet.readUInt32());
-            uint32_t count      = packet.readUInt32();
-            /*uint32_t totalCount =*/ packet.readUInt32();
-            queryItemInfo(itemId, 0);
-            if (showInChat) {
-                if (const ItemQueryResponseData* info = getItemInfo(itemId)) {
-                    std::string itemName = info->name.empty() ? ("item #" + std::to_string(itemId)) : info->name;
-                    if (randomProp != 0) {
-                        std::string suffix = getRandomPropertyName(randomProp);
-                        if (!suffix.empty()) itemName += " " + suffix;
-                    }
-                    uint32_t quality = info->quality;
-                    std::string link = buildItemLink(itemId, quality, itemName);
-                    std::string msg = "Received: " + link;
-                    if (count > 1) msg += " x" + std::to_string(count);
-                    addSystemChatMessage(msg);
-                                            withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playLootItem(); });
-                    if (itemLootCallback_) itemLootCallback_(itemId, count, quality, itemName);
-                                            fireAddonEvent("CHAT_MSG_LOOT", {msg, "", std::to_string(itemId), std::to_string(count)});
-                } else {
-                    pendingItemPushNotifs_.push_back({itemId, count});
-                }
-            }
-                fireAddonEvent("BAG_UPDATE", {});
-                fireAddonEvent("UNIT_INVENTORY_CHANGED", {"player"});
-            LOG_INFO("Item push: itemId=", itemId, " count=", count, " showInChat=", static_cast<int>(showInChat));
-        }
-    };
-    registerHandler(Opcode::SMSG_LOGOUT_RESPONSE, &GameHandler::handleLogoutResponse);
-    registerHandler(Opcode::SMSG_LOGOUT_COMPLETE, &GameHandler::handleLogoutComplete);
     registerHandler(Opcode::SMSG_NAME_QUERY_RESPONSE, &GameHandler::handleNameQueryResponse);
     registerHandler(Opcode::SMSG_CREATURE_QUERY_RESPONSE, &GameHandler::handleCreatureQueryResponse);
-    registerHandler(Opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE, &GameHandler::handleItemQueryResponse);
-    registerHandler(Opcode::SMSG_INSPECT_TALENT, &GameHandler::handleInspectResults);
     registerSkipHandler(Opcode::SMSG_ADDON_INFO);
     registerSkipHandler(Opcode::SMSG_EXPECTED_SPAM_RECORDS);
 
@@ -1755,92 +1574,13 @@ void GameHandler::registerOpcodeHandlers() {
         }
     };
 
-    // -----------------------------------------------------------------------
-    // Pet feedback (pre-main pet block)
-    // -----------------------------------------------------------------------
-    dispatchTable_[Opcode::SMSG_PET_TAME_FAILURE] = [this](network::Packet& packet) {
-        static const char* reasons[] = {
-            "Invalid creature", "Too many pets", "Already tamed",
-            "Wrong faction", "Level too low", "Creature not tameable",
-            "Can't control", "Can't command"
-        };
-        if (packet.hasRemaining(1)) {
-            uint8_t reason = packet.readUInt8();
-            const char* msg = (reason < 8) ? reasons[reason] : "Unknown reason";
-            std::string s = std::string("Failed to tame: ") + msg;
-            addUIError(s);
-            addSystemChatMessage(s);
-        }
-    };
-    dispatchTable_[Opcode::SMSG_PET_ACTION_FEEDBACK] = [this](network::Packet& packet) {
-        static const char* kPetFeedback[] = {
-            nullptr,
-            "Your pet is dead.", "Your pet has nothing to attack.",
-            "Your pet cannot attack that target.", "That target is too far away.",
-            "Your pet cannot find a path to the target.",
-            "Your pet cannot attack an immune target.",
-        };
-        if (!packet.hasRemaining(1)) return;
-        uint8_t msg = packet.readUInt8();
-        if (msg > 0 && msg < 7 && kPetFeedback[msg]) addSystemChatMessage(kPetFeedback[msg]);
-        packet.skipAll();
-    };
     registerSkipHandler(Opcode::SMSG_PET_NAME_QUERY_RESPONSE);
 
     // -----------------------------------------------------------------------
-    // Quest failures
-    // -----------------------------------------------------------------------
-    dispatchTable_[Opcode::SMSG_QUESTUPDATE_FAILED] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(4)) {
-            uint32_t questId = packet.readUInt32();
-            auto questTitle = getQuestTitle(questId);
-            addSystemChatMessage(questTitle.empty() ? std::string("Quest failed!")
-                                                    : ('"' + questTitle + "\" failed!"));
-        }
-    };
-    dispatchTable_[Opcode::SMSG_QUESTUPDATE_FAILEDTIMER] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(4)) {
-            uint32_t questId = packet.readUInt32();
-            auto questTitle = getQuestTitle(questId);
-            addSystemChatMessage(questTitle.empty() ? std::string("Quest timed out!")
-                                                    : ('"' + questTitle + "\" has timed out."));
-        }
-    };
-
-    // -----------------------------------------------------------------------
     // Entity delta updates: health / power / world state / combo / timers / PvP
+    // (SMSG_HEALTH_UPDATE, SMSG_POWER_UPDATE, SMSG_UPDATE_COMBO_POINTS,
+    //  SMSG_PVP_CREDIT, SMSG_PROCRESIST → moved to CombatHandler)
     // -----------------------------------------------------------------------
-    dispatchTable_[Opcode::SMSG_HEALTH_UPDATE] = [this](network::Packet& packet) {
-        const bool huTbc = isActiveExpansion("tbc");
-        if (!packet.hasRemaining(huTbc ? 8u : 2u) ) return;
-        uint64_t guid = huTbc ? packet.readUInt64() : packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        uint32_t hp = packet.readUInt32();
-        if (auto* unit = getUnitByGuid(guid)) unit->setHealth(hp);
-        if (guid != 0) {
-            auto unitId = guidToUnitId(guid);
-            if (!unitId.empty()) fireAddonEvent("UNIT_HEALTH", {unitId});
-        }
-    };
-    dispatchTable_[Opcode::SMSG_POWER_UPDATE] = [this](network::Packet& packet) {
-        const bool puTbc = isActiveExpansion("tbc");
-        if (!packet.hasRemaining(puTbc ? 8u : 2u) ) return;
-        uint64_t guid = puTbc ? packet.readUInt64() : packet.readPackedGuid();
-        if (!packet.hasRemaining(5)) return;
-        uint8_t  powerType = packet.readUInt8();
-        uint32_t value     = packet.readUInt32();
-        if (auto* unit = getUnitByGuid(guid)) unit->setPowerByType(powerType, value);
-        if (guid != 0) {
-            auto unitId = guidToUnitId(guid);
-            if (!unitId.empty()) {
-                fireAddonEvent("UNIT_POWER", {unitId});
-                if (guid == playerGuid) {
-                    fireAddonEvent("ACTIONBAR_UPDATE_USABLE", {});
-                    fireAddonEvent("SPELL_UPDATE_USABLE", {});
-                }
-            }
-        }
-    };
     dispatchTable_[Opcode::SMSG_UPDATE_WORLD_STATE] = [this](network::Packet& packet) {
         if (!packet.hasRemaining(8)) return;
         uint32_t field = packet.readUInt32();
@@ -1854,30 +1594,6 @@ void GameHandler::registerOpcodeHandlers() {
             uint32_t serverTime = packet.readUInt32();
             LOG_DEBUG("SMSG_WORLD_STATE_UI_TIMER_UPDATE: serverTime=", serverTime);
         }
-    };
-    dispatchTable_[Opcode::SMSG_PVP_CREDIT] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(16)) {
-            uint32_t honor      = packet.readUInt32();
-            uint64_t victimGuid = packet.readUInt64();
-            uint32_t rank       = packet.readUInt32();
-            LOG_INFO("SMSG_PVP_CREDIT: honor=", honor, " victim=0x", std::hex, victimGuid, std::dec, " rank=", rank);
-            std::string msg = "You gain " + std::to_string(honor) + " honor points.";
-            addSystemChatMessage(msg);
-            if (honor > 0) addCombatText(CombatTextEntry::HONOR_GAIN, static_cast<int32_t>(honor), 0, true);
-            if (pvpHonorCallback_) pvpHonorCallback_(honor, victimGuid, rank);
-            fireAddonEvent("CHAT_MSG_COMBAT_HONOR_GAIN", {msg});
-        }
-    };
-    dispatchTable_[Opcode::SMSG_UPDATE_COMBO_POINTS] = [this](network::Packet& packet) {
-        const bool cpTbc = isActiveExpansion("tbc");
-        if (!packet.hasRemaining(cpTbc ? 8u : 2u) ) return;
-        uint64_t target = cpTbc ? packet.readUInt64() : packet.readPackedGuid();
-        if (!packet.hasRemaining(1)) return;
-        comboPoints_ = packet.readUInt8();
-        comboTarget_ = target;
-        LOG_DEBUG("SMSG_UPDATE_COMBO_POINTS: target=0x", std::hex, target,
-                  std::dec, " points=", static_cast<int>(comboPoints_));
-        fireAddonEvent("PLAYER_COMBO_POINTS", {});
     };
     dispatchTable_[Opcode::SMSG_START_MIRROR_TIMER] = [this](network::Packet& packet) {
         if (!packet.hasRemaining(21)) return;
@@ -1920,111 +1636,9 @@ void GameHandler::registerOpcodeHandlers() {
 
     // -----------------------------------------------------------------------
     // Cast result / spell proc
+    // (SMSG_CAST_RESULT, SMSG_SPELL_FAILED_OTHER → moved to SpellHandler)
+    // (SMSG_PROCRESIST → moved to CombatHandler)
     // -----------------------------------------------------------------------
-    dispatchTable_[Opcode::SMSG_CAST_RESULT] = [this](network::Packet& packet) {
-        uint32_t castResultSpellId = 0;
-        uint8_t  castResult        = 0;
-        if (packetParsers_->parseCastResult(packet, castResultSpellId, castResult)) {
-            if (castResult != 0) {
-                casting = false; castIsChannel = false; currentCastSpellId = 0; castTimeRemaining = 0.0f;
-                lastInteractedGoGuid_ = 0;
-                craftQueueSpellId_ = 0; craftQueueRemaining_ = 0;
-                queuedSpellId_ = 0; queuedSpellTarget_ = 0;
-                int playerPowerType = -1;
-                if (auto pe = entityManager.getEntity(playerGuid)) {
-                    if (auto pu = std::dynamic_pointer_cast<Unit>(pe))
-                        playerPowerType = static_cast<int>(pu->getPowerType());
-                }
-                const char* reason = getSpellCastResultString(castResult, playerPowerType);
-                std::string errMsg = reason ? reason
-                                            : ("Spell cast failed (error " + std::to_string(castResult) + ")");
-                addUIError(errMsg);
-                if (spellCastFailedCallback_) spellCastFailedCallback_(castResultSpellId);
-                    fireAddonEvent("UNIT_SPELLCAST_FAILED", {"player", std::to_string(castResultSpellId)});
-                    fireAddonEvent("UNIT_SPELLCAST_STOP",   {"player", std::to_string(castResultSpellId)});
-                MessageChatData msg;
-                msg.type     = ChatType::SYSTEM;
-                msg.language = ChatLanguage::UNIVERSAL;
-                msg.message  = errMsg;
-                addLocalChatMessage(msg);
-            }
-        }
-    };
-    dispatchTable_[Opcode::SMSG_SPELL_FAILED_OTHER] = [this](network::Packet& packet) {
-        const bool tbcLike2 = isPreWotlk();
-        uint64_t failOtherGuid = tbcLike2
-            ? (packet.hasRemaining(8) ? packet.readUInt64() : 0)
-            : packet.readPackedGuid();
-        if (failOtherGuid != 0 && failOtherGuid != playerGuid) {
-            unitCastStates_.erase(failOtherGuid);
-            if (addonEventCallback_) {
-                std::string unitId;
-                if (failOtherGuid == targetGuid)     unitId = "target";
-                else if (failOtherGuid == focusGuid) unitId = "focus";
-                if (!unitId.empty()) {
-                    fireAddonEvent("UNIT_SPELLCAST_FAILED", {unitId});
-                    fireAddonEvent("UNIT_SPELLCAST_STOP",   {unitId});
-                }
-            }
-        }
-        packet.skipAll();
-    };
-    dispatchTable_[Opcode::SMSG_PROCRESIST] = [this](network::Packet& packet) {
-        const bool prUsesFullGuid = isActiveExpansion("tbc");
-        auto readPrGuid = [&]() -> uint64_t {
-            if (prUsesFullGuid)
-                return (packet.hasRemaining(8)) ? packet.readUInt64() : 0;
-            return packet.readPackedGuid();
-        };
-        if (!packet.hasRemaining(prUsesFullGuid ? 8u : 1u)             || (!prUsesFullGuid && !packet.hasFullPackedGuid())) { packet.skipAll(); return; }
-        uint64_t caster = readPrGuid();
-        if (!packet.hasRemaining(prUsesFullGuid ? 8u : 1u)             || (!prUsesFullGuid && !packet.hasFullPackedGuid())) { packet.skipAll(); return; }
-        uint64_t victim = readPrGuid();
-        if (!packet.hasRemaining(4)) return;
-        uint32_t spellId = packet.readUInt32();
-        if (victim == playerGuid)       addCombatText(CombatTextEntry::RESIST, 0, spellId, false, 0, caster, victim);
-        else if (caster == playerGuid)  addCombatText(CombatTextEntry::RESIST, 0, spellId, true,  0, caster, victim);
-        packet.skipAll();
-    };
-
-    // -----------------------------------------------------------------------
-    // Loot roll
-    // -----------------------------------------------------------------------
-    dispatchTable_[Opcode::SMSG_LOOT_START_ROLL] = [this](network::Packet& packet) {
-        const bool isWotLK = isActiveExpansion("wotlk");
-        const size_t minSize = isWotLK ? 33u : 25u;
-        if (!packet.hasRemaining(minSize)) return;
-        uint64_t objectGuid = packet.readUInt64();
-        /*uint32_t mapId =*/ packet.readUInt32();
-        uint32_t slot   = packet.readUInt32();
-        uint32_t itemId = packet.readUInt32();
-        int32_t rollRandProp = 0;
-        if (isWotLK) {
-            /*uint32_t randSuffix =*/ packet.readUInt32();
-            rollRandProp = static_cast<int32_t>(packet.readUInt32());
-        }
-        uint32_t countdown = packet.readUInt32();
-        uint8_t  voteMask  = packet.readUInt8();
-        pendingLootRollActive_      = true;
-        pendingLootRoll_.objectGuid = objectGuid;
-        pendingLootRoll_.slot       = slot;
-        pendingLootRoll_.itemId     = itemId;
-        queryItemInfo(itemId, 0);
-        auto* info = getItemInfo(itemId);
-        std::string rollItemName = info ? info->name : std::to_string(itemId);
-        if (rollRandProp != 0) {
-            std::string suffix = getRandomPropertyName(rollRandProp);
-            if (!suffix.empty()) rollItemName += " " + suffix;
-        }
-        pendingLootRoll_.itemName        = rollItemName;
-        pendingLootRoll_.itemQuality     = info ? static_cast<uint8_t>(info->quality) : 0;
-        pendingLootRoll_.rollCountdownMs = (countdown > 0 && countdown <= 120000) ? countdown : 60000;
-        pendingLootRoll_.voteMask        = voteMask;
-        pendingLootRoll_.rollStartedAt   = std::chrono::steady_clock::now();
-        LOG_INFO("SMSG_LOOT_START_ROLL: item=", itemId, " (", pendingLootRoll_.itemName,
-                 ") slot=", slot, " voteMask=0x", std::hex, static_cast<int>(voteMask), std::dec);
-                    fireAddonEvent("START_LOOT_ROLL", {std::to_string(slot), std::to_string(countdown)});
-    };
 
     // -----------------------------------------------------------------------
     // Pet stable
@@ -2132,19 +1746,6 @@ void GameHandler::registerOpcodeHandlers() {
         uint8_t enabled = packet.readUInt8();
         addSystemChatMessage(enabled ? "XP gain enabled." : "XP gain disabled.");
     };
-    dispatchTable_[Opcode::SMSG_GOSSIP_POI] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(20)) return;
-        /*uint32_t flags =*/ packet.readUInt32();
-        float poiX = packet.readFloat();
-        float poiY = packet.readFloat();
-        uint32_t icon = packet.readUInt32();
-        uint32_t data = packet.readUInt32();
-        std::string name = packet.readString();
-        GossipPoi poi; poi.x = poiX; poi.y = poiY; poi.icon = icon; poi.data = data; poi.name = std::move(name);
-        if (gossipPois_.size() >= 200) gossipPois_.erase(gossipPois_.begin());
-        gossipPois_.push_back(std::move(poi));
-        LOG_DEBUG("SMSG_GOSSIP_POI: x=", poiX, " y=", poiY, " icon=", icon);
-    };
     dispatchTable_[Opcode::SMSG_BINDZONEREPLY] = [this](network::Packet& packet) {
         if (packet.hasRemaining(4)) {
             uint32_t result = packet.readUInt32();
@@ -2210,13 +1811,7 @@ void GameHandler::registerOpcodeHandlers() {
         LOG_INFO("SMSG_FORCED_DEATH_UPDATE: player force-killed");
         packet.skipAll();
     };
-    dispatchTable_[Opcode::SMSG_DEFENSE_MESSAGE] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(5)) {
-            /*uint32_t zoneId =*/ packet.readUInt32();
-            std::string defMsg = packet.readString();
-            if (!defMsg.empty()) addSystemChatMessage("[Defense] " + defMsg);
-        }
-    };
+    // SMSG_DEFENSE_MESSAGE — moved to ChatHandler::registerOpcodes
     dispatchTable_[Opcode::SMSG_CORPSE_RECLAIM_DELAY] = [this](network::Packet& packet) {
         if (packet.hasRemaining(4)) {
             uint32_t delayMs = packet.readUInt32();
@@ -2309,33 +1904,6 @@ void GameHandler::registerOpcodeHandlers() {
     };
 
     // Combat clearing
-    dispatchTable_[Opcode::SMSG_ATTACKSWING_DEADTARGET] = [this](network::Packet& /*packet*/) {
-        autoAttacking = false;
-        autoAttackTarget = 0;
-    };
-    dispatchTable_[Opcode::SMSG_THREAT_CLEAR] = [this](network::Packet& /*packet*/) {
-        threatLists_.clear();
-        fireAddonEvent("UNIT_THREAT_LIST_UPDATE", {});
-    };
-    dispatchTable_[Opcode::SMSG_THREAT_REMOVE] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(1)) return;
-        uint64_t unitGuid   = packet.readPackedGuid();
-        if (!packet.hasRemaining(1)) return;
-        uint64_t victimGuid = packet.readPackedGuid();
-        auto it = threatLists_.find(unitGuid);
-        if (it != threatLists_.end()) {
-            auto& list = it->second;
-            list.erase(std::remove_if(list.begin(), list.end(),
-                [victimGuid](const ThreatEntry& e){ return e.victimGuid == victimGuid; }),
-                list.end());
-            if (list.empty()) threatLists_.erase(it);
-        }
-    };
-    dispatchTable_[Opcode::SMSG_CANCEL_COMBAT] = [this](network::Packet& /*packet*/) {
-        autoAttacking = false;
-        autoAttackTarget = 0;
-        autoAttackRequested_ = false;
-    };
     dispatchTable_[Opcode::SMSG_BREAK_TARGET] = [this](network::Packet& packet) {
         if (packet.hasRemaining(8)) {
             uint64_t bGuid = packet.readUInt64();
@@ -2374,180 +1942,6 @@ void GameHandler::registerOpcodeHandlers() {
         }
     };
 
-    // Loot notifications
-    dispatchTable_[Opcode::SMSG_LOOT_ALL_PASSED] = [this](network::Packet& packet) {
-        const bool isWotLK = isActiveExpansion("wotlk");
-        const size_t minSize = isWotLK ? 24u : 16u;
-        if (!packet.hasRemaining(minSize)) return;
-        /*uint64_t objGuid =*/ packet.readUInt64();
-        /*uint32_t slot    =*/ packet.readUInt32();
-        uint32_t itemId  = packet.readUInt32();
-        if (isWotLK) {
-            /*uint32_t randSuffix =*/ packet.readUInt32();
-            /*uint32_t randProp   =*/ packet.readUInt32();
-        }
-        auto* info = getItemInfo(itemId);
-        std::string allPassName = info && !info->name.empty() ? info->name : std::to_string(itemId);
-        uint32_t allPassQuality = info ? info->quality : 1u;
-        addSystemChatMessage("Everyone passed on " + buildItemLink(itemId, allPassQuality, allPassName) + ".");
-        pendingLootRollActive_ = false;
-    };
-    dispatchTable_[Opcode::SMSG_LOOT_ITEM_NOTIFY] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(24)) {
-            packet.skipAll(); return;
-        }
-        uint64_t looterGuid = packet.readUInt64();
-        /*uint64_t lootGuid =*/ packet.readUInt64();
-        uint32_t itemId  = packet.readUInt32();
-        uint32_t count   = packet.readUInt32();
-        if (isInGroup() && looterGuid != playerGuid) {
-            const auto& looterName = lookupName(looterGuid);
-            if (!looterName.empty()) {
-                queryItemInfo(itemId, 0);
-                std::string itemName = "item #" + std::to_string(itemId);
-                uint32_t notifyQuality = 1;
-                if (const ItemQueryResponseData* info = getItemInfo(itemId)) {
-                    if (!info->name.empty()) itemName = info->name;
-                    notifyQuality = info->quality;
-                }
-                std::string itemLink2 = buildItemLink(itemId, notifyQuality, itemName);
-                std::string lootMsg = looterName + " loots " + itemLink2;
-                if (count > 1) lootMsg += " x" + std::to_string(count);
-                lootMsg += ".";
-                addSystemChatMessage(lootMsg);
-            }
-        }
-    };
-    dispatchTable_[Opcode::SMSG_LOOT_SLOT_CHANGED] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(1)) {
-            uint8_t slotIndex = packet.readUInt8();
-            for (auto it = currentLoot.items.begin(); it != currentLoot.items.end(); ++it) {
-                if (it->slotIndex == slotIndex) {
-                    currentLoot.items.erase(it);
-                    break;
-                }
-            }
-        }
-    };
-
-    // Creature movement
-    registerHandler(Opcode::SMSG_MONSTER_MOVE, &GameHandler::handleMonsterMove);
-    registerHandler(Opcode::SMSG_COMPRESSED_MOVES, &GameHandler::handleCompressedMoves);
-    registerHandler(Opcode::SMSG_MONSTER_MOVE_TRANSPORT, &GameHandler::handleMonsterMoveTransport);
-
-    // Spline move: consume-only (no state change)
-    for (auto op : { Opcode::SMSG_SPLINE_MOVE_FEATHER_FALL,
-                     Opcode::SMSG_SPLINE_MOVE_GRAVITY_DISABLE,
-                     Opcode::SMSG_SPLINE_MOVE_GRAVITY_ENABLE,
-                     Opcode::SMSG_SPLINE_MOVE_LAND_WALK,
-                     Opcode::SMSG_SPLINE_MOVE_NORMAL_FALL,
-                     Opcode::SMSG_SPLINE_MOVE_ROOT,
-                     Opcode::SMSG_SPLINE_MOVE_SET_HOVER }) {
-        dispatchTable_[op] = [this](network::Packet& packet) {
-            if (packet.hasRemaining(1))
-                (void)packet.readPackedGuid();
-        };
-    }
-
-    // Spline move: synth flags (each opcode produces different flags)
-    {
-        auto makeSynthHandler = [this](uint32_t synthFlags) {
-            return [this, synthFlags](network::Packet& packet) {
-                if (!packet.hasRemaining(1)) return;
-                uint64_t guid = packet.readPackedGuid();
-                if (guid == 0 || guid == playerGuid || !unitMoveFlagsCallback_) return;
-                unitMoveFlagsCallback_(guid, synthFlags);
-            };
-        };
-        dispatchTable_[Opcode::SMSG_SPLINE_MOVE_SET_WALK_MODE] = makeSynthHandler(0x00000100u);
-        dispatchTable_[Opcode::SMSG_SPLINE_MOVE_SET_RUN_MODE]  = makeSynthHandler(0u);
-        dispatchTable_[Opcode::SMSG_SPLINE_MOVE_SET_FLYING]    = makeSynthHandler(0x01000000u | 0x00800000u);
-        dispatchTable_[Opcode::SMSG_SPLINE_MOVE_START_SWIM]    = makeSynthHandler(0x00200000u);
-        dispatchTable_[Opcode::SMSG_SPLINE_MOVE_STOP_SWIM]     = makeSynthHandler(0u);
-    }
-
-    // Spline speed: each opcode updates a different speed member
-    dispatchTable_[Opcode::SMSG_SPLINE_SET_RUN_SPEED] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(5)) return;
-        uint64_t guid = packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        float speed = packet.readFloat();
-        if (guid == playerGuid && std::isfinite(speed) && speed > 0.01f && speed < 200.0f)
-            serverRunSpeed_ = speed;
-    };
-    dispatchTable_[Opcode::SMSG_SPLINE_SET_RUN_BACK_SPEED] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(5)) return;
-        uint64_t guid = packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        float speed = packet.readFloat();
-        if (guid == playerGuid && std::isfinite(speed) && speed > 0.01f && speed < 200.0f)
-            serverRunBackSpeed_ = speed;
-    };
-    dispatchTable_[Opcode::SMSG_SPLINE_SET_SWIM_SPEED] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(5)) return;
-        uint64_t guid = packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        float speed = packet.readFloat();
-        if (guid == playerGuid && std::isfinite(speed) && speed > 0.01f && speed < 200.0f)
-            serverSwimSpeed_ = speed;
-    };
-
-    // Force speed changes
-    registerHandler(Opcode::SMSG_FORCE_RUN_SPEED_CHANGE, &GameHandler::handleForceRunSpeedChange);
-    dispatchTable_[Opcode::SMSG_FORCE_MOVE_ROOT] = [this](network::Packet& packet) { handleForceMoveRootState(packet, true); };
-    dispatchTable_[Opcode::SMSG_FORCE_MOVE_UNROOT] = [this](network::Packet& packet) { handleForceMoveRootState(packet, false); };
-    dispatchTable_[Opcode::SMSG_FORCE_WALK_SPEED_CHANGE] = [this](network::Packet& packet) {
-        handleForceSpeedChange(packet, "WALK_SPEED", Opcode::CMSG_FORCE_WALK_SPEED_CHANGE_ACK, &serverWalkSpeed_);
-    };
-    dispatchTable_[Opcode::SMSG_FORCE_RUN_BACK_SPEED_CHANGE] = [this](network::Packet& packet) {
-        handleForceSpeedChange(packet, "RUN_BACK_SPEED", Opcode::CMSG_FORCE_RUN_BACK_SPEED_CHANGE_ACK, &serverRunBackSpeed_);
-    };
-    dispatchTable_[Opcode::SMSG_FORCE_SWIM_SPEED_CHANGE] = [this](network::Packet& packet) {
-        handleForceSpeedChange(packet, "SWIM_SPEED", Opcode::CMSG_FORCE_SWIM_SPEED_CHANGE_ACK, &serverSwimSpeed_);
-    };
-    dispatchTable_[Opcode::SMSG_FORCE_SWIM_BACK_SPEED_CHANGE] = [this](network::Packet& packet) {
-        handleForceSpeedChange(packet, "SWIM_BACK_SPEED", Opcode::CMSG_FORCE_SWIM_BACK_SPEED_CHANGE_ACK, &serverSwimBackSpeed_);
-    };
-    dispatchTable_[Opcode::SMSG_FORCE_FLIGHT_SPEED_CHANGE] = [this](network::Packet& packet) {
-        handleForceSpeedChange(packet, "FLIGHT_SPEED", Opcode::CMSG_FORCE_FLIGHT_SPEED_CHANGE_ACK, &serverFlightSpeed_);
-    };
-    dispatchTable_[Opcode::SMSG_FORCE_FLIGHT_BACK_SPEED_CHANGE] = [this](network::Packet& packet) {
-        handleForceSpeedChange(packet, "FLIGHT_BACK_SPEED", Opcode::CMSG_FORCE_FLIGHT_BACK_SPEED_CHANGE_ACK, &serverFlightBackSpeed_);
-    };
-    dispatchTable_[Opcode::SMSG_FORCE_TURN_RATE_CHANGE] = [this](network::Packet& packet) {
-        handleForceSpeedChange(packet, "TURN_RATE", Opcode::CMSG_FORCE_TURN_RATE_CHANGE_ACK, &serverTurnRate_);
-    };
-    dispatchTable_[Opcode::SMSG_FORCE_PITCH_RATE_CHANGE] = [this](network::Packet& packet) {
-        handleForceSpeedChange(packet, "PITCH_RATE", Opcode::CMSG_FORCE_PITCH_RATE_CHANGE_ACK, &serverPitchRate_);
-    };
-
-    // Movement flag toggles
-    dispatchTable_[Opcode::SMSG_MOVE_SET_CAN_FLY] = [this](network::Packet& packet) {
-        handleForceMoveFlagChange(packet, "SET_CAN_FLY", Opcode::CMSG_MOVE_SET_CAN_FLY_ACK,
-            static_cast<uint32_t>(MovementFlags::CAN_FLY), true);
-    };
-    dispatchTable_[Opcode::SMSG_MOVE_UNSET_CAN_FLY] = [this](network::Packet& packet) {
-        handleForceMoveFlagChange(packet, "UNSET_CAN_FLY", Opcode::CMSG_MOVE_SET_CAN_FLY_ACK,
-            static_cast<uint32_t>(MovementFlags::CAN_FLY), false);
-    };
-    dispatchTable_[Opcode::SMSG_MOVE_FEATHER_FALL] = [this](network::Packet& packet) {
-        handleForceMoveFlagChange(packet, "FEATHER_FALL", Opcode::CMSG_MOVE_FEATHER_FALL_ACK,
-            static_cast<uint32_t>(MovementFlags::FEATHER_FALL), true);
-    };
-    dispatchTable_[Opcode::SMSG_MOVE_WATER_WALK] = [this](network::Packet& packet) {
-        handleForceMoveFlagChange(packet, "WATER_WALK", Opcode::CMSG_MOVE_WATER_WALK_ACK,
-            static_cast<uint32_t>(MovementFlags::WATER_WALK), true);
-    };
-    dispatchTable_[Opcode::SMSG_MOVE_SET_HOVER] = [this](network::Packet& packet) {
-        handleForceMoveFlagChange(packet, "SET_HOVER", Opcode::CMSG_MOVE_HOVER_ACK,
-            static_cast<uint32_t>(MovementFlags::HOVER), true);
-    };
-    dispatchTable_[Opcode::SMSG_MOVE_UNSET_HOVER] = [this](network::Packet& packet) {
-        handleForceMoveFlagChange(packet, "UNSET_HOVER", Opcode::CMSG_MOVE_HOVER_ACK,
-            static_cast<uint32_t>(MovementFlags::HOVER), false);
-    };
-    registerHandler(Opcode::SMSG_MOVE_KNOCK_BACK, &GameHandler::handleMoveKnockBack);
-
     // Camera shake
     dispatchTable_[Opcode::SMSG_CAMERA_SHAKE] = [this](network::Packet& packet) {
         if (packet.hasRemaining(8)) {
@@ -2560,262 +1954,19 @@ void GameHandler::registerOpcodeHandlers() {
         }
     };
 
-    // Attack/combat delegates
-    registerHandler(Opcode::SMSG_ATTACKSTART, &GameHandler::handleAttackStart);
-    registerHandler(Opcode::SMSG_ATTACKSTOP, &GameHandler::handleAttackStop);
-    dispatchTable_[Opcode::SMSG_ATTACKSWING_NOTINRANGE] = [this](network::Packet& /*packet*/) {
-        autoAttackOutOfRange_ = true;
-        if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-            addSystemChatMessage("Target is too far away.");
-            autoAttackRangeWarnCooldown_ = 1.25f;
-        }
-    };
-    dispatchTable_[Opcode::SMSG_ATTACKSWING_BADFACING] = [this](network::Packet& /*packet*/) {
-        if (autoAttackRequested_ && autoAttackTarget != 0) {
-            auto targetEntity = entityManager.getEntity(autoAttackTarget);
-            if (targetEntity) {
-                float toTargetX = targetEntity->getX() - movementInfo.x;
-                float toTargetY = targetEntity->getY() - movementInfo.y;
-                if (std::abs(toTargetX) > 0.01f || std::abs(toTargetY) > 0.01f) {
-                    movementInfo.orientation = std::atan2(-toTargetY, toTargetX);
-                    sendMovement(Opcode::MSG_MOVE_SET_FACING);
-                }
-            }
-        }
-    };
-    dispatchTable_[Opcode::SMSG_ATTACKSWING_NOTSTANDING] = [this](network::Packet& /*packet*/) {
-        autoAttackOutOfRange_ = false;
-        autoAttackOutOfRangeTime_ = 0.0f;
-        if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-            addSystemChatMessage("You need to stand up to fight.");
-            autoAttackRangeWarnCooldown_ = 1.25f;
-        }
-    };
-    dispatchTable_[Opcode::SMSG_ATTACKSWING_CANT_ATTACK] = [this](network::Packet& /*packet*/) {
-        stopAutoAttack();
-        if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-            addSystemChatMessage("You can't attack that.");
-            autoAttackRangeWarnCooldown_ = 1.25f;
-        }
-    };
-    registerHandler(Opcode::SMSG_ATTACKERSTATEUPDATE, &GameHandler::handleAttackerStateUpdate);
-    dispatchTable_[Opcode::SMSG_AI_REACTION] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(12)) return;
-        uint64_t guid = packet.readUInt64();
-        uint32_t reaction = packet.readUInt32();
-        if (reaction == 2 && npcAggroCallback_) {
-            auto entity = entityManager.getEntity(guid);
-            if (entity)
-                npcAggroCallback_(guid, glm::vec3(entity->getX(), entity->getY(), entity->getZ()));
-        }
-    };
-    registerHandler(Opcode::SMSG_SPELLNONMELEEDAMAGELOG, &GameHandler::handleSpellDamageLog);
-    dispatchTable_[Opcode::SMSG_PLAY_SPELL_VISUAL] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(12)) return;
-        uint64_t casterGuid = packet.readUInt64();
-        uint32_t visualId   = packet.readUInt32();
-        if (visualId == 0) return;
-        auto* renderer = core::Application::getInstance().getRenderer();
-        if (!renderer) return;
-        glm::vec3 spawnPos;
-        if (casterGuid == playerGuid) {
-            spawnPos = renderer->getCharacterPosition();
-        } else {
-            auto entity = entityManager.getEntity(casterGuid);
-            if (!entity) return;
-            glm::vec3 canonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());
-            spawnPos = core::coords::canonicalToRender(canonical);
-        }
-        renderer->playSpellVisual(visualId, spawnPos);
-    };
-    registerHandler(Opcode::SMSG_SPELLHEALLOG, &GameHandler::handleSpellHealLog);
-
-    // Spell delegates
-    registerHandler(Opcode::SMSG_INITIAL_SPELLS, &GameHandler::handleInitialSpells);
-    registerHandler(Opcode::SMSG_CAST_FAILED, &GameHandler::handleCastFailed);
-    registerHandler(Opcode::SMSG_SPELL_START, &GameHandler::handleSpellStart);
-    registerHandler(Opcode::SMSG_SPELL_GO, &GameHandler::handleSpellGo);
-    registerHandler(Opcode::SMSG_SPELL_COOLDOWN, &GameHandler::handleSpellCooldown);
-    registerHandler(Opcode::SMSG_COOLDOWN_EVENT, &GameHandler::handleCooldownEvent);
-    dispatchTable_[Opcode::SMSG_CLEAR_COOLDOWN] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(4)) {
-            uint32_t spellId = packet.readUInt32();
-            spellCooldowns.erase(spellId);
-            for (auto& slot : actionBar) {
-                if (slot.type == ActionBarSlot::SPELL && slot.id == spellId)
-                    slot.cooldownRemaining = 0.0f;
-            }
-        }
-    };
-    dispatchTable_[Opcode::SMSG_MODIFY_COOLDOWN] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(8)) {
-            uint32_t spellId = packet.readUInt32();
-            int32_t  diffMs  = static_cast<int32_t>(packet.readUInt32());
-            float diffSec = diffMs / 1000.0f;
-            auto it = spellCooldowns.find(spellId);
-            if (it != spellCooldowns.end()) {
-                it->second = std::max(0.0f, it->second + diffSec);
-                for (auto& slot : actionBar) {
-                    if (slot.type == ActionBarSlot::SPELL && slot.id == spellId)
-                        slot.cooldownRemaining = std::max(0.0f, slot.cooldownRemaining + diffSec);
-                }
-            }
-        }
-    };
-    registerHandler(Opcode::SMSG_LEARNED_SPELL, &GameHandler::handleLearnedSpell);
-    registerHandler(Opcode::SMSG_SUPERCEDED_SPELL, &GameHandler::handleSupercededSpell);
-    registerHandler(Opcode::SMSG_REMOVED_SPELL, &GameHandler::handleRemovedSpell);
-    registerHandler(Opcode::SMSG_SEND_UNLEARN_SPELLS, &GameHandler::handleUnlearnSpells);
-    registerHandler(Opcode::SMSG_TALENTS_INFO, &GameHandler::handleTalentsInfo);
-
-    // Group
-    registerHandler(Opcode::SMSG_GROUP_INVITE, &GameHandler::handleGroupInvite);
-    registerHandler(Opcode::SMSG_GROUP_DECLINE, &GameHandler::handleGroupDecline);
-    registerHandler(Opcode::SMSG_GROUP_LIST, &GameHandler::handleGroupList);
-    dispatchTable_[Opcode::SMSG_GROUP_DESTROYED] = [this](network::Packet& /*packet*/) {
-        partyData.members.clear();
-        partyData.memberCount = 0;
-        partyData.leaderGuid = 0;
-        addUIError("Your party has been disbanded.");
-        addSystemChatMessage("Your party has been disbanded.");
-            fireAddonEvent("GROUP_ROSTER_UPDATE", {});
-            fireAddonEvent("PARTY_MEMBERS_CHANGED", {});
-    };
-    dispatchTable_[Opcode::SMSG_GROUP_CANCEL] = [this](network::Packet& /*packet*/) {
-        addSystemChatMessage("Group invite cancelled.");
-    };
-    registerHandler(Opcode::SMSG_GROUP_UNINVITE, &GameHandler::handleGroupUninvite);
-    registerHandler(Opcode::SMSG_PARTY_COMMAND_RESULT, &GameHandler::handlePartyCommandResult);
-    dispatchTable_[Opcode::SMSG_PARTY_MEMBER_STATS] = [this](network::Packet& packet) { handlePartyMemberStats(packet, false); };
-    dispatchTable_[Opcode::SMSG_PARTY_MEMBER_STATS_FULL] = [this](network::Packet& packet) { handlePartyMemberStats(packet, true); };
+    // (SMSG_PLAY_SPELL_VISUAL, SMSG_CLEAR_COOLDOWN, SMSG_MODIFY_COOLDOWN → moved to SpellHandler)
 
     // ---- Batch 4: Ready check, duels, guild, loot/gossip/vendor, factions, spell mods ----
 
-    // Ready check
-    dispatchTable_[Opcode::MSG_RAID_READY_CHECK] = [this](network::Packet& packet) {
-        pendingReadyCheck_ = true;
-        readyCheckReadyCount_ = 0;
-        readyCheckNotReadyCount_ = 0;
-        readyCheckInitiator_.clear();
-        readyCheckResults_.clear();
-        if (packet.hasRemaining(8)) {
-            uint64_t initiatorGuid = packet.readUInt64();
-            if (auto* unit = getUnitByGuid(initiatorGuid))
-                readyCheckInitiator_ = unit->getName();
-        }
-        if (readyCheckInitiator_.empty() && partyData.leaderGuid != 0) {
-            for (const auto& member : partyData.members) {
-                if (member.guid == partyData.leaderGuid) { readyCheckInitiator_ = member.name; break; }
-            }
-        }
-        addSystemChatMessage(readyCheckInitiator_.empty()
-            ? "Ready check initiated!"
-            : readyCheckInitiator_ + " initiated a ready check!");
-                    fireAddonEvent("READY_CHECK", {readyCheckInitiator_});
-    };
-    dispatchTable_[Opcode::MSG_RAID_READY_CHECK_CONFIRM] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(9)) { packet.skipAll(); return; }
-        uint64_t respGuid = packet.readUInt64();
-        uint8_t  isReady  = packet.readUInt8();
-        if (isReady) ++readyCheckReadyCount_; else ++readyCheckNotReadyCount_;
-        const auto& rname = lookupName(respGuid);
-        if (!rname.empty()) {
-            bool found = false;
-            for (auto& r : readyCheckResults_) {
-                if (r.name == rname) { r.ready = (isReady != 0); found = true; break; }
-            }
-            if (!found) readyCheckResults_.push_back({ rname, isReady != 0 });
-            char rbuf[128];
-            std::snprintf(rbuf, sizeof(rbuf), "%s is %s.", rname.c_str(), isReady ? "Ready" : "Not Ready");
-            addSystemChatMessage(rbuf);
-        }
-        if (addonEventCallback_) {
-            char guidBuf[32];
-            snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", (unsigned long long)respGuid);
-            fireAddonEvent("READY_CHECK_CONFIRM", {guidBuf, isReady ? "1" : "0"});
-        }
-    };
-    dispatchTable_[Opcode::MSG_RAID_READY_CHECK_FINISHED] = [this](network::Packet& /*packet*/) {
-        char fbuf[128];
-        std::snprintf(fbuf, sizeof(fbuf), "Ready check complete: %u ready, %u not ready.",
-                     readyCheckReadyCount_, readyCheckNotReadyCount_);
-        addSystemChatMessage(fbuf);
-        pendingReadyCheck_ = false;
-        readyCheckReadyCount_ = 0;
-        readyCheckNotReadyCount_ = 0;
-        readyCheckResults_.clear();
-        fireAddonEvent("READY_CHECK_FINISHED", {});
-    };
-    registerHandler(Opcode::SMSG_RAID_INSTANCE_INFO, &GameHandler::handleRaidInstanceInfo);
-
-    // Duels
-    registerHandler(Opcode::SMSG_DUEL_REQUESTED, &GameHandler::handleDuelRequested);
-    registerHandler(Opcode::SMSG_DUEL_COMPLETE, &GameHandler::handleDuelComplete);
-    registerHandler(Opcode::SMSG_DUEL_WINNER, &GameHandler::handleDuelWinner);
-    dispatchTable_[Opcode::SMSG_DUEL_OUTOFBOUNDS] = [this](network::Packet& /*packet*/) {
-        addUIError("You are out of the duel area!");
-        addSystemChatMessage("You are out of the duel area!");
-    };
-    dispatchTable_[Opcode::SMSG_DUEL_INBOUNDS] = [this](network::Packet& /*packet*/) {};
-    dispatchTable_[Opcode::SMSG_DUEL_COUNTDOWN] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(4)) {
-            uint32_t ms = packet.readUInt32();
-            duelCountdownMs_ = (ms > 0 && ms <= 30000) ? ms : 3000;
-            duelCountdownStartedAt_ = std::chrono::steady_clock::now();
-        }
-    };
-    dispatchTable_[Opcode::SMSG_PARTYKILLLOG] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(16)) return;
-        uint64_t killerGuid = packet.readUInt64();
-        uint64_t victimGuid = packet.readUInt64();
-        const auto& killerName = lookupName(killerGuid);
-        const auto& victimName = lookupName(victimGuid);
-        if (!killerName.empty() && !victimName.empty()) {
-            char buf[256];
-            std::snprintf(buf, sizeof(buf), "%s killed %s.", killerName.c_str(), victimName.c_str());
-            addSystemChatMessage(buf);
-        }
-    };
-
     // Guild
-    registerHandler(Opcode::SMSG_GUILD_INFO, &GameHandler::handleGuildInfo);
-    registerHandler(Opcode::SMSG_GUILD_ROSTER, &GameHandler::handleGuildRoster);
-    registerHandler(Opcode::SMSG_GUILD_QUERY_RESPONSE, &GameHandler::handleGuildQueryResponse);
-    registerHandler(Opcode::SMSG_GUILD_EVENT, &GameHandler::handleGuildEvent);
-    registerHandler(Opcode::SMSG_GUILD_INVITE, &GameHandler::handleGuildInvite);
-    registerHandler(Opcode::SMSG_GUILD_COMMAND_RESULT, &GameHandler::handleGuildCommandResult);
     registerHandler(Opcode::SMSG_PET_SPELLS, &GameHandler::handlePetSpells);
-    registerHandler(Opcode::SMSG_PETITION_SHOWLIST, &GameHandler::handlePetitionShowlist);
-    registerHandler(Opcode::SMSG_TURN_IN_PETITION_RESULTS, &GameHandler::handleTurnInPetitionResults);
 
     // Loot/gossip/vendor delegates
-    registerHandler(Opcode::SMSG_LOOT_RESPONSE, &GameHandler::handleLootResponse);
-    registerHandler(Opcode::SMSG_LOOT_RELEASE_RESPONSE, &GameHandler::handleLootReleaseResponse);
-    registerHandler(Opcode::SMSG_LOOT_REMOVED, &GameHandler::handleLootRemoved);
-    registerHandler(Opcode::SMSG_QUEST_CONFIRM_ACCEPT, &GameHandler::handleQuestConfirmAccept);
-    registerHandler(Opcode::SMSG_ITEM_TEXT_QUERY_RESPONSE, &GameHandler::handleItemTextQueryResponse);
     registerHandler(Opcode::SMSG_SUMMON_REQUEST, &GameHandler::handleSummonRequest);
     dispatchTable_[Opcode::SMSG_SUMMON_CANCEL] = [this](network::Packet& /*packet*/) {
         pendingSummonRequest_ = false;
         addSystemChatMessage("Summon cancelled.");
     };
-    registerHandler(Opcode::SMSG_TRADE_STATUS, &GameHandler::handleTradeStatus);
-    registerHandler(Opcode::SMSG_TRADE_STATUS_EXTENDED, &GameHandler::handleTradeStatusExtended);
-    registerHandler(Opcode::SMSG_LOOT_ROLL, &GameHandler::handleLootRoll);
-    registerHandler(Opcode::SMSG_LOOT_ROLL_WON, &GameHandler::handleLootRollWon);
-    dispatchTable_[Opcode::SMSG_LOOT_MASTER_LIST] = [this](network::Packet& packet) {
-        masterLootCandidates_.clear();
-        if (!packet.hasRemaining(1)) return;
-        uint8_t mlCount = packet.readUInt8();
-        masterLootCandidates_.reserve(mlCount);
-        for (uint8_t i = 0; i < mlCount; ++i) {
-            if (!packet.hasRemaining(8)) break;
-            masterLootCandidates_.push_back(packet.readUInt64());
-        }
-    };
-    registerHandler(Opcode::SMSG_GOSSIP_MESSAGE, &GameHandler::handleGossipMessage);
-    registerHandler(Opcode::SMSG_QUESTGIVER_QUEST_LIST, &GameHandler::handleQuestgiverQuestList);
-    registerHandler(Opcode::SMSG_GOSSIP_COMPLETE, &GameHandler::handleGossipComplete);
 
     // Bind point
     dispatchTable_[Opcode::SMSG_BINDPOINTUPDATE] = [this](network::Packet& packet) {
@@ -2882,42 +2033,7 @@ void GameHandler::registerOpcodeHandlers() {
         }
     };
 
-    // Vendor/trainer
-    registerHandler(Opcode::SMSG_LIST_INVENTORY, &GameHandler::handleListInventory);
-    registerHandler(Opcode::SMSG_TRAINER_LIST, &GameHandler::handleTrainerList);
-    dispatchTable_[Opcode::SMSG_TRAINER_BUY_SUCCEEDED] = [this](network::Packet& packet) {
-        /*uint64_t guid =*/ packet.readUInt64();
-        uint32_t spellId = packet.readUInt32();
-        if (!knownSpells.count(spellId)) {
-            knownSpells.insert(spellId);
-        }
-        const std::string& name = getSpellName(spellId);
-        if (!name.empty())
-            addSystemChatMessage("You have learned " + name + ".");
-        else
-            addSystemChatMessage("Spell learned.");
-                    withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playQuestActivate(); });
-            fireAddonEvent("TRAINER_UPDATE", {});
-            fireAddonEvent("SPELLS_CHANGED", {});
-    };
-    dispatchTable_[Opcode::SMSG_TRAINER_BUY_FAILED] = [this](network::Packet& packet) {
-        /*uint64_t trainerGuid =*/ packet.readUInt64();
-        uint32_t spellId = packet.readUInt32();
-        uint32_t errorCode = 0;
-        if (packet.hasRemaining(4))
-            errorCode = packet.readUInt32();
-        const std::string& spellName = getSpellName(spellId);
-        std::string msg = "Cannot learn ";
-        if (!spellName.empty()) msg += spellName;
-        else msg += "spell #" + std::to_string(spellId);
-        if (errorCode == 0) msg += " (not enough money)";
-        else if (errorCode == 1) msg += " (not enough skill)";
-        else if (errorCode == 2) msg += " (already known)";
-        else if (errorCode != 0) msg += " (error " + std::to_string(errorCode) + ")";
-        addUIError(msg);
-        addSystemChatMessage(msg);
-                    withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playError(); });
-    };
+    // (SMSG_TRAINER_BUY_SUCCEEDED, SMSG_TRAINER_BUY_FAILED → moved to InventoryHandler)
 
     // Minimap ping
     dispatchTable_[Opcode::MSG_MINIMAP_PING] = [this](network::Packet& packet) {
@@ -2972,117 +2088,13 @@ void GameHandler::registerOpcodeHandlers() {
         }
     };
 
-    // Factions
-    dispatchTable_[Opcode::SMSG_INITIALIZE_FACTIONS] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(4)) return;
-        uint32_t count = packet.readUInt32();
-        size_t needed = static_cast<size_t>(count) * 5;
-        if (!packet.hasRemaining(needed)) { packet.skipAll(); return; }
-        initialFactions_.clear();
-        initialFactions_.reserve(count);
-        for (uint32_t i = 0; i < count; ++i) {
-            FactionStandingInit fs{};
-            fs.flags = packet.readUInt8();
-            fs.standing = static_cast<int32_t>(packet.readUInt32());
-            initialFactions_.push_back(fs);
-        }
-    };
-    dispatchTable_[Opcode::SMSG_SET_FACTION_STANDING] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(5)) return;
-        /*uint8_t showVisual =*/ packet.readUInt8();
-        uint32_t count = packet.readUInt32();
-        count = std::min(count, 128u);
-        loadFactionNameCache();
-        for (uint32_t i = 0; i < count && packet.hasRemaining(8); ++i) {
-            uint32_t factionId = packet.readUInt32();
-            int32_t  standing  = static_cast<int32_t>(packet.readUInt32());
-            int32_t  oldStanding = 0;
-            auto it = factionStandings_.find(factionId);
-            if (it != factionStandings_.end()) oldStanding = it->second;
-            factionStandings_[factionId] = standing;
-            int32_t delta = standing - oldStanding;
-            if (delta != 0) {
-                std::string name = getFactionName(factionId);
-                char buf[256];
-                std::snprintf(buf, sizeof(buf), "Reputation with %s %s by %d.",
-                              name.c_str(), delta > 0 ? "increased" : "decreased", std::abs(delta));
-                addSystemChatMessage(buf);
-                watchedFactionId_ = factionId;
-                if (repChangeCallback_) repChangeCallback_(name, delta, standing);
-                    fireAddonEvent("UPDATE_FACTION", {});
-                    fireAddonEvent("CHAT_MSG_COMBAT_FACTION_CHANGE", {std::string(buf)});
-            }
-        }
-    };
-    dispatchTable_[Opcode::SMSG_SET_FACTION_ATWAR] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(5)) { packet.skipAll(); return; }
-        uint32_t repListId = packet.readUInt32();
-        uint8_t  setAtWar  = packet.readUInt8();
-        if (repListId < initialFactions_.size()) {
-            if (setAtWar)
-                initialFactions_[repListId].flags |=  FACTION_FLAG_AT_WAR;
-            else
-                initialFactions_[repListId].flags &= ~FACTION_FLAG_AT_WAR;
-        }
-    };
-    dispatchTable_[Opcode::SMSG_SET_FACTION_VISIBLE] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(5)) { packet.skipAll(); return; }
-        uint32_t repListId = packet.readUInt32();
-        uint8_t  visible   = packet.readUInt8();
-        if (repListId < initialFactions_.size()) {
-            if (visible)
-                initialFactions_[repListId].flags |=  FACTION_FLAG_VISIBLE;
-            else
-                initialFactions_[repListId].flags &= ~FACTION_FLAG_VISIBLE;
-        }
-    };
+    // (SMSG_INITIALIZE_FACTIONS, SMSG_SET_FACTION_STANDING,
+    //  SMSG_SET_FACTION_ATWAR, SMSG_SET_FACTION_VISIBLE → moved to SocialHandler)
     dispatchTable_[Opcode::SMSG_FEATURE_SYSTEM_STATUS] = [this](network::Packet& packet) {
         packet.skipAll();
     };
 
-    // Spell modifiers (separate lambdas: *logicalOp was used to determine isFlat)
-    {
-        auto makeSpellModHandler = [this](bool isFlat) {
-            return [this, isFlat](network::Packet& packet) {
-                auto& modMap = isFlat ? spellFlatMods_ : spellPctMods_;
-                while (packet.hasRemaining(6)) {
-                    uint8_t groupIndex = packet.readUInt8();
-                    uint8_t modOpRaw   = packet.readUInt8();
-                    int32_t value      = static_cast<int32_t>(packet.readUInt32());
-                    if (groupIndex > 5 || modOpRaw >= SPELL_MOD_OP_COUNT) continue;
-                    SpellModKey key{ static_cast<SpellModOp>(modOpRaw), groupIndex };
-                    modMap[key] = value;
-                }
-                packet.skipAll();
-            };
-        };
-        dispatchTable_[Opcode::SMSG_SET_FLAT_SPELL_MODIFIER] = makeSpellModHandler(true);
-        dispatchTable_[Opcode::SMSG_SET_PCT_SPELL_MODIFIER]  = makeSpellModHandler(false);
-    }
-
-    // Spell delayed
-    dispatchTable_[Opcode::SMSG_SPELL_DELAYED] = [this](network::Packet& packet) {
-        const bool spellDelayTbcLike = isPreWotlk();
-        if (!packet.hasRemaining(spellDelayTbcLike ? 8u : 1u) ) return;
-        uint64_t caster = spellDelayTbcLike
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        uint32_t delayMs = packet.readUInt32();
-        if (delayMs == 0) return;
-        float delaySec = delayMs / 1000.0f;
-        if (caster == playerGuid) {
-            if (casting) {
-                castTimeRemaining += delaySec;
-                castTimeTotal     += delaySec;
-            }
-        } else {
-            auto it = unitCastStates_.find(caster);
-            if (it != unitCastStates_.end() && it->second.casting) {
-                it->second.timeRemaining += delaySec;
-                it->second.timeTotal     += delaySec;
-            }
-        }
-    };
+    // (SMSG_SET_FLAT_SPELL_MODIFIER, SMSG_SET_PCT_SPELL_MODIFIER, SMSG_SPELL_DELAYED → moved to SpellHandler)
 
     // Proficiency
     dispatchTable_[Opcode::SMSG_SET_PROFICIENCY] = [this](network::Packet& packet) {
@@ -3094,38 +2106,6 @@ void GameHandler::registerOpcodeHandlers() {
     };
 
     // Loot money / misc consume
-    dispatchTable_[Opcode::SMSG_LOOT_MONEY_NOTIFY] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(4)) return;
-        uint32_t amount = packet.readUInt32();
-        if (packet.hasRemaining(1))
-            /*uint8_t soleLooter =*/ packet.readUInt8();
-        playerMoneyCopper_ += amount;
-        pendingMoneyDelta_ = amount;
-        pendingMoneyDeltaTimer_ = 2.0f;
-        uint64_t notifyGuid = pendingLootMoneyGuid_ != 0 ? pendingLootMoneyGuid_ : currentLoot.lootGuid;
-        pendingLootMoneyGuid_ = 0;
-        pendingLootMoneyAmount_ = 0;
-        pendingLootMoneyNotifyTimer_ = 0.0f;
-        bool alreadyAnnounced = false;
-        auto it = localLootState_.find(notifyGuid);
-        if (it != localLootState_.end()) {
-            alreadyAnnounced = it->second.moneyTaken;
-            it->second.moneyTaken = true;
-        }
-        if (!alreadyAnnounced) {
-            addSystemChatMessage("Looted: " + formatCopperAmount(amount));
-            auto* renderer = core::Application::getInstance().getRenderer();
-            if (renderer) {
-                if (auto* sfx = renderer->getUiSoundManager()) {
-                    if (amount >= 10000) sfx->playLootCoinLarge();
-                    else sfx->playLootCoinSmall();
-                }
-            }
-            if (notifyGuid != 0)
-                recentLootMoneyAnnounceCooldowns_[notifyGuid] = 1.5f;
-        }
-        fireAddonEvent("PLAYER_MONEY", {});
-    };
     for (auto op : { Opcode::SMSG_LOOT_CLEAR_MONEY, Opcode::SMSG_NPC_TEXT_UPDATE }) {
         dispatchTable_[op] = [](network::Packet& /*packet*/) {};
     }
@@ -3138,42 +2118,9 @@ void GameHandler::registerOpcodeHandlers() {
         }
     };
 
-    // Server messages
-    dispatchTable_[Opcode::SMSG_SERVER_MESSAGE] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(4)) {
-            uint32_t msgType = packet.readUInt32();
-            std::string msg = packet.readString();
-            if (!msg.empty()) {
-                std::string prefix;
-                switch (msgType) {
-                    case 1: prefix = "[Shutdown] ";   addUIError("Server shutdown: " + msg);  break;
-                    case 2: prefix = "[Restart] ";    addUIError("Server restart: " + msg);   break;
-                    case 4: prefix = "[Shutdown cancelled] "; break;
-                    case 5: prefix = "[Restart cancelled] ";  break;
-                    default: prefix = "[Server] "; break;
-                }
-                addSystemChatMessage(prefix + msg);
-            }
-        }
-    };
-    dispatchTable_[Opcode::SMSG_CHAT_SERVER_MESSAGE] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(4)) {
-            /*uint32_t msgType =*/ packet.readUInt32();
-            std::string msg = packet.readString();
-            if (!msg.empty()) addSystemChatMessage("[Announcement] " + msg);
-        }
-    };
-    dispatchTable_[Opcode::SMSG_AREA_TRIGGER_MESSAGE] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(4)) {
-            /*uint32_t len =*/ packet.readUInt32();
-            std::string msg = packet.readString();
-            if (!msg.empty()) {
-                addUIError(msg);
-                addSystemChatMessage(msg);
-                areaTriggerMsgs_.push_back(msg);
-            }
-        }
-    };
+    // SMSG_SERVER_MESSAGE — moved to ChatHandler::registerOpcodes
+    // SMSG_CHAT_SERVER_MESSAGE — moved to ChatHandler::registerOpcodes
+    // SMSG_AREA_TRIGGER_MESSAGE — moved to ChatHandler::registerOpcodes
     dispatchTable_[Opcode::SMSG_TRIGGER_CINEMATIC] = [this](network::Packet& packet) {
         packet.skipAll();
         network::Packet ack(wireOpcode(Opcode::CMSG_NEXT_CINEMATIC_CAMERA));
@@ -3183,9 +2130,6 @@ void GameHandler::registerOpcodeHandlers() {
     // ---- Batch 5: Teleport, taxi, BG, LFG, arena, movement relay, mail, bank, auction, quests ----
 
     // Teleport
-    for (auto op : { Opcode::MSG_MOVE_TELEPORT, Opcode::MSG_MOVE_TELEPORT_ACK }) {
-        dispatchTable_[op] = [this](network::Packet& packet) { handleTeleportAck(packet); };
-    }
     dispatchTable_[Opcode::SMSG_TRANSFER_PENDING] = [this](network::Packet& packet) {
         uint32_t pendingMapId = packet.readUInt32();
         if (packet.hasRemaining(8)) {
@@ -3194,7 +2138,6 @@ void GameHandler::registerOpcodeHandlers() {
         }
         (void)pendingMapId;
     };
-    registerHandler(Opcode::SMSG_NEW_WORLD, &GameHandler::handleNewWorld);
     dispatchTable_[Opcode::SMSG_TRANSFER_ABORTED] = [this](network::Packet& packet) {
         uint32_t mapId = packet.readUInt32();
         uint8_t reason = (packet.hasData()) ? packet.readUInt8() : 0;
@@ -3216,8 +2159,6 @@ void GameHandler::registerOpcodeHandlers() {
     };
 
     // Taxi
-    registerHandler(Opcode::SMSG_SHOWTAXINODES, &GameHandler::handleShowTaxiNodes);
-    registerHandler(Opcode::SMSG_ACTIVATETAXIREPLY, &GameHandler::handleActivateTaxiReply);
     dispatchTable_[Opcode::SMSG_STANDSTATE_UPDATE] = [this](network::Packet& packet) {
         if (packet.hasRemaining(1)) {
             standState_ = packet.readUInt8();
@@ -3228,174 +2169,7 @@ void GameHandler::registerOpcodeHandlers() {
         addSystemChatMessage("New flight path discovered!");
     };
 
-    // Battlefield / BG
-    registerHandler(Opcode::SMSG_BATTLEFIELD_STATUS, &GameHandler::handleBattlefieldStatus);
-    registerHandler(Opcode::SMSG_BATTLEFIELD_LIST, &GameHandler::handleBattlefieldList);
-    dispatchTable_[Opcode::SMSG_BATTLEFIELD_PORT_DENIED] = [this](network::Packet& /*packet*/) {
-        addUIError("Battlefield port denied.");
-        addSystemChatMessage("Battlefield port denied.");
-    };
-    dispatchTable_[Opcode::MSG_BATTLEGROUND_PLAYER_POSITIONS] = [this](network::Packet& packet) {
-        bgPlayerPositions_.clear();
-        for (int grp = 0; grp < 2; ++grp) {
-            if (!packet.hasRemaining(4)) break;
-            uint32_t count = packet.readUInt32();
-            for (uint32_t i = 0; i < count && packet.hasRemaining(16); ++i) {
-                BgPlayerPosition pos;
-                pos.guid = packet.readUInt64();
-                pos.wowX = packet.readFloat();
-                pos.wowY = packet.readFloat();
-                pos.group = grp;
-                bgPlayerPositions_.push_back(pos);
-            }
-        }
-    };
-    dispatchTable_[Opcode::SMSG_REMOVED_FROM_PVP_QUEUE] = [this](network::Packet& /*packet*/) {
-        addSystemChatMessage("You have been removed from the PvP queue.");
-    };
-    dispatchTable_[Opcode::SMSG_GROUP_JOINED_BATTLEGROUND] = [this](network::Packet& /*packet*/) {
-        addSystemChatMessage("Your group has joined the battleground.");
-    };
-    dispatchTable_[Opcode::SMSG_JOINED_BATTLEGROUND_QUEUE] = [this](network::Packet& /*packet*/) {
-        addSystemChatMessage("You have joined the battleground queue.");
-    };
-    dispatchTable_[Opcode::SMSG_BATTLEGROUND_PLAYER_JOINED] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(8)) {
-            uint64_t guid = packet.readUInt64();
-            const auto& name = lookupName(guid);
-            if (!name.empty())
-                addSystemChatMessage(name + " has entered the battleground.");
-        }
-    };
-    dispatchTable_[Opcode::SMSG_BATTLEGROUND_PLAYER_LEFT] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(8)) {
-            uint64_t guid = packet.readUInt64();
-            const auto& name = lookupName(guid);
-            if (!name.empty())
-                addSystemChatMessage(name + " has left the battleground.");
-        }
-    };
-
-    // Instance
-    for (auto op : { Opcode::SMSG_INSTANCE_DIFFICULTY, Opcode::MSG_SET_DUNGEON_DIFFICULTY }) {
-        dispatchTable_[op] = [this](network::Packet& packet) { handleInstanceDifficulty(packet); };
-    }
-    dispatchTable_[Opcode::SMSG_INSTANCE_SAVE_CREATED] = [this](network::Packet& /*packet*/) {
-        addSystemChatMessage("You are now saved to this instance.");
-    };
-    dispatchTable_[Opcode::SMSG_RAID_INSTANCE_MESSAGE] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(12)) return;
-        uint32_t msgType = packet.readUInt32();
-        uint32_t mapId   = packet.readUInt32();
-        packet.readUInt32(); // diff
-        std::string mapLabel = getMapName(mapId);
-        if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
-        if (msgType == 1 && packet.hasRemaining(4)) {
-            uint32_t timeLeft = packet.readUInt32();
-            addSystemChatMessage(mapLabel + " will reset in " + std::to_string(timeLeft / 60) + " minute(s).");
-        } else if (msgType == 2) {
-            addSystemChatMessage("You have been saved to " + mapLabel + ".");
-        } else if (msgType == 3) {
-            addSystemChatMessage("Welcome to " + mapLabel + ".");
-        }
-    };
-    dispatchTable_[Opcode::SMSG_INSTANCE_RESET] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(4)) return;
-        uint32_t mapId = packet.readUInt32();
-        auto it = std::remove_if(instanceLockouts_.begin(), instanceLockouts_.end(),
-            [mapId](const InstanceLockout& lo){ return lo.mapId == mapId; });
-        instanceLockouts_.erase(it, instanceLockouts_.end());
-        std::string mapLabel = getMapName(mapId);
-        if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
-        addSystemChatMessage(mapLabel + " has been reset.");
-    };
-    dispatchTable_[Opcode::SMSG_INSTANCE_RESET_FAILED] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(8)) return;
-        uint32_t mapId  = packet.readUInt32();
-        uint32_t reason = packet.readUInt32();
-        static const char* resetFailReasons[] = {
-            "Not max level.", "Offline party members.", "Party members inside.",
-            "Party members changing zone.", "Heroic difficulty only."
-        };
-        const char* reasonMsg = (reason < 5) ? resetFailReasons[reason] : "Unknown reason.";
-        std::string mapLabel = getMapName(mapId);
-        if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
-        addUIError("Cannot reset " + mapLabel + ": " + reasonMsg);
-        addSystemChatMessage("Cannot reset " + mapLabel + ": " + reasonMsg);
-    };
-    dispatchTable_[Opcode::SMSG_INSTANCE_LOCK_WARNING_QUERY] = [this](network::Packet& packet) {
-        if (!socket || !packet.hasRemaining(17)) return;
-        uint32_t ilMapId    = packet.readUInt32();
-        uint32_t ilDiff     = packet.readUInt32();
-        uint32_t ilTimeLeft = packet.readUInt32();
-        packet.readUInt32(); // unk
-        uint8_t  ilLocked   = packet.readUInt8();
-        std::string ilName = getMapName(ilMapId);
-        if (ilName.empty()) ilName = "instance #" + std::to_string(ilMapId);
-        static const char* kDiff[] = {"Normal","Heroic","25-Man","25-Man Heroic"};
-        std::string ilMsg = "Entering " + ilName;
-        if (ilDiff < 4) ilMsg += std::string(" (") + kDiff[ilDiff] + ")";
-        if (ilLocked && ilTimeLeft > 0)
-            ilMsg += " — " + std::to_string(ilTimeLeft / 60) + " min remaining.";
-        else
-            ilMsg += ".";
-        addSystemChatMessage(ilMsg);
-        network::Packet resp(wireOpcode(Opcode::CMSG_INSTANCE_LOCK_RESPONSE));
-        resp.writeUInt8(1);
-        socket->send(resp);
-    };
-
-    // LFG
-    registerHandler(Opcode::SMSG_LFG_JOIN_RESULT, &GameHandler::handleLfgJoinResult);
-    registerHandler(Opcode::SMSG_LFG_QUEUE_STATUS, &GameHandler::handleLfgQueueStatus);
-    registerHandler(Opcode::SMSG_LFG_PROPOSAL_UPDATE, &GameHandler::handleLfgProposalUpdate);
-    registerHandler(Opcode::SMSG_LFG_ROLE_CHECK_UPDATE, &GameHandler::handleLfgRoleCheckUpdate);
-    for (auto op : { Opcode::SMSG_LFG_UPDATE_PLAYER, Opcode::SMSG_LFG_UPDATE_PARTY }) {
-        dispatchTable_[op] = [this](network::Packet& packet) { handleLfgUpdatePlayer(packet); };
-    }
-    registerHandler(Opcode::SMSG_LFG_PLAYER_REWARD, &GameHandler::handleLfgPlayerReward);
-    registerHandler(Opcode::SMSG_LFG_BOOT_PROPOSAL_UPDATE, &GameHandler::handleLfgBootProposalUpdate);
-    registerHandler(Opcode::SMSG_LFG_TELEPORT_DENIED, &GameHandler::handleLfgTeleportDenied);
-    dispatchTable_[Opcode::SMSG_LFG_DISABLED] = [this](network::Packet& /*packet*/) {
-        addSystemChatMessage("The Dungeon Finder is currently disabled.");
-    };
-    dispatchTable_[Opcode::SMSG_LFG_OFFER_CONTINUE] = [this](network::Packet& /*packet*/) {
-        addSystemChatMessage("Dungeon Finder: You may continue your dungeon.");
-    };
-    dispatchTable_[Opcode::SMSG_LFG_ROLE_CHOSEN] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(13)) { packet.skipAll(); return; }
-        uint64_t roleGuid = packet.readUInt64();
-        uint8_t  ready    = packet.readUInt8();
-        uint32_t roles    = packet.readUInt32();
-        std::string roleName;
-        if (roles & 0x02) roleName += "Tank ";
-        if (roles & 0x04) roleName += "Healer ";
-        if (roles & 0x08) roleName += "DPS ";
-        if (roleName.empty()) roleName = "None";
-        std::string pName = "A player";
-        if (auto e = entityManager.getEntity(roleGuid))
-            if (auto u = std::dynamic_pointer_cast<Unit>(e))
-                pName = u->getName();
-        if (ready) addSystemChatMessage(pName + " has chosen: " + roleName);
-        packet.skipAll();
-    };
-    for (auto op : { Opcode::SMSG_LFG_UPDATE_SEARCH, Opcode::SMSG_UPDATE_LFG_LIST,
-                     Opcode::SMSG_LFG_PLAYER_INFO, Opcode::SMSG_LFG_PARTY_INFO })
-        registerSkipHandler(op);
-    dispatchTable_[Opcode::SMSG_OPEN_LFG_DUNGEON_FINDER] = [this](network::Packet& packet) {
-        packet.skipAll();
-        if (openLfgCallback_) openLfgCallback_();
-    };
-
     // Arena
-    registerHandler(Opcode::SMSG_ARENA_TEAM_COMMAND_RESULT, &GameHandler::handleArenaTeamCommandResult);
-    registerHandler(Opcode::SMSG_ARENA_TEAM_QUERY_RESPONSE, &GameHandler::handleArenaTeamQueryResponse);
-    registerHandler(Opcode::SMSG_ARENA_TEAM_ROSTER, &GameHandler::handleArenaTeamRoster);
-    registerHandler(Opcode::SMSG_ARENA_TEAM_INVITE, &GameHandler::handleArenaTeamInvite);
-    registerHandler(Opcode::SMSG_ARENA_TEAM_EVENT, &GameHandler::handleArenaTeamEvent);
-    registerHandler(Opcode::SMSG_ARENA_TEAM_STATS, &GameHandler::handleArenaTeamStats);
-    registerHandler(Opcode::SMSG_ARENA_ERROR, &GameHandler::handleArenaError);
-    registerHandler(Opcode::MSG_PVP_LOG_DATA, &GameHandler::handlePvpLogData);
     dispatchTable_[Opcode::MSG_TALENT_WIPE_CONFIRM] = [this](network::Packet& packet) {
         if (!packet.hasRemaining(12)) { packet.skipAll(); return; }
         talentWipeNpcGuid_ = packet.readUInt64();
@@ -3404,124 +2178,8 @@ void GameHandler::registerOpcodeHandlers() {
                     fireAddonEvent("CONFIRM_TALENT_WIPE", {std::to_string(talentWipeCost_)});
     };
 
-    // MSG_MOVE_* relay (26 opcodes → handleOtherPlayerMovement)
-    for (auto op : { Opcode::MSG_MOVE_START_FORWARD, Opcode::MSG_MOVE_START_BACKWARD,
-                     Opcode::MSG_MOVE_STOP, Opcode::MSG_MOVE_START_STRAFE_LEFT,
-                     Opcode::MSG_MOVE_START_STRAFE_RIGHT, Opcode::MSG_MOVE_STOP_STRAFE,
-                     Opcode::MSG_MOVE_JUMP, Opcode::MSG_MOVE_START_TURN_LEFT,
-                     Opcode::MSG_MOVE_START_TURN_RIGHT, Opcode::MSG_MOVE_STOP_TURN,
-                     Opcode::MSG_MOVE_SET_FACING, Opcode::MSG_MOVE_FALL_LAND,
-                     Opcode::MSG_MOVE_HEARTBEAT, Opcode::MSG_MOVE_START_SWIM,
-                     Opcode::MSG_MOVE_STOP_SWIM, Opcode::MSG_MOVE_SET_WALK_MODE,
-                     Opcode::MSG_MOVE_SET_RUN_MODE, Opcode::MSG_MOVE_START_PITCH_UP,
-                     Opcode::MSG_MOVE_START_PITCH_DOWN, Opcode::MSG_MOVE_STOP_PITCH,
-                     Opcode::MSG_MOVE_START_ASCEND, Opcode::MSG_MOVE_STOP_ASCEND,
-                     Opcode::MSG_MOVE_START_DESCEND, Opcode::MSG_MOVE_SET_PITCH,
-                     Opcode::MSG_MOVE_GRAVITY_CHNG, Opcode::MSG_MOVE_UPDATE_CAN_FLY,
-                     Opcode::MSG_MOVE_UPDATE_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY,
-                     Opcode::MSG_MOVE_ROOT, Opcode::MSG_MOVE_UNROOT }) {
-        dispatchTable_[op] = [this](network::Packet& packet) {
-            if (state == WorldState::IN_WORLD) handleOtherPlayerMovement(packet);
-        };
-    }
-
-    // MSG_MOVE_SET_*_SPEED relay (7 opcodes → handleMoveSetSpeed)
-    for (auto op : { Opcode::MSG_MOVE_SET_RUN_SPEED, Opcode::MSG_MOVE_SET_RUN_BACK_SPEED,
-                     Opcode::MSG_MOVE_SET_WALK_SPEED, Opcode::MSG_MOVE_SET_SWIM_SPEED,
-                     Opcode::MSG_MOVE_SET_SWIM_BACK_SPEED, Opcode::MSG_MOVE_SET_FLIGHT_SPEED,
-                     Opcode::MSG_MOVE_SET_FLIGHT_BACK_SPEED }) {
-        dispatchTable_[op] = [this](network::Packet& packet) {
-            if (state == WorldState::IN_WORLD) handleMoveSetSpeed(packet);
-        };
-    }
-
-    // Mail
-    registerHandler(Opcode::SMSG_SHOW_MAILBOX, &GameHandler::handleShowMailbox);
-    registerHandler(Opcode::SMSG_MAIL_LIST_RESULT, &GameHandler::handleMailListResult);
-    registerHandler(Opcode::SMSG_SEND_MAIL_RESULT, &GameHandler::handleSendMailResult);
-    registerHandler(Opcode::SMSG_RECEIVED_MAIL, &GameHandler::handleReceivedMail);
-    registerHandler(Opcode::MSG_QUERY_NEXT_MAIL_TIME, &GameHandler::handleQueryNextMailTime);
-
-    // Inspect / channel list
-    registerHandler(Opcode::SMSG_INSPECT_RESULTS_UPDATE, &GameHandler::handleInspectResults);
-    dispatchTable_[Opcode::SMSG_CHANNEL_LIST] = [this](network::Packet& packet) {
-        std::string chanName = packet.readString();
-        if (!packet.hasRemaining(5)) return;
-        /*uint8_t chanFlags =*/ packet.readUInt8();
-        uint32_t memberCount = packet.readUInt32();
-        memberCount = std::min(memberCount, 200u);
-        addSystemChatMessage(chanName + " has " + std::to_string(memberCount) + " member(s):");
-        for (uint32_t i = 0; i < memberCount; ++i) {
-            if (!packet.hasRemaining(9)) break;
-            uint64_t memberGuid = packet.readUInt64();
-            uint8_t memberFlags = packet.readUInt8();
-            std::string name;
-            auto entity = entityManager.getEntity(memberGuid);
-            if (entity) {
-                auto player = std::dynamic_pointer_cast<Player>(entity);
-                if (player && !player->getName().empty()) name = player->getName();
-            }
-            if (name.empty()) name = lookupName(memberGuid);
-            if (name.empty()) name = "(unknown)";
-            std::string entry = "  " + name;
-            if (memberFlags & 0x01) entry += " [Moderator]";
-            if (memberFlags & 0x02) entry += " [Muted]";
-            addSystemChatMessage(entry);
-        }
-    };
-
-    // Bank
-    registerHandler(Opcode::SMSG_SHOW_BANK, &GameHandler::handleShowBank);
-    registerHandler(Opcode::SMSG_BUY_BANK_SLOT_RESULT, &GameHandler::handleBuyBankSlotResult);
-
-    // Guild bank
-    registerHandler(Opcode::SMSG_GUILD_BANK_LIST, &GameHandler::handleGuildBankList);
-
-    // Auction house
-    registerHandler(Opcode::MSG_AUCTION_HELLO, &GameHandler::handleAuctionHello);
-    registerHandler(Opcode::SMSG_AUCTION_LIST_RESULT, &GameHandler::handleAuctionListResult);
-    registerHandler(Opcode::SMSG_AUCTION_OWNER_LIST_RESULT, &GameHandler::handleAuctionOwnerListResult);
-    registerHandler(Opcode::SMSG_AUCTION_BIDDER_LIST_RESULT, &GameHandler::handleAuctionBidderListResult);
-    registerHandler(Opcode::SMSG_AUCTION_COMMAND_RESULT, &GameHandler::handleAuctionCommandResult);
-
-    // Questgiver status
-    dispatchTable_[Opcode::SMSG_QUESTGIVER_STATUS] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(9)) {
-            uint64_t npcGuid = packet.readUInt64();
-            uint8_t status = packetParsers_->readQuestGiverStatus(packet);
-            npcQuestStatus_[npcGuid] = static_cast<QuestGiverStatus>(status);
-        }
-    };
-    dispatchTable_[Opcode::SMSG_QUESTGIVER_STATUS_MULTIPLE] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(4)) return;
-        uint32_t count = packet.readUInt32();
-        for (uint32_t i = 0; i < count; ++i) {
-            if (!packet.hasRemaining(9)) break;
-            uint64_t npcGuid = packet.readUInt64();
-            uint8_t status = packetParsers_->readQuestGiverStatus(packet);
-            npcQuestStatus_[npcGuid] = static_cast<QuestGiverStatus>(status);
-        }
-    };
-    registerHandler(Opcode::SMSG_QUESTGIVER_QUEST_DETAILS, &GameHandler::handleQuestDetails);
-    dispatchTable_[Opcode::SMSG_QUESTLOG_FULL] = [this](network::Packet& /*packet*/) {
-        addUIError("Your quest log is full.");
-        addSystemChatMessage("Your quest log is full.");
-    };
-    registerHandler(Opcode::SMSG_QUESTGIVER_REQUEST_ITEMS, &GameHandler::handleQuestRequestItems);
-    registerHandler(Opcode::SMSG_QUESTGIVER_OFFER_REWARD, &GameHandler::handleQuestOfferReward);
-
-    // Group set leader
-    dispatchTable_[Opcode::SMSG_GROUP_SET_LEADER] = [this](network::Packet& packet) {
-        if (!packet.hasData()) return;
-        std::string leaderName = packet.readString();
-        for (const auto& m : partyData.members) {
-            if (m.name == leaderName) { partyData.leaderGuid = m.guid; break; }
-        }
-        if (!leaderName.empty())
-            addSystemChatMessage(leaderName + " is now the group leader.");
-        fireAddonEvent("PARTY_LEADER_CHANGED", {});
-        fireAddonEvent("GROUP_ROSTER_UPDATE", {});
-    };
+    // (SMSG_CHANNEL_LIST → moved to ChatHandler)
+    // (SMSG_GROUP_SET_LEADER → moved to SocialHandler)
 
     // Gameobject / page text
     registerHandler(Opcode::SMSG_GAMEOBJECT_QUERY_RESPONSE, &GameHandler::handleGameObjectQueryResponse);
@@ -3547,17 +2205,7 @@ void GameHandler::registerOpcodeHandlers() {
         }
     };
 
-    // Resurrect failed / item refund / socket gems / item time
-    dispatchTable_[Opcode::SMSG_RESURRECT_FAILED] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(4)) {
-            uint32_t reason = packet.readUInt32();
-            const char* msg = (reason == 1) ? "The target cannot be resurrected right now."
-                            : (reason == 2) ? "Cannot resurrect in this area."
-                            : "Resurrection failed.";
-            addUIError(msg);
-            addSystemChatMessage(msg);
-        }
-    };
+    // Item refund / socket gems / item time
     dispatchTable_[Opcode::SMSG_ITEM_REFUND_RESULT] = [this](network::Packet& packet) {
         if (packet.hasRemaining(12)) {
             packet.readUInt64(); // itemGuid
@@ -3582,280 +2230,10 @@ void GameHandler::registerOpcodeHandlers() {
 
     // ---- Batch 6: Spell miss / env damage / control / spell failure ----
 
-    // ---- SMSG_SPELLLOGMISS ----
-    dispatchTable_[Opcode::SMSG_SPELLLOGMISS] = [this](network::Packet& packet) {
-        // All expansions: uint32 spellId first.
-        // WotLK/Classic: spellId(4) + packed_guid caster + uint8 unk + uint32 count
-        //                 + count × (packed_guid victim + uint8 missInfo)
-        // TBC:            spellId(4) + uint64 caster + uint8 unk + uint32 count
-        //                 + count × (uint64 victim + uint8 missInfo)
-        // All expansions append uint32 reflectSpellId + uint8 reflectResult when
-        // missInfo==11 (REFLECT).
-        const bool spellMissUsesFullGuid = isActiveExpansion("tbc");
-        auto readSpellMissGuid = [&]() -> uint64_t {
-            if (spellMissUsesFullGuid)
-                return (packet.hasRemaining(8)) ? packet.readUInt64() : 0;
-            return packet.readPackedGuid();
-        };
-        // spellId prefix present in all expansions
-        if (!packet.hasRemaining(4)) return;
-        uint32_t spellId = packet.readUInt32();
-        if (!packet.hasRemaining(spellMissUsesFullGuid ? 8u : 1u)             || (!spellMissUsesFullGuid && !packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t casterGuid = readSpellMissGuid();
-        if (!packet.hasRemaining(5)) return;
-        /*uint8_t unk =*/ packet.readUInt8();
-        const uint32_t rawCount = packet.readUInt32();
-        if (rawCount > 128) {
-            LOG_WARNING("SMSG_SPELLLOGMISS: miss count capped (requested=", rawCount, ")");
-        }
-        const uint32_t storedLimit = std::min<uint32_t>(rawCount, 128u);
-
-        struct SpellMissLogEntry {
-            uint64_t victimGuid = 0;
-            uint8_t missInfo = 0;
-            uint32_t reflectSpellId = 0;  // Only valid when missInfo==11 (REFLECT)
-        };
-        std::vector<SpellMissLogEntry> parsedMisses;
-        parsedMisses.reserve(storedLimit);
-
-        bool truncated = false;
-        for (uint32_t i = 0; i < rawCount; ++i) {
-            if (!packet.hasRemaining(spellMissUsesFullGuid ? 9u : 2u)                 || (!spellMissUsesFullGuid && !packet.hasFullPackedGuid())) {
-                truncated = true;
-                return;
-            }
-            const uint64_t victimGuid = readSpellMissGuid();
-            if (!packet.hasRemaining(1)) {
-                truncated = true;
-                return;
-            }
-            const uint8_t missInfo = packet.readUInt8();
-            // REFLECT (11): extra uint32 reflectSpellId + uint8 reflectResult
-            uint32_t reflectSpellId = 0;
-            if (missInfo == 11) {
-                if (packet.hasRemaining(5)) {
-                    reflectSpellId = packet.readUInt32();
-                    /*uint8_t reflectResult =*/ packet.readUInt8();
-                } else {
-                    truncated = true;
-                    return;
-                }
-            }
-            if (i < storedLimit) {
-                parsedMisses.push_back({victimGuid, missInfo, reflectSpellId});
-            }
-        }
-
-        if (truncated) {
-            packet.skipAll();
-            return;
-        }
-
-        for (const auto& miss : parsedMisses) {
-            const uint64_t victimGuid = miss.victimGuid;
-            const uint8_t missInfo = miss.missInfo;
-            CombatTextEntry::Type ct = combatTextTypeFromSpellMissInfo(missInfo);
-            // For REFLECT, use the reflected spell ID so combat text shows the spell name
-            uint32_t combatSpellId = (ct == CombatTextEntry::REFLECT && miss.reflectSpellId != 0)
-                                     ? miss.reflectSpellId : spellId;
-            if (casterGuid == playerGuid) {
-                // We cast a spell and it missed the target
-                addCombatText(ct, 0, combatSpellId, true, 0, casterGuid, victimGuid);
-            } else if (victimGuid == playerGuid) {
-                // Enemy spell missed us (we dodged/parried/blocked/resisted/etc.)
-                addCombatText(ct, 0, combatSpellId, false, 0, casterGuid, victimGuid);
-            }
-        }
-    };
-
-    // ---- Environmental damage log ----
-    dispatchTable_[Opcode::SMSG_ENVIRONMENTALDAMAGELOG] = [this](network::Packet& packet) {
-        // uint64 victimGuid + uint8 envDamageType + uint32 damage + uint32 absorb + uint32 resist
-        if (!packet.hasRemaining(21)) return;
-        uint64_t victimGuid = packet.readUInt64();
-        /*uint8_t  envType =*/ packet.readUInt8();
-        uint32_t damage   = packet.readUInt32();
-        uint32_t absorb   = packet.readUInt32();
-        uint32_t resist   = packet.readUInt32();
-        if (victimGuid == playerGuid) {
-            // Environmental damage: no caster GUID, victim = player
-            if (damage > 0)
-                addCombatText(CombatTextEntry::ENVIRONMENTAL, static_cast<int32_t>(damage), 0, false, 0, 0, victimGuid);
-            if (absorb > 0)
-                addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(absorb), 0, false, 0, 0, victimGuid);
-            if (resist > 0)
-                addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(resist), 0, false, 0, 0, victimGuid);
-        }
-    };
-
-    // ---- Client control update ----
-    dispatchTable_[Opcode::SMSG_CLIENT_CONTROL_UPDATE] = [this](network::Packet& packet) {
-        // Minimal parse: PackedGuid + uint8 allowMovement.
-        if (!packet.hasRemaining(2)) {
-            LOG_WARNING("SMSG_CLIENT_CONTROL_UPDATE too short: ", packet.getSize(), " bytes");
-            return;
-        }
-        uint8_t guidMask = packet.readUInt8();
-        size_t guidBytes = 0;
-        uint64_t controlGuid = 0;
-        for (int i = 0; i < 8; ++i) {
-            if (guidMask & (1u << i)) ++guidBytes;
-        }
-        if (!packet.hasRemaining(guidBytes) + 1) {
-            LOG_WARNING("SMSG_CLIENT_CONTROL_UPDATE malformed (truncated packed guid)");
-            packet.skipAll();
-            return;
-        }
-        for (int i = 0; i < 8; ++i) {
-            if (guidMask & (1u << i)) {
-                uint8_t b = packet.readUInt8();
-                controlGuid |= (static_cast<uint64_t>(b) << (i * 8));
-            }
-        }
-        bool allowMovement = (packet.readUInt8() != 0);
-        if (controlGuid == 0 || controlGuid == playerGuid) {
-            bool changed = (serverMovementAllowed_ != allowMovement);
-            serverMovementAllowed_ = allowMovement;
-            if (changed && !allowMovement) {
-                // Force-stop local movement immediately when server revokes control.
-                movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::FORWARD) |
-                                        static_cast<uint32_t>(MovementFlags::BACKWARD) |
-                                        static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
-                                        static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) |
-                                        static_cast<uint32_t>(MovementFlags::TURN_LEFT) |
-                                        static_cast<uint32_t>(MovementFlags::TURN_RIGHT));
-                sendMovement(Opcode::MSG_MOVE_STOP);
-                sendMovement(Opcode::MSG_MOVE_STOP_STRAFE);
-                sendMovement(Opcode::MSG_MOVE_STOP_TURN);
-                sendMovement(Opcode::MSG_MOVE_STOP_SWIM);
-                addSystemChatMessage("Movement disabled by server.");
-                fireAddonEvent("PLAYER_CONTROL_LOST", {});
-            } else if (changed && allowMovement) {
-                addSystemChatMessage("Movement re-enabled.");
-                fireAddonEvent("PLAYER_CONTROL_GAINED", {});
-            }
-        }
-    };
-
-    // ---- Spell failure ----
-    dispatchTable_[Opcode::SMSG_SPELL_FAILURE] = [this](network::Packet& packet) {
-        // WotLK: packed_guid + uint8 castCount + uint32 spellId + uint8 failReason
-        // TBC:   full uint64 + uint8 castCount + uint32 spellId + uint8 failReason
-        // Classic: full uint64 + uint32 spellId + uint8 failReason  (NO castCount)
-        const bool isClassic = isClassicLikeExpansion();
-        const bool isTbc     = isActiveExpansion("tbc");
-        uint64_t failGuid = (isClassic || isTbc)
-            ? (packet.hasRemaining(8) ? packet.readUInt64() : 0)
-            : packet.readPackedGuid();
-        // Classic omits the castCount byte; TBC and WotLK include it
-        const size_t remainingFields = isClassic ? 5u : 6u;  // spellId(4)+reason(1) [+castCount(1)]
-        if (packet.hasRemaining(remainingFields)) {
-            if (!isClassic) /*uint8_t castCount =*/ packet.readUInt8();
-            uint32_t failSpellId = packet.readUInt32();
-            uint8_t rawFailReason = packet.readUInt8();
-            // Classic result enum starts at 0=AFFECTING_COMBAT; shift +1 for WotLK table
-            uint8_t failReason = isClassic ? static_cast<uint8_t>(rawFailReason + 1) : rawFailReason;
-            if (failGuid == playerGuid && failReason != 0) {
-                // Show interruption/failure reason in chat and error overlay for player
-                int pt = -1;
-                if (auto pe = entityManager.getEntity(playerGuid))
-                    if (auto pu = std::dynamic_pointer_cast<Unit>(pe))
-                        pt = static_cast<int>(pu->getPowerType());
-                const char* reason = getSpellCastResultString(failReason, pt);
-                if (reason) {
-                    // Prefix with spell name for context, e.g. "Fireball: Not in range"
-                    const std::string& sName = getSpellName(failSpellId);
-                    std::string fullMsg = sName.empty() ? reason
-                                                        : sName + ": " + reason;
-                    addUIError(fullMsg);
-                    MessageChatData emsg;
-                    emsg.type = ChatType::SYSTEM;
-                    emsg.language = ChatLanguage::UNIVERSAL;
-                    emsg.message = std::move(fullMsg);
-                    addLocalChatMessage(emsg);
-                }
-            }
-        }
-        // Fire UNIT_SPELLCAST_INTERRUPTED for Lua addons
-        if (addonEventCallback_) {
-            auto unitId = (failGuid == 0) ? std::string("player") : guidToUnitId(failGuid);
-            if (!unitId.empty()) {
-                fireAddonEvent("UNIT_SPELLCAST_INTERRUPTED", {unitId});
-                fireAddonEvent("UNIT_SPELLCAST_STOP", {unitId});
-            }
-        }
-        if (failGuid == playerGuid || failGuid == 0) {
-            // Player's own cast failed — clear gather-node loot target so the
-            // next timed cast doesn't try to loot a stale interrupted gather node.
-            casting = false;
-            castIsChannel = false;
-            currentCastSpellId = 0;
-            lastInteractedGoGuid_ = 0;
-            craftQueueSpellId_ = 0;
-            craftQueueRemaining_ = 0;
-            queuedSpellId_ = 0;
-            queuedSpellTarget_ = 0;
-            withSoundManager(&rendering::Renderer::getSpellSoundManager, [](auto* ssm) { ssm->stopPrecast(); });
-            if (spellCastAnimCallback_) {
-                spellCastAnimCallback_(playerGuid, false, false);
-            }
-        } else {
-            // Another unit's cast failed — clear their tracked cast bar
-            unitCastStates_.erase(failGuid);
-            if (spellCastAnimCallback_) {
-                spellCastAnimCallback_(failGuid, false, false);
-            }
-        }
-    };
 
     // ---- Achievement / fishing delegates ----
-    dispatchTable_[Opcode::SMSG_ACHIEVEMENT_EARNED] = [this](network::Packet& packet) {
-        handleAchievementEarned(packet);
-    };
     dispatchTable_[Opcode::SMSG_ALL_ACHIEVEMENT_DATA] = [this](network::Packet& packet) {
         handleAllAchievementData(packet);
-    };
-    dispatchTable_[Opcode::SMSG_ITEM_COOLDOWN] = [this](network::Packet& packet) {
-        // uint64 itemGuid + uint32 spellId + uint32 cooldownMs
-        size_t rem = packet.getRemainingSize();
-        if (rem >= 16) {
-            uint64_t itemGuid = packet.readUInt64();
-            uint32_t spellId  = packet.readUInt32();
-            uint32_t cdMs     = packet.readUInt32();
-            float cdSec = cdMs / 1000.0f;
-            if (cdSec > 0.0f) {
-                if (spellId != 0) {
-                    auto it = spellCooldowns.find(spellId);
-                    if (it == spellCooldowns.end()) {
-                        spellCooldowns[spellId] = cdSec;
-                    } else {
-                        it->second = mergeCooldownSeconds(it->second, cdSec);
-                    }
-                }
-                // Resolve itemId from the GUID so item-type slots are also updated
-                uint32_t itemId = 0;
-                auto iit = onlineItems_.find(itemGuid);
-                if (iit != onlineItems_.end()) itemId = iit->second.entry;
-                for (auto& slot : actionBar) {
-                    bool match = (spellId != 0 && slot.type == ActionBarSlot::SPELL && slot.id == spellId)
-                              || (itemId  != 0 && slot.type == ActionBarSlot::ITEM  && slot.id == itemId);
-                    if (match) {
-                        float prevRemaining = slot.cooldownRemaining;
-                        float merged = mergeCooldownSeconds(slot.cooldownRemaining, cdSec);
-                        slot.cooldownRemaining = merged;
-                        if (slot.cooldownTotal <= 0.0f || prevRemaining <= 0.0f) {
-                            slot.cooldownTotal = cdSec;
-                        } else {
-                            slot.cooldownTotal = std::max(slot.cooldownTotal, merged);
-                        }
-                    }
-                }
-                LOG_DEBUG("SMSG_ITEM_COOLDOWN: itemGuid=0x", std::hex, itemGuid, std::dec,
-                          " spellId=", spellId, " itemId=", itemId, " cd=", cdSec, "s");
-            }
-        }
     };
     dispatchTable_[Opcode::SMSG_FISH_NOT_HOOKED] = [this](network::Packet& /*packet*/) {
         addSystemChatMessage("Your fish got away.");
@@ -3868,238 +2246,7 @@ void GameHandler::registerOpcodeHandlers() {
     dispatchTable_[Opcode::SMSG_CANCEL_AUTO_REPEAT] = [this](network::Packet& /*packet*/) {
         // Server signals to stop a repeating spell (wand/shoot); no client action needed
     };
-    dispatchTable_[Opcode::SMSG_AURA_UPDATE] = [this](network::Packet& packet) {
-        handleAuraUpdate(packet, false);
-    };
-    dispatchTable_[Opcode::SMSG_AURA_UPDATE_ALL] = [this](network::Packet& packet) {
-        handleAuraUpdate(packet, true);
-    };
-    dispatchTable_[Opcode::SMSG_DISPEL_FAILED] = [this](network::Packet& packet) {
-        // WotLK:       uint32 dispelSpellId + packed_guid caster + packed_guid victim
-        //              [+ count × uint32 failedSpellId]
-        // Classic:     uint32 dispelSpellId + packed_guid caster + packed_guid victim
-        //              [+ count × uint32 failedSpellId]
-        // TBC:         uint64 caster + uint64 victim + uint32 spellId
-        //              [+ count × uint32 failedSpellId]
-        const bool dispelUsesFullGuid = isActiveExpansion("tbc");
-        uint32_t dispelSpellId = 0;
-        uint64_t dispelCasterGuid = 0;
-        if (dispelUsesFullGuid) {
-            if (!packet.hasRemaining(20)) return;
-            dispelCasterGuid = packet.readUInt64();
-            /*uint64_t victim =*/ packet.readUInt64();
-            dispelSpellId = packet.readUInt32();
-        } else {
-            if (!packet.hasRemaining(4)) return;
-            dispelSpellId = packet.readUInt32();
-            if (!packet.hasFullPackedGuid()) {
-                packet.skipAll(); return;
-            }
-            dispelCasterGuid = packet.readPackedGuid();
-            if (!packet.hasFullPackedGuid()) {
-                packet.skipAll(); return;
-            }
-            /*uint64_t victim =*/ packet.readPackedGuid();
-        }
-        // Only show failure to the player who attempted the dispel
-        if (dispelCasterGuid == playerGuid) {
-            const auto& name = getSpellName(dispelSpellId);
-            char buf[128];
-            if (!name.empty())
-                std::snprintf(buf, sizeof(buf), "%s failed to dispel.", name.c_str());
-            else
-                std::snprintf(buf, sizeof(buf), "Dispel failed! (spell %u)", dispelSpellId);
-            addSystemChatMessage(buf);
-        }
-    };
-    dispatchTable_[Opcode::SMSG_TOTEM_CREATED] = [this](network::Packet& packet) {
-        // WotLK:       uint8 slot + packed_guid + uint32 duration + uint32 spellId
-        // TBC/Classic: uint8 slot + uint64 guid  + uint32 duration + uint32 spellId
-        const bool totemTbcLike = isPreWotlk();
-        if (!packet.hasRemaining(totemTbcLike ? 17u : 9u) ) return;
-        uint8_t slot = packet.readUInt8();
-        if (totemTbcLike)
-            /*uint64_t guid =*/ packet.readUInt64();
-        else
-            /*uint64_t guid =*/ packet.readPackedGuid();
-        if (!packet.hasRemaining(8)) return;
-        uint32_t duration = packet.readUInt32();
-        uint32_t spellId  = packet.readUInt32();
-        LOG_DEBUG("SMSG_TOTEM_CREATED: slot=", static_cast<int>(slot),
-                  " spellId=", spellId, " duration=", duration, "ms");
-        if (slot < NUM_TOTEM_SLOTS) {
-            activeTotemSlots_[slot].spellId    = spellId;
-            activeTotemSlots_[slot].durationMs = duration;
-            activeTotemSlots_[slot].placedAt   = std::chrono::steady_clock::now();
-        }
-    };
 
-    // ---- SMSG_ENVIRONMENTAL_DAMAGE_LOG (distinct from SMSG_ENVIRONMENTALDAMAGELOG) ----
-    dispatchTable_[Opcode::SMSG_ENVIRONMENTAL_DAMAGE_LOG] = [this](network::Packet& packet) {
-        // uint64 victimGuid + uint8 envDmgType + uint32 damage + uint32 absorbed + uint32 resisted
-        // envDmgType: 0=Exhausted(fatigue), 1=Drowning, 2=Fall, 3=Lava, 4=Slime, 5=Fire
-        if (!packet.hasRemaining(21)) { packet.skipAll(); return; }
-        uint64_t victimGuid  = packet.readUInt64();
-        uint8_t envType      = packet.readUInt8();
-        uint32_t dmg         = packet.readUInt32();
-        uint32_t envAbs      = packet.readUInt32();
-        uint32_t envRes      = packet.readUInt32();
-        if (victimGuid == playerGuid) {
-            // Environmental damage: pass envType via powerType field for display differentiation
-            if (dmg > 0)
-                addCombatText(CombatTextEntry::ENVIRONMENTAL, static_cast<int32_t>(dmg), 0, false, envType, 0, victimGuid);
-            if (envAbs > 0)
-                addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(envAbs), 0, false, 0, 0, victimGuid);
-            if (envRes > 0)
-                addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(envRes), 0, false, 0, 0, victimGuid);
-        }
-        packet.skipAll();
-    };
-
-    // ---- Spline move flag changes for other units (unroot/unset_hover/water_walk) ----
-    for (auto op : {Opcode::SMSG_SPLINE_MOVE_UNROOT,
-                    Opcode::SMSG_SPLINE_MOVE_UNSET_HOVER,
-                    Opcode::SMSG_SPLINE_MOVE_WATER_WALK}) {
-        dispatchTable_[op] = [this](network::Packet& packet) {
-            // Minimal parse: PackedGuid only — no animation-relevant state change.
-            if (packet.hasRemaining(1)) {
-                (void)packet.readPackedGuid();
-            }
-        };
-    }
-
-    dispatchTable_[Opcode::SMSG_SPLINE_MOVE_UNSET_FLYING] = [this](network::Packet& packet) {
-        // PackedGuid + synthesised move-flags=0 → clears flying animation.
-        if (!packet.hasRemaining(1)) return;
-        uint64_t guid = packet.readPackedGuid();
-        if (guid == 0 || guid == playerGuid || !unitMoveFlagsCallback_) return;
-        unitMoveFlagsCallback_(guid, 0u); // clear flying/CAN_FLY
-    };
-
-    // ---- Spline speed changes for other units ----
-    // These use *logicalOp to distinguish which speed to set, so each gets a separate lambda.
-    dispatchTable_[Opcode::SMSG_SPLINE_SET_FLIGHT_SPEED] = [this](network::Packet& packet) {
-        // Minimal parse: PackedGuid + float speed
-        if (!packet.hasRemaining(5)) return;
-        uint64_t sGuid = packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        float sSpeed = packet.readFloat();
-        if (sGuid == playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
-            serverFlightSpeed_ = sSpeed;
-        }
-    };
-    dispatchTable_[Opcode::SMSG_SPLINE_SET_FLIGHT_BACK_SPEED] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(5)) return;
-        uint64_t sGuid = packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        float sSpeed = packet.readFloat();
-        if (sGuid == playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
-            serverFlightBackSpeed_ = sSpeed;
-        }
-    };
-    dispatchTable_[Opcode::SMSG_SPLINE_SET_SWIM_BACK_SPEED] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(5)) return;
-        uint64_t sGuid = packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        float sSpeed = packet.readFloat();
-        if (sGuid == playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
-            serverSwimBackSpeed_ = sSpeed;
-        }
-    };
-    dispatchTable_[Opcode::SMSG_SPLINE_SET_WALK_SPEED] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(5)) return;
-        uint64_t sGuid = packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        float sSpeed = packet.readFloat();
-        if (sGuid == playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
-            serverWalkSpeed_ = sSpeed;
-        }
-    };
-    dispatchTable_[Opcode::SMSG_SPLINE_SET_TURN_RATE] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(5)) return;
-        uint64_t sGuid = packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        float sSpeed = packet.readFloat();
-        if (sGuid == playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
-            serverTurnRate_ = sSpeed;  // rad/s
-        }
-    };
-    dispatchTable_[Opcode::SMSG_SPLINE_SET_PITCH_RATE] = [this](network::Packet& packet) {
-        // Minimal parse: PackedGuid + float speed — pitch rate not stored locally
-        if (!packet.hasRemaining(5)) return;
-        (void)packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        (void)packet.readFloat();
-    };
-
-    // ---- Threat updates ----
-    for (auto op : {Opcode::SMSG_HIGHEST_THREAT_UPDATE,
-                    Opcode::SMSG_THREAT_UPDATE}) {
-        dispatchTable_[op] = [this](network::Packet& packet) {
-            // Both packets share the same format:
-            // packed_guid (unit) + packed_guid (highest-threat target or target, unused here)
-            // + uint32 count + count × (packed_guid victim + uint32 threat)
-            if (!packet.hasRemaining(1)) return;
-            uint64_t unitGuid = packet.readPackedGuid();
-            if (!packet.hasRemaining(1)) return;
-            (void)packet.readPackedGuid(); // highest-threat / current target
-            if (!packet.hasRemaining(4)) return;
-            uint32_t cnt = packet.readUInt32();
-            if (cnt > 100) { packet.skipAll(); return; } // sanity
-            std::vector<ThreatEntry> list;
-            list.reserve(cnt);
-            for (uint32_t i = 0; i < cnt; ++i) {
-                if (!packet.hasRemaining(1)) return;
-                ThreatEntry entry;
-                entry.victimGuid = packet.readPackedGuid();
-                if (!packet.hasRemaining(4)) return;
-                entry.threat = packet.readUInt32();
-                list.push_back(entry);
-            }
-            // Sort descending by threat so highest is first
-            std::sort(list.begin(), list.end(),
-                [](const ThreatEntry& a, const ThreatEntry& b){ return a.threat > b.threat; });
-            threatLists_[unitGuid] = std::move(list);
-                            fireAddonEvent("UNIT_THREAT_LIST_UPDATE", {});
-        };
-    }
-
-    // ---- Player movement flag changes (server-pushed) ----
-    dispatchTable_[Opcode::SMSG_MOVE_GRAVITY_DISABLE] = [this](network::Packet& packet) {
-        handleForceMoveFlagChange(packet, "GRAVITY_DISABLE", Opcode::CMSG_MOVE_GRAVITY_DISABLE_ACK,
-            static_cast<uint32_t>(MovementFlags::LEVITATING), true);
-    };
-    dispatchTable_[Opcode::SMSG_MOVE_GRAVITY_ENABLE] = [this](network::Packet& packet) {
-        handleForceMoveFlagChange(packet, "GRAVITY_ENABLE", Opcode::CMSG_MOVE_GRAVITY_ENABLE_ACK,
-            static_cast<uint32_t>(MovementFlags::LEVITATING), false);
-    };
-    dispatchTable_[Opcode::SMSG_MOVE_LAND_WALK] = [this](network::Packet& packet) {
-        handleForceMoveFlagChange(packet, "LAND_WALK", Opcode::CMSG_MOVE_WATER_WALK_ACK,
-            static_cast<uint32_t>(MovementFlags::WATER_WALK), false);
-    };
-    dispatchTable_[Opcode::SMSG_MOVE_NORMAL_FALL] = [this](network::Packet& packet) {
-        handleForceMoveFlagChange(packet, "NORMAL_FALL", Opcode::CMSG_MOVE_FEATHER_FALL_ACK,
-            static_cast<uint32_t>(MovementFlags::FEATHER_FALL), false);
-    };
-    dispatchTable_[Opcode::SMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY] = [this](network::Packet& packet) {
-        handleForceMoveFlagChange(packet, "SET_CAN_TRANSITION_SWIM_FLY",
-            Opcode::CMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY_ACK, 0, true);
-    };
-    dispatchTable_[Opcode::SMSG_MOVE_UNSET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY] = [this](network::Packet& packet) {
-        handleForceMoveFlagChange(packet, "UNSET_CAN_TRANSITION_SWIM_FLY",
-            Opcode::CMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY_ACK, 0, false);
-    };
-    dispatchTable_[Opcode::SMSG_MOVE_SET_COLLISION_HGT] = [this](network::Packet& packet) {
-        handleMoveSetCollisionHeight(packet);
-    };
-    dispatchTable_[Opcode::SMSG_MOVE_SET_FLIGHT] = [this](network::Packet& packet) {
-        handleForceMoveFlagChange(packet, "SET_FLIGHT", Opcode::CMSG_MOVE_FLIGHT_ACK,
-            static_cast<uint32_t>(MovementFlags::FLYING), true);
-    };
-    dispatchTable_[Opcode::SMSG_MOVE_UNSET_FLIGHT] = [this](network::Packet& packet) {
-        handleForceMoveFlagChange(packet, "UNSET_FLIGHT", Opcode::CMSG_MOVE_FLIGHT_ACK,
-            static_cast<uint32_t>(MovementFlags::FLYING), false);
-    };
 
     // ---- Batch 7: World states, action buttons, level-up, vendor, inventory ----
 
@@ -4212,28 +2359,30 @@ void GameHandler::registerOpcodeHandlers() {
             }
             actionBar[i] = slot;
         }
-        // Apply any pending cooldowns from spellCooldowns to newly populated slots.
+        // Apply any pending cooldowns from spellHandler's cooldowns to newly populated slots.
         // SMSG_SPELL_COOLDOWN often arrives before SMSG_ACTION_BUTTONS during login,
         // so the per-slot cooldownRemaining would be 0 without this sync.
-        for (auto& slot : actionBar) {
-            if (slot.type == ActionBarSlot::SPELL && slot.id != 0) {
-                auto cdIt = spellCooldowns.find(slot.id);
-                if (cdIt != spellCooldowns.end() && cdIt->second > 0.0f) {
-                    slot.cooldownRemaining = cdIt->second;
-                    slot.cooldownTotal     = cdIt->second;
-                }
-            } else if (slot.type == ActionBarSlot::ITEM && slot.id != 0) {
-                // Items (potions, trinkets): look up the item's on-use spell
-                // and check if that spell has a pending cooldown.
-                const auto* qi = getItemInfo(slot.id);
-                if (qi && qi->valid) {
-                    for (const auto& sp : qi->spells) {
-                        if (sp.spellId == 0) continue;
-                        auto cdIt = spellCooldowns.find(sp.spellId);
-                        if (cdIt != spellCooldowns.end() && cdIt->second > 0.0f) {
-                            slot.cooldownRemaining = cdIt->second;
-                            slot.cooldownTotal     = cdIt->second;
-                            break;
+        if (spellHandler_) {
+            for (auto& slot : actionBar) {
+                if (slot.type == ActionBarSlot::SPELL && slot.id != 0) {
+                    auto cdIt = spellHandler_->spellCooldowns_.find(slot.id);
+                    if (cdIt != spellHandler_->spellCooldowns_.end() && cdIt->second > 0.0f) {
+                        slot.cooldownRemaining = cdIt->second;
+                        slot.cooldownTotal     = cdIt->second;
+                    }
+                } else if (slot.type == ActionBarSlot::ITEM && slot.id != 0) {
+                    // Items (potions, trinkets): look up the item's on-use spell
+                    // and check if that spell has a pending cooldown.
+                    const auto* qi = getItemInfo(slot.id);
+                    if (qi && qi->valid) {
+                        for (const auto& sp : qi->spells) {
+                            if (sp.spellId == 0) continue;
+                            auto cdIt = spellHandler_->spellCooldowns_.find(sp.spellId);
+                            if (cdIt != spellHandler_->spellCooldowns_.end() && cdIt->second > 0.0f) {
+                                slot.cooldownRemaining = cdIt->second;
+                                slot.cooldownTotal     = cdIt->second;
+                                break;
+                            }
                         }
                     }
                 }
@@ -4283,253 +2432,6 @@ void GameHandler::registerOpcodeHandlers() {
         };
     }
 
-    // ---- SMSG_SELL_ITEM ----
-    dispatchTable_[Opcode::SMSG_SELL_ITEM] = [this](network::Packet& packet) {
-        // uint64 vendorGuid, uint64 itemGuid, uint8 result
-        if (packet.hasRemaining(17)) {
-            uint64_t vendorGuid = packet.readUInt64();
-            uint64_t itemGuid = packet.readUInt64();
-            uint8_t result = packet.readUInt8();
-            LOG_INFO("SMSG_SELL_ITEM: vendorGuid=0x", std::hex, vendorGuid,
-                     " itemGuid=0x", itemGuid, std::dec,
-                     " result=", static_cast<int>(result));
-            if (result == 0) {
-                pendingSellToBuyback_.erase(itemGuid);
-                withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playDropOnGround(); });
-                    fireAddonEvent("BAG_UPDATE", {});
-                    fireAddonEvent("PLAYER_MONEY", {});
-            } else {
-                bool removedPending = false;
-                auto it = pendingSellToBuyback_.find(itemGuid);
-                if (it != pendingSellToBuyback_.end()) {
-                    for (auto bit = buybackItems_.begin(); bit != buybackItems_.end(); ++bit) {
-                        if (bit->itemGuid == itemGuid) {
-                            buybackItems_.erase(bit);
-                            return;
-                        }
-                    }
-                    pendingSellToBuyback_.erase(it);
-                    removedPending = true;
-                }
-                if (!removedPending) {
-                    // Some cores return a non-item GUID on sell failure; drop the newest
-                    // optimistic entry if it is still pending so stale rows don't block buyback.
-                    if (!buybackItems_.empty()) {
-                        uint64_t frontGuid = buybackItems_.front().itemGuid;
-                        if (pendingSellToBuyback_.erase(frontGuid) > 0) {
-                            buybackItems_.pop_front();
-                            removedPending = true;
-                        }
-                    }
-                }
-                if (!removedPending && !pendingSellToBuyback_.empty()) {
-                    // Last-resort desync recovery.
-                    pendingSellToBuyback_.clear();
-                    buybackItems_.clear();
-                }
-                static const char* sellErrors[] = {
-                    "OK", "Can't find item", "Can't sell item",
-                    "Can't find vendor", "You don't own that item",
-                    "Unknown error", "Only empty bag"
-                };
-                const char* msg = (result < 7) ? sellErrors[result] : "Unknown sell error";
-                addUIError(std::string("Sell failed: ") + msg);
-                addSystemChatMessage(std::string("Sell failed: ") + msg);
-                withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playError(); });
-                LOG_WARNING("SMSG_SELL_ITEM error: ", static_cast<int>(result), " (", msg, ")");
-            }
-        }
-    };
-
-    // ---- SMSG_INVENTORY_CHANGE_FAILURE ----
-    dispatchTable_[Opcode::SMSG_INVENTORY_CHANGE_FAILURE] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(1)) {
-            uint8_t error = packet.readUInt8();
-            if (error != 0) {
-                LOG_WARNING("SMSG_INVENTORY_CHANGE_FAILURE: error=", static_cast<int>(error));
-                // After error byte: item_guid1(8) + item_guid2(8) + bag_slot(1) = 17 bytes
-                uint32_t requiredLevel = 0;
-                if (packet.hasRemaining(17)) {
-                    packet.readUInt64(); // item_guid1
-                    packet.readUInt64(); // item_guid2
-                    packet.readUInt8();  // bag_slot
-                    // Error 1 = EQUIP_ERR_LEVEL_REQ: server appends required level as uint32
-                    if (error == 1 && packet.hasRemaining(4))
-                        requiredLevel = packet.readUInt32();
-                }
-                // InventoryResult enum (AzerothCore 3.3.5a)
-                const char* errMsg = nullptr;
-                char levelBuf[64];
-                switch (error) {
-                    case 1:
-                        if (requiredLevel > 0) {
-                            std::snprintf(levelBuf, sizeof(levelBuf),
-                                          "You must reach level %u to use that item.", requiredLevel);
-                            addUIError(levelBuf);
-                            addSystemChatMessage(levelBuf);
-                        } else {
-                            addUIError("You must reach a higher level to use that item.");
-                            addSystemChatMessage("You must reach a higher level to use that item.");
-                        }
-                        return;
-                    case 2:  errMsg = "You don't have the required skill."; break;
-                    case 3:  errMsg = "That item doesn't go in that slot."; break;
-                    case 4:  errMsg = "That bag is full."; break;
-                    case 5:  errMsg = "Can't put bags in bags."; break;
-                    case 6:  errMsg = "Can't trade equipped bags."; break;
-                    case 7:  errMsg = "That slot only holds ammo."; break;
-                    case 8:  errMsg = "You can't use that item."; break;
-                    case 9:  errMsg = "No equipment slot available."; break;
-                    case 10: errMsg = "You can never use that item."; break;
-                    case 11: errMsg = "You can never use that item."; break;
-                    case 12: errMsg = "No equipment slot available."; break;
-                    case 13: errMsg = "Can't equip with a two-handed weapon."; break;
-                    case 14: errMsg = "Can't dual-wield."; break;
-                    case 15: errMsg = "That item doesn't go in that bag."; break;
-                    case 16: errMsg = "That item doesn't go in that bag."; break;
-                    case 17: errMsg = "You can't carry any more of those."; break;
-                    case 18: errMsg = "No equipment slot available."; break;
-                    case 19: errMsg = "Can't stack those items."; break;
-                    case 20: errMsg = "That item can't be equipped."; break;
-                    case 21: errMsg = "Can't swap items."; break;
-                    case 22: errMsg = "That slot is empty."; break;
-                    case 23: errMsg = "Item not found."; break;
-                    case 24: errMsg = "Can't drop soulbound items."; break;
-                    case 25: errMsg = "Out of range."; break;
-                    case 26: errMsg = "Need to split more than 1."; break;
-                    case 27: errMsg = "Split failed."; break;
-                    case 28: errMsg = "Not enough reagents."; break;
-                    case 29: errMsg = "Not enough money."; break;
-                    case 30: errMsg = "Not a bag."; break;
-                    case 31: errMsg = "Can't destroy non-empty bag."; break;
-                    case 32: errMsg = "You don't own that item."; break;
-                    case 33: errMsg = "You can only have one quiver."; break;
-                    case 34: errMsg = "No free bank slots."; break;
-                    case 35: errMsg = "No bank here."; break;
-                    case 36: errMsg = "Item is locked."; break;
-                    case 37: errMsg = "You are stunned."; break;
-                    case 38: errMsg = "You are dead."; break;
-                    case 39: errMsg = "Can't do that right now."; break;
-                    case 40: errMsg = "Internal bag error."; break;
-                    case 49: errMsg = "Loot is gone."; break;
-                    case 50: errMsg = "Inventory is full."; break;
-                    case 51: errMsg = "Bank is full."; break;
-                    case 52: errMsg = "That item is sold out."; break;
-                    case 58: errMsg = "That object is busy."; break;
-                    case 60: errMsg = "Can't do that in combat."; break;
-                    case 61: errMsg = "Can't do that while disarmed."; break;
-                    case 63: errMsg = "Requires a higher rank."; break;
-                    case 64: errMsg = "Requires higher reputation."; break;
-                    case 67: errMsg = "That item is unique-equipped."; break;
-                    case 69: errMsg = "Not enough honor points."; break;
-                    case 70: errMsg = "Not enough arena points."; break;
-                    case 77: errMsg = "Too much gold."; break;
-                    case 78: errMsg = "Can't do that during arena match."; break;
-                    case 80: errMsg = "Requires a personal arena rating."; break;
-                    case 87: errMsg = "Requires a higher level."; break;
-                    case 88: errMsg = "Requires the right talent."; break;
-                    default: break;
-                }
-                std::string msg = errMsg ? errMsg : "Inventory error (" + std::to_string(error) + ").";
-                addUIError(msg);
-                addSystemChatMessage(msg);
-                withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playError(); });
-            }
-        }
-    };
-
-    // ---- SMSG_BUY_FAILED ----
-    dispatchTable_[Opcode::SMSG_BUY_FAILED] = [this](network::Packet& packet) {
-        // vendorGuid(8) + itemId(4) + errorCode(1)
-        if (packet.hasRemaining(13)) {
-            uint64_t vendorGuid = packet.readUInt64();
-            uint32_t itemIdOrSlot = packet.readUInt32();
-            uint8_t errCode = packet.readUInt8();
-            LOG_INFO("SMSG_BUY_FAILED: vendorGuid=0x", std::hex, vendorGuid, std::dec,
-                     " item/slot=", itemIdOrSlot,
-                     " err=", static_cast<int>(errCode),
-                     " pendingBuybackSlot=", pendingBuybackSlot_,
-                     " pendingBuybackWireSlot=", pendingBuybackWireSlot_,
-                     " pendingBuyItemId=", pendingBuyItemId_,
-                     " pendingBuyItemSlot=", pendingBuyItemSlot_);
-            if (pendingBuybackSlot_ >= 0) {
-                // Some cores require probing absolute buyback slots until a live entry is found.
-                if (errCode == 0) {
-                    constexpr uint16_t kWotlkCmsgBuybackItemOpcode = 0x290;
-                    constexpr uint32_t kBuybackSlotEnd = 85;
-                    if (pendingBuybackWireSlot_ >= 74 && pendingBuybackWireSlot_ < kBuybackSlotEnd &&
-                        socket && state == WorldState::IN_WORLD && currentVendorItems.vendorGuid != 0) {
-                        ++pendingBuybackWireSlot_;
-                        LOG_INFO("Buyback retry: vendorGuid=0x", std::hex, currentVendorItems.vendorGuid,
-                                 std::dec, " uiSlot=", pendingBuybackSlot_,
-                                 " wireSlot=", pendingBuybackWireSlot_);
-                        network::Packet retry(kWotlkCmsgBuybackItemOpcode);
-                        retry.writeUInt64(currentVendorItems.vendorGuid);
-                        retry.writeUInt32(pendingBuybackWireSlot_);
-                        socket->send(retry);
-                        return;
-                    }
-                    // Exhausted slot probe: drop stale local row and advance.
-                    if (pendingBuybackSlot_ < static_cast<int>(buybackItems_.size())) {
-                        buybackItems_.erase(buybackItems_.begin() + pendingBuybackSlot_);
-                    }
-                    pendingBuybackSlot_ = -1;
-                    pendingBuybackWireSlot_ = 0;
-                    if (currentVendorItems.vendorGuid != 0 && socket && state == WorldState::IN_WORLD) {
-                        auto pkt = ListInventoryPacket::build(currentVendorItems.vendorGuid);
-                        socket->send(pkt);
-                    }
-                    return;
-                }
-                pendingBuybackSlot_ = -1;
-                pendingBuybackWireSlot_ = 0;
-            }
-
-            const char* msg = "Purchase failed.";
-            switch (errCode) {
-                case 0: msg = "Purchase failed: item not found."; break;
-                case 2: msg = "You don't have enough money."; break;
-                case 4: msg = "Seller is too far away."; break;
-                case 5: msg = "That item is sold out."; break;
-                case 6: msg = "You can't carry any more items."; break;
-                default: break;
-            }
-            addUIError(msg);
-            addSystemChatMessage(msg);
-            withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playError(); });
-        }
-    };
-
-    // ---- SMSG_BUY_ITEM ----
-    dispatchTable_[Opcode::SMSG_BUY_ITEM] = [this](network::Packet& packet) {
-        // uint64 vendorGuid + uint32 vendorSlot + int32 newCount + uint32 itemCount
-        // Confirms a successful CMSG_BUY_ITEM. The inventory update arrives via SMSG_UPDATE_OBJECT.
-        if (packet.hasRemaining(20)) {
-            /*uint64_t vendorGuid =*/ packet.readUInt64();
-            /*uint32_t vendorSlot =*/ packet.readUInt32();
-            /*int32_t  newCount   =*/ static_cast<int32_t>(packet.readUInt32());
-            uint32_t itemCount  = packet.readUInt32();
-            // Show purchase confirmation with item name if available
-            if (pendingBuyItemId_ != 0) {
-                std::string itemLabel;
-                uint32_t buyQuality = 1;
-                if (const ItemQueryResponseData* info = getItemInfo(pendingBuyItemId_)) {
-                    if (!info->name.empty()) itemLabel = info->name;
-                    buyQuality = info->quality;
-                }
-                if (itemLabel.empty()) itemLabel = "item #" + std::to_string(pendingBuyItemId_);
-                std::string msg = "Purchased: " + buildItemLink(pendingBuyItemId_, buyQuality, itemLabel);
-                if (itemCount > 1) msg += " x" + std::to_string(itemCount);
-                addSystemChatMessage(msg);
-                withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playPickupBag(); });
-            }
-            pendingBuyItemId_   = 0;
-            pendingBuyItemSlot_ = 0;
-                fireAddonEvent("MERCHANT_UPDATE", {});
-                fireAddonEvent("BAG_UPDATE", {});
-        }
-    };
-
     // ---- MSG_RAID_TARGET_UPDATE ----
     dispatchTable_[Opcode::MSG_RAID_TARGET_UPDATE] = [this](network::Packet& packet) {
         // uint8 type: 0 = full update (8 × (uint8 icon + uint64 guid)),
@@ -4543,16 +2445,16 @@ void GameHandler::registerOpcodeHandlers() {
                 if (!packet.hasRemaining(9)) return;
                 uint8_t  icon = packet.readUInt8();
                 uint64_t guid = packet.readUInt64();
-                if (icon < kRaidMarkCount)
-                    raidTargetGuids_[icon] = guid;
+                if (socialHandler_)
+                    socialHandler_->setRaidTargetGuid(icon, guid);
             }
         } else {
             // Single update
             if (packet.hasRemaining(9)) {
                 uint8_t  icon = packet.readUInt8();
                 uint64_t guid = packet.readUInt64();
-                if (icon < kRaidMarkCount)
-                    raidTargetGuids_[icon] = guid;
+                if (socialHandler_)
+                    socialHandler_->setRaidTargetGuid(icon, guid);
             }
         }
         LOG_DEBUG("MSG_RAID_TARGET_UPDATE: type=", static_cast<int>(rtuType));
@@ -4599,227 +2501,10 @@ void GameHandler::registerOpcodeHandlers() {
         }
     };
 
-    // ---- SMSG_QUESTGIVER_QUEST_FAILED ----
-    dispatchTable_[Opcode::SMSG_QUESTGIVER_QUEST_FAILED] = [this](network::Packet& packet) {
-        // uint32 questId + uint32 reason
-        if (packet.hasRemaining(8)) {
-            uint32_t questId = packet.readUInt32();
-            uint32_t reason = packet.readUInt32();
-            auto questTitle = getQuestTitle(questId);
-            const char* reasonStr = nullptr;
-            switch (reason) {
-                case 1: reasonStr = "failed conditions"; break;
-                case 2: reasonStr = "inventory full"; break;
-                case 3: reasonStr = "too far away"; break;
-                case 4: reasonStr = "another quest is blocking"; break;
-                case 5: reasonStr = "wrong time of day"; break;
-                case 6: reasonStr = "wrong race"; break;
-                case 7: reasonStr = "wrong class"; break;
-            }
-            std::string msg = questTitle.empty() ? "Quest" : ('"' + questTitle + '"');
-            msg += " failed";
-            if (reasonStr) msg += std::string(": ") + reasonStr;
-            msg += '.';
-            addSystemChatMessage(msg);
-        }
-    };
-
-
     // -----------------------------------------------------------------------
     // Batch 8-12: Remaining opcodes (inspects, quests, auctions, spells,
     //             calendars, battlefields, voice, misc consume-only)
     // -----------------------------------------------------------------------
-    // uint32 setIndex + uint64 guid — equipment set was successfully saved
-    dispatchTable_[Opcode::SMSG_EQUIPMENT_SET_SAVED] = [this](network::Packet& packet) {
-        // uint32 setIndex + uint64 guid — equipment set was successfully saved
-        std::string setName;
-        if (packet.hasRemaining(12)) {
-            uint32_t setIndex = packet.readUInt32();
-            uint64_t setGuid  = packet.readUInt64();
-            // Update the local set's GUID so subsequent "Update" calls
-            // use the server-assigned GUID instead of 0 (which would
-            // create a duplicate instead of updating).
-            bool found = false;
-            for (auto& es : equipmentSets_) {
-                if (es.setGuid == setGuid || es.setId == setIndex) {
-                    es.setGuid = setGuid;
-                    setName = es.name;
-                    found = true;
-                    break;
-                }
-            }
-            // Also update public-facing info
-            for (auto& info : equipmentSetInfo_) {
-                if (info.setGuid == setGuid || info.setId == setIndex) {
-                    info.setGuid = setGuid;
-                    break;
-                }
-            }
-            // If the set doesn't exist locally yet (new save), add a
-            // placeholder entry so it shows up in the UI immediately.
-            if (!found && setGuid != 0) {
-                EquipmentSet newEs;
-                newEs.setGuid = setGuid;
-                newEs.setId   = setIndex;
-                newEs.name    = pendingSaveSetName_;
-                newEs.iconName = pendingSaveSetIcon_;
-                for (int s = 0; s < 19; ++s)
-                    newEs.itemGuids[s] = getEquipSlotGuid(s);
-                equipmentSets_.push_back(std::move(newEs));
-                EquipmentSetInfo newInfo;
-                newInfo.setGuid = setGuid;
-                newInfo.setId   = setIndex;
-                newInfo.name    = pendingSaveSetName_;
-                newInfo.iconName = pendingSaveSetIcon_;
-                equipmentSetInfo_.push_back(std::move(newInfo));
-                setName = pendingSaveSetName_;
-            }
-            pendingSaveSetName_.clear();
-            pendingSaveSetIcon_.clear();
-            LOG_INFO("SMSG_EQUIPMENT_SET_SAVED: index=", setIndex,
-                     " guid=", setGuid, " name=", setName);
-        }
-        addSystemChatMessage(setName.empty()
-            ? std::string("Equipment set saved.")
-            : "Equipment set \"" + setName + "\" saved.");
-    };
-    // WotLK: packed_guid victim + packed_guid caster + uint32 spellId + uint32 count + effects
-    // TBC: full uint64 victim + uint64 caster + uint32 spellId + uint32 count + effects
-    // Classic/Vanilla: packed_guid (same as WotLK)
-    dispatchTable_[Opcode::SMSG_PERIODICAURALOG] = [this](network::Packet& packet) {
-        // WotLK: packed_guid victim + packed_guid caster + uint32 spellId + uint32 count + effects
-        // TBC: full uint64 victim + uint64 caster + uint32 spellId + uint32 count + effects
-        // Classic/Vanilla: packed_guid (same as WotLK)
-        const bool periodicTbc = isActiveExpansion("tbc");
-        const size_t guidMinSz = periodicTbc ? 8u : 2u;
-        if (!packet.hasRemaining(guidMinSz)) return;
-        uint64_t victimGuid = periodicTbc
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (!packet.hasRemaining(guidMinSz)) return;
-        uint64_t casterGuid = periodicTbc
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (!packet.hasRemaining(8)) return;
-        uint32_t spellId = packet.readUInt32();
-        uint32_t count   = packet.readUInt32();
-        bool isPlayerVictim = (victimGuid == playerGuid);
-        bool isPlayerCaster = (casterGuid == playerGuid);
-        if (!isPlayerVictim && !isPlayerCaster) {
-            packet.skipAll();
-            return;
-        }
-        for (uint32_t i = 0; i < count && packet.hasRemaining(1); ++i) {
-            uint8_t auraType = packet.readUInt8();
-            if (auraType == 3 || auraType == 89) {
-                // Classic/TBC: damage(4)+school(4)+absorbed(4)+resisted(4)  = 16 bytes
-                // WotLK 3.3.5a: damage(4)+overkill(4)+school(4)+absorbed(4)+resisted(4)+isCrit(1) = 21 bytes
-                const bool periodicWotlk = isActiveExpansion("wotlk");
-                const size_t dotSz = periodicWotlk ? 21u : 16u;
-                if (!packet.hasRemaining(dotSz)) break;
-                uint32_t dmg      = packet.readUInt32();
-                if (periodicWotlk) /*uint32_t overkill=*/ packet.readUInt32();
-                /*uint32_t school=*/ packet.readUInt32();
-                uint32_t abs      = packet.readUInt32();
-                uint32_t res      = packet.readUInt32();
-                bool dotCrit = false;
-                if (periodicWotlk) dotCrit = (packet.readUInt8() != 0);
-                if (dmg > 0)
-                    addCombatText(dotCrit ? CombatTextEntry::CRIT_DAMAGE : CombatTextEntry::PERIODIC_DAMAGE,
-                                  static_cast<int32_t>(dmg),
-                                  spellId, isPlayerCaster, 0, casterGuid, victimGuid);
-                if (abs > 0)
-                    addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(abs),
-                                  spellId, isPlayerCaster, 0, casterGuid, victimGuid);
-                if (res > 0)
-                    addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(res),
-                                  spellId, isPlayerCaster, 0, casterGuid, victimGuid);
-            } else if (auraType == 8 || auraType == 124 || auraType == 45) {
-                // Classic/TBC: heal(4)+maxHeal(4)+overHeal(4)                  = 12 bytes
-                // WotLK 3.3.5a: heal(4)+maxHeal(4)+overHeal(4)+absorbed(4)+isCrit(1) = 17 bytes
-                const bool healWotlk = isActiveExpansion("wotlk");
-                const size_t hotSz = healWotlk ? 17u : 12u;
-                if (!packet.hasRemaining(hotSz)) break;
-                uint32_t heal    = packet.readUInt32();
-                /*uint32_t max=*/  packet.readUInt32();
-                /*uint32_t over=*/ packet.readUInt32();
-                uint32_t hotAbs  = 0;
-                bool hotCrit = false;
-                if (healWotlk) {
-                    hotAbs = packet.readUInt32();
-                    hotCrit = (packet.readUInt8() != 0);
-                }
-                addCombatText(hotCrit ? CombatTextEntry::CRIT_HEAL : CombatTextEntry::PERIODIC_HEAL,
-                              static_cast<int32_t>(heal),
-                              spellId, isPlayerCaster, 0, casterGuid, victimGuid);
-                if (hotAbs > 0)
-                    addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(hotAbs),
-                                  spellId, isPlayerCaster, 0, casterGuid, victimGuid);
-            } else if (auraType == 46 || auraType == 91) {
-                // OBS_MOD_POWER / PERIODIC_ENERGIZE: miscValue(powerType) + amount
-                // Common in WotLK: Replenishment, Mana Spring Totem, Divine Plea, etc.
-                if (!packet.hasRemaining(8)) break;
-                uint8_t periodicPowerType = static_cast<uint8_t>(packet.readUInt32());
-                uint32_t amount = packet.readUInt32();
-                if ((isPlayerVictim || isPlayerCaster) && amount > 0)
-                    addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(amount),
-                                  spellId, isPlayerCaster, periodicPowerType, casterGuid, victimGuid);
-            } else if (auraType == 98) {
-                // PERIODIC_MANA_LEECH: miscValue(powerType) + amount + float multiplier
-                if (!packet.hasRemaining(12)) break;
-                uint8_t powerType = static_cast<uint8_t>(packet.readUInt32());
-                uint32_t amount = packet.readUInt32();
-                float multiplier = packet.readFloat();
-                if (isPlayerVictim && amount > 0)
-                    addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(amount),
-                                  spellId, false, powerType, casterGuid, victimGuid);
-                if (isPlayerCaster && amount > 0 && multiplier > 0.0f && std::isfinite(multiplier)) {
-                    const uint32_t gainedAmount = static_cast<uint32_t>(
-                        std::lround(static_cast<double>(amount) * static_cast<double>(multiplier)));
-                    if (gainedAmount > 0) {
-                        addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(gainedAmount),
-                                      spellId, true, powerType, casterGuid, casterGuid);
-                    }
-                }
-            } else {
-                // Unknown/untracked aura type — stop parsing this event safely
-                packet.skipAll();
-                break;
-            }
-        }
-        packet.skipAll();
-    };
-    // WotLK: packed_guid victim + packed_guid caster + uint32 spellId + uint8 powerType + int32 amount
-    // TBC: full uint64 victim + uint64 caster + uint32 spellId + uint8 powerType + int32 amount
-    // Classic/Vanilla: packed_guid (same as WotLK)
-    dispatchTable_[Opcode::SMSG_SPELLENERGIZELOG] = [this](network::Packet& packet) {
-        // WotLK: packed_guid victim + packed_guid caster + uint32 spellId + uint8 powerType + int32 amount
-        // TBC: full uint64 victim + uint64 caster + uint32 spellId + uint8 powerType + int32 amount
-        // Classic/Vanilla: packed_guid (same as WotLK)
-        const bool energizeTbc = isActiveExpansion("tbc");
-        auto readEnergizeGuid = [&]() -> uint64_t {
-            if (energizeTbc)
-                return (packet.hasRemaining(8)) ? packet.readUInt64() : 0;
-            return packet.readPackedGuid();
-        };
-        if (!packet.hasRemaining(energizeTbc ? 8u : 1u)             || (!energizeTbc && !packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t victimGuid = readEnergizeGuid();
-        if (!packet.hasRemaining(energizeTbc ? 8u : 1u)             || (!energizeTbc && !packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t casterGuid = readEnergizeGuid();
-        if (!packet.hasRemaining(9)) {
-            packet.skipAll(); return;
-        }
-        uint32_t spellId       = packet.readUInt32();
-        uint8_t  energizePowerType = packet.readUInt8();
-        int32_t  amount        = static_cast<int32_t>(packet.readUInt32());
-        bool isPlayerVictim = (victimGuid == playerGuid);
-        bool isPlayerCaster = (casterGuid == playerGuid);
-        if ((isPlayerVictim || isPlayerCaster) && amount > 0)
-            addCombatText(CombatTextEntry::ENERGIZE, amount, spellId, isPlayerCaster, energizePowerType, casterGuid, victimGuid);
-        packet.skipAll();
-    };
     // uint32 currentZoneLightId + uint32 overrideLightId + uint32 transitionMs
     dispatchTable_[Opcode::SMSG_OVERRIDE_LIGHT] = [this](network::Packet& packet) {
         // uint32 currentZoneLightId + uint32 overrideLightId + uint32 transitionMs
@@ -4908,443 +2593,6 @@ void GameHandler::registerOpcodeHandlers() {
             }
         }
     };
-    // Quest query failed - parse failure reason
-    dispatchTable_[Opcode::SMSG_QUESTGIVER_QUEST_INVALID] = [this](network::Packet& packet) {
-        // Quest query failed - parse failure reason
-        if (packet.hasRemaining(4)) {
-            uint32_t failReason = packet.readUInt32();
-            pendingTurnInRewardRequest_ = false;
-            const char* reasonStr = "Unknown";
-            switch (failReason) {
-                case 0: reasonStr = "Don't have quest"; break;
-                case 1: reasonStr = "Quest level too low"; break;
-                case 4: reasonStr = "Insufficient money"; break;
-                case 5: reasonStr = "Inventory full"; break;
-                case 13: reasonStr = "Already on that quest"; break;
-                case 18: reasonStr = "Already completed quest"; break;
-                case 19: reasonStr = "Can't take any more quests"; break;
-            }
-            LOG_WARNING("Quest invalid: reason=", failReason, " (", reasonStr, ")");
-            if (!pendingQuestAcceptTimeouts_.empty()) {
-                std::vector<uint32_t> pendingQuestIds;
-                pendingQuestIds.reserve(pendingQuestAcceptTimeouts_.size());
-                for (const auto& pending : pendingQuestAcceptTimeouts_) {
-                    pendingQuestIds.push_back(pending.first);
-                }
-                for (uint32_t questId : pendingQuestIds) {
-                    const uint64_t npcGuid = pendingQuestAcceptNpcGuids_.count(questId) != 0
-                        ? pendingQuestAcceptNpcGuids_[questId] : 0;
-                    if (failReason == 13) {
-                        std::string fallbackTitle = "Quest #" + std::to_string(questId);
-                        std::string fallbackObjectives;
-                        if (currentQuestDetails.questId == questId) {
-                            if (!currentQuestDetails.title.empty()) fallbackTitle = currentQuestDetails.title;
-                            fallbackObjectives = currentQuestDetails.objectives;
-                        }
-                        addQuestToLocalLogIfMissing(questId, fallbackTitle, fallbackObjectives);
-                        triggerQuestAcceptResync(questId, npcGuid, "already-on-quest");
-                    } else if (failReason == 18) {
-                        triggerQuestAcceptResync(questId, npcGuid, "already-completed");
-                    }
-                    clearPendingQuestAccept(questId);
-                }
-            }
-            // Only show error to user for real errors (not informational messages)
-            if (failReason != 13 && failReason != 18) {  // Don't spam "already on/completed"
-                addSystemChatMessage(std::string("Quest unavailable: ") + reasonStr);
-            }
-        }
-    };
-    // Mark quest as complete in local log
-    dispatchTable_[Opcode::SMSG_QUESTGIVER_QUEST_COMPLETE] = [this](network::Packet& packet) {
-        // Mark quest as complete in local log
-        if (packet.hasRemaining(4)) {
-            uint32_t questId = packet.readUInt32();
-            LOG_INFO("Quest completed: questId=", questId);
-            if (pendingTurnInQuestId_ == questId) {
-                pendingTurnInQuestId_ = 0;
-                pendingTurnInNpcGuid_ = 0;
-                pendingTurnInRewardRequest_ = false;
-            }
-            for (auto it = questLog_.begin(); it != questLog_.end(); ++it) {
-                if (it->questId == questId) {
-                    // Fire toast callback before erasing
-                    if (questCompleteCallback_) {
-                        questCompleteCallback_(questId, it->title);
-                    }
-                    // Play quest-complete sound
-                    withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playQuestComplete(); });
-                    questLog_.erase(it);
-                    LOG_INFO("  Removed quest ", questId, " from quest log");
-                                            fireAddonEvent("QUEST_TURNED_IN", {std::to_string(questId)});
-                    break;
-                }
-            }
-        }
-            fireAddonEvent("QUEST_LOG_UPDATE", {});
-            fireAddonEvent("UNIT_QUEST_LOG_CHANGED", {"player"});
-        // Re-query all nearby quest giver NPCs so markers refresh
-        if (socket) {
-            for (const auto& [guid, entity] : entityManager.getEntities()) {
-                if (entity->getType() != ObjectType::UNIT) continue;
-                auto unit = std::static_pointer_cast<Unit>(entity);
-                if (unit->getNpcFlags() & 0x02) {
-                    network::Packet qsPkt(wireOpcode(Opcode::CMSG_QUESTGIVER_STATUS_QUERY));
-                    qsPkt.writeUInt64(guid);
-                    socket->send(qsPkt);
-                }
-            }
-        }
-    };
-    // Quest kill count update
-    // Compatibility: some classic-family opcode tables swap ADD_KILL and COMPLETE.
-    dispatchTable_[Opcode::SMSG_QUESTUPDATE_ADD_KILL] = [this](network::Packet& packet) {
-        // Quest kill count update
-        // Compatibility: some classic-family opcode tables swap ADD_KILL and COMPLETE.
-        size_t rem = packet.getRemainingSize();
-        if (rem >= 12) {
-            uint32_t questId = packet.readUInt32();
-            clearPendingQuestAccept(questId);
-            uint32_t entry = packet.readUInt32();   // Creature entry
-            uint32_t count = packet.readUInt32();   // Current kills
-            uint32_t reqCount = 0;
-            if (packet.hasRemaining(4)) {
-                reqCount = packet.readUInt32();     // Required kills (if present)
-            }
-
-            LOG_INFO("Quest kill update: questId=", questId, " entry=", entry,
-                     " count=", count, "/", reqCount);
-
-            // Update quest log with kill count
-            for (auto& quest : questLog_) {
-                if (quest.questId == questId) {
-                    // Preserve prior required count if this packet variant omits it.
-                    if (reqCount == 0) {
-                        auto it = quest.killCounts.find(entry);
-                        if (it != quest.killCounts.end()) reqCount = it->second.second;
-                    }
-                    // Fall back to killObjectives (parsed from SMSG_QUEST_QUERY_RESPONSE).
-                    // Note: npcOrGoId < 0 means game object; server always sends entry as uint32
-                    // in QUESTUPDATE_ADD_KILL regardless of type, so match by absolute value.
-                    if (reqCount == 0) {
-                        for (const auto& obj : quest.killObjectives) {
-                            if (obj.npcOrGoId == 0 || obj.required == 0) continue;
-                            uint32_t objEntry = static_cast<uint32_t>(
-                                obj.npcOrGoId > 0 ? obj.npcOrGoId : -obj.npcOrGoId);
-                            if (objEntry == entry) {
-                                reqCount = obj.required;
-                                break;
-                            }
-                        }
-                    }
-                    if (reqCount == 0) reqCount = count;  // last-resort: avoid 0/0 display
-                    quest.killCounts[entry] = {count, reqCount};
-
-                    std::string creatureName = getCachedCreatureName(entry);
-                    std::string progressMsg = quest.title + ": ";
-                    if (!creatureName.empty()) {
-                        progressMsg += creatureName + " ";
-                    }
-                    progressMsg += std::to_string(count) + "/" + std::to_string(reqCount);
-                    addSystemChatMessage(progressMsg);
-
-                    if (questProgressCallback_) {
-                        questProgressCallback_(quest.title, creatureName, count, reqCount);
-                    }
-                        fireAddonEvent("QUEST_WATCH_UPDATE", {std::to_string(questId)});
-                        fireAddonEvent("QUEST_LOG_UPDATE", {});
-                        fireAddonEvent("UNIT_QUEST_LOG_CHANGED", {"player"});
-
-                    LOG_INFO("Updated kill count for quest ", questId, ": ",
-                             count, "/", reqCount);
-                    break;
-                }
-            }
-        } else if (rem >= 4) {
-            // Swapped mapping fallback: treat as QUESTUPDATE_COMPLETE packet.
-            uint32_t questId = packet.readUInt32();
-            clearPendingQuestAccept(questId);
-            LOG_INFO("Quest objectives completed (compat via ADD_KILL): questId=", questId);
-            for (auto& quest : questLog_) {
-                if (quest.questId == questId) {
-                    quest.complete = true;
-                    addSystemChatMessage("Quest Complete: " + quest.title);
-                    break;
-                }
-            }
-        }
-    };
-    // Quest item count update: itemId + count
-    dispatchTable_[Opcode::SMSG_QUESTUPDATE_ADD_ITEM] = [this](network::Packet& packet) {
-        // Quest item count update: itemId + count
-        if (packet.hasRemaining(8)) {
-            uint32_t itemId = packet.readUInt32();
-            uint32_t count = packet.readUInt32();
-            queryItemInfo(itemId, 0);
-
-            std::string itemLabel = "item #" + std::to_string(itemId);
-            uint32_t questItemQuality = 1;
-            if (const ItemQueryResponseData* info = getItemInfo(itemId)) {
-                if (!info->name.empty()) itemLabel = info->name;
-                questItemQuality = info->quality;
-            }
-
-            bool updatedAny = false;
-            for (auto& quest : questLog_) {
-                if (quest.complete) continue;
-                bool tracksItem =
-                    quest.requiredItemCounts.count(itemId) > 0 ||
-                    quest.itemCounts.count(itemId) > 0;
-                // Also check itemObjectives parsed from SMSG_QUEST_QUERY_RESPONSE in case
-                // requiredItemCounts hasn't been populated yet (race during quest accept).
-                if (!tracksItem) {
-                    for (const auto& obj : quest.itemObjectives) {
-                        if (obj.itemId == itemId && obj.required > 0) {
-                            quest.requiredItemCounts.emplace(itemId, obj.required);
-                            tracksItem = true;
-                            break;
-                        }
-                    }
-                }
-                if (!tracksItem) continue;
-                quest.itemCounts[itemId] = count;
-                updatedAny = true;
-            }
-            addSystemChatMessage("Quest item: " + buildItemLink(itemId, questItemQuality, itemLabel) + " (" + std::to_string(count) + ")");
-
-            if (questProgressCallback_ && updatedAny) {
-                // Find the quest that tracks this item to get title and required count
-                for (const auto& quest : questLog_) {
-                    if (quest.complete) continue;
-                    if (quest.itemCounts.count(itemId) == 0) continue;
-                    uint32_t required = 0;
-                    auto rIt = quest.requiredItemCounts.find(itemId);
-                    if (rIt != quest.requiredItemCounts.end()) required = rIt->second;
-                    if (required == 0) {
-                        for (const auto& obj : quest.itemObjectives) {
-                            if (obj.itemId == itemId) { required = obj.required; break; }
-                        }
-                    }
-                    if (required == 0) required = count;
-                    questProgressCallback_(quest.title, itemLabel, count, required);
-                    break;
-                }
-            }
-
-            if (updatedAny) {
-                fireAddonEvent("QUEST_WATCH_UPDATE", {});
-                fireAddonEvent("QUEST_LOG_UPDATE", {});
-                fireAddonEvent("UNIT_QUEST_LOG_CHANGED", {"player"});
-            }
-            LOG_INFO("Quest item update: itemId=", itemId, " count=", count,
-                     " trackedQuestsUpdated=", updatedAny);
-        }
-    };
-    // Quest objectives completed - mark as ready to turn in.
-    // Compatibility: some classic-family opcode tables swap COMPLETE and ADD_KILL.
-    dispatchTable_[Opcode::SMSG_QUESTUPDATE_COMPLETE] = [this](network::Packet& packet) {
-        // Quest objectives completed - mark as ready to turn in.
-        // Compatibility: some classic-family opcode tables swap COMPLETE and ADD_KILL.
-        size_t rem = packet.getRemainingSize();
-        if (rem >= 12) {
-            uint32_t questId = packet.readUInt32();
-            clearPendingQuestAccept(questId);
-            uint32_t entry = packet.readUInt32();
-            uint32_t count = packet.readUInt32();
-            uint32_t reqCount = 0;
-            if (packet.hasRemaining(4)) reqCount = packet.readUInt32();
-            if (reqCount == 0) reqCount = count;
-            LOG_INFO("Quest kill update (compat via COMPLETE): questId=", questId,
-                     " entry=", entry, " count=", count, "/", reqCount);
-            for (auto& quest : questLog_) {
-                if (quest.questId == questId) {
-                    quest.killCounts[entry] = {count, reqCount};
-                    addSystemChatMessage(quest.title + ": " + std::to_string(count) +
-                                         "/" + std::to_string(reqCount));
-                    break;
-                }
-            }
-        } else if (rem >= 4) {
-            uint32_t questId = packet.readUInt32();
-            clearPendingQuestAccept(questId);
-            LOG_INFO("Quest objectives completed: questId=", questId);
-
-            for (auto& quest : questLog_) {
-                if (quest.questId == questId) {
-                    quest.complete = true;
-                    addSystemChatMessage("Quest Complete: " + quest.title);
-                    LOG_INFO("Marked quest ", questId, " as complete");
-                    break;
-                }
-            }
-        }
-    };
-    // This opcode is aliased to SMSG_SET_REST_START in the opcode table
-    // because both share opcode 0x21E in WotLK 3.3.5a.
-    // In WotLK: payload = uint32 areaId (entering rest) or 0 (leaving rest).
-    // In Classic/TBC: payload = uint32 questId (force-remove a quest).
-    dispatchTable_[Opcode::SMSG_QUEST_FORCE_REMOVE] = [this](network::Packet& packet) {
-        // This opcode is aliased to SMSG_SET_REST_START in the opcode table
-        // because both share opcode 0x21E in WotLK 3.3.5a.
-        // In WotLK: payload = uint32 areaId (entering rest) or 0 (leaving rest).
-        // In Classic/TBC: payload = uint32 questId (force-remove a quest).
-        if (!packet.hasRemaining(4)) {
-            LOG_WARNING("SMSG_QUEST_FORCE_REMOVE/SET_REST_START too short");
-            return;
-        }
-        uint32_t value = packet.readUInt32();
-
-        // WotLK uses this opcode as SMSG_SET_REST_START: non-zero = entering
-        // a rest area (inn/city), zero = leaving. Classic/TBC use it for quest removal.
-        if (!isClassicLikeExpansion() && !isActiveExpansion("tbc")) {
-            // WotLK: treat as SET_REST_START
-            bool nowResting = (value != 0);
-            if (nowResting != isResting_) {
-                isResting_ = nowResting;
-                addSystemChatMessage(isResting_ ? "You are now resting."
-                                                : "You are no longer resting.");
-                                    fireAddonEvent("PLAYER_UPDATE_RESTING", {});
-            }
-            return;
-        }
-
-        // Classic/TBC: treat as QUEST_FORCE_REMOVE (uint32 questId)
-        uint32_t questId = value;
-        clearPendingQuestAccept(questId);
-        pendingQuestQueryIds_.erase(questId);
-        if (questId == 0) {
-            // Some servers emit a zero-id variant during world bootstrap.
-            // Treat as no-op to avoid false "Quest removed" spam.
-            return;
-        }
-
-        bool removed = false;
-        std::string removedTitle;
-        for (auto it = questLog_.begin(); it != questLog_.end(); ++it) {
-            if (it->questId == questId) {
-                removedTitle = it->title;
-                questLog_.erase(it);
-                removed = true;
-                break;
-            }
-        }
-        if (currentQuestDetails.questId == questId) {
-            questDetailsOpen = false;
-            questDetailsOpenTime = std::chrono::steady_clock::time_point{};
-            currentQuestDetails = QuestDetailsData{};
-            removed = true;
-        }
-        if (currentQuestRequestItems_.questId == questId) {
-            questRequestItemsOpen_ = false;
-            currentQuestRequestItems_ = QuestRequestItemsData{};
-            removed = true;
-        }
-        if (currentQuestOfferReward_.questId == questId) {
-            questOfferRewardOpen_ = false;
-            currentQuestOfferReward_ = QuestOfferRewardData{};
-            removed = true;
-        }
-        if (removed) {
-            if (!removedTitle.empty()) {
-                addSystemChatMessage("Quest removed: " + removedTitle);
-            } else {
-                addSystemChatMessage("Quest removed (ID " + std::to_string(questId) + ").");
-            }
-                fireAddonEvent("QUEST_LOG_UPDATE", {});
-                fireAddonEvent("UNIT_QUEST_LOG_CHANGED", {"player"});
-                fireAddonEvent("QUEST_REMOVED", {std::to_string(questId)});
-        }
-    };
-    dispatchTable_[Opcode::SMSG_QUEST_QUERY_RESPONSE] = [this](network::Packet& packet) {
-        if (packet.getSize() < 8) {
-            LOG_WARNING("SMSG_QUEST_QUERY_RESPONSE: packet too small (", packet.getSize(), " bytes)");
-            return;
-        }
-
-        uint32_t questId = packet.readUInt32();
-        packet.readUInt32(); // questMethod
-
-        // Classic/Turtle = stride 3, TBC = stride 4 — all use 40 fixed fields + 4 strings.
-        // WotLK = stride 5, uses 55 fixed fields + 5 strings.
-        const bool isClassicLayout = packetParsers_ && packetParsers_->questLogStride() <= 4;
-        const QuestQueryTextCandidate parsed = pickBestQuestQueryTexts(packet.getData(), isClassicLayout);
-        const QuestQueryObjectives objs = extractQuestQueryObjectives(packet.getData(), isClassicLayout);
-        const QuestQueryRewards rwds = tryParseQuestRewards(packet.getData(), isClassicLayout);
-
-        for (auto& q : questLog_) {
-            if (q.questId != questId) continue;
-
-            const int existingScore = scoreQuestTitle(q.title);
-            const bool parsedStrong = isStrongQuestTitle(parsed.title);
-            const bool parsedLongEnough = parsed.title.size() >= 6;
-            const bool notShorterThanExisting =
-                isPlaceholderQuestTitle(q.title) || q.title.empty() || parsed.title.size() + 2 >= q.title.size();
-            const bool shouldReplaceTitle =
-                parsed.score > -1000 &&
-                parsedStrong &&
-                parsedLongEnough &&
-                notShorterThanExisting &&
-                (isPlaceholderQuestTitle(q.title) || q.title.empty() || parsed.score >= existingScore + 12);
-
-            if (shouldReplaceTitle && !parsed.title.empty()) {
-                q.title = parsed.title;
-            }
-            if (!parsed.objectives.empty() &&
-                (q.objectives.empty() || q.objectives.size() < 16)) {
-                q.objectives = parsed.objectives;
-            }
-
-            // Store structured kill/item objectives for later kill-count restoration.
-            if (objs.valid) {
-                for (int i = 0; i < 4; ++i) {
-                    q.killObjectives[i].npcOrGoId = objs.kills[i].npcOrGoId;
-                    q.killObjectives[i].required  = objs.kills[i].required;
-                }
-                for (int i = 0; i < 6; ++i) {
-                    q.itemObjectives[i].itemId   = objs.items[i].itemId;
-                    q.itemObjectives[i].required = objs.items[i].required;
-                }
-                // Now that we have the objective creature IDs, apply any packed kill
-                // counts from the player update fields that arrived at login.
-                applyPackedKillCountsFromFields(q);
-                // Pre-fetch creature/GO names and item info so objective display is
-                // populated by the time the player opens the quest log.
-                for (int i = 0; i < 4; ++i) {
-                    int32_t id = objs.kills[i].npcOrGoId;
-                    if (id == 0 || objs.kills[i].required == 0) continue;
-                    if (id > 0) queryCreatureInfo(static_cast<uint32_t>(id), 0);
-                    else        queryGameObjectInfo(static_cast<uint32_t>(-id), 0);
-                }
-                for (int i = 0; i < 6; ++i) {
-                    if (objs.items[i].itemId != 0 && objs.items[i].required != 0)
-                        queryItemInfo(objs.items[i].itemId, 0);
-                }
-                LOG_DEBUG("Quest ", questId, " objectives parsed: kills=[",
-                          objs.kills[0].npcOrGoId, "/", objs.kills[0].required, ", ",
-                          objs.kills[1].npcOrGoId, "/", objs.kills[1].required, ", ",
-                          objs.kills[2].npcOrGoId, "/", objs.kills[2].required, ", ",
-                          objs.kills[3].npcOrGoId, "/", objs.kills[3].required, "]");
-            }
-
-            // Store reward data and pre-fetch item info for icons.
-            if (rwds.valid) {
-                q.rewardMoney = rwds.rewardMoney;
-                for (int i = 0; i < 4; ++i) {
-                    q.rewardItems[i].itemId = rwds.itemId[i];
-                    q.rewardItems[i].count  = (rwds.itemId[i] != 0) ? rwds.itemCount[i] : 0;
-                    if (rwds.itemId[i] != 0) queryItemInfo(rwds.itemId[i], 0);
-                }
-                for (int i = 0; i < 6; ++i) {
-                    q.rewardChoiceItems[i].itemId = rwds.choiceItemId[i];
-                    q.rewardChoiceItems[i].count  = (rwds.choiceItemId[i] != 0) ? rwds.choiceItemCount[i] : 0;
-                    if (rwds.choiceItemId[i] != 0) queryItemInfo(rwds.choiceItemId[i], 0);
-                }
-            }
-            break;
-        }
-
-        pendingQuestQueryIds_.erase(questId);
-    };
     // WotLK: uint64 playerGuid + uint8 teamCount + per-team fields
     dispatchTable_[Opcode::MSG_INSPECT_ARENA_TEAMS] = [this](network::Packet& packet) {
         // WotLK: uint64 playerGuid + uint8 teamCount + per-team fields
@@ -5355,22 +2603,25 @@ void GameHandler::registerOpcodeHandlers() {
         uint64_t inspGuid  = packet.readUInt64();
         uint8_t  teamCount = packet.readUInt8();
         if (teamCount > 3) teamCount = 3; // 2v2, 3v3, 5v5
-        if (inspGuid == inspectResult_.guid || inspectResult_.guid == 0) {
-            inspectResult_.guid = inspGuid;
-            inspectResult_.arenaTeams.clear();
-            for (uint8_t t = 0; t < teamCount; ++t) {
-                if (!packet.hasRemaining(21)) break;
-                InspectArenaTeam team;
-                team.teamId         = packet.readUInt32();
-                team.type           = packet.readUInt8();
-                team.weekGames      = packet.readUInt32();
-                team.weekWins       = packet.readUInt32();
-                team.seasonGames    = packet.readUInt32();
-                team.seasonWins     = packet.readUInt32();
-                team.name           = packet.readString();
-                if (!packet.hasRemaining(4)) break;
-                team.personalRating = packet.readUInt32();
-                inspectResult_.arenaTeams.push_back(std::move(team));
+        if (socialHandler_) {
+            auto& ir = socialHandler_->mutableInspectResult();
+            if (inspGuid == ir.guid || ir.guid == 0) {
+                ir.guid = inspGuid;
+                ir.arenaTeams.clear();
+                for (uint8_t t = 0; t < teamCount; ++t) {
+                    if (!packet.hasRemaining(21)) break;
+                    SocialHandler::InspectArenaTeam team;
+                    team.teamId         = packet.readUInt32();
+                    team.type           = packet.readUInt8();
+                    team.weekGames      = packet.readUInt32();
+                    team.weekWins       = packet.readUInt32();
+                    team.seasonGames    = packet.readUInt32();
+                    team.seasonWins     = packet.readUInt32();
+                    team.name           = packet.readString();
+                    if (!packet.hasRemaining(4)) break;
+                    team.personalRating = packet.readUInt32();
+                    ir.arenaTeams.push_back(std::move(team));
+                }
             }
         }
         LOG_DEBUG("MSG_INSPECT_ARENA_TEAMS: guid=0x", std::hex, inspGuid, std::dec,
@@ -5378,88 +2629,10 @@ void GameHandler::registerOpcodeHandlers() {
     };
     // auctionId(u32) + action(u32) + error(u32) + itemEntry(u32) + randomPropertyId(u32) + ...
     // action: 0=sold/won, 1=expired, 2=bid placed on your auction
-    dispatchTable_[Opcode::SMSG_AUCTION_OWNER_NOTIFICATION] = [this](network::Packet& packet) {
-        // auctionId(u32) + action(u32) + error(u32) + itemEntry(u32) + randomPropertyId(u32) + ...
-        // action: 0=sold/won, 1=expired, 2=bid placed on your auction
-        if (packet.hasRemaining(16)) {
-            /*uint32_t auctionId =*/ packet.readUInt32();
-            uint32_t action    = packet.readUInt32();
-            /*uint32_t error   =*/ packet.readUInt32();
-            uint32_t itemEntry = packet.readUInt32();
-            int32_t ownerRandProp = 0;
-            if (packet.hasRemaining(4))
-                ownerRandProp = static_cast<int32_t>(packet.readUInt32());
-            ensureItemInfo(itemEntry);
-            auto* info = getItemInfo(itemEntry);
-            std::string rawName = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
-            if (ownerRandProp != 0) {
-                std::string suffix = getRandomPropertyName(ownerRandProp);
-                if (!suffix.empty()) rawName += " " + suffix;
-            }
-            uint32_t aucQuality = info ? info->quality : 1u;
-            std::string itemLink = buildItemLink(itemEntry, aucQuality, rawName);
-            if (action == 1)
-                addSystemChatMessage("Your auction of " + itemLink + " has expired.");
-            else if (action == 2)
-                addSystemChatMessage("A bid has been placed on your auction of " + itemLink + ".");
-            else
-                addSystemChatMessage("Your auction of " + itemLink + " has sold!");
-        }
-        packet.skipAll();
-    };
     // auctionHouseId(u32) + auctionId(u32) + bidderGuid(u64) + bidAmount(u32) + outbidAmount(u32) + itemEntry(u32) + randomPropertyId(u32)
-    dispatchTable_[Opcode::SMSG_AUCTION_BIDDER_NOTIFICATION] = [this](network::Packet& packet) {
-        // auctionHouseId(u32) + auctionId(u32) + bidderGuid(u64) + bidAmount(u32) + outbidAmount(u32) + itemEntry(u32) + randomPropertyId(u32)
-        if (packet.hasRemaining(8)) {
-            /*uint32_t auctionId =*/ packet.readUInt32();
-            uint32_t itemEntry = packet.readUInt32();
-            int32_t bidRandProp = 0;
-            // Try to read randomPropertyId if enough data remains
-            if (packet.hasRemaining(4))
-                bidRandProp = static_cast<int32_t>(packet.readUInt32());
-            ensureItemInfo(itemEntry);
-            auto* info = getItemInfo(itemEntry);
-            std::string rawName2 = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
-            if (bidRandProp != 0) {
-                std::string suffix = getRandomPropertyName(bidRandProp);
-                if (!suffix.empty()) rawName2 += " " + suffix;
-            }
-            uint32_t bidQuality = info ? info->quality : 1u;
-            std::string bidLink = buildItemLink(itemEntry, bidQuality, rawName2);
-            addSystemChatMessage("You have been outbid on " + bidLink + ".");
-        }
-        packet.skipAll();
-    };
     // uint32 auctionId + uint32 itemEntry + uint32 itemRandom — auction expired/cancelled
-    dispatchTable_[Opcode::SMSG_AUCTION_REMOVED_NOTIFICATION] = [this](network::Packet& packet) {
-        // uint32 auctionId + uint32 itemEntry + uint32 itemRandom — auction expired/cancelled
-        if (packet.hasRemaining(12)) {
-            /*uint32_t auctionId =*/ packet.readUInt32();
-            uint32_t itemEntry = packet.readUInt32();
-            int32_t itemRandom = static_cast<int32_t>(packet.readUInt32());
-            ensureItemInfo(itemEntry);
-            auto* info = getItemInfo(itemEntry);
-            std::string rawName3 = info && !info->name.empty() ? info->name : ("Item #" + std::to_string(itemEntry));
-            if (itemRandom != 0) {
-                std::string suffix = getRandomPropertyName(itemRandom);
-                if (!suffix.empty()) rawName3 += " " + suffix;
-            }
-            uint32_t remQuality = info ? info->quality : 1u;
-            std::string remLink = buildItemLink(itemEntry, remQuality, rawName3);
-            addSystemChatMessage("Your auction of " + remLink + " has expired.");
-        }
-        packet.skipAll();
-    };
     // uint64 containerGuid — tells client to open this container
     // The actual items come via update packets; we just log this.
-    dispatchTable_[Opcode::SMSG_OPEN_CONTAINER] = [this](network::Packet& packet) {
-        // uint64 containerGuid — tells client to open this container
-        // The actual items come via update packets; we just log this.
-        if (packet.hasRemaining(8)) {
-            uint64_t containerGuid = packet.readUInt64();
-            LOG_DEBUG("SMSG_OPEN_CONTAINER: guid=0x", std::hex, containerGuid, std::dec);
-        }
-    };
     // PackedGuid (player guid) + uint32 vehicleId
     // vehicleId == 0 means the player left the vehicle
     dispatchTable_[Opcode::SMSG_PLAYER_VEHICLE_DATA] = [this](network::Packet& packet) {
@@ -5483,104 +2656,7 @@ void GameHandler::registerOpcodeHandlers() {
             taxiNpcHasRoutes_[npcGuid] = (status != 0);
         }
     };
-    // TBC 2.4.3 aura tracking: replaces SMSG_AURA_UPDATE which doesn't exist in TBC.
-    // Format: uint64 targetGuid + uint8 count + N×{uint8 slot, uint32 spellId,
-    //         uint8 effectIndex, uint8 flags, uint32 durationMs, uint32 maxDurationMs}
-    dispatchTable_[Opcode::SMSG_INIT_EXTRA_AURA_INFO_OBSOLETE] = [this](network::Packet& packet) {
-        // TBC 2.4.3 aura tracking: replaces SMSG_AURA_UPDATE which doesn't exist in TBC.
-        // Format: uint64 targetGuid + uint8 count + N×{uint8 slot, uint32 spellId,
-        //         uint8 effectIndex, uint8 flags, uint32 durationMs, uint32 maxDurationMs}
-        const bool isInit = true;
-        auto remaining = [&]() { return packet.getRemainingSize(); };
-        if (remaining() < 9) { packet.skipAll(); return; }
-        uint64_t auraTargetGuid = packet.readUInt64();
-        uint8_t count = packet.readUInt8();
-
-        std::vector<AuraSlot>* auraList = nullptr;
-        if (auraTargetGuid == playerGuid)       auraList = &playerAuras;
-        else if (auraTargetGuid == targetGuid)  auraList = &targetAuras;
-        else if (auraTargetGuid != 0)           auraList = &unitAurasCache_[auraTargetGuid];
-
-        if (auraList && isInit) auraList->clear();
-
-        uint64_t nowMs = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count());
-
-        for (uint8_t i = 0; i < count && remaining() >= 15; i++) {
-            uint8_t  slot        = packet.readUInt8();   // 1 byte
-            uint32_t spellId     = packet.readUInt32();  // 4 bytes
-            (void)               packet.readUInt8();     // effectIndex: 1 byte (unused for slot display)
-            uint8_t  flags       = packet.readUInt8();   // 1 byte
-            uint32_t durationMs  = packet.readUInt32();  // 4 bytes
-            uint32_t maxDurMs    = packet.readUInt32();  // 4 bytes — total 15 bytes per entry
-
-            if (auraList) {
-                while (auraList->size() <= slot) auraList->push_back(AuraSlot{});
-                AuraSlot& a = (*auraList)[slot];
-                a.spellId      = spellId;
-                // TBC uses same flag convention as Classic: 0x02=harmful, 0x04=beneficial.
-                // Normalize to WotLK SMSG_AURA_UPDATE convention: 0x80=debuff, 0=buff.
-                a.flags        = (flags & 0x02) ? 0x80u : 0u;
-                a.durationMs   = (durationMs == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(durationMs);
-                a.maxDurationMs= (maxDurMs   == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(maxDurMs);
-                a.receivedAtMs = nowMs;
-            }
-        }
-        packet.skipAll();
-    };
-    // TBC 2.4.3 aura tracking: replaces SMSG_AURA_UPDATE which doesn't exist in TBC.
-    // Format: uint64 targetGuid + uint8 count + N×{uint8 slot, uint32 spellId,
-    //         uint8 effectIndex, uint8 flags, uint32 durationMs, uint32 maxDurationMs}
-    dispatchTable_[Opcode::SMSG_SET_EXTRA_AURA_INFO_OBSOLETE] = [this](network::Packet& packet) {
-        // TBC 2.4.3 aura tracking: replaces SMSG_AURA_UPDATE which doesn't exist in TBC.
-        // Format: uint64 targetGuid + uint8 count + N×{uint8 slot, uint32 spellId,
-        //         uint8 effectIndex, uint8 flags, uint32 durationMs, uint32 maxDurationMs}
-        const bool isInit = false;
-        auto remaining = [&]() { return packet.getRemainingSize(); };
-        if (remaining() < 9) { packet.skipAll(); return; }
-        uint64_t auraTargetGuid = packet.readUInt64();
-        uint8_t count = packet.readUInt8();
-
-        std::vector<AuraSlot>* auraList = nullptr;
-        if (auraTargetGuid == playerGuid)       auraList = &playerAuras;
-        else if (auraTargetGuid == targetGuid)  auraList = &targetAuras;
-        else if (auraTargetGuid != 0)           auraList = &unitAurasCache_[auraTargetGuid];
-
-        if (auraList && isInit) auraList->clear();
-
-        uint64_t nowMs = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count());
-
-        for (uint8_t i = 0; i < count && remaining() >= 15; i++) {
-            uint8_t  slot        = packet.readUInt8();   // 1 byte
-            uint32_t spellId     = packet.readUInt32();  // 4 bytes
-            (void)               packet.readUInt8();     // effectIndex: 1 byte (unused for slot display)
-            uint8_t  flags       = packet.readUInt8();   // 1 byte
-            uint32_t durationMs  = packet.readUInt32();  // 4 bytes
-            uint32_t maxDurMs    = packet.readUInt32();  // 4 bytes — total 15 bytes per entry
-
-            if (auraList) {
-                while (auraList->size() <= slot) auraList->push_back(AuraSlot{});
-                AuraSlot& a = (*auraList)[slot];
-                a.spellId      = spellId;
-                // TBC uses same flag convention as Classic: 0x02=harmful, 0x04=beneficial.
-                // Normalize to WotLK SMSG_AURA_UPDATE convention: 0x80=debuff, 0=buff.
-                a.flags        = (flags & 0x02) ? 0x80u : 0u;
-                a.durationMs   = (durationMs == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(durationMs);
-                a.maxDurationMs= (maxDurMs   == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(maxDurMs);
-                a.receivedAtMs = nowMs;
-            }
-        }
-        packet.skipAll();
-    };
-    dispatchTable_[Opcode::SMSG_GUILD_DECLINE] = [this](network::Packet& packet) {
-        if (packet.hasData()) {
-            std::string name = packet.readString();
-            addSystemChatMessage(name + " declined your guild invitation.");
-        }
-    };
+    // SMSG_GUILD_DECLINE — moved to SocialHandler::registerOpcodes
     // Clear cached talent data so the talent screen reflects the reset.
     dispatchTable_[Opcode::SMSG_TALENTS_INVOLUNTARILY_RESET] = [this](network::Packet& packet) {
         // Clear cached talent data so the talent screen reflects the reset.
@@ -5654,13 +2730,6 @@ void GameHandler::registerOpcodeHandlers() {
             network::Packet ack(wire);
             socket->send(ack);
             LOG_DEBUG("SMSG_TRIGGER_MOVIE: skipped, sent CMSG_COMPLETE_MOVIE");
-        }
-    };
-    registerHandler(Opcode::SMSG_EQUIPMENT_SET_LIST, &GameHandler::handleEquipmentSetList);
-    dispatchTable_[Opcode::SMSG_EQUIPMENT_SET_USE_RESULT] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(1)) {
-            uint8_t result = packet.readUInt8();
-            if (result != 0) { addUIError("Failed to equip item set."); addSystemChatMessage("Failed to equip item set."); }
         }
     };
     // Server-side LFG invite timed out (no response within time limit)
@@ -5913,553 +2982,7 @@ void GameHandler::registerOpcodeHandlers() {
             }
         }
     };
-    // Classic: packed_guid victim + packed_guid caster + spellId(4) + damage(4) + schoolMask(4)
-    // TBC:     uint64 victim + uint64 caster + spellId(4) + damage(4) + schoolMask(4)
-    // WotLK:   packed_guid victim + packed_guid caster + spellId(4) + damage(4) + absorbed(4) + schoolMask(4)
-    dispatchTable_[Opcode::SMSG_SPELLDAMAGESHIELD] = [this](network::Packet& packet) {
-        // Classic: packed_guid victim + packed_guid caster + spellId(4) + damage(4) + schoolMask(4)
-        // TBC:     uint64 victim + uint64 caster + spellId(4) + damage(4) + schoolMask(4)
-        // WotLK:   packed_guid victim + packed_guid caster + spellId(4) + damage(4) + absorbed(4) + schoolMask(4)
-        const bool shieldTbc = isActiveExpansion("tbc");
-        const bool shieldWotlkLike = !isClassicLikeExpansion() && !shieldTbc;
-        const auto shieldRem = [&]() { return packet.getRemainingSize(); };
-        const size_t shieldMinSz = shieldTbc ? 24u : 2u;
-        if (!packet.hasRemaining(shieldMinSz)) {
-            packet.skipAll(); return;
-        }
-        if (!shieldTbc && (!packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t victimGuid = shieldTbc
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (!packet.hasRemaining(shieldTbc ? 8u : 1u)             || (!shieldTbc && !packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t casterGuid = shieldTbc
-            ? packet.readUInt64() : packet.readPackedGuid();
-        const size_t shieldTailSize = shieldWotlkLike ? 16u : 12u;
-        if (shieldRem() < shieldTailSize) {
-            packet.skipAll(); return;
-        }
-        uint32_t shieldSpellId = packet.readUInt32();
-        uint32_t damage        = packet.readUInt32();
-        if (shieldWotlkLike)
-            /*uint32_t absorbed =*/ packet.readUInt32();
-        /*uint32_t school =*/  packet.readUInt32();
-        // Show combat text: damage shield reflect
-        if (casterGuid == playerGuid) {
-            // We have a damage shield that reflected damage
-            addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(damage), shieldSpellId, true, 0, casterGuid, victimGuid);
-        } else if (victimGuid == playerGuid) {
-            // A damage shield hit us (e.g. target's Thorns)
-            addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(damage), shieldSpellId, false, 0, casterGuid, victimGuid);
-        }
-    };
-    // WotLK/Classic/Turtle: packed casterGuid + packed victimGuid + uint32 spellId + uint8 saveType
-    // TBC:                  full uint64 casterGuid + full uint64 victimGuid + uint32 + uint8
-    dispatchTable_[Opcode::SMSG_SPELLORDAMAGE_IMMUNE] = [this](network::Packet& packet) {
-        // WotLK/Classic/Turtle: packed casterGuid + packed victimGuid + uint32 spellId + uint8 saveType
-        // TBC:                  full uint64 casterGuid + full uint64 victimGuid + uint32 + uint8
-        const bool immuneUsesFullGuid = isActiveExpansion("tbc");
-        const size_t minSz = immuneUsesFullGuid ? 21u : 2u;
-        if (!packet.hasRemaining(minSz)) {
-            packet.skipAll(); return;
-        }
-        if (!immuneUsesFullGuid && !packet.hasFullPackedGuid()) {
-            packet.skipAll(); return;
-        }
-        uint64_t casterGuid = immuneUsesFullGuid
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (!packet.hasRemaining(immuneUsesFullGuid ? 8u : 2u)             || (!immuneUsesFullGuid && !packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t victimGuid = immuneUsesFullGuid
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (!packet.hasRemaining(5)) return;
-        uint32_t immuneSpellId = packet.readUInt32();
-        /*uint8_t saveType =*/ packet.readUInt8();
-        // Show IMMUNE text when the player is the caster (we hit an immune target)
-        // or the victim (we are immune)
-        if (casterGuid == playerGuid || victimGuid == playerGuid) {
-            addCombatText(CombatTextEntry::IMMUNE, 0, immuneSpellId,
-                          casterGuid == playerGuid, 0, casterGuid, victimGuid);
-        }
-    };
-    // WotLK/Classic/Turtle: packed casterGuid + packed victimGuid + uint32 dispelSpell + uint8 isStolen
-    // TBC:                  full uint64 casterGuid + full uint64 victimGuid + ...
-    // + uint32 count + count × (uint32 dispelled_spellId + uint32 unk)
-    dispatchTable_[Opcode::SMSG_SPELLDISPELLOG] = [this](network::Packet& packet) {
-        // WotLK/Classic/Turtle: packed casterGuid + packed victimGuid + uint32 dispelSpell + uint8 isStolen
-        // TBC:                  full uint64 casterGuid + full uint64 victimGuid + ...
-        // + uint32 count + count × (uint32 dispelled_spellId + uint32 unk)
-        const bool dispelUsesFullGuid = isActiveExpansion("tbc");
-        if (!packet.hasRemaining(dispelUsesFullGuid ? 8u : 1u)             || (!dispelUsesFullGuid && !packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t casterGuid = dispelUsesFullGuid
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (!packet.hasRemaining(dispelUsesFullGuid ? 8u : 1u)             || (!dispelUsesFullGuid && !packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t victimGuid = dispelUsesFullGuid
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (!packet.hasRemaining(9)) return;
-        /*uint32_t dispelSpell =*/ packet.readUInt32();
-        uint8_t isStolen = packet.readUInt8();
-        uint32_t count   = packet.readUInt32();
-        // Preserve every dispelled aura in the combat log instead of collapsing
-        // multi-aura packets down to the first entry only.
-        const size_t dispelEntrySize = dispelUsesFullGuid ? 8u : 5u;
-        std::vector<uint32_t> dispelledIds;
-        dispelledIds.reserve(count);
-        for (uint32_t i = 0; i < count && packet.hasRemaining(dispelEntrySize); ++i) {
-            uint32_t dispelledId = packet.readUInt32();
-            if (dispelUsesFullGuid) {
-                /*uint32_t unk =*/ packet.readUInt32();
-            } else {
-                /*uint8_t isPositive =*/ packet.readUInt8();
-            }
-            if (dispelledId != 0) {
-                dispelledIds.push_back(dispelledId);
-            }
-        }
-        // Show system message if player was victim or caster
-        if (victimGuid == playerGuid || casterGuid == playerGuid) {
-            std::vector<uint32_t> loggedIds;
-            if (isStolen) {
-                loggedIds.reserve(dispelledIds.size());
-                for (uint32_t dispelledId : dispelledIds) {
-                    if (shouldLogSpellstealAura(casterGuid, victimGuid, dispelledId))
-                        loggedIds.push_back(dispelledId);
-                }
-            } else {
-                loggedIds = dispelledIds;
-            }
 
-            const std::string displaySpellNames = formatSpellNameList(*this, loggedIds);
-            if (!displaySpellNames.empty()) {
-                char buf[256];
-                const char* passiveVerb = loggedIds.size() == 1 ? "was" : "were";
-                if (isStolen) {
-                    if (victimGuid == playerGuid && casterGuid != playerGuid)
-                        std::snprintf(buf, sizeof(buf), "%s %s stolen.",
-                                      displaySpellNames.c_str(), passiveVerb);
-                    else if (casterGuid == playerGuid)
-                        std::snprintf(buf, sizeof(buf), "You steal %s.", displaySpellNames.c_str());
-                    else
-                        std::snprintf(buf, sizeof(buf), "%s %s stolen.",
-                                      displaySpellNames.c_str(), passiveVerb);
-                } else {
-                    if (victimGuid == playerGuid && casterGuid != playerGuid)
-                        std::snprintf(buf, sizeof(buf), "%s %s dispelled.",
-                                      displaySpellNames.c_str(), passiveVerb);
-                    else if (casterGuid == playerGuid)
-                        std::snprintf(buf, sizeof(buf), "You dispel %s.", displaySpellNames.c_str());
-                    else
-                        std::snprintf(buf, sizeof(buf), "%s %s dispelled.",
-                                      displaySpellNames.c_str(), passiveVerb);
-                }
-                addSystemChatMessage(buf);
-            }
-            // Preserve stolen auras as spellsteal events so the log wording stays accurate.
-            if (!loggedIds.empty()) {
-                bool isPlayerCaster = (casterGuid == playerGuid);
-                for (uint32_t dispelledId : loggedIds) {
-                    addCombatText(isStolen ? CombatTextEntry::STEAL : CombatTextEntry::DISPEL,
-                                  0, dispelledId, isPlayerCaster, 0,
-                                  casterGuid, victimGuid);
-                }
-            }
-        }
-        packet.skipAll();
-    };
-    // Sent to the CASTER (Mage) when Spellsteal succeeds.
-    // Wire format mirrors SPELLDISPELLOG:
-    // WotLK/Classic/Turtle: packed victim + packed caster + uint32 spellId + uint8 isStolen + uint32 count
-    //                        + count × (uint32 stolenSpellId + uint8 isPositive)
-    // TBC:                   full uint64 victim + full uint64 caster + same tail
-    dispatchTable_[Opcode::SMSG_SPELLSTEALLOG] = [this](network::Packet& packet) {
-        // Sent to the CASTER (Mage) when Spellsteal succeeds.
-        // Wire format mirrors SPELLDISPELLOG:
-        // WotLK/Classic/Turtle: packed victim + packed caster + uint32 spellId + uint8 isStolen + uint32 count
-        //                        + count × (uint32 stolenSpellId + uint8 isPositive)
-        // TBC:                   full uint64 victim + full uint64 caster + same tail
-        const bool stealUsesFullGuid = isActiveExpansion("tbc");
-        if (!packet.hasRemaining(stealUsesFullGuid ? 8u : 1u)             || (!stealUsesFullGuid && !packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t stealVictim = stealUsesFullGuid
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (!packet.hasRemaining(stealUsesFullGuid ? 8u : 1u)             || (!stealUsesFullGuid && !packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t stealCaster = stealUsesFullGuid
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (!packet.hasRemaining(9)) {
-            packet.skipAll(); return;
-        }
-        /*uint32_t stealSpellId =*/ packet.readUInt32();
-        /*uint8_t  isStolen    =*/ packet.readUInt8();
-        uint32_t stealCount   = packet.readUInt32();
-        // Preserve every stolen aura in the combat log instead of only the first.
-        const size_t stealEntrySize = stealUsesFullGuid ? 8u : 5u;
-        std::vector<uint32_t> stolenIds;
-        stolenIds.reserve(stealCount);
-        for (uint32_t i = 0; i < stealCount && packet.hasRemaining(stealEntrySize); ++i) {
-            uint32_t stolenId = packet.readUInt32();
-            if (stealUsesFullGuid) {
-                /*uint32_t unk =*/ packet.readUInt32();
-            } else {
-                /*uint8_t isPos  =*/ packet.readUInt8();
-            }
-            if (stolenId != 0) {
-                stolenIds.push_back(stolenId);
-            }
-        }
-        if (stealCaster == playerGuid || stealVictim == playerGuid) {
-            std::vector<uint32_t> loggedIds;
-            loggedIds.reserve(stolenIds.size());
-            for (uint32_t stolenId : stolenIds) {
-                if (shouldLogSpellstealAura(stealCaster, stealVictim, stolenId))
-                    loggedIds.push_back(stolenId);
-            }
-
-            const std::string displaySpellNames = formatSpellNameList(*this, loggedIds);
-            if (!displaySpellNames.empty()) {
-                char buf[256];
-                if (stealCaster == playerGuid)
-                    std::snprintf(buf, sizeof(buf), "You stole %s.", displaySpellNames.c_str());
-                else
-                    std::snprintf(buf, sizeof(buf), "%s %s stolen.", displaySpellNames.c_str(),
-                                  loggedIds.size() == 1 ? "was" : "were");
-                addSystemChatMessage(buf);
-            }
-            // Some servers emit both SPELLDISPELLOG(isStolen=1) and SPELLSTEALLOG
-            // for the same aura. Keep the first event and suppress the duplicate.
-            if (!loggedIds.empty()) {
-                bool isPlayerCaster = (stealCaster == playerGuid);
-                for (uint32_t stolenId : loggedIds) {
-                    addCombatText(CombatTextEntry::STEAL, 0, stolenId, isPlayerCaster, 0,
-                                  stealCaster, stealVictim);
-                }
-            }
-        }
-        packet.skipAll();
-    };
-    // WotLK/Classic/Turtle: packed_guid target + packed_guid caster + uint32 spellId + ...
-    // TBC:                  uint64 target + uint64 caster + uint32 spellId + ...
-    dispatchTable_[Opcode::SMSG_SPELL_CHANCE_PROC_LOG] = [this](network::Packet& packet) {
-        // WotLK/Classic/Turtle: packed_guid target + packed_guid caster + uint32 spellId + ...
-        // TBC:                  uint64 target + uint64 caster + uint32 spellId + ...
-        const bool procChanceUsesFullGuid = isActiveExpansion("tbc");
-        auto readProcChanceGuid = [&]() -> uint64_t {
-            if (procChanceUsesFullGuid)
-                return (packet.hasRemaining(8)) ? packet.readUInt64() : 0;
-            return packet.readPackedGuid();
-        };
-        if (!packet.hasRemaining(procChanceUsesFullGuid ? 8u : 1u)             || (!procChanceUsesFullGuid && !packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t procTargetGuid = readProcChanceGuid();
-        if (!packet.hasRemaining(procChanceUsesFullGuid ? 8u : 1u)             || (!procChanceUsesFullGuid && !packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t procCasterGuid = readProcChanceGuid();
-        if (!packet.hasRemaining(4)) {
-            packet.skipAll(); return;
-        }
-        uint32_t procSpellId = packet.readUInt32();
-        // Show a "PROC!" floating text when the player triggers the proc
-        if (procCasterGuid == playerGuid && procSpellId > 0)
-            addCombatText(CombatTextEntry::PROC_TRIGGER, 0, procSpellId, true, 0,
-                          procCasterGuid, procTargetGuid);
-        packet.skipAll();
-    };
-    // Sent when a unit is killed by a spell with SPELL_ATTR_EX2_INSTAKILL (e.g. Execute, Obliterate, etc.)
-    // WotLK/Classic/Turtle: packed_guid caster + packed_guid victim + uint32 spellId
-    // TBC:                  full uint64 caster + full uint64 victim + uint32 spellId
-    dispatchTable_[Opcode::SMSG_SPELLINSTAKILLLOG] = [this](network::Packet& packet) {
-        // Sent when a unit is killed by a spell with SPELL_ATTR_EX2_INSTAKILL (e.g. Execute, Obliterate, etc.)
-        // WotLK/Classic/Turtle: packed_guid caster + packed_guid victim + uint32 spellId
-        // TBC:                  full uint64 caster + full uint64 victim + uint32 spellId
-        const bool ikUsesFullGuid = isActiveExpansion("tbc");
-        auto ik_rem = [&]() { return packet.getRemainingSize(); };
-        if (ik_rem() < (ikUsesFullGuid ? 8u : 1u)
-            || (!ikUsesFullGuid && !packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t ikCaster = ikUsesFullGuid
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (ik_rem() < (ikUsesFullGuid ? 8u : 1u)
-            || (!ikUsesFullGuid && !packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t ikVictim = ikUsesFullGuid
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (ik_rem() < 4) {
-            packet.skipAll(); return;
-        }
-        uint32_t ikSpell = packet.readUInt32();
-        // Show kill/death feedback for the local player
-        if (ikCaster == playerGuid) {
-            addCombatText(CombatTextEntry::INSTAKILL, 0, ikSpell, true, 0, ikCaster, ikVictim);
-        } else if (ikVictim == playerGuid) {
-            addCombatText(CombatTextEntry::INSTAKILL, 0, ikSpell, false, 0, ikCaster, ikVictim);
-            addUIError("You were killed by an instant-kill effect.");
-            addSystemChatMessage("You were killed by an instant-kill effect.");
-        }
-        LOG_DEBUG("SMSG_SPELLINSTAKILLLOG: caster=0x", std::hex, ikCaster,
-                  " victim=0x", ikVictim, std::dec, " spell=", ikSpell);
-        packet.skipAll();
-    };
-    // WotLK/Classic/Turtle: packed_guid caster + uint32 spellId + uint32 effectCount
-    // TBC:                  uint64 caster + uint32 spellId + uint32 effectCount
-    // Per-effect: uint8 effectType + uint32 effectLogCount + effect-specific data
-    // Effect 10 = POWER_DRAIN:   packed_guid target + uint32 amount + uint32 powerType + float multiplier
-    // Effect 11 = HEALTH_LEECH:  packed_guid target + uint32 amount + float multiplier
-    // Effect 24 = CREATE_ITEM:   uint32 itemEntry
-    // Effect 26 = INTERRUPT_CAST: packed_guid target + uint32 interrupted_spell_id
-    // Effect 49 = FEED_PET:      uint32 itemEntry
-    // Effect 114= CREATE_ITEM2:  uint32 itemEntry (same layout as CREATE_ITEM)
-    dispatchTable_[Opcode::SMSG_SPELLLOGEXECUTE] = [this](network::Packet& packet) {
-        // WotLK/Classic/Turtle: packed_guid caster + uint32 spellId + uint32 effectCount
-        // TBC:                  uint64 caster + uint32 spellId + uint32 effectCount
-        // Per-effect: uint8 effectType + uint32 effectLogCount + effect-specific data
-        // Effect 10 = POWER_DRAIN:   packed_guid target + uint32 amount + uint32 powerType + float multiplier
-        // Effect 11 = HEALTH_LEECH:  packed_guid target + uint32 amount + float multiplier
-        // Effect 24 = CREATE_ITEM:   uint32 itemEntry
-        // Effect 26 = INTERRUPT_CAST: packed_guid target + uint32 interrupted_spell_id
-        // Effect 49 = FEED_PET:      uint32 itemEntry
-        // Effect 114= CREATE_ITEM2:  uint32 itemEntry (same layout as CREATE_ITEM)
-        const bool exeUsesFullGuid = isActiveExpansion("tbc");
-        if (!packet.hasRemaining(exeUsesFullGuid ? 8u : 1u) ) {
-            packet.skipAll(); return;
-        }
-        if (!exeUsesFullGuid && !packet.hasFullPackedGuid()) {
-            packet.skipAll(); return;
-        }
-        uint64_t exeCaster = exeUsesFullGuid
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (!packet.hasRemaining(8)) {
-            packet.skipAll(); return;
-        }
-        uint32_t exeSpellId = packet.readUInt32();
-        uint32_t exeEffectCount = packet.readUInt32();
-        exeEffectCount = std::min(exeEffectCount, 32u); // sanity
-
-        const bool isPlayerCaster = (exeCaster == playerGuid);
-        for (uint32_t ei = 0; ei < exeEffectCount; ++ei) {
-            if (!packet.hasRemaining(5)) break;
-            uint8_t  effectType     = packet.readUInt8();
-            uint32_t effectLogCount = packet.readUInt32();
-            effectLogCount = std::min(effectLogCount, 64u); // sanity
-            if (effectType == 10) {
-                // SPELL_EFFECT_POWER_DRAIN: packed_guid target + uint32 amount + uint32 powerType + float multiplier
-                for (uint32_t li = 0; li < effectLogCount; ++li) {
-                    if (!packet.hasRemaining(exeUsesFullGuid ? 8u : 1u)                         || (!exeUsesFullGuid && !packet.hasFullPackedGuid())) {
-                        packet.skipAll(); break;
-                    }
-                    uint64_t drainTarget = exeUsesFullGuid
-                        ? packet.readUInt64()
-                        : packet.readPackedGuid();
-                    if (!packet.hasRemaining(12)) { packet.skipAll(); break; }
-                    uint32_t drainAmount = packet.readUInt32();
-                    uint32_t drainPower  = packet.readUInt32(); // 0=mana,1=rage,3=energy,6=runic
-                    float drainMult = packet.readFloat();
-                    if (drainAmount > 0) {
-                        if (drainTarget == playerGuid)
-                            addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(drainAmount), exeSpellId, false,
-                                          static_cast<uint8_t>(drainPower),
-                                          exeCaster, drainTarget);
-                        if (isPlayerCaster) {
-                            if (drainTarget != playerGuid) {
-                                addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(drainAmount), exeSpellId, true,
-                                              static_cast<uint8_t>(drainPower), exeCaster, drainTarget);
-                            }
-                            if (drainMult > 0.0f && std::isfinite(drainMult)) {
-                                const uint32_t gainedAmount = static_cast<uint32_t>(
-                                    std::lround(static_cast<double>(drainAmount) * static_cast<double>(drainMult)));
-                                if (gainedAmount > 0) {
-                                    addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(gainedAmount), exeSpellId, true,
-                                                  static_cast<uint8_t>(drainPower), exeCaster, exeCaster);
-                                }
-                            }
-                        }
-                    }
-                    LOG_DEBUG("SMSG_SPELLLOGEXECUTE POWER_DRAIN: spell=", exeSpellId,
-                              " power=", drainPower, " amount=", drainAmount,
-                              " multiplier=", drainMult);
-                }
-            } else if (effectType == 11) {
-                // SPELL_EFFECT_HEALTH_LEECH: packed_guid target + uint32 amount + float multiplier
-                for (uint32_t li = 0; li < effectLogCount; ++li) {
-                    if (!packet.hasRemaining(exeUsesFullGuid ? 8u : 1u)                         || (!exeUsesFullGuid && !packet.hasFullPackedGuid())) {
-                        packet.skipAll(); break;
-                    }
-                    uint64_t leechTarget = exeUsesFullGuid
-                        ? packet.readUInt64()
-                        : packet.readPackedGuid();
-                    if (!packet.hasRemaining(8)) { packet.skipAll(); break; }
-                    uint32_t leechAmount = packet.readUInt32();
-                    float leechMult = packet.readFloat();
-                    if (leechAmount > 0) {
-                        if (leechTarget == playerGuid) {
-                            addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(leechAmount), exeSpellId, false, 0,
-                                          exeCaster, leechTarget);
-                        } else if (isPlayerCaster) {
-                            addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(leechAmount), exeSpellId, true, 0,
-                                          exeCaster, leechTarget);
-                        }
-                        if (isPlayerCaster && leechMult > 0.0f && std::isfinite(leechMult)) {
-                            const uint32_t gainedAmount = static_cast<uint32_t>(
-                                std::lround(static_cast<double>(leechAmount) * static_cast<double>(leechMult)));
-                            if (gainedAmount > 0) {
-                                addCombatText(CombatTextEntry::HEAL, static_cast<int32_t>(gainedAmount), exeSpellId, true, 0,
-                                              exeCaster, exeCaster);
-                            }
-                        }
-                    }
-                    LOG_DEBUG("SMSG_SPELLLOGEXECUTE HEALTH_LEECH: spell=", exeSpellId,
-                              " amount=", leechAmount, " multiplier=", leechMult);
-                }
-            } else if (effectType == 24 || effectType == 114) {
-                // SPELL_EFFECT_CREATE_ITEM / CREATE_ITEM2: uint32 itemEntry per log entry
-                for (uint32_t li = 0; li < effectLogCount; ++li) {
-                    if (!packet.hasRemaining(4)) break;
-                    uint32_t itemEntry = packet.readUInt32();
-                    if (isPlayerCaster && itemEntry != 0) {
-                        ensureItemInfo(itemEntry);
-                        const ItemQueryResponseData* info = getItemInfo(itemEntry);
-                        std::string itemName = info && !info->name.empty()
-                            ? info->name : ("item #" + std::to_string(itemEntry));
-                        const auto& spellName = getSpellName(exeSpellId);
-                        std::string msg = spellName.empty()
-                            ? ("You create: " + itemName + ".")
-                            : ("You create " + itemName + " using " + spellName + ".");
-                        addSystemChatMessage(msg);
-                        LOG_DEBUG("SMSG_SPELLLOGEXECUTE CREATE_ITEM: spell=", exeSpellId,
-                                  " item=", itemEntry, " name=", itemName);
-
-                        // Repeat-craft queue: re-cast if more crafts remaining
-                        if (craftQueueRemaining_ > 0 && craftQueueSpellId_ == exeSpellId) {
-                            --craftQueueRemaining_;
-                            if (craftQueueRemaining_ > 0) {
-                                castSpell(craftQueueSpellId_, 0);
-                            } else {
-                                craftQueueSpellId_ = 0;
-                            }
-                        }
-                    }
-                }
-            } else if (effectType == 26) {
-                // SPELL_EFFECT_INTERRUPT_CAST: packed_guid target + uint32 interrupted_spell_id
-                for (uint32_t li = 0; li < effectLogCount; ++li) {
-                    if (!packet.hasRemaining(exeUsesFullGuid ? 8u : 1u)                         || (!exeUsesFullGuid && !packet.hasFullPackedGuid())) {
-                        packet.skipAll(); break;
-                    }
-                    uint64_t icTarget = exeUsesFullGuid
-                        ? packet.readUInt64()
-                        : packet.readPackedGuid();
-                    if (!packet.hasRemaining(4)) { packet.skipAll(); break; }
-                    uint32_t icSpellId = packet.readUInt32();
-                    // Clear the interrupted unit's cast bar immediately
-                    unitCastStates_.erase(icTarget);
-                    // Record interrupt in combat log when player is involved
-                    if (isPlayerCaster || icTarget == playerGuid)
-                        addCombatText(CombatTextEntry::INTERRUPT, 0, icSpellId, isPlayerCaster, 0,
-                                      exeCaster, icTarget);
-                    LOG_DEBUG("SMSG_SPELLLOGEXECUTE INTERRUPT_CAST: spell=", exeSpellId,
-                              " interrupted=", icSpellId, " target=0x", std::hex, icTarget, std::dec);
-                }
-            } else if (effectType == 49) {
-                // SPELL_EFFECT_FEED_PET: uint32 itemEntry per log entry
-                for (uint32_t li = 0; li < effectLogCount; ++li) {
-                    if (!packet.hasRemaining(4)) break;
-                    uint32_t feedItem = packet.readUInt32();
-                    if (isPlayerCaster && feedItem != 0) {
-                        ensureItemInfo(feedItem);
-                        const ItemQueryResponseData* info = getItemInfo(feedItem);
-                        std::string itemName = info && !info->name.empty()
-                            ? info->name : ("item #" + std::to_string(feedItem));
-                        uint32_t feedQuality = info ? info->quality : 1u;
-                        addSystemChatMessage("You feed your pet " + buildItemLink(feedItem, feedQuality, itemName) + ".");
-                        LOG_DEBUG("SMSG_SPELLLOGEXECUTE FEED_PET: item=", feedItem, " name=", itemName);
-                    }
-                }
-            } else {
-                // Unknown effect type — stop parsing to avoid misalignment
-                packet.skipAll();
-                break;
-            }
-        }
-        packet.skipAll();
-    };
-    // TBC 2.4.3: clear a single aura slot for a unit
-    // Format: uint64 targetGuid + uint8 slot
-    dispatchTable_[Opcode::SMSG_CLEAR_EXTRA_AURA_INFO] = [this](network::Packet& packet) {
-        // TBC 2.4.3: clear a single aura slot for a unit
-        // Format: uint64 targetGuid + uint8 slot
-        if (packet.hasRemaining(9)) {
-            uint64_t clearGuid  = packet.readUInt64();
-            uint8_t  slot       = packet.readUInt8();
-            std::vector<AuraSlot>* auraList = nullptr;
-            if (clearGuid == playerGuid)      auraList = &playerAuras;
-            else if (clearGuid == targetGuid) auraList = &targetAuras;
-            if (auraList && slot < auraList->size()) {
-                (*auraList)[slot] = AuraSlot{};
-            }
-        }
-        packet.skipAll();
-    };
-    // Format: uint64 itemGuid + uint32 slot + uint32 durationSec + uint64 playerGuid
-    // slot: 0=main-hand, 1=off-hand, 2=ranged
-    dispatchTable_[Opcode::SMSG_ITEM_ENCHANT_TIME_UPDATE] = [this](network::Packet& packet) {
-        // Format: uint64 itemGuid + uint32 slot + uint32 durationSec + uint64 playerGuid
-        // slot: 0=main-hand, 1=off-hand, 2=ranged
-        if (!packet.hasRemaining(24)) {
-            packet.skipAll(); return;
-        }
-        /*uint64_t itemGuid =*/ packet.readUInt64();
-        uint32_t enchSlot    = packet.readUInt32();
-        uint32_t durationSec = packet.readUInt32();
-        /*uint64_t playerGuid =*/ packet.readUInt64();
-
-        // Clamp to known slots (0-2)
-        if (enchSlot > 2) { return; }
-
-        uint64_t nowMs = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count());
-
-        if (durationSec == 0) {
-            // Enchant expired / removed — erase the slot entry
-            tempEnchantTimers_.erase(
-                std::remove_if(tempEnchantTimers_.begin(), tempEnchantTimers_.end(),
-                               [enchSlot](const TempEnchantTimer& t) { return t.slot == enchSlot; }),
-                tempEnchantTimers_.end());
-        } else {
-            uint64_t expireMs = nowMs + static_cast<uint64_t>(durationSec) * 1000u;
-            bool found = false;
-            for (auto& t : tempEnchantTimers_) {
-                if (t.slot == enchSlot) { t.expireMs = expireMs; found = true; break; }
-            }
-            if (!found) tempEnchantTimers_.push_back({enchSlot, expireMs});
-
-            // Warn at important thresholds
-            if (durationSec <= 60 && durationSec > 55) {
-                const char* slotName = (enchSlot < 3) ? kTempEnchantSlotNames[enchSlot] : "weapon";
-                char buf[80];
-                std::snprintf(buf, sizeof(buf), "Weapon enchant (%s) expires in 1 minute!", slotName);
-                addSystemChatMessage(buf);
-            } else if (durationSec <= 300 && durationSec > 295) {
-                const char* slotName = (enchSlot < 3) ? kTempEnchantSlotNames[enchSlot] : "weapon";
-                char buf[80];
-                std::snprintf(buf, sizeof(buf), "Weapon enchant (%s) expires in 5 minutes.", slotName);
-                addSystemChatMessage(buf);
-            }
-        }
-        LOG_DEBUG("SMSG_ITEM_ENCHANT_TIME_UPDATE: slot=", enchSlot, " dur=", durationSec, "s");
-    };
     // uint8 result: 0=success, 1=failed, 2=disabled
     dispatchTable_[Opcode::SMSG_COMPLAIN_RESULT] = [this](network::Packet& packet) {
         // uint8 result: 0=success, 1=failed, 2=disabled
@@ -6472,109 +2995,6 @@ void GameHandler::registerOpcodeHandlers() {
         }
         packet.skipAll();
     };
-    // WotLK: packed_guid caster + packed_guid target + uint32 spellId + uint32 remainingMs + uint32 totalMs + uint8 schoolMask
-    // TBC/Classic: uint64 caster + uint64 target + ...
-    dispatchTable_[Opcode::SMSG_RESUME_CAST_BAR] = [this](network::Packet& packet) {
-        // WotLK: packed_guid caster + packed_guid target + uint32 spellId + uint32 remainingMs + uint32 totalMs + uint8 schoolMask
-        // TBC/Classic: uint64 caster + uint64 target + ...
-        const bool rcbTbc = isPreWotlk();
-        auto remaining = [&]() { return packet.getRemainingSize(); };
-        if (remaining() < (rcbTbc ? 8u : 1u)) return;
-        uint64_t caster = rcbTbc
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (remaining() < (rcbTbc ? 8u : 1u)) return;
-        if (rcbTbc) packet.readUInt64(); // target (discard)
-        else (void)packet.readPackedGuid(); // target
-        if (remaining() < 12) return;
-        uint32_t spellId   = packet.readUInt32();
-        uint32_t remainMs  = packet.readUInt32();
-        uint32_t totalMs   = packet.readUInt32();
-        if (totalMs > 0) {
-            if (caster == playerGuid) {
-                casting            = true;
-                castIsChannel      = false;
-                currentCastSpellId = spellId;
-                castTimeTotal      = totalMs  / 1000.0f;
-                castTimeRemaining  = remainMs / 1000.0f;
-            } else {
-                auto& s = unitCastStates_[caster];
-                s.casting       = true;
-                s.spellId       = spellId;
-                s.timeTotal     = totalMs  / 1000.0f;
-                s.timeRemaining = remainMs / 1000.0f;
-            }
-            LOG_DEBUG("SMSG_RESUME_CAST_BAR: caster=0x", std::hex, caster, std::dec,
-                      " spell=", spellId, " remaining=", remainMs, "ms total=", totalMs, "ms");
-        }
-    };
-    // casterGuid + uint32 spellId + uint32 totalDurationMs
-    dispatchTable_[Opcode::MSG_CHANNEL_START] = [this](network::Packet& packet) {
-        // casterGuid + uint32 spellId + uint32 totalDurationMs
-        const bool tbcOrClassic = isPreWotlk();
-        uint64_t chanCaster = tbcOrClassic
-            ? (packet.hasRemaining(8) ? packet.readUInt64() : 0)
-            : packet.readPackedGuid();
-        if (!packet.hasRemaining(8)) return;
-        uint32_t chanSpellId = packet.readUInt32();
-        uint32_t chanTotalMs = packet.readUInt32();
-        if (chanTotalMs > 0 && chanCaster != 0) {
-            if (chanCaster == playerGuid) {
-                casting            = true;
-                castIsChannel      = true;
-                currentCastSpellId = chanSpellId;
-                castTimeTotal      = chanTotalMs / 1000.0f;
-                castTimeRemaining  = castTimeTotal;
-            } else {
-                auto& s = unitCastStates_[chanCaster];
-                s.casting        = true;
-                s.isChannel      = true;
-                s.spellId        = chanSpellId;
-                s.timeTotal      = chanTotalMs / 1000.0f;
-                s.timeRemaining  = s.timeTotal;
-                s.interruptible  = isSpellInterruptible(chanSpellId);
-            }
-            LOG_DEBUG("MSG_CHANNEL_START: caster=0x", std::hex, chanCaster, std::dec,
-                      " spell=", chanSpellId, " total=", chanTotalMs, "ms");
-            // Fire UNIT_SPELLCAST_CHANNEL_START for Lua addons
-            if (addonEventCallback_) {
-                auto unitId = guidToUnitId(chanCaster);
-                if (!unitId.empty())
-                    fireAddonEvent("UNIT_SPELLCAST_CHANNEL_START", {unitId, std::to_string(chanSpellId)});
-            }
-        }
-    };
-    // casterGuid + uint32 remainingMs
-    dispatchTable_[Opcode::MSG_CHANNEL_UPDATE] = [this](network::Packet& packet) {
-        // casterGuid + uint32 remainingMs
-        const bool tbcOrClassic2 = isPreWotlk();
-        uint64_t chanCaster2 = tbcOrClassic2
-            ? (packet.hasRemaining(8) ? packet.readUInt64() : 0)
-            : packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        uint32_t chanRemainMs = packet.readUInt32();
-        if (chanCaster2 == playerGuid) {
-            castTimeRemaining = chanRemainMs / 1000.0f;
-            if (chanRemainMs == 0) {
-                casting = false;
-                castIsChannel = false;
-                currentCastSpellId = 0;
-            }
-        } else if (chanCaster2 != 0) {
-            auto it = unitCastStates_.find(chanCaster2);
-            if (it != unitCastStates_.end()) {
-                it->second.timeRemaining = chanRemainMs / 1000.0f;
-                if (chanRemainMs == 0) unitCastStates_.erase(it);
-            }
-        }
-        LOG_DEBUG("MSG_CHANNEL_UPDATE: caster=0x", std::hex, chanCaster2, std::dec,
-                  " remaining=", chanRemainMs, "ms");
-        // Fire UNIT_SPELLCAST_CHANNEL_STOP when channel ends
-        if (chanRemainMs == 0) {
-            auto unitId = guidToUnitId(chanCaster2);
-            if (!unitId.empty())
-                fireAddonEvent("UNIT_SPELLCAST_CHANNEL_STOP", {unitId});
-        }
-    };
     // uint32 slot + packed_guid unit (0 packed = clear slot)
     dispatchTable_[Opcode::SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT] = [this](network::Packet& packet) {
         // uint32 slot + packed_guid unit (0 packed = clear slot)
@@ -6584,8 +3004,8 @@ void GameHandler::registerOpcodeHandlers() {
         }
         uint32_t slot = packet.readUInt32();
         uint64_t unit = packet.readPackedGuid();
-        if (slot < kMaxEncounterSlots) {
-            encounterUnitGuids_[slot] = unit;
+        if (socialHandler_) {
+            socialHandler_->setEncounterUnitGuid(slot, unit);
             LOG_DEBUG("SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT: slot=", slot,
                       " guid=0x", std::hex, unit, std::dec);
         }
@@ -6615,7 +3035,6 @@ void GameHandler::registerOpcodeHandlers() {
         }
         packet.skipAll();
     };
-    registerHandler(Opcode::SMSG_SET_FORCED_REACTIONS, &GameHandler::handleSetForcedReactions);
     dispatchTable_[Opcode::SMSG_SUSPEND_COMMS] = [this](network::Packet& packet) {
         if (packet.hasRemaining(4)) {
             uint32_t seqIdx = packet.readUInt32();
@@ -6696,22 +3115,25 @@ void GameHandler::registerOpcodeHandlers() {
         if (rem() < 8) return;
         uint64_t newLeaderGuid = packet.readUInt64();
 
-        partyData.groupType = newGroupType;
-        partyData.leaderGuid = newLeaderGuid;
+        if (socialHandler_) {
+            auto& pd = socialHandler_->mutablePartyData();
+            pd.groupType = newGroupType;
+            pd.leaderGuid = newLeaderGuid;
 
-        // Update local player's flags in the member list
-        uint64_t localGuid = playerGuid;
-        for (auto& m : partyData.members) {
-            if (m.guid == localGuid) {
-                m.flags = static_cast<uint8_t>(newMemberFlags & 0xFF);
-                break;
+            // Update local player's flags in the member list
+            uint64_t localGuid = playerGuid;
+            for (auto& m : pd.members) {
+                if (m.guid == localGuid) {
+                    m.flags = static_cast<uint8_t>(newMemberFlags & 0xFF);
+                    break;
+                }
             }
         }
         LOG_DEBUG("SMSG_REAL_GROUP_UPDATE groupType=", static_cast<int>(newGroupType),
                   " memberFlags=0x", std::hex, newMemberFlags, std::dec,
                   " leaderGuid=", newLeaderGuid);
-            fireAddonEvent("PARTY_LEADER_CHANGED", {});
-            fireAddonEvent("GROUP_ROSTER_UPDATE", {});
+        fireAddonEvent("PARTY_LEADER_CHANGED", {});
+        fireAddonEvent("GROUP_ROSTER_UPDATE", {});
     };
     dispatchTable_[Opcode::SMSG_PLAY_MUSIC] = [this](network::Packet& packet) {
         if (packet.hasRemaining(4)) {
@@ -6754,208 +3176,15 @@ void GameHandler::registerOpcodeHandlers() {
         }
         renderer->playSpellVisual(impVisualId, spawnPos, /*useImpactKit=*/true);
     };
-    // WotLK/Classic/Turtle: uint32 hitInfo + packed_guid attacker + packed_guid victim + uint32 spellId
-    //                      + float resistFactor + uint32 targetRes + uint32 resistedValue + ...
-    // TBC:                 same layout but full uint64 GUIDs
-    // Show RESIST combat text when player resists an incoming spell.
-    dispatchTable_[Opcode::SMSG_RESISTLOG] = [this](network::Packet& packet) {
-        // WotLK/Classic/Turtle: uint32 hitInfo + packed_guid attacker + packed_guid victim + uint32 spellId
-        //                      + float resistFactor + uint32 targetRes + uint32 resistedValue + ...
-        // TBC:                 same layout but full uint64 GUIDs
-        // Show RESIST combat text when player resists an incoming spell.
-        const bool rlUsesFullGuid = isActiveExpansion("tbc");
-        auto rl_rem = [&]() { return packet.getRemainingSize(); };
-        if (rl_rem() < 4) { packet.skipAll(); return; }
-        /*uint32_t hitInfo =*/ packet.readUInt32();
-        if (rl_rem() < (rlUsesFullGuid ? 8u : 1u)
-            || (!rlUsesFullGuid && !packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t attackerGuid = rlUsesFullGuid
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (rl_rem() < (rlUsesFullGuid ? 8u : 1u)
-            || (!rlUsesFullGuid && !packet.hasFullPackedGuid())) {
-            packet.skipAll(); return;
-        }
-        uint64_t victimGuid = rlUsesFullGuid
-            ? packet.readUInt64() : packet.readPackedGuid();
-        if (rl_rem() < 4) { packet.skipAll(); return; }
-        uint32_t spellId = packet.readUInt32();
-        // Resist payload includes:
-        // float resistFactor + uint32 targetResistance + uint32 resistedValue.
-        // Require the full payload so truncated packets cannot synthesize
-        // zero-value resist events.
-        if (rl_rem() < 12) { packet.skipAll(); return; }
-        /*float resistFactor =*/ packet.readFloat();
-        /*uint32_t targetRes =*/ packet.readUInt32();
-        int32_t resistedAmount = static_cast<int32_t>(packet.readUInt32());
-        // Show RESIST when the player is involved on either side.
-        if (resistedAmount > 0 && victimGuid == playerGuid) {
-            addCombatText(CombatTextEntry::RESIST, resistedAmount, spellId, false, 0, attackerGuid, victimGuid);
-        } else if (resistedAmount > 0 && attackerGuid == playerGuid) {
-            addCombatText(CombatTextEntry::RESIST, resistedAmount, spellId, true, 0, attackerGuid, victimGuid);
-        }
-        packet.skipAll();
-    };
-    dispatchTable_[Opcode::SMSG_READ_ITEM_OK] = [this](network::Packet& packet) {
-        bookPages_.clear();  // fresh book for this item read
-        packet.skipAll();
-    };
-    dispatchTable_[Opcode::SMSG_READ_ITEM_FAILED] = [this](network::Packet& packet) {
-        addUIError("You cannot read this item.");
-        addSystemChatMessage("You cannot read this item.");
-        packet.skipAll();
-    };
-    dispatchTable_[Opcode::SMSG_QUERY_QUESTS_COMPLETED_RESPONSE] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(4)) {
-            uint32_t count = packet.readUInt32();
-            if (count <= 4096) {
-                for (uint32_t i = 0; i < count; ++i) {
-                    if (!packet.hasRemaining(4)) break;
-                    uint32_t questId = packet.readUInt32();
-                    completedQuests_.insert(questId);
-                }
-                LOG_DEBUG("SMSG_QUERY_QUESTS_COMPLETED_RESPONSE: ", count, " completed quests");
-            }
-        }
-        packet.skipAll();
-    };
-    // WotLK 3.3.5a format: uint64 guid + uint32 questId + uint32 count + uint32 reqCount
-    // Classic format:       uint64 guid + uint32 questId + uint32 count  (no reqCount)
-    dispatchTable_[Opcode::SMSG_QUESTUPDATE_ADD_PVP_KILL] = [this](network::Packet& packet) {
-        // WotLK 3.3.5a format: uint64 guid + uint32 questId + uint32 count + uint32 reqCount
-        // Classic format:       uint64 guid + uint32 questId + uint32 count  (no reqCount)
-        if (packet.hasRemaining(16)) {
-            /*uint64_t guid =*/ packet.readUInt64();
-            uint32_t questId = packet.readUInt32();
-            uint32_t count   = packet.readUInt32();
-            uint32_t reqCount = 0;
-            if (packet.hasRemaining(4)) {
-                reqCount = packet.readUInt32();
-            }
-
-            // Update quest log kill counts (PvP kills use entry=0 as the key
-            // since there's no specific creature entry — one slot per quest).
-            constexpr uint32_t PVP_KILL_ENTRY = 0u;
-            for (auto& quest : questLog_) {
-                if (quest.questId != questId) continue;
-
-                if (reqCount == 0) {
-                    auto it = quest.killCounts.find(PVP_KILL_ENTRY);
-                    if (it != quest.killCounts.end()) reqCount = it->second.second;
-                }
-                if (reqCount == 0) {
-                    // Pull required count from kill objectives (npcOrGoId == 0 slot, if any)
-                    for (const auto& obj : quest.killObjectives) {
-                        if (obj.npcOrGoId == 0 && obj.required > 0) {
-                            reqCount = obj.required;
-                            break;
-                        }
-                    }
-                }
-                if (reqCount == 0) reqCount = count;
-                quest.killCounts[PVP_KILL_ENTRY] = {count, reqCount};
-
-                std::string progressMsg = quest.title + ": PvP kills " +
-                    std::to_string(count) + "/" + std::to_string(reqCount);
-                addSystemChatMessage(progressMsg);
-                break;
-            }
-        }
-    };
+    // SMSG_READ_ITEM_OK — moved to InventoryHandler::registerOpcodes
+    // SMSG_READ_ITEM_FAILED — moved to InventoryHandler::registerOpcodes
+    // SMSG_QUERY_QUESTS_COMPLETED_RESPONSE — moved to QuestHandler::registerOpcodes
     dispatchTable_[Opcode::SMSG_NPC_WONT_TALK] = [this](network::Packet& packet) {
         addUIError("That creature can't talk to you right now.");
         addSystemChatMessage("That creature can't talk to you right now.");
         packet.skipAll();
     };
-    dispatchTable_[Opcode::SMSG_OFFER_PETITION_ERROR] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(4)) {
-            uint32_t err = packet.readUInt32();
-            if (err == 1) addSystemChatMessage("Player is already in a guild.");
-            else if (err == 2) addSystemChatMessage("Player already has a petition.");
-            else addSystemChatMessage("Cannot offer petition to that player.");
-        }
-    };
-    registerHandler(Opcode::SMSG_PETITION_QUERY_RESPONSE, &GameHandler::handlePetitionQueryResponse);
-    registerHandler(Opcode::SMSG_PETITION_SHOW_SIGNATURES, &GameHandler::handlePetitionShowSignatures);
-    registerHandler(Opcode::SMSG_PETITION_SIGN_RESULTS, &GameHandler::handlePetitionSignResults);
-    // uint64 petGuid, uint32 mode
-    // mode bits: low byte = command state, next byte = react state
-    dispatchTable_[Opcode::SMSG_PET_MODE] = [this](network::Packet& packet) {
-        // uint64 petGuid, uint32 mode
-        // mode bits: low byte = command state, next byte = react state
-        if (packet.hasRemaining(12)) {
-            uint64_t modeGuid = packet.readUInt64();
-            uint32_t mode     = packet.readUInt32();
-            if (modeGuid == petGuid_) {
-                petCommand_ = static_cast<uint8_t>(mode & 0xFF);
-                petReact_   = static_cast<uint8_t>((mode >> 8) & 0xFF);
-                LOG_DEBUG("SMSG_PET_MODE: command=", static_cast<int>(petCommand_),
-                          " react=", static_cast<int>(petReact_));
-            }
-        }
-        packet.skipAll();
-    };
-    // Pet bond broken (died or forcibly dismissed) — clear pet state
-    dispatchTable_[Opcode::SMSG_PET_BROKEN] = [this](network::Packet& packet) {
-        // Pet bond broken (died or forcibly dismissed) — clear pet state
-        petGuid_ = 0;
-        petSpellList_.clear();
-        petAutocastSpells_.clear();
-        memset(petActionSlots_, 0, sizeof(petActionSlots_));
-        addSystemChatMessage("Your pet has died.");
-        LOG_INFO("SMSG_PET_BROKEN: pet bond broken");
-        packet.skipAll();
-    };
-    dispatchTable_[Opcode::SMSG_PET_LEARNED_SPELL] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(4)) {
-            uint32_t spellId = packet.readUInt32();
-            petSpellList_.push_back(spellId);
-            const std::string& sname = getSpellName(spellId);
-            addSystemChatMessage("Your pet has learned " + (sname.empty() ? "a new ability." : sname + "."));
-            LOG_DEBUG("SMSG_PET_LEARNED_SPELL: spellId=", spellId);
-            fireAddonEvent("PET_BAR_UPDATE", {});
-        }
-        packet.skipAll();
-    };
-    dispatchTable_[Opcode::SMSG_PET_UNLEARNED_SPELL] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(4)) {
-            uint32_t spellId = packet.readUInt32();
-            petSpellList_.erase(
-                std::remove(petSpellList_.begin(), petSpellList_.end(), spellId),
-                petSpellList_.end());
-            petAutocastSpells_.erase(spellId);
-            LOG_DEBUG("SMSG_PET_UNLEARNED_SPELL: spellId=", spellId);
-        }
-        packet.skipAll();
-    };
-    // WotLK: castCount(1) + spellId(4) + reason(1)
-    // Classic/TBC: spellId(4) + reason(1) (no castCount)
-    dispatchTable_[Opcode::SMSG_PET_CAST_FAILED] = [this](network::Packet& packet) {
-        // WotLK: castCount(1) + spellId(4) + reason(1)
-        // Classic/TBC: spellId(4) + reason(1) (no castCount)
-        const bool hasCount = isActiveExpansion("wotlk");
-        const size_t minSize = hasCount ? 6u : 5u;
-        if (packet.hasRemaining(minSize)) {
-            if (hasCount) /*uint8_t castCount =*/ packet.readUInt8();
-            uint32_t spellId   = packet.readUInt32();
-            uint8_t  reason    = (packet.hasRemaining(1))
-                                     ? packet.readUInt8() : 0;
-            LOG_DEBUG("SMSG_PET_CAST_FAILED: spell=", spellId,
-                      " reason=", static_cast<int>(reason));
-            if (reason != 0) {
-                const char* reasonStr = getSpellCastResultString(reason);
-                const std::string& sName = getSpellName(spellId);
-                std::string errMsg;
-                if (reasonStr && *reasonStr)
-                    errMsg = sName.empty() ? reasonStr : (sName + ": " + reasonStr);
-                else
-                    errMsg = sName.empty() ? "Pet spell failed." : (sName + ": Pet spell failed.");
-                addSystemChatMessage(errMsg);
-            }
-        }
-        packet.skipAll();
-    };
+
     // uint64 petGuid + uint32 cost (copper)
     for (auto op : { Opcode::SMSG_PET_GUIDS, Opcode::SMSG_PET_DISMISS_SOUND, Opcode::SMSG_PET_ACTION_SOUND, Opcode::SMSG_PET_UNLEARN_CONFIRM }) {
         dispatchTable_[op] = [this](network::Packet& packet) {
@@ -7011,14 +3240,17 @@ void GameHandler::registerOpcodeHandlers() {
         }
 
         // Populate inspect result immediately (no talent data in Classic SMSG_INSPECT)
-        inspectResult_.guid           = guid;
-        inspectResult_.playerName     = playerName;
-        inspectResult_.totalTalents   = 0;
-        inspectResult_.unspentTalents = 0;
-        inspectResult_.talentGroups   = 0;
-        inspectResult_.activeTalentGroup = 0;
-        inspectResult_.itemEntries    = items;
-        inspectResult_.enchantIds     = {};
+        if (socialHandler_) {
+            auto& ir = socialHandler_->mutableInspectResult();
+            ir.guid           = guid;
+            ir.playerName     = playerName;
+            ir.totalTalents   = 0;
+            ir.unspentTalents = 0;
+            ir.talentGroups   = 0;
+            ir.activeTalentGroup = 0;
+            ir.itemEntries    = items;
+            ir.enchantIds     = {};
+        }
 
         // Also cache for future talent-inspect cross-reference
         inspectedPlayerItemEntries_[guid] = items;
@@ -7040,7 +3272,7 @@ void GameHandler::registerOpcodeHandlers() {
     // Same wire format as SMSG_COMPRESSED_MOVES: uint8 size + uint16 opcode + payload[]
     dispatchTable_[Opcode::SMSG_MULTIPLE_MOVES] = [this](network::Packet& packet) {
         // Same wire format as SMSG_COMPRESSED_MOVES: uint8 size + uint16 opcode + payload[]
-        handleCompressedMoves(packet);
+        if (movementHandler_) movementHandler_->handleCompressedMoves(packet);
     };
     // Each sub-packet uses the standard WotLK server wire format:
     //   uint16_be subSize  (includes the 2-byte opcode; payload = subSize - 2)
@@ -7095,41 +3327,32 @@ void GameHandler::registerOpcodeHandlers() {
         }
         packet.skipAll();
     };
-    dispatchTable_[Opcode::SMSG_REFER_A_FRIEND_EXPIRED] = [this](network::Packet& packet) {
-        addSystemChatMessage("Your Recruit-A-Friend link has expired.");
-        packet.skipAll();
-    };
-    dispatchTable_[Opcode::SMSG_REFER_A_FRIEND_FAILURE] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(4)) {
-            uint32_t reason = packet.readUInt32();
-            static const char* kRafErrors[] = {
-                "Not eligible",            // 0
-                "Target not eligible",     // 1
-                "Too many referrals",      // 2
-                "Wrong faction",           // 3
-                "Not a recruit",           // 4
-                "Recruit requirements not met", // 5
-                "Level above requirement", // 6
-                "Friend needs account upgrade", // 7
-            };
-            const char* msg = (reason < 8) ? kRafErrors[reason]
-                                           : "Recruit-A-Friend failed.";
-            addSystemChatMessage(std::string("Recruit-A-Friend: ") + msg);
+    // SMSG_REFER_A_FRIEND_EXPIRED — moved to SocialHandler::registerOpcodes
+    // SMSG_REFER_A_FRIEND_FAILURE — moved to SocialHandler::registerOpcodes
+    // SMSG_REPORT_PVP_AFK_RESULT — moved to SocialHandler::registerOpcodes
+    dispatchTable_[Opcode::SMSG_RESPOND_INSPECT_ACHIEVEMENTS] = [this](network::Packet& packet) {
+        loadAchievementNameCache();
+        if (!packet.hasRemaining(1)) return;
+        uint64_t inspectedGuid = packet.readPackedGuid();
+        if (inspectedGuid == 0) { packet.skipAll(); return; }
+        std::unordered_set<uint32_t> achievements;
+        while (packet.hasRemaining(4)) {
+            uint32_t id = packet.readUInt32();
+            if (id == 0xFFFFFFFF) break;
+            if (!packet.hasRemaining(4)) break;
+            /*date*/ packet.readUInt32();
+            achievements.insert(id);
         }
-        packet.skipAll();
-    };
-    dispatchTable_[Opcode::SMSG_REPORT_PVP_AFK_RESULT] = [this](network::Packet& packet) {
-        if (packet.hasRemaining(1)) {
-            uint8_t result = packet.readUInt8();
-            if (result == 0)
-                addSystemChatMessage("AFK report submitted.");
-            else
-                addSystemChatMessage("Cannot report that player as AFK right now.");
+        while (packet.hasRemaining(4)) {
+            uint32_t id = packet.readUInt32();
+            if (id == 0xFFFFFFFF) break;
+            if (!packet.hasRemaining(16)) break;
+            packet.readUInt64(); packet.readUInt32(); packet.readUInt32();
         }
-        packet.skipAll();
+        inspectedPlayerAchievements_[inspectedGuid] = std::move(achievements);
+        LOG_INFO("SMSG_RESPOND_INSPECT_ACHIEVEMENTS: guid=0x", std::hex, inspectedGuid, std::dec,
+                 " achievements=", inspectedPlayerAchievements_[inspectedGuid].size());
     };
-    registerHandler(Opcode::SMSG_RESPOND_INSPECT_ACHIEVEMENTS, &GameHandler::handleRespondInspectAchievements);
-    registerHandler(Opcode::SMSG_QUEST_POI_QUERY_RESPONSE, &GameHandler::handleQuestPoiQueryResponse);
     dispatchTable_[Opcode::SMSG_ON_CANCEL_EXPECTED_RIDE_VEHICLE_AURA] = [this](network::Packet& packet) {
         vehicleId_ = 0;  // Vehicle ride cancelled; clear UI
         packet.skipAll();
@@ -7157,7 +3380,6 @@ void GameHandler::registerOpcodeHandlers() {
             addUIError(buf);
         }
     };
-    registerHandler(Opcode::SMSG_ITEM_QUERY_MULTIPLE_RESPONSE, &GameHandler::handleItemQueryResponse);
     // WotLK 3.3.5a format:
     //   uint64 mirrorGuid — GUID of the mirror image unit
     //   uint32 displayId  — display ID to render the image with
@@ -7720,6 +3942,18 @@ void GameHandler::registerOpcodeHandlers() {
         Opcode::SMSG_VOICE_SESSION_ROSTER_UPDATE,
         Opcode::SMSG_VOICE_SET_TALKER_MUTED
     }) { registerSkipHandler(op); }
+
+    // -----------------------------------------------------------------------
+    // Domain handler registrations (override duplicate entries above)
+    // -----------------------------------------------------------------------
+    chatHandler_->registerOpcodes(dispatchTable_);
+    movementHandler_->registerOpcodes(dispatchTable_);
+    combatHandler_->registerOpcodes(dispatchTable_);
+    spellHandler_->registerOpcodes(dispatchTable_);
+    inventoryHandler_->registerOpcodes(dispatchTable_);
+    socialHandler_->registerOpcodes(dispatchTable_);
+    questHandler_->registerOpcodes(dispatchTable_);
+    wardenHandler_->registerOpcodes(dispatchTable_);
 }
 
 void GameHandler::handlePacket(network::Packet& packet) {
@@ -7757,7 +3991,7 @@ void GameHandler::handlePacket(network::Packet& packet) {
                     (monsterMoveTransportWire != 0xFFFF && subOpcode == monsterMoveTransportWire)) {
                     LOG_INFO("Opcode 0x006B interpreted as SMSG_COMPRESSED_MOVES (subOpcode=0x",
                              std::hex, subOpcode, std::dec, ")");
-                    handleCompressedMoves(packet);
+                    if (movementHandler_) movementHandler_->handleCompressedMoves(packet);
                     return;
                 }
             }
@@ -8384,19 +4618,6 @@ const Character* GameHandler::getFirstCharacter() const {
     return &characters.front();
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 void GameHandler::handleCharLoginFailed(network::Packet& packet) {
     uint8_t reason = packet.readUInt8();
 
@@ -8480,15 +4701,17 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     playerRangedCritPct_ = -1.0f;
     std::fill(std::begin(playerSpellCritPct_), std::end(playerSpellCritPct_), -1.0f);
     std::fill(std::begin(playerCombatRatings_), std::end(playerCombatRatings_), -1);
-    knownSpells.clear();
-    spellCooldowns.clear();
+    if (spellHandler_) spellHandler_->knownSpells_.clear();
+    if (spellHandler_) spellHandler_->spellCooldowns_.clear();
     spellFlatMods_.clear();
     spellPctMods_.clear();
     actionBar = {};
-    playerAuras.clear();
-    targetAuras.clear();
-    unitAurasCache_.clear();
-    unitCastStates_.clear();
+    if (spellHandler_) {
+        spellHandler_->playerAuras_.clear();
+        spellHandler_->targetAuras_.clear();
+        spellHandler_->unitAurasCache_.clear();
+    }
+    if (spellHandler_) spellHandler_->unitCastStates_.clear();
     petGuid_ = 0;
     stableWindowOpen_  = false;
     stableMasterGuid_  = 0;
@@ -8507,17 +4730,11 @@ void GameHandler::selectCharacter(uint64_t characterGuid) {
     pendingQuestAcceptTimeouts_.clear();
     pendingQuestAcceptNpcGuids_.clear();
     npcQuestStatus_.clear();
-    hostileAttackers_.clear();
-    combatText.clear();
-    autoAttacking = false;
-    autoAttackTarget = 0;
-    casting = false;
-    castIsChannel = false;
-    currentCastSpellId = 0;
+    if (combatHandler_) combatHandler_->resetAllCombatState();
+    if (spellHandler_) { spellHandler_->casting_ = false; spellHandler_->castIsChannel_ = false; spellHandler_->currentCastSpellId_ = 0; }
     pendingGameObjectInteractGuid_ = 0;
     lastInteractedGoGuid_ = 0;
-    castTimeRemaining = 0.0f;
-    castTimeTotal = 0.0f;
+    if (spellHandler_) { spellHandler_->castTimeRemaining_ = 0.0f; spellHandler_->castTimeTotal_ = 0.0f; }
     craftQueueSpellId_ = 0;
     craftQueueRemaining_ = 0;
     queuedSpellId_ = 0;
@@ -8620,11 +4837,15 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
     movementInfo.orientation = core::coords::serverToCanonicalYaw(data.orientation);
     movementInfo.flags = 0;
     movementInfo.flags2 = 0;
-    movementClockStart_ = std::chrono::steady_clock::now();
-    lastMovementTimestampMs_ = 0;
+    if (movementHandler_) {
+        movementHandler_->movementClockStart_ = std::chrono::steady_clock::now();
+        movementHandler_->lastMovementTimestampMs_ = 0;
+    }
     movementInfo.time = nextMovementTimestampMs();
-    isFalling_ = false;
-    fallStartMs_ = 0;
+    if (movementHandler_) {
+        movementHandler_->isFalling_ = false;
+        movementHandler_->fallStartMs_ = 0;
+    }
     movementInfo.fallTime = 0;
     movementInfo.jumpVelocity = 0.0f;
     movementInfo.jumpSinAngle = 0.0f;
@@ -8648,8 +4869,7 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
     }
 
     // Clear boss encounter unit slots and raid marks on world transfer
-    encounterUnitGuids_.fill(0);
-    raidTargetGuids_.fill(0);
+    if (socialHandler_) socialHandler_->resetTransferState();
 
     // Suppress area triggers on initial login — prevents exit portals from
     // immediately firing when spawning inside a dungeon/instance.
@@ -8797,1180 +5017,6 @@ void GameHandler::handleTutorialFlags(network::Packet& packet) {
              flags[4], ", ", flags[5], ", ", flags[6], ", ", flags[7], "]");
 }
 
-bool GameHandler::loadWardenCRFile(const std::string& moduleHashHex) {
-    wardenCREntries_.clear();
-
-    // Look for .cr file in warden cache
-    std::string cacheBase;
-#ifdef _WIN32
-    if (const char* h = std::getenv("APPDATA")) cacheBase = std::string(h) + "\\wowee\\warden_cache";
-    else cacheBase = ".\\warden_cache";
-#else
-    if (const char* h = std::getenv("HOME")) cacheBase = std::string(h) + "/.local/share/wowee/warden_cache";
-    else cacheBase = "./warden_cache";
-#endif
-    std::string crPath = cacheBase + "/" + moduleHashHex + ".cr";
-
-    std::ifstream crFile(crPath, std::ios::binary);
-    if (!crFile) {
-        LOG_WARNING("Warden: No .cr file found at ", crPath);
-        return false;
-    }
-
-    // Get file size
-    crFile.seekg(0, std::ios::end);
-    auto fileSize = crFile.tellg();
-    crFile.seekg(0, std::ios::beg);
-
-    // Header: [4 memoryRead][4 pageScanCheck][9 opcodes] = 17 bytes
-    constexpr size_t CR_HEADER_SIZE = 17;
-    constexpr size_t CR_ENTRY_SIZE = 68; // seed[16]+reply[20]+clientKey[16]+serverKey[16]
-
-    if (static_cast<size_t>(fileSize) < CR_HEADER_SIZE) {
-        LOG_ERROR("Warden: .cr file too small (", fileSize, " bytes)");
-        return false;
-    }
-
-    // Read header: [4 memoryRead][4 pageScanCheck][9 opcodes]
-    crFile.seekg(8); // skip memoryRead + pageScanCheck
-    crFile.read(reinterpret_cast<char*>(wardenCheckOpcodes_), 9);
-    {
-        std::string opcHex;
-        // CMaNGOS WindowsScanType order:
-        // 0 READ_MEMORY, 1 FIND_MODULE_BY_NAME, 2 FIND_MEM_IMAGE_CODE_BY_HASH,
-        // 3 FIND_CODE_BY_HASH, 4 HASH_CLIENT_FILE, 5 GET_LUA_VARIABLE,
-        // 6 API_CHECK, 7 FIND_DRIVER_BY_NAME, 8 CHECK_TIMING_VALUES
-        const char* names[] = {"MEM","MODULE","PAGE_A","PAGE_B","MPQ","LUA","PROC","DRIVER","TIMING"};
-        for (int i = 0; i < 9; i++) {
-            char s[16]; snprintf(s, sizeof(s), "%s=0x%02X ", names[i], wardenCheckOpcodes_[i]); opcHex += s;
-        }
-        LOG_WARNING("Warden: Check opcodes: ", opcHex);
-    }
-
-    size_t entryCount = (static_cast<size_t>(fileSize) - CR_HEADER_SIZE) / CR_ENTRY_SIZE;
-    if (entryCount == 0) {
-        LOG_ERROR("Warden: .cr file has no entries");
-        return false;
-    }
-
-    wardenCREntries_.resize(entryCount);
-    for (size_t i = 0; i < entryCount; i++) {
-        auto& e = wardenCREntries_[i];
-        crFile.read(reinterpret_cast<char*>(e.seed), 16);
-        crFile.read(reinterpret_cast<char*>(e.reply), 20);
-        crFile.read(reinterpret_cast<char*>(e.clientKey), 16);
-        crFile.read(reinterpret_cast<char*>(e.serverKey), 16);
-    }
-
-    LOG_INFO("Warden: Loaded ", entryCount, " CR entries from ", crPath);
-    return true;
-}
-
-void GameHandler::handleWardenData(network::Packet& packet) {
-    const auto& data = packet.getData();
-    if (!wardenGateSeen_) {
-        wardenGateSeen_ = true;
-        wardenGateElapsed_ = 0.0f;
-        wardenGateNextStatusLog_ = 2.0f;
-        wardenPacketsAfterGate_ = 0;
-    }
-
-    // Initialize Warden crypto from session key on first packet
-    if (!wardenCrypto_) {
-        wardenCrypto_ = std::make_unique<WardenCrypto>();
-        if (sessionKey.size() != 40) {
-            LOG_ERROR("Warden: No valid session key (size=", sessionKey.size(), "), cannot init crypto");
-            wardenCrypto_.reset();
-            return;
-        }
-        if (!wardenCrypto_->initFromSessionKey(sessionKey)) {
-            LOG_ERROR("Warden: Failed to initialize crypto from session key");
-            wardenCrypto_.reset();
-            return;
-        }
-        wardenState_ = WardenState::WAIT_MODULE_USE;
-    }
-
-    // Decrypt the payload
-    std::vector<uint8_t> decrypted = wardenCrypto_->decrypt(data);
-
-    // Avoid expensive hex formatting when DEBUG logs are disabled.
-    if (core::Logger::getInstance().shouldLog(core::LogLevel::DEBUG)) {
-        std::string hex;
-        size_t logSize = std::min(decrypted.size(), size_t(256));
-        hex.reserve(logSize * 3);
-        for (size_t i = 0; i < logSize; ++i) {
-            char b[4];
-            snprintf(b, sizeof(b), "%02x ", decrypted[i]);
-            hex += b;
-        }
-        if (decrypted.size() > 64) {
-            hex += "... (" + std::to_string(decrypted.size() - 64) + " more)";
-        }
-        LOG_DEBUG("Warden: Decrypted (", decrypted.size(), " bytes): ", hex);
-    }
-
-    if (decrypted.empty()) {
-        LOG_WARNING("Warden: Empty decrypted payload");
-        return;
-    }
-
-    uint8_t wardenOpcode = decrypted[0];
-
-    // Helper to send an encrypted Warden response
-    auto sendWardenResponse = [&](const std::vector<uint8_t>& plaintext) {
-        std::vector<uint8_t> encrypted = wardenCrypto_->encrypt(plaintext);
-        network::Packet response(wireOpcode(Opcode::CMSG_WARDEN_DATA));
-        for (uint8_t byte : encrypted) {
-            response.writeUInt8(byte);
-        }
-        if (socket && socket->isConnected()) {
-            socket->send(response);
-            LOG_DEBUG("Warden: Sent response (", plaintext.size(), " bytes plaintext)");
-        }
-    };
-
-    switch (wardenOpcode) {
-        case 0x00: { // WARDEN_SMSG_MODULE_USE
-            // Format: [1 opcode][16 moduleHash][16 moduleKey][4 moduleSize]
-            if (decrypted.size() < 37) {
-                LOG_ERROR("Warden: MODULE_USE too short (", decrypted.size(), " bytes, need 37)");
-                return;
-            }
-
-            wardenModuleHash_.assign(decrypted.begin() + 1, decrypted.begin() + 17);
-            wardenModuleKey_.assign(decrypted.begin() + 17, decrypted.begin() + 33);
-            wardenModuleSize_ = static_cast<uint32_t>(decrypted[33])
-                              | (static_cast<uint32_t>(decrypted[34]) << 8)
-                              | (static_cast<uint32_t>(decrypted[35]) << 16)
-                              | (static_cast<uint32_t>(decrypted[36]) << 24);
-            wardenModuleData_.clear();
-
-            {
-                std::string hashHex;
-                for (auto b : wardenModuleHash_) { char s[4]; snprintf(s, 4, "%02x", b); hashHex += s; }
-                LOG_DEBUG("Warden: MODULE_USE hash=", hashHex, " size=", wardenModuleSize_);
-
-                // Try to load pre-computed challenge/response entries
-                loadWardenCRFile(hashHex);
-            }
-
-            // Respond with MODULE_MISSING (opcode 0x00) to request the module data
-            std::vector<uint8_t> resp = { 0x00 }; // WARDEN_CMSG_MODULE_MISSING
-            sendWardenResponse(resp);
-            wardenState_ = WardenState::WAIT_MODULE_CACHE;
-            LOG_DEBUG("Warden: Sent MODULE_MISSING, waiting for module data chunks");
-            break;
-        }
-
-        case 0x01: { // WARDEN_SMSG_MODULE_CACHE (module data chunk)
-            // Format: [1 opcode][2 chunkSize LE][chunkSize bytes data]
-            if (decrypted.size() < 3) {
-                LOG_ERROR("Warden: MODULE_CACHE too short");
-                return;
-            }
-
-            uint16_t chunkSize = static_cast<uint16_t>(decrypted[1])
-                               | (static_cast<uint16_t>(decrypted[2]) << 8);
-
-            if (decrypted.size() < 3u + chunkSize) {
-                LOG_ERROR("Warden: MODULE_CACHE chunk truncated (claimed ", chunkSize,
-                          ", have ", decrypted.size() - 3, ")");
-                return;
-            }
-
-            wardenModuleData_.insert(wardenModuleData_.end(),
-                                     decrypted.begin() + 3,
-                                     decrypted.begin() + 3 + chunkSize);
-
-            LOG_DEBUG("Warden: MODULE_CACHE chunk ", chunkSize, " bytes, total ",
-                     wardenModuleData_.size(), "/", wardenModuleSize_);
-
-            // Check if module download is complete
-            if (wardenModuleData_.size() >= wardenModuleSize_) {
-                LOG_INFO("Warden: Module download complete (",
-                         wardenModuleData_.size(), " bytes)");
-                wardenState_ = WardenState::WAIT_HASH_REQUEST;
-
-                // Cache raw module to disk
-                {
-#ifdef _WIN32
-                    std::string cacheDir;
-                    if (const char* h = std::getenv("APPDATA")) cacheDir = std::string(h) + "\\wowee\\warden_cache";
-                    else cacheDir = ".\\warden_cache";
-#else
-                    std::string cacheDir;
-                    if (const char* h = std::getenv("HOME")) cacheDir = std::string(h) + "/.local/share/wowee/warden_cache";
-                    else cacheDir = "./warden_cache";
-#endif
-                    std::filesystem::create_directories(cacheDir);
-
-                    std::string hashHex;
-                    for (auto b : wardenModuleHash_) { char s[4]; snprintf(s, 4, "%02x", b); hashHex += s; }
-                    std::string cachePath = cacheDir + "/" + hashHex + ".wdn";
-
-                    std::ofstream wf(cachePath, std::ios::binary);
-                    if (wf) {
-                        wf.write(reinterpret_cast<const char*>(wardenModuleData_.data()), wardenModuleData_.size());
-                        LOG_DEBUG("Warden: Cached module to ", cachePath);
-                    }
-                }
-
-                // Load the module (decrypt, decompress, parse, relocate)
-                wardenLoadedModule_ = std::make_shared<WardenModule>();
-                if (wardenLoadedModule_->load(wardenModuleData_, wardenModuleHash_, wardenModuleKey_)) { // codeql[cpp/weak-cryptographic-algorithm]
-                    LOG_INFO("Warden: Module loaded successfully (image size=",
-                             wardenLoadedModule_->getModuleSize(), " bytes)");
-                } else {
-                    LOG_ERROR("Warden: Module loading FAILED");
-                    wardenLoadedModule_.reset();
-                }
-
-                // Send MODULE_OK (opcode 0x01)
-                std::vector<uint8_t> resp = { 0x01 }; // WARDEN_CMSG_MODULE_OK
-                sendWardenResponse(resp);
-                LOG_DEBUG("Warden: Sent MODULE_OK");
-            }
-            // No response for intermediate chunks
-            break;
-        }
-
-        case 0x05: { // WARDEN_SMSG_HASH_REQUEST
-            // Format: [1 opcode][16 seed]
-            if (decrypted.size() < 17) {
-                LOG_ERROR("Warden: HASH_REQUEST too short (", decrypted.size(), " bytes, need 17)");
-                return;
-            }
-
-            std::vector<uint8_t> seed(decrypted.begin() + 1, decrypted.begin() + 17);
-            auto applyWardenSeedRekey = [&](const std::vector<uint8_t>& rekeySeed) {
-                // Derive new RC4 keys from the seed using SHA1Randx.
-                uint8_t newEncryptKey[16], newDecryptKey[16];
-                WardenCrypto::sha1RandxGenerate(rekeySeed, newEncryptKey, newDecryptKey);
-
-                std::vector<uint8_t> ek(newEncryptKey, newEncryptKey + 16);
-                std::vector<uint8_t> dk(newDecryptKey, newDecryptKey + 16);
-                wardenCrypto_->replaceKeys(ek, dk);
-                for (auto& b : newEncryptKey) b = 0;
-                for (auto& b : newDecryptKey) b = 0;
-                LOG_DEBUG("Warden: Derived and applied key update from seed");
-            };
-
-            // --- Try CR lookup (pre-computed challenge/response entries) ---
-            if (!wardenCREntries_.empty()) {
-                const WardenCREntry* match = nullptr;
-                for (const auto& entry : wardenCREntries_) {
-                    if (std::memcmp(entry.seed, seed.data(), 16) == 0) {
-                        match = &entry;
-                        break;
-                    }
-                }
-
-                if (match) {
-                    LOG_WARNING("Warden: HASH_REQUEST — CR entry MATCHED, sending pre-computed reply");
-
-                    // Send HASH_RESULT (opcode 0x04 + 20-byte reply)
-                    std::vector<uint8_t> resp;
-                    resp.push_back(0x04);
-                    resp.insert(resp.end(), match->reply, match->reply + 20);
-                    sendWardenResponse(resp);
-
-                    // Switch to new RC4 keys from the CR entry
-                    // clientKey = encrypt (client→server), serverKey = decrypt (server→client)
-                    std::vector<uint8_t> newEncryptKey(match->clientKey, match->clientKey + 16);
-                    std::vector<uint8_t> newDecryptKey(match->serverKey, match->serverKey + 16);
-                    wardenCrypto_->replaceKeys(newEncryptKey, newDecryptKey);
-
-                    LOG_WARNING("Warden: Switched to CR key set");
-
-                    wardenState_ = WardenState::WAIT_CHECKS;
-                    break;
-                } else {
-                    LOG_WARNING("Warden: Seed not found in ", wardenCREntries_.size(), " CR entries");
-                }
-            }
-
-            // --- No CR match: decide strategy based on server strictness ---
-            {
-                std::string seedHex;
-                for (auto b : seed) { char s[4]; snprintf(s, 4, "%02x", b); seedHex += s; }
-
-                bool isTurtle = isActiveExpansion("turtle");
-                bool isClassic = (build <= 6005) && !isTurtle;
-
-                if (!isTurtle && !isClassic) {
-                    // WotLK/TBC (AzerothCore, etc.): strict servers BAN for wrong HASH_RESULT.
-                    // Without a matching CR entry we cannot compute the correct hash
-                    // (requires executing the module's native init function).
-                    // Safest action: don't respond. Server will time-out and kick (not ban).
-                    LOG_WARNING("Warden: HASH_REQUEST seed=", seedHex,
-                                " — no CR match, SKIPPING response to avoid account ban");
-                    LOG_WARNING("Warden: To fix, provide a .cr file with the correct seed→reply entry for this module");
-                    // Stay in WAIT_HASH_REQUEST — server will eventually kick.
-                    break;
-                }
-
-                // Turtle/Classic: lenient servers (log-only penalties, no bans).
-                // Send a best-effort fallback hash so we can continue the handshake.
-                LOG_WARNING("Warden: No CR match (seed=", seedHex,
-                            "), sending fallback hash (lenient server)");
-
-                std::vector<uint8_t> fallbackReply;
-                if (wardenLoadedModule_ && wardenLoadedModule_->isLoaded()) {
-                    const uint8_t* moduleImage = static_cast<const uint8_t*>(wardenLoadedModule_->getModuleMemory());
-                    size_t moduleImageSize = wardenLoadedModule_->getModuleSize();
-                    if (moduleImage && moduleImageSize > 0) {
-                        std::vector<uint8_t> imageData(moduleImage, moduleImage + moduleImageSize);
-                        fallbackReply = auth::Crypto::sha1(imageData);
-                    }
-                }
-                if (fallbackReply.empty()) {
-                    if (!wardenModuleData_.empty())
-                        fallbackReply = auth::Crypto::sha1(wardenModuleData_);
-                    else
-                        fallbackReply.assign(20, 0);
-                }
-
-                std::vector<uint8_t> resp;
-                resp.push_back(0x04); // WARDEN_CMSG_HASH_RESULT
-                resp.insert(resp.end(), fallbackReply.begin(), fallbackReply.end());
-                sendWardenResponse(resp);
-                applyWardenSeedRekey(seed);
-            }
-
-            wardenState_ = WardenState::WAIT_CHECKS;
-            break;
-        }
-
-        case 0x02: { // WARDEN_SMSG_CHEAT_CHECKS_REQUEST
-            LOG_DEBUG("Warden: CHEAT_CHECKS_REQUEST (", decrypted.size(), " bytes)");
-
-            if (decrypted.size() < 3) {
-                LOG_ERROR("Warden: CHEAT_CHECKS_REQUEST too short");
-                break;
-            }
-
-            // --- Parse string table ---
-            // Format: [1 opcode][string table: (len+data)*][0x00 end][check data][xorByte]
-            size_t pos = 1;
-            std::vector<std::string> strings;
-            while (pos < decrypted.size()) {
-                uint8_t slen = decrypted[pos++];
-                if (slen == 0) break; // end of string table
-                if (pos + slen > decrypted.size()) break;
-                strings.emplace_back(reinterpret_cast<const char*>(decrypted.data() + pos), slen);
-                pos += slen;
-            }
-            LOG_DEBUG("Warden: String table: ", strings.size(), " entries");
-            for (size_t i = 0; i < strings.size(); i++) {
-                LOG_DEBUG("Warden:   [", i, "] = \"", strings[i], "\"");
-            }
-
-            // XOR byte is the last byte of the packet
-            uint8_t xorByte = decrypted.back();
-            LOG_DEBUG("Warden: XOR byte = 0x", [&]{ char s[4]; snprintf(s,4,"%02x",xorByte); return std::string(s); }());
-
-            // Quick-scan for PAGE_A/PAGE_B checks (these trigger 5-second brute-force searches)
-            {
-                bool hasSlowChecks = false;
-                for (size_t i = pos; i < decrypted.size() - 1; i++) {
-                    uint8_t d = decrypted[i] ^ xorByte;
-                    if (d == wardenCheckOpcodes_[2] || d == wardenCheckOpcodes_[3]) {
-                        hasSlowChecks = true;
-                        break;
-                    }
-                }
-                if (hasSlowChecks && !wardenResponsePending_) {
-                    LOG_WARNING("Warden: PAGE_A/PAGE_B detected — building response async to avoid main-loop stall");
-                    // Ensure wardenMemory_ is loaded on main thread before launching async task
-                    if (!wardenMemory_) {
-                        wardenMemory_ = std::make_unique<WardenMemory>();
-                        if (!wardenMemory_->load(static_cast<uint16_t>(build), isActiveExpansion("turtle"))) {
-                            LOG_WARNING("Warden: Could not load WoW.exe for MEM_CHECK");
-                        }
-                    }
-                    // Capture state by value (decrypted, strings) and launch async.
-                    // The async task returns plaintext response bytes; main thread encrypts+sends in update().
-                    size_t capturedPos = pos;
-                    wardenPendingEncrypted_ = std::async(std::launch::async,
-                        [this, decrypted, strings, xorByte, capturedPos]() -> std::vector<uint8_t> {
-                            // This runs on a background thread — same logic as the synchronous path below.
-                            // BEGIN: duplicated check processing (kept in sync with synchronous path)
-                            enum CheckType { CT_MEM=0, CT_PAGE_A=1, CT_PAGE_B=2, CT_MPQ=3, CT_LUA=4,
-                                             CT_DRIVER=5, CT_TIMING=6, CT_PROC=7, CT_MODULE=8, CT_UNKNOWN=9 };
-                            size_t checkEnd = decrypted.size() - 1;
-                            size_t pos = capturedPos;
-
-                            auto decodeCheckType = [&](uint8_t raw) -> CheckType {
-                                uint8_t decoded = raw ^ xorByte;
-                                if (decoded == wardenCheckOpcodes_[0]) return CT_MEM;
-                                if (decoded == wardenCheckOpcodes_[1]) return CT_MODULE;
-                                if (decoded == wardenCheckOpcodes_[2]) return CT_PAGE_A;
-                                if (decoded == wardenCheckOpcodes_[3]) return CT_PAGE_B;
-                                if (decoded == wardenCheckOpcodes_[4]) return CT_MPQ;
-                                if (decoded == wardenCheckOpcodes_[5]) return CT_LUA;
-                                if (decoded == wardenCheckOpcodes_[6]) return CT_PROC;
-                                if (decoded == wardenCheckOpcodes_[7]) return CT_DRIVER;
-                                if (decoded == wardenCheckOpcodes_[8]) return CT_TIMING;
-                                return CT_UNKNOWN;
-                            };
-                            auto resolveString = [&](uint8_t idx) -> std::string {
-                                if (idx == 0) return {};
-                                size_t i = idx - 1;
-                                return i < strings.size() ? strings[i] : std::string();
-                            };
-                            auto isKnownWantedCodeScan = [&](const uint8_t seed[4], const uint8_t hash[20],
-                                                             uint32_t off, uint8_t len) -> bool {
-                                auto tryMatch = [&](const uint8_t* pat, size_t patLen) {
-                                    uint8_t out[SHA_DIGEST_LENGTH]; unsigned int outLen = 0;
-                                    HMAC(EVP_sha1(), seed, 4, pat, patLen, out, &outLen);
-                                    return outLen == SHA_DIGEST_LENGTH && !std::memcmp(out, hash, SHA_DIGEST_LENGTH);
-                                };
-                                static const uint8_t p1[] = {0x33,0xD2,0x33,0xC9,0xE8,0x87,0x07,0x1B,0x00,0xE8};
-                                if (off == 13856 && len == sizeof(p1) && tryMatch(p1, sizeof(p1))) return true;
-                                static const uint8_t p2[] = {0x56,0x57,0xFC,0x8B,0x54,0x24,0x14,0x8B,
-                                    0x74,0x24,0x10,0x8B,0x44,0x24,0x0C,0x8B,0xCA,0x8B,0xF8,0xC1,
-                                    0xE9,0x02,0x74,0x02,0xF3,0xA5,0xB1,0x03,0x23,0xCA,0x74,0x02,
-                                    0xF3,0xA4,0x5F,0x5E,0xC3};
-                                if (len == sizeof(p2) && tryMatch(p2, sizeof(p2))) return true;
-                                return false;
-                            };
-
-                            std::vector<uint8_t> resultData;
-                            int checkCount = 0;
-                            int checkTypeCounts[10] = {};
-
-                            #define WARDEN_ASYNC_HANDLER 1
-                            // The check processing loop is identical to the synchronous path.
-                            // See the synchronous case 0x02 below for the canonical version.
-                            while (pos < checkEnd) {
-                                CheckType ct = decodeCheckType(decrypted[pos]);
-                                pos++;
-                                checkCount++;
-                                if (ct <= CT_UNKNOWN) checkTypeCounts[ct]++;
-
-                                switch (ct) {
-                                case CT_TIMING: {
-                                    // Result byte: 0x01 = timing check ran successfully,
-                                    // 0x00 = timing check failed (Wine/VM — server skips anti-AFK).
-                                    // We return 0x01 so the server validates normally; our
-                                    // LastHardwareAction (now-2000) ensures a clean 2s delta.
-                                    resultData.push_back(0x01);
-                                    uint32_t ticks = static_cast<uint32_t>(
-                                        std::chrono::duration_cast<std::chrono::milliseconds>(
-                                            std::chrono::steady_clock::now().time_since_epoch()).count());
-                                    resultData.push_back(ticks & 0xFF);
-                                    resultData.push_back((ticks >> 8) & 0xFF);
-                                    resultData.push_back((ticks >> 16) & 0xFF);
-                                    resultData.push_back((ticks >> 24) & 0xFF);
-                                    break;
-                                }
-                                case CT_MEM: {
-                                    if (pos + 6 > checkEnd) { pos = checkEnd; break; }
-                                    uint8_t strIdx = decrypted[pos++];
-                                    std::string moduleName = resolveString(strIdx);
-                                    uint32_t offset = decrypted[pos] | (uint32_t(decrypted[pos+1])<<8)
-                                                    | (uint32_t(decrypted[pos+2])<<16) | (uint32_t(decrypted[pos+3])<<24);
-                                    pos += 4;
-                                    uint8_t readLen = decrypted[pos++];
-                                    LOG_WARNING("Warden:   MEM offset=0x", [&]{char s[12];snprintf(s,12,"%08x",offset);return std::string(s);}(),
-                                             " len=", static_cast<int>(readLen),
-                                             (strIdx ? " module=\"" + moduleName + "\"" : ""));
-                                    if (offset == 0x00CF0BC8 && readLen == 4 && wardenMemory_ && wardenMemory_->isLoaded()) {
-                                        uint32_t now = static_cast<uint32_t>(
-                                            std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                std::chrono::steady_clock::now().time_since_epoch()).count());
-                                        wardenMemory_->writeLE32(0xCF0BC8, now - 2000);
-                                    }
-                                    std::vector<uint8_t> memBuf(readLen, 0);
-                                    bool memOk = wardenMemory_ && wardenMemory_->isLoaded() &&
-                                                 wardenMemory_->readMemory(offset, readLen, memBuf.data());
-                                    if (memOk) {
-                                        const char* region = "?";
-                                        if (offset >= 0x7FFE0000 && offset < 0x7FFF0000) region = "KUSER";
-                                        else if (offset >= 0x400000 && offset < 0x800000) region = ".text/.code";
-                                        else if (offset >= 0x7FF000 && offset < 0x827000) region = ".rdata";
-                                        else if (offset >= 0x827000 && offset < 0x883000) region = ".data(raw)";
-                                        else if (offset >= 0x883000 && offset < 0xD06000) region = ".data(BSS)";
-                                        bool allZero = true;
-                                        for (int i = 0; i < static_cast<int>(readLen); i++) { if (memBuf[i] != 0) { allZero = false; break; } }
-                                        std::string hexDump;
-                                        for (int i = 0; i < static_cast<int>(readLen); i++) { char hx[4]; snprintf(hx,4,"%02x ",memBuf[i]); hexDump += hx; }
-                                        LOG_WARNING("Warden:   MEM_CHECK served: [", hexDump, "] region=", region,
-                                                    (allZero && offset >= 0x883000 ? " \xe2\x98\x85""BSS_ZERO\xe2\x98\x85" : ""));
-                                        if (offset == 0x7FFE026C && readLen == 12)
-                                            LOG_WARNING("Warden:   Applying 4-byte ULONG alignment padding for WinVersionGet");
-                                        resultData.push_back(0x00);
-                                        resultData.insert(resultData.end(), memBuf.begin(), memBuf.end());
-                                    } else {
-                                        // Address not in PE/KUSER — return 0xE9 (not readable).
-                                        // Real 32-bit WoW can't read kernel space (>=0x80000000)
-                                        // or arbitrary unallocated user-space addresses.
-                                        LOG_WARNING("Warden:   MEM_CHECK -> 0xE9 (unmapped 0x",
-                                                    [&]{char s[12];snprintf(s,12,"%08x",offset);return std::string(s);}(), ")");
-                                        resultData.push_back(0xE9);
-                                    }
-                                    break;
-                                }
-                                case CT_PAGE_A:
-                                case CT_PAGE_B: {
-                                    constexpr size_t kPageSize = 29;
-                                    const char* pageName = (ct == CT_PAGE_A) ? "PAGE_A" : "PAGE_B";
-                                    bool isImageOnly = (ct == CT_PAGE_A);
-                                    if (pos + kPageSize > checkEnd) { pos = checkEnd; resultData.push_back(0x00); break; }
-                                    const uint8_t* p = decrypted.data() + pos;
-                                    const uint8_t* seed = p;
-                                    const uint8_t* sha1 = p + 4;
-                                    uint32_t off = uint32_t(p[24])|(uint32_t(p[25])<<8)|(uint32_t(p[26])<<16)|(uint32_t(p[27])<<24);
-                                    uint8_t patLen = p[28];
-                                    bool found = false;
-                                    bool turtleFallback = false;
-                                    if (isKnownWantedCodeScan(seed, sha1, off, patLen)) {
-                                        found = true;
-                                    } else if (wardenMemory_ && wardenMemory_->isLoaded() && patLen > 0) {
-                                        // Hint + nearby window search (instant).
-                                        // Skip full brute-force for Turtle PAGE_A to avoid
-                                        // 25s delay that triggers response timeout.
-                                        bool hintOnly = (ct == CT_PAGE_A && isActiveExpansion("turtle"));
-                                        found = wardenMemory_->searchCodePattern(seed, sha1, patLen, isImageOnly, off, hintOnly);
-                                        if (!found && !hintOnly && wardenLoadedModule_ && wardenLoadedModule_->isLoaded()) {
-                                            const uint8_t* modMem = static_cast<const uint8_t*>(wardenLoadedModule_->getModuleMemory());
-                                            size_t modSize = wardenLoadedModule_->getModuleSize();
-                                            if (modMem && modSize >= patLen) {
-                                                for (size_t i = 0; i < modSize - patLen + 1; i++) {
-                                                    uint8_t h[20]; unsigned int hl = 0;
-                                                    HMAC(EVP_sha1(), seed, 4, modMem+i, patLen, h, &hl);
-                                                    if (hl == 20 && !std::memcmp(h, sha1, 20)) { found = true; break; }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    // Turtle PAGE_A fallback: patterns at runtime-patched
-                                    // offsets don't exist in the on-disk PE. The server
-                                    // expects "found" for these code integrity checks.
-                                    if (!found && ct == CT_PAGE_A && isActiveExpansion("turtle") && off < 0x600000) {
-                                        found = true;
-                                        turtleFallback = true;
-                                    }
-                                    uint8_t pageResult = found ? 0x4A : 0x00;
-                                    LOG_WARNING("Warden:   ", pageName, " offset=0x",
-                                                [&]{char s[12];snprintf(s,12,"%08x",off);return std::string(s);}(),
-                                                " patLen=", static_cast<int>(patLen), " found=", found ? "yes" : "no",
-                                                turtleFallback ? " (turtle-fallback)" : "");
-                                    pos += kPageSize;
-                                    resultData.push_back(pageResult);
-                                    break;
-                                }
-                                case CT_MPQ: {
-                                    if (pos + 1 > checkEnd) { pos = checkEnd; break; }
-                                    uint8_t strIdx = decrypted[pos++];
-                                    std::string filePath = resolveString(strIdx);
-                                    LOG_WARNING("Warden:   MPQ file=\"", (filePath.empty() ? "?" : filePath), "\"");
-                                    bool found = false;
-                                    std::vector<uint8_t> hash(20, 0);
-                                    if (!filePath.empty()) {
-                                        std::string np = asciiLower(filePath);
-                                        std::replace(np.begin(), np.end(), '/', '\\');
-                                        auto knownIt = knownDoorHashes().find(np);
-                                        if (knownIt != knownDoorHashes().end()) { found = true; hash.assign(knownIt->second.begin(), knownIt->second.end()); }
-                                        auto* am = core::Application::getInstance().getAssetManager();
-                                        if (am && am->isInitialized() && !found) {
-                                            std::vector<uint8_t> fd;
-                                            std::string rp = resolveCaseInsensitiveDataPath(am->getDataPath(), filePath);
-                                            if (!rp.empty()) fd = readFileBinary(rp);
-                                            if (fd.empty()) fd = am->readFile(filePath);
-                                            if (!fd.empty()) { found = true; hash = auth::Crypto::sha1(fd); }
-                                        }
-                                    }
-                                    LOG_WARNING("Warden:   MPQ result=", (found ? "FOUND" : "NOT_FOUND"));
-                                    if (found) { resultData.push_back(0x00); resultData.insert(resultData.end(), hash.begin(), hash.end()); }
-                                    else { resultData.push_back(0x01); }
-                                    break;
-                                }
-                                case CT_LUA: {
-                                    if (pos + 1 > checkEnd) { pos = checkEnd; break; }
-                                    pos++; resultData.push_back(0x01); break;
-                                }
-                                case CT_DRIVER: {
-                                    if (pos + 25 > checkEnd) { pos = checkEnd; break; }
-                                    pos += 24;
-                                    uint8_t strIdx = decrypted[pos++];
-                                    std::string dn = resolveString(strIdx);
-                                    LOG_WARNING("Warden:   DRIVER=\"", (dn.empty() ? "?" : dn), "\" -> 0x00(not found)");
-                                    resultData.push_back(0x00); break;
-                                }
-                                case CT_MODULE: {
-                                    if (pos + 24 > checkEnd) { pos = checkEnd; resultData.push_back(0x00); break; }
-                                    const uint8_t* p = decrypted.data() + pos;
-                                    uint8_t sb[4] = {p[0],p[1],p[2],p[3]};
-                                    uint8_t rh[20]; std::memcpy(rh, p+4, 20);
-                                    pos += 24;
-                                    bool isWanted = hmacSha1Matches(sb, "KERNEL32.DLL", rh);
-                                    std::string mn = isWanted ? "KERNEL32.DLL" : "?";
-                                    if (!isWanted) {
-                                        // Cheat modules (unwanted — report not found)
-                                        if (hmacSha1Matches(sb,"WPESPY.DLL",rh)) mn = "WPESPY.DLL";
-                                        else if (hmacSha1Matches(sb,"TAMIA.DLL",rh)) mn = "TAMIA.DLL";
-                                        else if (hmacSha1Matches(sb,"PRXDRVPE.DLL",rh)) mn = "PRXDRVPE.DLL";
-                                        else if (hmacSha1Matches(sb,"SPEEDHACK-I386.DLL",rh)) mn = "SPEEDHACK-I386.DLL";
-                                        else if (hmacSha1Matches(sb,"D3DHOOK.DLL",rh)) mn = "D3DHOOK.DLL";
-                                        else if (hmacSha1Matches(sb,"NJUMD.DLL",rh)) mn = "NJUMD.DLL";
-                                        // System DLLs (wanted — report found)
-                                        else if (hmacSha1Matches(sb,"USER32.DLL",rh)) { mn = "USER32.DLL"; isWanted = true; }
-                                        else if (hmacSha1Matches(sb,"NTDLL.DLL",rh)) { mn = "NTDLL.DLL"; isWanted = true; }
-                                        else if (hmacSha1Matches(sb,"WS2_32.DLL",rh)) { mn = "WS2_32.DLL"; isWanted = true; }
-                                        else if (hmacSha1Matches(sb,"WSOCK32.DLL",rh)) { mn = "WSOCK32.DLL"; isWanted = true; }
-                                        else if (hmacSha1Matches(sb,"ADVAPI32.DLL",rh)) { mn = "ADVAPI32.DLL"; isWanted = true; }
-                                        else if (hmacSha1Matches(sb,"SHELL32.DLL",rh)) { mn = "SHELL32.DLL"; isWanted = true; }
-                                        else if (hmacSha1Matches(sb,"GDI32.DLL",rh)) { mn = "GDI32.DLL"; isWanted = true; }
-                                        else if (hmacSha1Matches(sb,"OPENGL32.DLL",rh)) { mn = "OPENGL32.DLL"; isWanted = true; }
-                                        else if (hmacSha1Matches(sb,"WINMM.DLL",rh)) { mn = "WINMM.DLL"; isWanted = true; }
-                                    }
-                                    uint8_t mr = isWanted ? 0x4A : 0x00;
-                                    LOG_WARNING("Warden:   MODULE \"", mn, "\" -> 0x",
-                                                [&]{char s[4];snprintf(s,4,"%02x",mr);return std::string(s);}(),
-                                                isWanted ? "(found)" : "(not found)");
-                                    resultData.push_back(mr); break;
-                                }
-                                case CT_PROC: {
-                                    if (pos + 30 > checkEnd) { pos = checkEnd; break; }
-                                    pos += 30; resultData.push_back(0x01); break;
-                                }
-                                default: pos = checkEnd; break;
-                                }
-                            }
-                            #undef WARDEN_ASYNC_HANDLER
-
-                            // Log summary
-                            {
-                                std::string summary;
-                                const char* ctNames[] = {"MEM","PAGE_A","PAGE_B","MPQ","LUA","DRIVER","TIMING","PROC","MODULE","UNK"};
-                                for (int i = 0; i < 10; i++) {
-                                    if (checkTypeCounts[i] > 0) {
-                                        if (!summary.empty()) summary += " ";
-                                        summary += ctNames[i]; summary += "="; summary += std::to_string(checkTypeCounts[i]);
-                                    }
-                                }
-                                LOG_WARNING("Warden: (async) Parsed ", checkCount, " checks [", summary,
-                                            "] resultSize=", resultData.size());
-                                std::string fullHex;
-                                for (size_t bi = 0; bi < resultData.size(); bi++) {
-                                    char hx[4]; snprintf(hx, 4, "%02x ", resultData[bi]); fullHex += hx;
-                                    if ((bi + 1) % 32 == 0 && bi + 1 < resultData.size()) fullHex += "\n                    ";
-                                }
-                                LOG_WARNING("Warden: RESPONSE_HEX [", fullHex, "]");
-                            }
-
-                            // Build plaintext response: [0x02][uint16 len][uint32 checksum][resultData]
-                            auto resultHash = auth::Crypto::sha1(resultData);
-                            uint32_t checksum = 0;
-                            for (int i = 0; i < 5; i++) {
-                                uint32_t word = resultHash[i*4] | (uint32_t(resultHash[i*4+1])<<8)
-                                              | (uint32_t(resultHash[i*4+2])<<16) | (uint32_t(resultHash[i*4+3])<<24);
-                                checksum ^= word;
-                            }
-                            uint16_t rl = static_cast<uint16_t>(resultData.size());
-                            std::vector<uint8_t> resp;
-                            resp.push_back(0x02);
-                            resp.push_back(rl & 0xFF); resp.push_back((rl >> 8) & 0xFF);
-                            resp.push_back(checksum & 0xFF); resp.push_back((checksum >> 8) & 0xFF);
-                            resp.push_back((checksum >> 16) & 0xFF); resp.push_back((checksum >> 24) & 0xFF);
-                            resp.insert(resp.end(), resultData.begin(), resultData.end());
-                            return resp; // plaintext; main thread will encrypt + send
-                        });
-                    wardenResponsePending_ = true;
-                    break; // exit case 0x02 — response will be sent from update()
-                }
-            }
-
-            // Check type enum indices
-            enum CheckType { CT_MEM=0, CT_PAGE_A=1, CT_PAGE_B=2, CT_MPQ=3, CT_LUA=4,
-                             CT_DRIVER=5, CT_TIMING=6, CT_PROC=7, CT_MODULE=8, CT_UNKNOWN=9 };
-            const char* checkTypeNames[] = {"MEM","PAGE_A","PAGE_B","MPQ","LUA","DRIVER","TIMING","PROC","MODULE","UNKNOWN"};
-            size_t checkEnd = decrypted.size() - 1; // exclude xorByte
-
-            auto decodeCheckType = [&](uint8_t raw) -> CheckType {
-                uint8_t decoded = raw ^ xorByte;
-                if (decoded == wardenCheckOpcodes_[0]) return CT_MEM;    // READ_MEMORY
-                if (decoded == wardenCheckOpcodes_[1]) return CT_MODULE; // FIND_MODULE_BY_NAME
-                if (decoded == wardenCheckOpcodes_[2]) return CT_PAGE_A; // FIND_MEM_IMAGE_CODE_BY_HASH
-                if (decoded == wardenCheckOpcodes_[3]) return CT_PAGE_B; // FIND_CODE_BY_HASH
-                if (decoded == wardenCheckOpcodes_[4]) return CT_MPQ;    // HASH_CLIENT_FILE
-                if (decoded == wardenCheckOpcodes_[5]) return CT_LUA;    // GET_LUA_VARIABLE
-                if (decoded == wardenCheckOpcodes_[6]) return CT_PROC;   // API_CHECK
-                if (decoded == wardenCheckOpcodes_[7]) return CT_DRIVER; // FIND_DRIVER_BY_NAME
-                if (decoded == wardenCheckOpcodes_[8]) return CT_TIMING; // CHECK_TIMING_VALUES
-                return CT_UNKNOWN;
-            };
-            auto isKnownWantedCodeScan = [&](const uint8_t seedBytes[4], const uint8_t reqHash[20],
-                                            uint32_t offset, uint8_t length) -> bool {
-                auto hashPattern = [&](const uint8_t* pattern, size_t patternLen) {
-                    uint8_t out[SHA_DIGEST_LENGTH];
-                    unsigned int outLen = 0;
-                    HMAC(EVP_sha1(),
-                         seedBytes, 4,
-                         pattern, patternLen,
-                         out, &outLen);
-                    return outLen == SHA_DIGEST_LENGTH && std::memcmp(out, reqHash, SHA_DIGEST_LENGTH) == 0;
-                };
-
-                // DB sanity check: "Warden packet process code search sanity check" (id=85)
-                static const uint8_t kPacketProcessSanityPattern[] = {
-                    0x33, 0xD2, 0x33, 0xC9, 0xE8, 0x87, 0x07, 0x1B, 0x00, 0xE8
-                };
-                if (offset == 13856 && length == sizeof(kPacketProcessSanityPattern) &&
-                    hashPattern(kPacketProcessSanityPattern, sizeof(kPacketProcessSanityPattern))) {
-                    return true;
-                }
-
-                // Scripted sanity check: "Warden Memory Read check" in wardenwin.cpp
-                static const uint8_t kWardenMemoryReadPattern[] = {
-                    0x56, 0x57, 0xFC, 0x8B, 0x54, 0x24, 0x14, 0x8B,
-                    0x74, 0x24, 0x10, 0x8B, 0x44, 0x24, 0x0C, 0x8B,
-                    0xCA, 0x8B, 0xF8, 0xC1, 0xE9, 0x02, 0x74, 0x02,
-                    0xF3, 0xA5, 0xB1, 0x03, 0x23, 0xCA, 0x74, 0x02,
-                    0xF3, 0xA4, 0x5F, 0x5E, 0xC3
-                };
-                if (length == sizeof(kWardenMemoryReadPattern) &&
-                    hashPattern(kWardenMemoryReadPattern, sizeof(kWardenMemoryReadPattern))) {
-                    return true;
-                }
-
-                return false;
-            };
-            auto resolveWardenString = [&](uint8_t oneBasedIndex) -> std::string {
-                if (oneBasedIndex == 0) return std::string();
-                size_t idx = static_cast<size_t>(oneBasedIndex - 1);
-                if (idx >= strings.size()) return std::string();
-                return strings[idx];
-            };
-            auto requestSizes = [&](CheckType ct) {
-                switch (ct) {
-                    case CT_TIMING: return std::vector<size_t>{0};
-                    case CT_MEM:    return std::vector<size_t>{6};
-                    case CT_PAGE_A: return std::vector<size_t>{24, 29};
-                    case CT_PAGE_B: return std::vector<size_t>{24, 29};
-                    case CT_MPQ:    return std::vector<size_t>{1};
-                    case CT_LUA:    return std::vector<size_t>{1};
-                    case CT_DRIVER: return std::vector<size_t>{25};
-                    case CT_PROC:   return std::vector<size_t>{30};
-                    case CT_MODULE: return std::vector<size_t>{24};
-                    default:        return std::vector<size_t>{};
-                }
-            };
-            std::unordered_map<size_t, bool> parseMemo;
-            std::function<bool(size_t)> canParseFrom = [&](size_t checkPos) -> bool {
-                if (checkPos == checkEnd) return true;
-                if (checkPos > checkEnd) return false;
-                auto it = parseMemo.find(checkPos);
-                if (it != parseMemo.end()) return it->second;
-
-                CheckType ct = decodeCheckType(decrypted[checkPos]);
-                if (ct == CT_UNKNOWN) {
-                    parseMemo[checkPos] = false;
-                    return false;
-                }
-
-                size_t payloadPos = checkPos + 1;
-                for (size_t reqSize : requestSizes(ct)) {
-                    if (payloadPos + reqSize > checkEnd) continue;
-                    if (canParseFrom(payloadPos + reqSize)) {
-                        parseMemo[checkPos] = true;
-                        return true;
-                    }
-                }
-
-                parseMemo[checkPos] = false;
-                return false;
-            };
-            auto isBoundaryAfter = [&](size_t start, size_t consume) -> bool {
-                size_t next = start + consume;
-                if (next == checkEnd) return true;
-                if (next > checkEnd) return false;
-                return decodeCheckType(decrypted[next]) != CT_UNKNOWN;
-            };
-
-            // --- Parse check entries and build response ---
-            std::vector<uint8_t> resultData;
-            int checkCount = 0;
-
-            while (pos < checkEnd) {
-                CheckType ct = decodeCheckType(decrypted[pos]);
-                pos++;
-                checkCount++;
-
-                LOG_DEBUG("Warden: Check #", checkCount, " type=", checkTypeNames[ct],
-                         " at offset ", pos - 1);
-
-                switch (ct) {
-                    case CT_TIMING: {
-                        // No additional request data
-                        // Response: [uint8 result][uint32 ticks]
-                        // 0x01 = timing check ran successfully (server validates anti-AFK)
-                        // 0x00 = timing failed (Wine/VM — server skips check but flags client)
-                        resultData.push_back(0x01);
-                        uint32_t ticks = static_cast<uint32_t>(
-                            std::chrono::duration_cast<std::chrono::milliseconds>(
-                                std::chrono::steady_clock::now().time_since_epoch()).count());
-                        resultData.push_back(ticks & 0xFF);
-                        resultData.push_back((ticks >> 8) & 0xFF);
-                        resultData.push_back((ticks >> 16) & 0xFF);
-                        resultData.push_back((ticks >> 24) & 0xFF);
-                        LOG_WARNING("Warden:   (sync) TIMING ticks=", ticks);
-                        break;
-                    }
-                    case CT_MEM: {
-                        // Request: [1 stringIdx][4 offset][1 length]
-                        if (pos + 6 > checkEnd) { pos = checkEnd; break; }
-                        uint8_t strIdx = decrypted[pos++];
-                        std::string moduleName = resolveWardenString(strIdx);
-                        uint32_t offset = decrypted[pos] | (uint32_t(decrypted[pos+1])<<8)
-                                        | (uint32_t(decrypted[pos+2])<<16) | (uint32_t(decrypted[pos+3])<<24);
-                        pos += 4;
-                        uint8_t readLen = decrypted[pos++];
-                        LOG_WARNING("Warden:   (sync) MEM offset=0x", [&]{char s[12];snprintf(s,12,"%08x",offset);return std::string(s);}(),
-                                 " len=", static_cast<int>(readLen),
-                                 moduleName.empty() ? "" : (" module=\"" + moduleName + "\""));
-
-                        // Lazy-load WoW.exe PE image on first MEM_CHECK
-                        if (!wardenMemory_) {
-                            wardenMemory_ = std::make_unique<WardenMemory>();
-                            if (!wardenMemory_->load(static_cast<uint16_t>(build), isActiveExpansion("turtle"))) {
-                                LOG_WARNING("Warden: Could not load WoW.exe for MEM_CHECK");
-                            }
-                        }
-
-                        // Dynamically update LastHardwareAction before reading
-                        // (anti-AFK scan compares this timestamp against TIMING ticks)
-                        if (offset == 0x00CF0BC8 && readLen == 4 && wardenMemory_ && wardenMemory_->isLoaded()) {
-                            uint32_t now = static_cast<uint32_t>(
-                                std::chrono::duration_cast<std::chrono::milliseconds>(
-                                    std::chrono::steady_clock::now().time_since_epoch()).count());
-                            wardenMemory_->writeLE32(0xCF0BC8, now - 2000);
-                        }
-
-                        // Read bytes from PE image (includes patched runtime globals)
-                        std::vector<uint8_t> memBuf(readLen, 0);
-                        if (wardenMemory_->isLoaded() && wardenMemory_->readMemory(offset, readLen, memBuf.data())) {
-                            LOG_DEBUG("Warden:   MEM_CHECK served from PE image");
-                            resultData.push_back(0x00);
-                            resultData.insert(resultData.end(), memBuf.begin(), memBuf.end());
-                        } else {
-                            // Address not in PE/KUSER — return 0xE9 (not readable).
-                            LOG_WARNING("Warden:   (sync) MEM_CHECK -> 0xE9 (unmapped 0x",
-                                        [&]{char s[12];snprintf(s,12,"%08x",offset);return std::string(s);}(), ")");
-                            resultData.push_back(0xE9);
-                        }
-                        break;
-                    }
-                    case CT_PAGE_A: {
-                        // Classic has seen two PAGE_A layouts in the wild:
-                        // short: [4 seed][20 sha1] = 24 bytes
-                        // long:  [4 seed][20 sha1][4 addr][1 len] = 29 bytes
-                        // Prefer the variant that allows the full remaining stream to parse.
-                        constexpr size_t kPageAShort = 24;
-                        constexpr size_t kPageALong = 29;
-                        size_t consume = 0;
-
-                        if (pos + kPageAShort <= checkEnd && canParseFrom(pos + kPageAShort)) {
-                            consume = kPageAShort;
-                        }
-                        if (pos + kPageALong <= checkEnd && canParseFrom(pos + kPageALong) && consume == 0) {
-                            consume = kPageALong;
-                        }
-                        if (consume == 0 && isBoundaryAfter(pos, kPageAShort)) consume = kPageAShort;
-                        if (consume == 0 && isBoundaryAfter(pos, kPageALong)) consume = kPageALong;
-
-                        if (consume == 0) {
-                            size_t remaining = checkEnd - pos;
-                            if (remaining >= kPageAShort && remaining < kPageALong) consume = kPageAShort;
-                            else if (remaining >= kPageALong) consume = kPageALong;
-                            else {
-                                LOG_WARNING("Warden:   PAGE_A check truncated (remaining=", remaining,
-                                            "), consuming remainder");
-                                pos = checkEnd;
-                                resultData.push_back(0x00);
-                                break;
-                            }
-                        }
-
-                        uint8_t pageResult = 0x00;
-                        if (consume >= 29) {
-                            const uint8_t* p = decrypted.data() + pos;
-                            uint8_t seedBytes[4] = { p[0], p[1], p[2], p[3] };
-                            uint8_t reqHash[20];
-                            std::memcpy(reqHash, p + 4, 20);
-                            uint32_t off = uint32_t(p[24]) | (uint32_t(p[25]) << 8) |
-                                           (uint32_t(p[26]) << 16) | (uint32_t(p[27]) << 24);
-                            uint8_t len = p[28];
-                            if (isKnownWantedCodeScan(seedBytes, reqHash, off, len)) {
-                                pageResult = 0x4A;
-                            } else if (wardenMemory_ && wardenMemory_->isLoaded() && len > 0) {
-                                if (wardenMemory_->searchCodePattern(seedBytes, reqHash, len, true, off))
-                                    pageResult = 0x4A;
-                            }
-                            // Turtle PAGE_A fallback: runtime-patched offsets aren't in the
-                            // on-disk PE. Server expects "found" for code integrity checks.
-                            if (pageResult == 0x00 && isActiveExpansion("turtle") && off < 0x600000) {
-                                pageResult = 0x4A;
-                                LOG_WARNING("Warden:   PAGE_A turtle-fallback for offset=0x",
-                                            [&]{char s[12];snprintf(s,12,"%08x",off);return std::string(s);}());
-                            }
-                        }
-                        if (consume >= 29) {
-                            uint32_t off2 = uint32_t((decrypted.data()+pos)[24]) | (uint32_t((decrypted.data()+pos)[25])<<8) |
-                                            (uint32_t((decrypted.data()+pos)[26])<<16) | (uint32_t((decrypted.data()+pos)[27])<<24);
-                            uint8_t len2 = (decrypted.data()+pos)[28];
-                            LOG_WARNING("Warden:   (sync) PAGE_A offset=0x",
-                                        [&]{char s[12];snprintf(s,12,"%08x",off2);return std::string(s);}(),
-                                        " patLen=", static_cast<int>(len2),
-                                        " result=0x", [&]{char s[4];snprintf(s,4,"%02x",pageResult);return std::string(s);}());
-                        } else {
-                            LOG_WARNING("Warden:   (sync) PAGE_A (short ", consume, "b) result=0x",
-                                        [&]{char s[4];snprintf(s,4,"%02x",pageResult);return std::string(s);}());
-                        }
-                        pos += consume;
-                        resultData.push_back(pageResult);
-                        break;
-                    }
-                    case CT_PAGE_B: {
-                        constexpr size_t kPageBShort = 24;
-                        constexpr size_t kPageBLong = 29;
-                        size_t consume = 0;
-
-                        if (pos + kPageBShort <= checkEnd && canParseFrom(pos + kPageBShort)) {
-                            consume = kPageBShort;
-                        }
-                        if (pos + kPageBLong <= checkEnd && canParseFrom(pos + kPageBLong) && consume == 0) {
-                            consume = kPageBLong;
-                        }
-                        if (consume == 0 && isBoundaryAfter(pos, kPageBShort)) consume = kPageBShort;
-                        if (consume == 0 && isBoundaryAfter(pos, kPageBLong)) consume = kPageBLong;
-
-                        if (consume == 0) {
-                            size_t remaining = checkEnd - pos;
-                            if (remaining >= kPageBShort && remaining < kPageBLong) consume = kPageBShort;
-                            else if (remaining >= kPageBLong) consume = kPageBLong;
-                            else { pos = checkEnd; break; }
-                        }
-                        uint8_t pageResult = 0x00;
-                        if (consume >= 29) {
-                            const uint8_t* p = decrypted.data() + pos;
-                            uint8_t seedBytes[4] = { p[0], p[1], p[2], p[3] };
-                            uint8_t reqHash[20];
-                            std::memcpy(reqHash, p + 4, 20);
-                            uint32_t off = uint32_t(p[24]) | (uint32_t(p[25]) << 8) |
-                                           (uint32_t(p[26]) << 16) | (uint32_t(p[27]) << 24);
-                            uint8_t len = p[28];
-                            if (isKnownWantedCodeScan(seedBytes, reqHash, off, len)) {
-                                pageResult = 0x4A; // PatternFound
-                            }
-                        }
-                        LOG_DEBUG("Warden:   PAGE_B request bytes=", consume,
-                                 " result=0x", [&]{char s[4];snprintf(s,4,"%02x",pageResult);return std::string(s);}());
-                        pos += consume;
-                        resultData.push_back(pageResult);
-                        break;
-                    }
-                    case CT_MPQ: {
-                        // HASH_CLIENT_FILE request: [1 stringIdx]
-                        if (pos + 1 > checkEnd) { pos = checkEnd; break; }
-                        uint8_t strIdx = decrypted[pos++];
-                        std::string filePath = resolveWardenString(strIdx);
-                        LOG_WARNING("Warden:   (sync) MPQ file=\"", (filePath.empty() ? "?" : filePath), "\"");
-
-                        bool found = false;
-                        std::vector<uint8_t> hash(20, 0);
-                        if (!filePath.empty()) {
-                            std::string normalizedPath = asciiLower(filePath);
-                            std::replace(normalizedPath.begin(), normalizedPath.end(), '/', '\\');
-                            auto knownIt = knownDoorHashes().find(normalizedPath);
-                            if (knownIt != knownDoorHashes().end()) {
-                                found = true;
-                                hash.assign(knownIt->second.begin(), knownIt->second.end());
-                            }
-
-                            auto* am = core::Application::getInstance().getAssetManager();
-                            if (am && am->isInitialized() && !found) {
-                                // Use a case-insensitive direct filesystem resolution first.
-                                // Manifest entries may point at uppercase duplicate trees with
-                                // different content/hashes than canonical client files.
-                                std::vector<uint8_t> fileData;
-                                std::string resolvedFsPath =
-                                    resolveCaseInsensitiveDataPath(am->getDataPath(), filePath);
-                                if (!resolvedFsPath.empty()) {
-                                    fileData = readFileBinary(resolvedFsPath);
-                                }
-                                if (fileData.empty()) {
-                                    fileData = am->readFile(filePath);
-                                }
-
-                                if (!fileData.empty()) {
-                                    found = true;
-                                    hash = auth::Crypto::sha1(fileData);
-                                }
-                            }
-                        }
-
-                        // Response: result=0 + 20-byte SHA1 if found; result=1 (no hash) if not found.
-                        // Server only reads 20 hash bytes when result==0; extra bytes corrupt parsing.
-                        if (found) {
-                            resultData.push_back(0x00);
-                            resultData.insert(resultData.end(), hash.begin(), hash.end());
-                        } else {
-                            resultData.push_back(0x01);
-                        }
-                        LOG_WARNING("Warden:   (sync) MPQ result=", found ? "FOUND" : "NOT_FOUND");
-                        break;
-                    }
-                    case CT_LUA: {
-                        // Request: [1 stringIdx]
-                        if (pos + 1 > checkEnd) { pos = checkEnd; break; }
-                        uint8_t strIdx = decrypted[pos++];
-                        std::string luaVar = resolveWardenString(strIdx);
-                        LOG_WARNING("Warden:   (sync) LUA str=\"", (luaVar.empty() ? "?" : luaVar), "\"");
-                        // Response: [uint8 result=0][uint16 len=0]
-                        // Lua string doesn't exist
-                        resultData.push_back(0x01); // not found
-                        break;
-                    }
-                    case CT_DRIVER: {
-                        // Request: [4 seed][20 sha1][1 stringIdx]
-                        if (pos + 25 > checkEnd) { pos = checkEnd; break; }
-                        pos += 24; // skip seed + sha1
-                        uint8_t strIdx = decrypted[pos++];
-                        std::string driverName = resolveWardenString(strIdx);
-                        LOG_WARNING("Warden:   (sync) DRIVER=\"", (driverName.empty() ? "?" : driverName), "\" -> 0x00(not found)");
-                        // Response: [uint8 result=0] (driver NOT found = clean)
-                        // VMaNGOS: result != 0 means "found". 0x01 would mean VM driver detected!
-                        resultData.push_back(0x00);
-                        break;
-                    }
-                    case CT_MODULE: {
-                        // FIND_MODULE_BY_NAME request: [4 seed][20 sha1] = 24 bytes
-                        int moduleSize = 24;
-                        if (pos + moduleSize > checkEnd) {
-                            size_t remaining = checkEnd - pos;
-                            LOG_WARNING("Warden:   MODULE check truncated (remaining=", remaining,
-                                        ", expected=", moduleSize, "), consuming remainder");
-                            pos = checkEnd;
-                        } else {
-                            const uint8_t* p = decrypted.data() + pos;
-                            uint8_t seedBytes[4] = { p[0], p[1], p[2], p[3] };
-                            uint8_t reqHash[20];
-                            std::memcpy(reqHash, p + 4, 20);
-                            pos += moduleSize;
-
-                            bool shouldReportFound = false;
-                            std::string modName = "?";
-                            // Wanted system modules
-                            if (hmacSha1Matches(seedBytes, "KERNEL32.DLL", reqHash)) { modName = "KERNEL32.DLL"; shouldReportFound = true; }
-                            else if (hmacSha1Matches(seedBytes, "USER32.DLL", reqHash)) { modName = "USER32.DLL"; shouldReportFound = true; }
-                            else if (hmacSha1Matches(seedBytes, "NTDLL.DLL", reqHash)) { modName = "NTDLL.DLL"; shouldReportFound = true; }
-                            else if (hmacSha1Matches(seedBytes, "WS2_32.DLL", reqHash)) { modName = "WS2_32.DLL"; shouldReportFound = true; }
-                            else if (hmacSha1Matches(seedBytes, "WSOCK32.DLL", reqHash)) { modName = "WSOCK32.DLL"; shouldReportFound = true; }
-                            else if (hmacSha1Matches(seedBytes, "ADVAPI32.DLL", reqHash)) { modName = "ADVAPI32.DLL"; shouldReportFound = true; }
-                            else if (hmacSha1Matches(seedBytes, "SHELL32.DLL", reqHash)) { modName = "SHELL32.DLL"; shouldReportFound = true; }
-                            else if (hmacSha1Matches(seedBytes, "GDI32.DLL", reqHash)) { modName = "GDI32.DLL"; shouldReportFound = true; }
-                            else if (hmacSha1Matches(seedBytes, "OPENGL32.DLL", reqHash)) { modName = "OPENGL32.DLL"; shouldReportFound = true; }
-                            else if (hmacSha1Matches(seedBytes, "WINMM.DLL", reqHash)) { modName = "WINMM.DLL"; shouldReportFound = true; }
-                            // Unwanted cheat modules
-                            else if (hmacSha1Matches(seedBytes, "WPESPY.DLL", reqHash)) modName = "WPESPY.DLL";
-                            else if (hmacSha1Matches(seedBytes, "SPEEDHACK-I386.DLL", reqHash)) modName = "SPEEDHACK-I386.DLL";
-                            else if (hmacSha1Matches(seedBytes, "TAMIA.DLL", reqHash)) modName = "TAMIA.DLL";
-                            else if (hmacSha1Matches(seedBytes, "PRXDRVPE.DLL", reqHash)) modName = "PRXDRVPE.DLL";
-                            else if (hmacSha1Matches(seedBytes, "D3DHOOK.DLL", reqHash)) modName = "D3DHOOK.DLL";
-                            else if (hmacSha1Matches(seedBytes, "NJUMD.DLL", reqHash)) modName = "NJUMD.DLL";
-                            LOG_WARNING("Warden:   (sync) MODULE \"", modName,
-                                        "\" -> 0x", [&]{char s[4];snprintf(s,4,"%02x",shouldReportFound?0x4A:0x00);return std::string(s);}(),
-                                        "(", shouldReportFound ? "found" : "not found", ")");
-                            resultData.push_back(shouldReportFound ? 0x4A : 0x00);
-                            break;
-                        }
-                        // Truncated module request fallback: module NOT loaded = clean
-                        resultData.push_back(0x00);
-                        break;
-                    }
-                    case CT_PROC: {
-                        // API_CHECK request:
-                        // [4 seed][20 sha1][1 stringIdx][1 stringIdx2][4 offset] = 30 bytes
-                        int procSize = 30;
-                        if (pos + procSize > checkEnd) { pos = checkEnd; break; }
-                        pos += procSize;
-                        LOG_WARNING("Warden:   (sync) PROC check -> 0x01(not found)");
-                        // Response: [uint8 result=1] (proc NOT found = clean)
-                        resultData.push_back(0x01);
-                        break;
-                    }
-                    default: {
-                        uint8_t rawByte = decrypted[pos - 1];
-                        uint8_t decoded = rawByte ^ xorByte;
-                        LOG_WARNING("Warden: Unknown check type raw=0x",
-                                    [&]{char s[4];snprintf(s,4,"%02x",rawByte);return std::string(s);}(),
-                                    " decoded=0x",
-                                    [&]{char s[4];snprintf(s,4,"%02x",decoded);return std::string(s);}(),
-                                    " xorByte=0x",
-                                    [&]{char s[4];snprintf(s,4,"%02x",xorByte);return std::string(s);}(),
-                                    " opcodes=[",
-                                    [&]{std::string r;for(int i=0;i<9;i++){char s[6];snprintf(s,6,"0x%02x ",wardenCheckOpcodes_[i]);r+=s;}return r;}(),
-                                    "] pos=", pos, "/", checkEnd);
-                        pos = checkEnd; // stop parsing
-                        break;
-                    }
-                }
-            }
-
-            // Log synchronous round summary at WARNING level for diagnostics
-            {
-                LOG_WARNING("Warden: (sync) Parsed ", checkCount, " checks, resultSize=", resultData.size());
-                std::string fullHex;
-                for (size_t bi = 0; bi < resultData.size(); bi++) {
-                    char hx[4]; snprintf(hx, 4, "%02x ", resultData[bi]); fullHex += hx;
-                    if ((bi + 1) % 32 == 0 && bi + 1 < resultData.size()) fullHex += "\n                    ";
-                }
-                LOG_WARNING("Warden: (sync) RESPONSE_HEX [", fullHex, "]");
-            }
-
-            // --- Compute checksum: XOR of 5 uint32s from SHA1(resultData) ---
-            auto resultHash = auth::Crypto::sha1(resultData);
-            uint32_t checksum = 0;
-            for (int i = 0; i < 5; i++) {
-                uint32_t word = resultHash[i*4]
-                              | (uint32_t(resultHash[i*4+1]) << 8)
-                              | (uint32_t(resultHash[i*4+2]) << 16)
-                              | (uint32_t(resultHash[i*4+3]) << 24);
-                checksum ^= word;
-            }
-
-            // --- Build response: [0x02][uint16 length][uint32 checksum][resultData] ---
-            uint16_t resultLen = static_cast<uint16_t>(resultData.size());
-            std::vector<uint8_t> resp;
-            resp.push_back(0x02);
-            resp.push_back(resultLen & 0xFF);
-            resp.push_back((resultLen >> 8) & 0xFF);
-            resp.push_back(checksum & 0xFF);
-            resp.push_back((checksum >> 8) & 0xFF);
-            resp.push_back((checksum >> 16) & 0xFF);
-            resp.push_back((checksum >> 24) & 0xFF);
-            resp.insert(resp.end(), resultData.begin(), resultData.end());
-            sendWardenResponse(resp);
-            LOG_DEBUG("Warden: Sent CHEAT_CHECKS_RESULT (", resp.size(), " bytes, ",
-                     checkCount, " checks, checksum=0x",
-                     [&]{char s[12];snprintf(s,12,"%08x",checksum);return std::string(s);}(), ")");
-            break;
-        }
-
-        case 0x03: // WARDEN_SMSG_MODULE_INITIALIZE
-            LOG_DEBUG("Warden: MODULE_INITIALIZE (", decrypted.size(), " bytes, no response needed)");
-            break;
-
-        default:
-            LOG_DEBUG("Warden: Unknown opcode 0x", std::hex, static_cast<int>(wardenOpcode), std::dec,
-                     " (state=", static_cast<int>(wardenState_), ", size=", decrypted.size(), ")");
-            break;
-    }
-}
-
 void GameHandler::handleAccountDataTimes(network::Packet& packet) {
     LOG_DEBUG("Handling SMSG_ACCOUNT_DATA_TIMES");
 
@@ -9984,31 +5030,7 @@ void GameHandler::handleAccountDataTimes(network::Packet& packet) {
 }
 
 void GameHandler::handleMotd(network::Packet& packet) {
-    LOG_INFO("Handling SMSG_MOTD");
-
-    MotdData data;
-    if (!MotdParser::parse(packet, data)) {
-        LOG_WARNING("Failed to parse SMSG_MOTD");
-        return;
-    }
-
-    if (!data.isEmpty()) {
-        LOG_INFO("========================================");
-        LOG_INFO("   MESSAGE OF THE DAY");
-        LOG_INFO("========================================");
-        for (const auto& line : data.lines) {
-            LOG_INFO(line);
-            addSystemChatMessage(std::string("MOTD: ") + line);
-        }
-        // Add a visual separator after MOTD block so subsequent messages don't
-        // appear glued to the last MOTD line.
-        MessageChatData spacer;
-        spacer.type = ChatType::SYSTEM;
-        spacer.language = ChatLanguage::UNIVERSAL;
-        spacer.message = "";
-        addLocalChatMessage(spacer);
-        LOG_INFO("========================================");
-    }
+    if (chatHandler_) chatHandler_->handleMotd(packet);
 }
 
 void GameHandler::handleNotification(network::Packet& packet) {
@@ -10048,137 +5070,24 @@ void GameHandler::sendRequestVehicleExit() {
 }
 
 bool GameHandler::supportsEquipmentSets() const {
-    return wireOpcode(Opcode::CMSG_EQUIPMENT_SET_SAVE) != 0xFFFF;
+    return inventoryHandler_ && inventoryHandler_->supportsEquipmentSets();
 }
 
 void GameHandler::useEquipmentSet(uint32_t setId) {
-    if (!isInWorld()) return;
-    uint16_t wire = wireOpcode(Opcode::CMSG_EQUIPMENT_SET_USE);
-    if (wire == 0xFFFF) { addUIError("Equipment sets not supported."); return; }
-    // Find the equipment set to get target item GUIDs per slot
-    const EquipmentSet* es = nullptr;
-    for (const auto& s : equipmentSets_) {
-        if (s.setId == setId) { es = &s; break; }
-    }
-    if (!es) {
-        addUIError("Equipment set not found.");
-        return;
-    }
-    // CMSG_EQUIPMENT_SET_USE: 19 × (PackedGuid itemGuid + uint8 srcBag + uint8 srcSlot)
-    network::Packet pkt(wire);
-    for (int slot = 0; slot < 19; ++slot) {
-        uint64_t itemGuid = es->itemGuids[slot];
-        pkt.writePackedGuid(itemGuid);
-        uint8_t srcBag = 0xFF;
-        uint8_t srcSlot = 0;
-        if (itemGuid != 0) {
-            bool found = false;
-            // Check if item is already in an equipment slot
-            for (int eq = 0; eq < 19 && !found; ++eq) {
-                if (getEquipSlotGuid(eq) == itemGuid) {
-                    srcBag = 0xFF;  // INVENTORY_SLOT_BAG_0
-                    srcSlot = static_cast<uint8_t>(eq);
-                    found = true;
-                }
-            }
-            // Check backpack (slots 23-38 in the body container)
-            for (int bp = 0; bp < 16 && !found; ++bp) {
-                if (getBackpackItemGuid(bp) == itemGuid) {
-                    srcBag = 0xFF;
-                    srcSlot = static_cast<uint8_t>(23 + bp);
-                    found = true;
-                }
-            }
-            // Check extra bags (bag indices 19-22)
-            for (int bag = 0; bag < 4 && !found; ++bag) {
-                int bagSize = inventory.getBagSize(bag);
-                for (int s = 0; s < bagSize && !found; ++s) {
-                    if (getBagItemGuid(bag, s) == itemGuid) {
-                        srcBag = static_cast<uint8_t>(19 + bag);
-                        srcSlot = static_cast<uint8_t>(s);
-                        found = true;
-                    }
-                }
-            }
-        }
-        pkt.writeUInt8(srcBag);
-        pkt.writeUInt8(srcSlot);
-    }
-    socket->send(pkt);
-    LOG_INFO("CMSG_EQUIPMENT_SET_USE: setId=", setId);
+    if (inventoryHandler_) inventoryHandler_->useEquipmentSet(setId);
 }
 
 void GameHandler::saveEquipmentSet(const std::string& name, const std::string& iconName,
                                     uint64_t existingGuid, uint32_t setIndex) {
-    if (state != WorldState::IN_WORLD) return;
-    uint16_t wire = wireOpcode(Opcode::CMSG_EQUIPMENT_SET_SAVE);
-    if (wire == 0xFFFF) { addUIError("Equipment sets not supported."); return; }
-    // CMSG_EQUIPMENT_SET_SAVE: uint64 setGuid + uint32 setIndex + string name + string iconName
-    //   + 19 × PackedGuid itemGuid (one per equipment slot, 0–18)
-    if (setIndex == 0xFFFFFFFF) {
-        // Auto-assign next free index
-        setIndex = 0;
-        for (const auto& es : equipmentSets_) {
-            if (es.setId >= setIndex) setIndex = es.setId + 1;
-        }
-    }
-    network::Packet pkt(wire);
-    pkt.writeUInt64(existingGuid);  // 0 = create new, nonzero = update
-    pkt.writeUInt32(setIndex);
-    pkt.writeString(name);
-    pkt.writeString(iconName);
-    for (int slot = 0; slot < 19; ++slot) {
-        uint64_t guid = getEquipSlotGuid(slot);
-        pkt.writePackedGuid(guid);
-    }
-    // Track pending save so SMSG_EQUIPMENT_SET_SAVED can add the new set locally
-    pendingSaveSetName_ = name;
-    pendingSaveSetIcon_ = iconName;
-    socket->send(pkt);
-    LOG_INFO("CMSG_EQUIPMENT_SET_SAVE: name=\"", name, "\" guid=", existingGuid, " index=", setIndex);
+    if (inventoryHandler_) inventoryHandler_->saveEquipmentSet(name, iconName, existingGuid, setIndex);
 }
 
 void GameHandler::deleteEquipmentSet(uint64_t setGuid) {
-    if (state != WorldState::IN_WORLD || setGuid == 0) return;
-    uint16_t wire = wireOpcode(Opcode::CMSG_DELETEEQUIPMENT_SET);
-    if (wire == 0xFFFF) { addUIError("Equipment sets not supported."); return; }
-    // CMSG_DELETEEQUIPMENT_SET: uint64 setGuid
-    network::Packet pkt(wire);
-    pkt.writeUInt64(setGuid);
-    socket->send(pkt);
-    // Remove locally so UI updates immediately
-    equipmentSets_.erase(
-        std::remove_if(equipmentSets_.begin(), equipmentSets_.end(),
-                       [setGuid](const EquipmentSet& es) { return es.setGuid == setGuid; }),
-        equipmentSets_.end());
-    equipmentSetInfo_.erase(
-        std::remove_if(equipmentSetInfo_.begin(), equipmentSetInfo_.end(),
-                       [setGuid](const EquipmentSetInfo& es) { return es.setGuid == setGuid; }),
-        equipmentSetInfo_.end());
-    LOG_INFO("CMSG_DELETEEQUIPMENT_SET: guid=", setGuid);
+    if (inventoryHandler_) inventoryHandler_->deleteEquipmentSet(setGuid);
 }
 
 void GameHandler::sendMinimapPing(float wowX, float wowY) {
-    if (state != WorldState::IN_WORLD) return;
-
-    // MSG_MINIMAP_PING (CMSG direction): float posX + float posY
-    // Server convention: posX = east/west axis = canonical Y (west)
-    //                    posY = north/south axis = canonical X (north)
-    const float serverX = wowY;  // canonical Y (west) → server posX
-    const float serverY = wowX;  // canonical X (north) → server posY
-
-    network::Packet pkt(wireOpcode(Opcode::MSG_MINIMAP_PING));
-    pkt.writeFloat(serverX);
-    pkt.writeFloat(serverY);
-    socket->send(pkt);
-
-    // Add ping locally so the sender sees their own ping immediately
-    MinimapPing localPing;
-    localPing.senderGuid = activeCharacterGuid_;
-    localPing.wowX       = wowX;
-    localPing.wowY       = wowY;
-    localPing.age        = 0.0f;
-    minimapPings_.push_back(localPing);
+    if (socialHandler_) socialHandler_->sendMinimapPing(wowX, wowY);
 }
 
 void GameHandler::handlePong(network::Packet& packet) {
@@ -10206,420 +5115,33 @@ void GameHandler::handlePong(network::Packet& packet) {
               " latencyMs=", lastLatency);
 }
 
+bool GameHandler::isServerMovementAllowed() const {
+    return movementHandler_ ? movementHandler_->isServerMovementAllowed() : true;
+}
+
 uint32_t GameHandler::nextMovementTimestampMs() {
-    auto now = std::chrono::steady_clock::now();
-    uint64_t elapsed = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(now - movementClockStart_).count()) + 1ULL;
-    if (elapsed > std::numeric_limits<uint32_t>::max()) {
-        movementClockStart_ = now;
-        elapsed = 1ULL;
-    }
-
-    uint32_t candidate = static_cast<uint32_t>(elapsed);
-    if (candidate <= lastMovementTimestampMs_) {
-        candidate = lastMovementTimestampMs_ + 1U;
-        if (candidate == 0) {
-            movementClockStart_ = now;
-            candidate = 1U;
-        }
-    }
-
-    lastMovementTimestampMs_ = candidate;
-    return candidate;
+    if (movementHandler_) return movementHandler_->nextMovementTimestampMs();
+    return 0;
 }
 
 void GameHandler::sendMovement(Opcode opcode) {
-    if (state != WorldState::IN_WORLD) {
-        LOG_WARNING("Cannot send movement in state: ", static_cast<int>(state));
-        return;
-    }
-
-    // Block manual movement while taxi is active/mounted, but always allow
-    // stop/heartbeat opcodes so stuck states can be recovered.
-    bool taxiAllowed =
-        (opcode == Opcode::MSG_MOVE_HEARTBEAT) ||
-        (opcode == Opcode::MSG_MOVE_STOP) ||
-        (opcode == Opcode::MSG_MOVE_STOP_STRAFE) ||
-        (opcode == Opcode::MSG_MOVE_STOP_TURN) ||
-        (opcode == Opcode::MSG_MOVE_STOP_SWIM);
-    if (!serverMovementAllowed_ && !taxiAllowed) return;
-    if ((onTaxiFlight_ || taxiMountActive_) && !taxiAllowed) return;
-    if (resurrectPending_ && !taxiAllowed) return;
-
-    // Always send a strictly increasing non-zero client movement clock value.
-    const uint32_t movementTime = nextMovementTimestampMs();
-    movementInfo.time = movementTime;
-
-    if (opcode == Opcode::MSG_MOVE_SET_FACING &&
-        (isPreWotlk())) {
-        const float facingDelta = core::coords::normalizeAngleRad(
-            movementInfo.orientation - lastFacingSentOrientation_);
-        const uint32_t sinceLastFacingMs =
-            lastFacingSendTimeMs_ != 0 && movementTime >= lastFacingSendTimeMs_
-                ? (movementTime - lastFacingSendTimeMs_)
-                : std::numeric_limits<uint32_t>::max();
-        if (std::abs(facingDelta) < 0.02f && sinceLastFacingMs < 200U) {
-            return;
-        }
-    }
-
-    // Track movement state transition for PLAYER_STARTED/STOPPED_MOVING events
-    const uint32_t kMoveMask = static_cast<uint32_t>(MovementFlags::FORWARD) |
-                               static_cast<uint32_t>(MovementFlags::BACKWARD) |
-                               static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
-                               static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT);
-    const bool wasMoving = (movementInfo.flags & kMoveMask) != 0;
-
-    // Cancel any timed (non-channeled) cast the moment the player starts moving.
-    // Channeled spells end via MSG_CHANNEL_UPDATE / SMSG_CHANNEL_NOTIFY from the server.
-    // Turning (MSG_MOVE_START_TURN_*) is allowed while casting.
-    if (casting && !castIsChannel) {
-        const bool isPositionalMove =
-            opcode == Opcode::MSG_MOVE_START_FORWARD  ||
-            opcode == Opcode::MSG_MOVE_START_BACKWARD ||
-            opcode == Opcode::MSG_MOVE_START_STRAFE_LEFT  ||
-            opcode == Opcode::MSG_MOVE_START_STRAFE_RIGHT ||
-            opcode == Opcode::MSG_MOVE_JUMP;
-        if (isPositionalMove) {
-            cancelCast();
-        }
-    }
-
-    // Update movement flags based on opcode
-    switch (opcode) {
-        case Opcode::MSG_MOVE_START_FORWARD:
-            movementInfo.flags |= static_cast<uint32_t>(MovementFlags::FORWARD);
-            break;
-        case Opcode::MSG_MOVE_START_BACKWARD:
-            movementInfo.flags |= static_cast<uint32_t>(MovementFlags::BACKWARD);
-            break;
-        case Opcode::MSG_MOVE_STOP:
-            movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::FORWARD) |
-                                    static_cast<uint32_t>(MovementFlags::BACKWARD));
-            break;
-        case Opcode::MSG_MOVE_START_STRAFE_LEFT:
-            movementInfo.flags |= static_cast<uint32_t>(MovementFlags::STRAFE_LEFT);
-            break;
-        case Opcode::MSG_MOVE_START_STRAFE_RIGHT:
-            movementInfo.flags |= static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT);
-            break;
-        case Opcode::MSG_MOVE_STOP_STRAFE:
-            movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
-                                    static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT));
-            break;
-        case Opcode::MSG_MOVE_JUMP:
-            movementInfo.flags |= static_cast<uint32_t>(MovementFlags::FALLING);
-            // Record fall start and capture horizontal velocity for jump fields.
-            isFalling_ = true;
-            fallStartMs_ = movementInfo.time;
-            movementInfo.fallTime = 0;
-            // jumpVelocity: WoW convention is the upward speed at launch.
-            movementInfo.jumpVelocity = 7.96f; // WOW_JUMP_VELOCITY from CameraController
-            {
-                // Facing direction encodes the horizontal movement direction at launch.
-                const float facingRad = movementInfo.orientation;
-                movementInfo.jumpCosAngle = std::cos(facingRad);
-                movementInfo.jumpSinAngle = std::sin(facingRad);
-                // Horizontal speed: only non-zero when actually moving at jump time.
-                const uint32_t horizFlags =
-                    static_cast<uint32_t>(MovementFlags::FORWARD) |
-                    static_cast<uint32_t>(MovementFlags::BACKWARD) |
-                    static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
-                    static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT);
-                const bool movingHoriz = (movementInfo.flags & horizFlags) != 0;
-                if (movingHoriz) {
-                    const bool isWalking = (movementInfo.flags & static_cast<uint32_t>(MovementFlags::WALKING)) != 0;
-                    movementInfo.jumpXYSpeed = isWalking ? 2.5f : (serverRunSpeed_ > 0.0f ? serverRunSpeed_ : 7.0f);
-                } else {
-                    movementInfo.jumpXYSpeed = 0.0f;
-                }
-            }
-            break;
-        case Opcode::MSG_MOVE_START_TURN_LEFT:
-            movementInfo.flags |= static_cast<uint32_t>(MovementFlags::TURN_LEFT);
-            break;
-        case Opcode::MSG_MOVE_START_TURN_RIGHT:
-            movementInfo.flags |= static_cast<uint32_t>(MovementFlags::TURN_RIGHT);
-            break;
-        case Opcode::MSG_MOVE_STOP_TURN:
-            movementInfo.flags &= ~(static_cast<uint32_t>(MovementFlags::TURN_LEFT) |
-                                    static_cast<uint32_t>(MovementFlags::TURN_RIGHT));
-            break;
-        case Opcode::MSG_MOVE_FALL_LAND:
-            movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::FALLING);
-            isFalling_ = false;
-            fallStartMs_ = 0;
-            movementInfo.fallTime = 0;
-            movementInfo.jumpVelocity = 0.0f;
-            movementInfo.jumpSinAngle = 0.0f;
-            movementInfo.jumpCosAngle = 0.0f;
-            movementInfo.jumpXYSpeed = 0.0f;
-            break;
-        case Opcode::MSG_MOVE_HEARTBEAT:
-            // No flag changes — just sends current position
-            timeSinceLastMoveHeartbeat_ = 0.0f;
-            break;
-        case Opcode::MSG_MOVE_START_ASCEND:
-            movementInfo.flags |= static_cast<uint32_t>(MovementFlags::ASCENDING);
-            break;
-        case Opcode::MSG_MOVE_STOP_ASCEND:
-            // Clears ascending (and descending) — one stop opcode for both directions
-            movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::ASCENDING);
-            break;
-        case Opcode::MSG_MOVE_START_DESCEND:
-            // Descending: no separate flag; clear ASCENDING so they don't conflict
-            movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::ASCENDING);
-            break;
-        default:
-            break;
-    }
-
-    // Fire PLAYER_STARTED/STOPPED_MOVING on movement state transitions
-    {
-        const bool isMoving = (movementInfo.flags & kMoveMask) != 0;
-        if (isMoving && !wasMoving)
-            fireAddonEvent("PLAYER_STARTED_MOVING", {});
-        else if (!isMoving && wasMoving)
-            fireAddonEvent("PLAYER_STOPPED_MOVING", {});
-    }
-
-    if (opcode == Opcode::MSG_MOVE_SET_FACING) {
-        lastFacingSendTimeMs_ = movementInfo.time;
-        lastFacingSentOrientation_ = movementInfo.orientation;
-    }
-
-    // Keep fallTime current: it must equal the elapsed milliseconds since FALLING
-    // was set, so the server can compute fall damage correctly.
-    if (isFalling_ && movementInfo.hasFlag(MovementFlags::FALLING)) {
-        // movementInfo.time is the strictly-increasing client clock (ms).
-        // Subtract fallStartMs_ to get elapsed fall time; clamp to non-negative.
-        uint32_t elapsed = (movementInfo.time >= fallStartMs_)
-                               ? (movementInfo.time - fallStartMs_)
-                               : 0u;
-        movementInfo.fallTime = elapsed;
-    } else if (!movementInfo.hasFlag(MovementFlags::FALLING)) {
-        // Ensure fallTime is zeroed whenever we're not falling.
-        if (isFalling_) {
-            isFalling_ = false;
-            fallStartMs_ = 0;
-        }
-        movementInfo.fallTime = 0;
-    }
-
-    if (onTaxiFlight_ || taxiMountActive_ || taxiActivatePending_ || taxiClientActive_) {
-        sanitizeMovementForTaxi();
-    }
-
-    bool includeTransportInWire = isOnTransport();
-    if (includeTransportInWire && transportManager_) {
-        if (auto* tr = transportManager_->getTransport(playerTransportGuid_); tr && tr->isM2) {
-            // Client-detected M2 elevators/trams are not always server-recognized transports.
-            // Sending ONTRANSPORT for these can trigger bad fall-state corrections server-side.
-            includeTransportInWire = false;
-        }
-    }
-
-    // Add transport data if player is on a server-recognized transport
-    if (includeTransportInWire) {
-        // Keep authoritative world position synchronized to parent transport transform
-        // so heartbeats/corrections don't drag the passenger through geometry.
-        if (transportManager_) {
-            glm::vec3 composed = transportManager_->getPlayerWorldPosition(playerTransportGuid_, playerTransportOffset_);
-            movementInfo.x = composed.x;
-            movementInfo.y = composed.y;
-            movementInfo.z = composed.z;
-        }
-        movementInfo.flags |= static_cast<uint32_t>(MovementFlags::ONTRANSPORT);
-        movementInfo.transportGuid = playerTransportGuid_;
-        movementInfo.transportX = playerTransportOffset_.x;
-        movementInfo.transportY = playerTransportOffset_.y;
-        movementInfo.transportZ = playerTransportOffset_.z;
-        movementInfo.transportTime = movementInfo.time;
-        movementInfo.transportSeat = -1;
-        movementInfo.transportTime2 = movementInfo.time;
-
-        // ONTRANSPORT expects local orientation (player yaw relative to transport yaw).
-        // Keep internal yaw canonical; convert to server yaw on the wire.
-        float transportYawCanonical = 0.0f;
-        if (transportManager_) {
-            if (auto* tr = transportManager_->getTransport(playerTransportGuid_); tr) {
-                if (tr->hasServerYaw) {
-                    transportYawCanonical = tr->serverYaw;
-                } else {
-                    transportYawCanonical = glm::eulerAngles(tr->rotation).z;
-                }
-            }
-        }
-
-        movementInfo.transportO =
-            core::coords::normalizeAngleRad(movementInfo.orientation - transportYawCanonical);
-    } else {
-        // Clear transport flag if not on transport
-        movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::ONTRANSPORT);
-        movementInfo.transportGuid = 0;
-        movementInfo.transportSeat = -1;
-    }
-
-    if (opcode == Opcode::MSG_MOVE_HEARTBEAT && isClassicLikeExpansion()) {
-        const uint32_t locomotionFlags =
-            static_cast<uint32_t>(MovementFlags::FORWARD) |
-            static_cast<uint32_t>(MovementFlags::BACKWARD) |
-            static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
-            static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) |
-            static_cast<uint32_t>(MovementFlags::TURN_LEFT) |
-            static_cast<uint32_t>(MovementFlags::TURN_RIGHT) |
-            static_cast<uint32_t>(MovementFlags::ASCENDING) |
-            static_cast<uint32_t>(MovementFlags::FALLING) |
-            static_cast<uint32_t>(MovementFlags::FALLINGFAR) |
-            static_cast<uint32_t>(MovementFlags::SWIMMING);
-        const bool stationaryIdle =
-            !onTaxiFlight_ &&
-            !taxiMountActive_ &&
-            !taxiActivatePending_ &&
-            !taxiClientActive_ &&
-            !includeTransportInWire &&
-            (movementInfo.flags & locomotionFlags) == 0;
-        const uint32_t sinceLastHeartbeatMs =
-            lastHeartbeatSendTimeMs_ != 0 && movementTime >= lastHeartbeatSendTimeMs_
-                ? (movementTime - lastHeartbeatSendTimeMs_)
-                : std::numeric_limits<uint32_t>::max();
-        const bool unchangedState =
-            std::abs(movementInfo.x - lastHeartbeatX_) < 0.01f &&
-            std::abs(movementInfo.y - lastHeartbeatY_) < 0.01f &&
-            std::abs(movementInfo.z - lastHeartbeatZ_) < 0.01f &&
-            movementInfo.flags == lastHeartbeatFlags_ &&
-            movementInfo.transportGuid == lastHeartbeatTransportGuid_;
-        if (stationaryIdle && unchangedState && sinceLastHeartbeatMs < 1500U) {
-            timeSinceLastMoveHeartbeat_ = 0.0f;
-            return;
-        }
-        const uint32_t sinceLastNonHeartbeatMoveMs =
-            lastNonHeartbeatMoveSendTimeMs_ != 0 && movementTime >= lastNonHeartbeatMoveSendTimeMs_
-                ? (movementTime - lastNonHeartbeatMoveSendTimeMs_)
-                : std::numeric_limits<uint32_t>::max();
-        if (sinceLastNonHeartbeatMoveMs < 350U) {
-            timeSinceLastMoveHeartbeat_ = 0.0f;
-            return;
-        }
-    }
-
-    LOG_DEBUG("Sending movement packet: opcode=0x", std::hex,
-              wireOpcode(opcode), std::dec,
-              (includeTransportInWire ? " ONTRANSPORT" : ""));
-
-    // Convert canonical → server coordinates for the wire
-    MovementInfo wireInfo = movementInfo;
-    glm::vec3 serverPos = core::coords::canonicalToServer(glm::vec3(wireInfo.x, wireInfo.y, wireInfo.z));
-    wireInfo.x = serverPos.x;
-    wireInfo.y = serverPos.y;
-    wireInfo.z = serverPos.z;
-
-    // Convert canonical → server yaw for the wire
-    wireInfo.orientation = core::coords::canonicalToServerYaw(wireInfo.orientation);
-
-    // Also convert transport local position to server coordinates if on transport
-    if (includeTransportInWire) {
-        glm::vec3 serverTransportPos = core::coords::canonicalToServer(
-            glm::vec3(wireInfo.transportX, wireInfo.transportY, wireInfo.transportZ));
-        wireInfo.transportX = serverTransportPos.x;
-        wireInfo.transportY = serverTransportPos.y;
-        wireInfo.transportZ = serverTransportPos.z;
-        // transportO is a local delta; server<->canonical swap negates delta yaw.
-        wireInfo.transportO = core::coords::normalizeAngleRad(-wireInfo.transportO);
-    }
-
-    // Build and send movement packet (expansion-specific format)
-    auto packet = packetParsers_
-        ? packetParsers_->buildMovementPacket(opcode, wireInfo, playerGuid)
-        : MovementPacket::build(opcode, wireInfo, playerGuid);
-    socket->send(packet);
-
-    if (opcode == Opcode::MSG_MOVE_HEARTBEAT) {
-        lastHeartbeatSendTimeMs_ = movementInfo.time;
-        lastHeartbeatX_ = movementInfo.x;
-        lastHeartbeatY_ = movementInfo.y;
-        lastHeartbeatZ_ = movementInfo.z;
-        lastHeartbeatFlags_ = movementInfo.flags;
-        lastHeartbeatTransportGuid_ = movementInfo.transportGuid;
-    } else {
-        lastNonHeartbeatMoveSendTimeMs_ = movementInfo.time;
-    }
+    if (movementHandler_) movementHandler_->sendMovement(opcode);
 }
 
 void GameHandler::sanitizeMovementForTaxi() {
-    constexpr uint32_t kClearTaxiFlags =
-        static_cast<uint32_t>(MovementFlags::FORWARD) |
-        static_cast<uint32_t>(MovementFlags::BACKWARD) |
-        static_cast<uint32_t>(MovementFlags::STRAFE_LEFT) |
-        static_cast<uint32_t>(MovementFlags::STRAFE_RIGHT) |
-        static_cast<uint32_t>(MovementFlags::TURN_LEFT) |
-        static_cast<uint32_t>(MovementFlags::TURN_RIGHT) |
-        static_cast<uint32_t>(MovementFlags::PITCH_UP) |
-        static_cast<uint32_t>(MovementFlags::PITCH_DOWN) |
-        static_cast<uint32_t>(MovementFlags::FALLING) |
-        static_cast<uint32_t>(MovementFlags::FALLINGFAR) |
-        static_cast<uint32_t>(MovementFlags::SWIMMING);
-
-    movementInfo.flags &= ~kClearTaxiFlags;
-    movementInfo.fallTime = 0;
-    movementInfo.jumpVelocity = 0.0f;
-    movementInfo.jumpSinAngle = 0.0f;
-    movementInfo.jumpCosAngle = 0.0f;
-    movementInfo.jumpXYSpeed = 0.0f;
-    movementInfo.pitch = 0.0f;
+    if (movementHandler_) movementHandler_->sanitizeMovementForTaxi();
 }
 
 void GameHandler::forceClearTaxiAndMovementState() {
-    taxiActivatePending_ = false;
-    taxiActivateTimer_ = 0.0f;
-    taxiClientActive_ = false;
-    taxiClientPath_.clear();
-    taxiRecoverPending_ = false;
-    taxiStartGrace_ = 0.0f;
-    onTaxiFlight_ = false;
-
-    if (taxiMountActive_ && mountCallback_) {
-        mountCallback_(0);
-    }
-    taxiMountActive_ = false;
-    taxiMountDisplayId_ = 0;
-    currentMountDisplayId_ = 0;
-    vehicleId_ = 0;
-    resurrectPending_ = false;
-    resurrectRequestPending_ = false;
-    selfResAvailable_ = false;
-    playerDead_ = false;
-    releasedSpirit_ = false;
-    corpseGuid_ = 0;
-    corpseReclaimAvailableMs_ = 0;
-    repopPending_ = false;
-    pendingSpiritHealerGuid_ = 0;
-    resurrectCasterGuid_ = 0;
-
-    movementInfo.flags = 0;
-    movementInfo.flags2 = 0;
-    movementInfo.transportGuid = 0;
-    clearPlayerTransport();
-
-    if (socket && state == WorldState::IN_WORLD) {
-        sendMovement(Opcode::MSG_MOVE_STOP);
-        sendMovement(Opcode::MSG_MOVE_STOP_STRAFE);
-        sendMovement(Opcode::MSG_MOVE_STOP_TURN);
-        sendMovement(Opcode::MSG_MOVE_STOP_SWIM);
-        sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
-    }
-
-    LOG_INFO("Force-cleared taxi/movement state");
+    if (movementHandler_) movementHandler_->forceClearTaxiAndMovementState();
 }
 
 void GameHandler::setPosition(float x, float y, float z) {
-    movementInfo.x = x;
-    movementInfo.y = y;
-    movementInfo.z = z;
+    if (movementHandler_) movementHandler_->setPosition(x, y, z);
 }
 
 void GameHandler::setOrientation(float orientation) {
-    movementInfo.orientation = orientation;
+    if (movementHandler_) movementHandler_->setOrientation(orientation);
 }
 
 void GameHandler::handleUpdateObject(network::Packet& packet) {
@@ -11015,7 +5537,7 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                             if (old == 0 && val != 0) {
                                 // Just mounted — find the mount aura (indefinite duration, self-cast)
                                 mountAuraSpellId_ = 0;
-                                for (const auto& a : playerAuras) {
+                                if (spellHandler_) for (const auto& a : spellHandler_->playerAuras_) {
                                     if (!a.isEmpty() && a.maxDurationMs < 0 && a.casterGuid == playerGuid) {
                                         mountAuraSpellId_ = a.spellId;
                                     }
@@ -11036,7 +5558,7 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                             }
                             if (old != 0 && val == 0) {
                                 mountAuraSpellId_ = 0;
-                                for (auto& a : playerAuras)
+                                if (spellHandler_) for (auto& a : spellHandler_->playerAuras_)
                                     if (!a.isEmpty() && a.maxDurationMs < 0) a = AuraSlot{};
                             }
                         }
@@ -11049,7 +5571,7 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                         onTaxiFlight_ = true;
                         taxiStartGrace_ = std::max(taxiStartGrace_, 2.0f);
                         sanitizeMovementForTaxi();
-                        applyTaxiMountForCurrentNode();
+                        if (movementHandler_) movementHandler_->applyTaxiMountForCurrentNode();
                     }
                 }
                 if (block.guid == playerGuid &&
@@ -11073,8 +5595,8 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                         }
                     }
                 }
-                // Classic: rebuild playerAuras from UNIT_FIELD_AURAS on initial object create
-                if (block.guid == playerGuid && isClassicLikeExpansion()) {
+                // Classic: rebuild spellHandler_->playerAuras_ from UNIT_FIELD_AURAS on initial object create
+                if (block.guid == playerGuid && isClassicLikeExpansion() && spellHandler_) {
                     const uint16_t ufAuras     = fieldIndex(UF::UNIT_FIELD_AURAS);
                     const uint16_t ufAuraFlags = fieldIndex(UF::UNIT_FIELD_AURAFLAGS);
                     if (ufAuras != 0xFFFF) {
@@ -11083,8 +5605,8 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                             if (fk >= ufAuras && fk < ufAuras + 48) { hasAuraField = true; break; }
                         }
                         if (hasAuraField) {
-                            playerAuras.clear();
-                            playerAuras.resize(48);
+                            spellHandler_->playerAuras_.clear();
+                            spellHandler_->playerAuras_.resize(48);
                             uint64_t nowMs = static_cast<uint64_t>(
                                 std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -11092,7 +5614,7 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                             for (int slot = 0; slot < 48; ++slot) {
                                 auto it = allFields.find(static_cast<uint16_t>(ufAuras + slot));
                                 if (it != allFields.end() && it->second != 0) {
-                                    AuraSlot& a = playerAuras[slot];
+                                    AuraSlot& a = spellHandler_->playerAuras_[slot];
                                     a.spellId = it->second;
                                     // Read aura flag byte: packed 4-per-uint32 at ufAuraFlags
                                     // Classic flags: 0x01=cancelable, 0x02=harmful, 0x04=helpful
@@ -11492,10 +6014,10 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                             unit->setHealth(val);
                             healthChanged = true;
                             if (val == 0) {
-                                if (block.guid == autoAttackTarget) {
+                                if (combatHandler_ && block.guid == combatHandler_->getAutoAttackTargetGuid()) {
                                     stopAutoAttack();
                                 }
-                                hostileAttackers_.erase(block.guid);
+                                if (combatHandler_) combatHandler_->removeHostileAttacker(block.guid);
                                 if (block.guid == playerGuid) {
                                     playerDead_ = true;
                                     releasedSpirit_ = false;
@@ -11624,7 +6146,7 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                                     fireAddonEvent("UNIT_MODEL_CHANGED", {"player"});
                                 if (old == 0 && val != 0) {
                                     mountAuraSpellId_ = 0;
-                                    for (const auto& a : playerAuras) {
+                                    if (spellHandler_) for (const auto& a : spellHandler_->playerAuras_) {
                                         if (!a.isEmpty() && a.maxDurationMs < 0 && a.casterGuid == playerGuid) {
                                             mountAuraSpellId_ = a.spellId;
                                         }
@@ -11645,7 +6167,7 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                                 }
                                 if (old != 0 && val == 0) {
                                     mountAuraSpellId_ = 0;
-                                    for (auto& a : playerAuras)
+                                    if (spellHandler_) for (auto& a : spellHandler_->playerAuras_)
                                         if (!a.isEmpty() && a.maxDurationMs < 0) a = AuraSlot{};
                                 }
                             }
@@ -11677,8 +6199,8 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                         }
                     }
 
-                    // Classic: sync playerAuras from UNIT_FIELD_AURAS when those fields are updated
-                    if (block.guid == playerGuid && isClassicLikeExpansion()) {
+                    // Classic: sync spellHandler_->playerAuras_ from UNIT_FIELD_AURAS when those fields are updated
+                    if (block.guid == playerGuid && isClassicLikeExpansion() && spellHandler_) {
                         const uint16_t ufAuras     = fieldIndex(UF::UNIT_FIELD_AURAS);
                         const uint16_t ufAuraFlags = fieldIndex(UF::UNIT_FIELD_AURAFLAGS);
                         if (ufAuras != 0xFFFF) {
@@ -11687,8 +6209,8 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                                 if (fk >= ufAuras && fk < ufAuras + 48) { hasAuraUpdate = true; break; }
                             }
                             if (hasAuraUpdate) {
-                                playerAuras.clear();
-                                playerAuras.resize(48);
+                                spellHandler_->playerAuras_.clear();
+                                spellHandler_->playerAuras_.resize(48);
                                 uint64_t nowMs = static_cast<uint64_t>(
                                     std::chrono::duration_cast<std::chrono::milliseconds>(
                                         std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -11696,7 +6218,7 @@ void GameHandler::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItem
                                 for (int slot = 0; slot < 48; ++slot) {
                                     auto it = allFields.find(static_cast<uint16_t>(ufAuras + slot));
                                     if (it != allFields.end() && it->second != 0) {
-                                        AuraSlot& a = playerAuras[slot];
+                                        AuraSlot& a = spellHandler_->playerAuras_[slot];
                                         a.spellId = it->second;
                                         // Read aura flag byte: packed 4-per-uint32 at ufAuraFlags
                                         uint8_t aFlag = 0;
@@ -12325,13 +6847,13 @@ void GameHandler::handleDestroyObject(network::Packet& packet) {
     }
 
     // Clean up auto-attack and target if destroyed entity was our target
-    if (data.guid == autoAttackTarget) {
+    if (combatHandler_ && data.guid == combatHandler_->getAutoAttackTargetGuid()) {
         stopAutoAttack();
     }
     if (data.guid == targetGuid) {
         targetGuid = 0;
     }
-    hostileAttackers_.erase(data.guid);
+    if (combatHandler_) combatHandler_->removeHostileAttacker(data.guid);
 
     // Remove online item/container tracking
     containerContents_.erase(data.guid);
@@ -12344,1701 +6866,337 @@ void GameHandler::handleDestroyObject(network::Packet& packet) {
 
     // Remove combat text entries referencing the destroyed entity so floating
     // damage numbers don't linger after the source/target despawns.
-    combatText.erase(
-        std::remove_if(combatText.begin(), combatText.end(),
-            [&data](const CombatTextEntry& e) {
-                return e.dstGuid == data.guid;
-            }),
-        combatText.end());
+    if (combatHandler_) combatHandler_->removeCombatTextForGuid(data.guid);
 
     // Clean up unit cast state (cast bar) for the destroyed unit
-    unitCastStates_.erase(data.guid);
+    if (spellHandler_) spellHandler_->unitCastStates_.erase(data.guid);
     // Clean up cached auras
-    unitAurasCache_.erase(data.guid);
+    if (spellHandler_) spellHandler_->unitAurasCache_.erase(data.guid);
 
     tabCycleStale = true;
 }
 
 void GameHandler::sendChatMessage(ChatType type, const std::string& message, const std::string& target) {
-    if (state != WorldState::IN_WORLD) {
-        LOG_WARNING("Cannot send chat in state: ", static_cast<int>(state));
-        return;
-    }
-
-    if (message.empty()) {
-        LOG_WARNING("Cannot send empty chat message");
-        return;
-    }
-
-    LOG_INFO("Sending chat message: [", getChatTypeString(type), "] ", message);
-
-    // Determine language based on character (for now, use COMMON)
-    ChatLanguage language = ChatLanguage::COMMON;
-
-    // Build and send packet
-    auto packet = MessageChatPacket::build(type, language, message, target);
-    socket->send(packet);
-
-    // Add local echo so the player sees their own message immediately
-    MessageChatData echo;
-    echo.senderGuid = playerGuid;
-    echo.language = language;
-    echo.message = message;
-
-    // Look up player name
-    echo.senderName = lookupName(playerGuid);
-
-    if (type == ChatType::WHISPER) {
-        echo.type = ChatType::WHISPER_INFORM;
-        echo.senderName = target;  // "To [target]: message"
-    } else {
-        echo.type = type;
-    }
-
-    if (type == ChatType::CHANNEL) {
-        echo.channelName = target;
-    }
-
-    addLocalChatMessage(echo);
-}
-
-void GameHandler::handleMessageChat(network::Packet& packet) {
-    LOG_DEBUG("Handling SMSG_MESSAGECHAT");
-
-    MessageChatData data;
-    if (!packetParsers_->parseMessageChat(packet, data)) {
-        LOG_WARNING("Failed to parse SMSG_MESSAGECHAT");
-        return;
-    }
-
-    // Skip server echo of our own messages (we already added a local echo)
-    if (data.senderGuid == playerGuid && data.senderGuid != 0) {
-        // Still track whisper sender for /r even if it's our own whisper-inform
-        if (data.type == ChatType::WHISPER && !data.senderName.empty()) {
-            lastWhisperSender_ = data.senderName;
-        }
-        return;
-    }
-
-    // Resolve sender name from entity/cache if not already set by parser
-    if (data.senderName.empty() && data.senderGuid != 0) {
-        data.senderName = lookupName(data.senderGuid);
-
-        // If still unknown, proactively query the server so the UI can show names soon after.
-        if (data.senderName.empty()) {
-            queryPlayerName(data.senderGuid);
-        }
-    }
-
-    // Add to chat history
-    chatHistory.push_back(data);
-
-    // Limit chat history size
-    if (chatHistory.size() > maxChatHistory) {
-        chatHistory.erase(chatHistory.begin());
-    }
-
-    // Track whisper sender for /r command
-    if (data.type == ChatType::WHISPER && !data.senderName.empty()) {
-        lastWhisperSender_ = data.senderName;
-
-        // Auto-reply if AFK or DND
-        if (afkStatus_ && !data.senderName.empty()) {
-            std::string reply = afkMessage_.empty() ? "Away from Keyboard" : afkMessage_;
-            sendChatMessage(ChatType::WHISPER, "<AFK> " + reply, data.senderName);
-        } else if (dndStatus_ && !data.senderName.empty()) {
-            std::string reply = dndMessage_.empty() ? "Do Not Disturb" : dndMessage_;
-            sendChatMessage(ChatType::WHISPER, "<DND> " + reply, data.senderName);
-        }
-    }
-
-    // Trigger chat bubble for SAY/YELL messages from others
-    if (chatBubbleCallback_ && data.senderGuid != 0) {
-        if (data.type == ChatType::SAY || data.type == ChatType::YELL ||
-            data.type == ChatType::MONSTER_SAY || data.type == ChatType::MONSTER_YELL ||
-            data.type == ChatType::MONSTER_PARTY) {
-            bool isYell = (data.type == ChatType::YELL || data.type == ChatType::MONSTER_YELL);
-            chatBubbleCallback_(data.senderGuid, data.message, isYell);
-        }
-    }
-
-    // Log the message
-    std::string senderInfo;
-    if (!data.senderName.empty()) {
-        senderInfo = data.senderName;
-    } else if (data.senderGuid != 0) {
-        senderInfo = "Unknown-" + std::to_string(data.senderGuid);
-    } else {
-        senderInfo = "System";
-    }
-
-    std::string channelInfo;
-    if (!data.channelName.empty()) {
-        channelInfo = "[" + data.channelName + "] ";
-    }
-
-    LOG_DEBUG("[", getChatTypeString(data.type), "] ", channelInfo, senderInfo, ": ", data.message);
-
-    // Detect addon messages: format is "prefix\ttext" in the message body.
-    // Only treat as addon message if prefix is short (<=16 chars, WoW limit),
-    // contains no spaces (real prefixes are identifiers like "DBM4" or "BigWigs"),
-    // and the message isn't a SAY/YELL/EMOTE (those are always player chat).
-    if (addonEventCallback_ &&
-        data.type != ChatType::SAY && data.type != ChatType::YELL &&
-        data.type != ChatType::EMOTE && data.type != ChatType::TEXT_EMOTE &&
-        data.type != ChatType::MONSTER_SAY && data.type != ChatType::MONSTER_YELL) {
-        auto tabPos = data.message.find('\t');
-        if (tabPos != std::string::npos && tabPos > 0 && tabPos <= 16 &&
-            tabPos < data.message.size() - 1) {
-            std::string prefix = data.message.substr(0, tabPos);
-            // Addon prefixes are identifier-like: no spaces
-            if (prefix.find(' ') == std::string::npos) {
-                std::string body = data.message.substr(tabPos + 1);
-                std::string channel = getChatTypeString(data.type);
-                fireAddonEvent("CHAT_MSG_ADDON", {prefix, body, channel, data.senderName});
-                return;
-            }
-        }
-    }
-
-    // Fire CHAT_MSG_* addon events so Lua chat frames and addons receive messages.
-    // WoW event args: message, senderName, language, channelName
-    if (addonEventCallback_) {
-        std::string eventName = "CHAT_MSG_";
-        eventName += getChatTypeString(data.type);
-        std::string lang = std::to_string(static_cast<int>(data.language));
-        // Format sender GUID as hex string for addons that need it
-        char guidBuf[32];
-        snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", (unsigned long long)data.senderGuid);
-        fireAddonEvent(eventName, {
-            data.message,
-            data.senderName,
-            lang,
-            data.channelName,
-            senderInfo,       // arg5: displayName
-            "",               // arg6: specialFlags
-            "0",              // arg7: zoneChannelID
-            "0",              // arg8: channelIndex
-            "",               // arg9: channelBaseName
-            "0",              // arg10: unused
-            "0",              // arg11: lineID
-            guidBuf           // arg12: senderGUID
-        });
-    }
+    if (chatHandler_) chatHandler_->sendChatMessage(type, message, target);
 }
 
 void GameHandler::sendTextEmote(uint32_t textEmoteId, uint64_t targetGuid) {
-    if (!isInWorld()) return;
-    auto packet = TextEmotePacket::build(textEmoteId, targetGuid);
-    socket->send(packet);
-}
-
-void GameHandler::handleTextEmote(network::Packet& packet) {
-    // Classic 1.12 and TBC 2.4.3 send: textEmoteId(u32) + emoteNum(u32) + senderGuid(u64) + nameLen(u32) + name
-    // WotLK 3.3.5a reversed this to: senderGuid(u64) + textEmoteId(u32) + emoteNum(u32) + nameLen(u32) + name
-    const bool legacyFormat = isPreWotlk();
-    TextEmoteData data;
-    if (!TextEmoteParser::parse(packet, data, legacyFormat)) {
-        LOG_WARNING("Failed to parse SMSG_TEXT_EMOTE");
-        return;
-    }
-
-    // Skip our own text emotes (we already have local echo)
-    if (data.senderGuid == playerGuid && data.senderGuid != 0) {
-        return;
-    }
-
-    // Resolve sender name
-    std::string senderName = lookupName(data.senderGuid);
-    if (senderName.empty()) {
-        senderName = "Unknown";
-        queryPlayerName(data.senderGuid);
-    }
-
-    // Resolve emote text from DBC using third-person "others see" templates
-    const std::string* targetPtr = data.targetName.empty() ? nullptr : &data.targetName;
-    std::string emoteText = rendering::Renderer::getEmoteTextByDbcId(data.textEmoteId, senderName, targetPtr);
-    if (emoteText.empty()) {
-        // Fallback if DBC lookup fails
-        emoteText = data.targetName.empty()
-            ? senderName + " performs an emote."
-            : senderName + " performs an emote at " + data.targetName + ".";
-    }
-
-    MessageChatData chatMsg;
-    chatMsg.type = ChatType::TEXT_EMOTE;
-    chatMsg.language = ChatLanguage::COMMON;
-    chatMsg.senderGuid = data.senderGuid;
-    chatMsg.senderName = senderName;
-    chatMsg.message = emoteText;
-
-    addLocalChatMessage(chatMsg);
-
-    // Trigger emote animation on sender's entity via callback
-    uint32_t animId = rendering::Renderer::getEmoteAnimByDbcId(data.textEmoteId);
-    if (animId != 0 && emoteAnimCallback_) {
-        emoteAnimCallback_(data.senderGuid, animId);
-    }
-
-    LOG_INFO("TEXT_EMOTE from ", senderName, " (emoteId=", data.textEmoteId, ", anim=", animId, ")");
+    if (chatHandler_) chatHandler_->sendTextEmote(textEmoteId, targetGuid);
 }
 
 void GameHandler::joinChannel(const std::string& channelName, const std::string& password) {
-    if (!isInWorld()) return;
-    auto packet = packetParsers_ ? packetParsers_->buildJoinChannel(channelName, password)
-                                 : JoinChannelPacket::build(channelName, password);
-    socket->send(packet);
-    LOG_INFO("Requesting to join channel: ", channelName);
+    if (chatHandler_) chatHandler_->joinChannel(channelName, password);
 }
 
 void GameHandler::leaveChannel(const std::string& channelName) {
-    if (!isInWorld()) return;
-    auto packet = packetParsers_ ? packetParsers_->buildLeaveChannel(channelName)
-                                 : LeaveChannelPacket::build(channelName);
-    socket->send(packet);
-    LOG_INFO("Requesting to leave channel: ", channelName);
+    if (chatHandler_) chatHandler_->leaveChannel(channelName);
 }
 
 std::string GameHandler::getChannelByIndex(int index) const {
-    if (index < 1 || index > static_cast<int>(joinedChannels_.size())) return "";
-    return joinedChannels_[index - 1];
+    return chatHandler_ ? chatHandler_->getChannelByIndex(index) : "";
 }
 
 int GameHandler::getChannelIndex(const std::string& channelName) const {
-    for (int i = 0; i < static_cast<int>(joinedChannels_.size()); ++i) {
-        if (joinedChannels_[i] == channelName) return i + 1;  // 1-based
-    }
-    return 0;
-}
-
-void GameHandler::handleChannelNotify(network::Packet& packet) {
-    ChannelNotifyData data;
-    if (!ChannelNotifyParser::parse(packet, data)) {
-        LOG_WARNING("Failed to parse SMSG_CHANNEL_NOTIFY");
-        return;
-    }
-
-    switch (data.notifyType) {
-        case ChannelNotifyType::YOU_JOINED: {
-            // Add to active channels if not already present
-            bool found = false;
-            for (const auto& ch : joinedChannels_) {
-                if (ch == data.channelName) { found = true; break; }
-            }
-            if (!found) {
-                joinedChannels_.push_back(data.channelName);
-            }
-            MessageChatData msg;
-            msg.type = ChatType::SYSTEM;
-            msg.message = "Joined channel: " + data.channelName;
-            addLocalChatMessage(msg);
-            LOG_INFO("Joined channel: ", data.channelName);
-            break;
-        }
-        case ChannelNotifyType::YOU_LEFT: {
-            joinedChannels_.erase(
-                std::remove(joinedChannels_.begin(), joinedChannels_.end(), data.channelName),
-                joinedChannels_.end());
-            MessageChatData msg;
-            msg.type = ChatType::SYSTEM;
-            msg.message = "Left channel: " + data.channelName;
-            addLocalChatMessage(msg);
-            LOG_INFO("Left channel: ", data.channelName);
-            break;
-        }
-        case ChannelNotifyType::PLAYER_ALREADY_MEMBER: {
-            // Server says we're already in this channel (e.g. server auto-joined us)
-            // Still track it in our channel list
-            bool found = false;
-            for (const auto& ch : joinedChannels_) {
-                if (ch == data.channelName) { found = true; break; }
-            }
-            if (!found) {
-                joinedChannels_.push_back(data.channelName);
-                LOG_INFO("Already in channel: ", data.channelName);
-            }
-            break;
-        }
-        case ChannelNotifyType::NOT_IN_AREA:
-            addSystemChatMessage("You must be in the area to join '" + data.channelName + "'.");
-            LOG_DEBUG("Cannot join channel ", data.channelName, " (not in area)");
-            break;
-        case ChannelNotifyType::WRONG_PASSWORD:
-            addSystemChatMessage("Wrong password for channel '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::NOT_MEMBER:
-            addSystemChatMessage("You are not in channel '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::NOT_MODERATOR:
-            addSystemChatMessage("You are not a moderator of '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::MUTED:
-            addSystemChatMessage("You are muted in channel '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::BANNED:
-            addSystemChatMessage("You are banned from channel '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::THROTTLED:
-            addSystemChatMessage("Channel '" + data.channelName + "' is throttled. Please wait.");
-            break;
-        case ChannelNotifyType::NOT_IN_LFG:
-            addSystemChatMessage("You must be in a LFG queue to join '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::PLAYER_KICKED:
-            addSystemChatMessage("A player was kicked from '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::PASSWORD_CHANGED:
-            addSystemChatMessage("Password for '" + data.channelName + "' changed.");
-            break;
-        case ChannelNotifyType::OWNER_CHANGED:
-            addSystemChatMessage("Owner of '" + data.channelName + "' changed.");
-            break;
-        case ChannelNotifyType::NOT_OWNER:
-            addSystemChatMessage("You are not the owner of '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::INVALID_NAME:
-            addSystemChatMessage("Invalid channel name '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::PLAYER_NOT_FOUND:
-            addSystemChatMessage("Player not found.");
-            break;
-        case ChannelNotifyType::ANNOUNCEMENTS_ON:
-            addSystemChatMessage("Channel '" + data.channelName + "': announcements enabled.");
-            break;
-        case ChannelNotifyType::ANNOUNCEMENTS_OFF:
-            addSystemChatMessage("Channel '" + data.channelName + "': announcements disabled.");
-            break;
-        case ChannelNotifyType::MODERATION_ON:
-            addSystemChatMessage("Channel '" + data.channelName + "' is now moderated.");
-            break;
-        case ChannelNotifyType::MODERATION_OFF:
-            addSystemChatMessage("Channel '" + data.channelName + "' is no longer moderated.");
-            break;
-        case ChannelNotifyType::PLAYER_BANNED:
-            addSystemChatMessage("A player was banned from '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::PLAYER_UNBANNED:
-            addSystemChatMessage("A player was unbanned from '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::PLAYER_NOT_BANNED:
-            addSystemChatMessage("That player is not banned from '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::INVITE:
-            addSystemChatMessage("You have been invited to join channel '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::INVITE_WRONG_FACTION:
-        case ChannelNotifyType::WRONG_FACTION:
-            addSystemChatMessage("Wrong faction for channel '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::NOT_MODERATED:
-            addSystemChatMessage("Channel '" + data.channelName + "' is not moderated.");
-            break;
-        case ChannelNotifyType::PLAYER_INVITED:
-            addSystemChatMessage("Player invited to channel '" + data.channelName + "'.");
-            break;
-        case ChannelNotifyType::PLAYER_INVITE_BANNED:
-            addSystemChatMessage("That player is banned from '" + data.channelName + "'.");
-            break;
-        default:
-            LOG_DEBUG("Channel notify type ", static_cast<int>(data.notifyType),
-                     " for channel ", data.channelName);
-            break;
-    }
+    return chatHandler_ ? chatHandler_->getChannelIndex(channelName) : 0;
 }
 
 void GameHandler::autoJoinDefaultChannels() {
-    LOG_INFO("autoJoinDefaultChannels: general=", chatAutoJoin.general,
-             " trade=", chatAutoJoin.trade, " localDefense=", chatAutoJoin.localDefense,
-             " lfg=", chatAutoJoin.lfg, " local=", chatAutoJoin.local);
-    if (chatAutoJoin.general) joinChannel("General");
-    if (chatAutoJoin.trade) joinChannel("Trade");
-    if (chatAutoJoin.localDefense) joinChannel("LocalDefense");
-    if (chatAutoJoin.lfg) joinChannel("LookingForGroup");
-    if (chatAutoJoin.local) joinChannel("Local");
+    if (chatHandler_) {
+        chatHandler_->chatAutoJoin.general = chatAutoJoin.general;
+        chatHandler_->chatAutoJoin.trade = chatAutoJoin.trade;
+        chatHandler_->chatAutoJoin.localDefense = chatAutoJoin.localDefense;
+        chatHandler_->chatAutoJoin.lfg = chatAutoJoin.lfg;
+        chatHandler_->chatAutoJoin.local = chatAutoJoin.local;
+        chatHandler_->autoJoinDefaultChannels();
+    }
 }
 
 void GameHandler::setTarget(uint64_t guid) {
-    if (guid == targetGuid) return;
-
-    // Save previous target
-    if (targetGuid != 0) {
-        lastTargetGuid = targetGuid;
-    }
-
-    targetGuid = guid;
-
-    // Clear stale aura data from the previous target so the buff bar shows
-    // an empty state until the server sends SMSG_AURA_UPDATE_ALL for the new target.
-    for (auto& slot : targetAuras) slot = AuraSlot{};
-
-    // Clear previous target's cast bar on target change
-    // (the new target's cast state is naturally fetched from unitCastStates_ by GUID)
-
-    // Inform server of target selection (Phase 1)
-    if (isInWorld()) {
-        auto packet = SetSelectionPacket::build(guid);
-        socket->send(packet);
-    }
-
-    if (guid != 0) {
-        LOG_INFO("Target set: 0x", std::hex, guid, std::dec);
-    }
-    fireAddonEvent("PLAYER_TARGET_CHANGED", {});
+    if (combatHandler_) combatHandler_->setTarget(guid);
 }
 
 void GameHandler::clearTarget() {
-    if (targetGuid != 0) {
-        LOG_INFO("Target cleared");
-        fireAddonEvent("PLAYER_TARGET_CHANGED", {});
-    }
-    targetGuid = 0;
-    tabCycleIndex = -1;
-    tabCycleStale = true;
+    if (combatHandler_) combatHandler_->clearTarget();
 }
 
 std::shared_ptr<Entity> GameHandler::getTarget() const {
-    if (targetGuid == 0) return nullptr;
-    return entityManager.getEntity(targetGuid);
+    return combatHandler_ ? combatHandler_->getTarget() : nullptr;
 }
 
 void GameHandler::setFocus(uint64_t guid) {
-    focusGuid = guid;
-    fireAddonEvent("PLAYER_FOCUS_CHANGED", {});
-    if (guid != 0) {
-        auto entity = entityManager.getEntity(guid);
-        if (entity) {
-            std::string name;
-            auto unit = std::dynamic_pointer_cast<Unit>(entity);
-            if (unit && !unit->getName().empty()) {
-                name = unit->getName();
-            }
-            if (name.empty()) name = lookupName(guid);
-            if (name.empty()) name = "Unknown";
-            addSystemChatMessage("Focus set: " + name);
-            LOG_INFO("Focus set: 0x", std::hex, guid, std::dec);
-        }
-    }
+    if (combatHandler_) combatHandler_->setFocus(guid);
 }
 
 void GameHandler::clearFocus() {
-    if (focusGuid != 0) {
-        addSystemChatMessage("Focus cleared.");
-        LOG_INFO("Focus cleared");
-    }
-    focusGuid = 0;
-    fireAddonEvent("PLAYER_FOCUS_CHANGED", {});
+    if (combatHandler_) combatHandler_->clearFocus();
 }
 
 void GameHandler::setMouseoverGuid(uint64_t guid) {
-    if (mouseoverGuid_ != guid) {
-        mouseoverGuid_ = guid;
-        fireAddonEvent("UPDATE_MOUSEOVER_UNIT", {});
-    }
+    if (combatHandler_) combatHandler_->setMouseoverGuid(guid);
 }
 
 std::shared_ptr<Entity> GameHandler::getFocus() const {
-    if (focusGuid == 0) return nullptr;
-    return entityManager.getEntity(focusGuid);
+    return combatHandler_ ? combatHandler_->getFocus() : nullptr;
 }
 
 void GameHandler::targetLastTarget() {
-    if (lastTargetGuid == 0) {
-        addSystemChatMessage("No previous target.");
-        return;
-    }
-
-    // Swap current and last target
-    uint64_t temp = targetGuid;
-    setTarget(lastTargetGuid);
-    lastTargetGuid = temp;
+    if (combatHandler_) combatHandler_->targetLastTarget();
 }
 
 void GameHandler::targetEnemy(bool reverse) {
-    // Get list of hostile entities
-    std::vector<uint64_t> hostiles;
-    auto& entities = entityManager.getEntities();
-
-    for (const auto& [guid, entity] : entities) {
-        if (entity->getType() == ObjectType::UNIT) {
-            auto unit = std::dynamic_pointer_cast<Unit>(entity);
-            if (unit && guid != playerGuid && unit->isHostile()) {
-                hostiles.push_back(guid);
-            }
-        }
-    }
-
-    if (hostiles.empty()) {
-        addSystemChatMessage("No enemies in range.");
-        return;
-    }
-
-    // Find current target in list
-    auto it = std::find(hostiles.begin(), hostiles.end(), targetGuid);
-
-    if (it == hostiles.end()) {
-        // Not currently targeting a hostile, target first one
-        setTarget(reverse ? hostiles.back() : hostiles.front());
-    } else {
-        // Cycle to next/previous
-        if (reverse) {
-            if (it == hostiles.begin()) {
-                setTarget(hostiles.back());
-            } else {
-                setTarget(*(--it));
-            }
-        } else {
-            ++it;
-            if (it == hostiles.end()) {
-                setTarget(hostiles.front());
-            } else {
-                setTarget(*it);
-            }
-        }
-    }
+    if (combatHandler_) combatHandler_->targetEnemy(reverse);
 }
 
 void GameHandler::targetFriend(bool reverse) {
-    // Get list of friendly entities (players)
-    std::vector<uint64_t> friendlies;
-    auto& entities = entityManager.getEntities();
-
-    for (const auto& [guid, entity] : entities) {
-        if (entity->getType() == ObjectType::PLAYER && guid != playerGuid) {
-            friendlies.push_back(guid);
-        }
-    }
-
-    if (friendlies.empty()) {
-        addSystemChatMessage("No friendly targets in range.");
-        return;
-    }
-
-    // Find current target in list
-    auto it = std::find(friendlies.begin(), friendlies.end(), targetGuid);
-
-    if (it == friendlies.end()) {
-        // Not currently targeting a friend, target first one
-        setTarget(reverse ? friendlies.back() : friendlies.front());
-    } else {
-        // Cycle to next/previous
-        if (reverse) {
-            if (it == friendlies.begin()) {
-                setTarget(friendlies.back());
-            } else {
-                setTarget(*(--it));
-            }
-        } else {
-            ++it;
-            if (it == friendlies.end()) {
-                setTarget(friendlies.front());
-            } else {
-                setTarget(*it);
-            }
-        }
-    }
+    if (combatHandler_) combatHandler_->targetFriend(reverse);
 }
 
 void GameHandler::inspectTarget() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot inspect: not in world or not connected");
-        return;
-    }
-
-    if (targetGuid == 0) {
-        addSystemChatMessage("You must target a player to inspect.");
-        return;
-    }
-
-    auto target = getTarget();
-    if (!target || target->getType() != ObjectType::PLAYER) {
-        addSystemChatMessage("You can only inspect players.");
-        return;
-    }
-
-    auto packet = InspectPacket::build(targetGuid);
-    socket->send(packet);
-
-    // WotLK: also query the player's achievement data so the inspect UI can display it
-    if (isActiveExpansion("wotlk")) {
-        auto achPkt = QueryInspectAchievementsPacket::build(targetGuid);
-        socket->send(achPkt);
-    }
-
-    auto player = std::static_pointer_cast<Player>(target);
-    std::string name = player->getName().empty() ? "Target" : player->getName();
-    addSystemChatMessage("Inspecting " + name + "...");
-    LOG_INFO("Sent inspect request for player: ", name, " (GUID: 0x", std::hex, targetGuid, std::dec, ")");
+    if (socialHandler_) socialHandler_->inspectTarget();
 }
 
 void GameHandler::queryServerTime() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot query time: not in world or not connected");
-        return;
-    }
-
-    auto packet = QueryTimePacket::build();
-    socket->send(packet);
-    LOG_INFO("Requested server time");
+    if (socialHandler_) socialHandler_->queryServerTime();
 }
 
 void GameHandler::requestPlayedTime() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot request played time: not in world or not connected");
-        return;
-    }
-
-    auto packet = RequestPlayedTimePacket::build(true);
-    socket->send(packet);
-    LOG_INFO("Requested played time");
+    if (socialHandler_) socialHandler_->requestPlayedTime();
 }
 
 void GameHandler::queryWho(const std::string& playerName) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot query who: not in world or not connected");
-        return;
-    }
-
-    auto packet = WhoPacket::build(0, 0, playerName);
-    socket->send(packet);
-    LOG_INFO("Sent WHO query", playerName.empty() ? "" : " for: " + playerName);
+    if (socialHandler_) socialHandler_->queryWho(playerName);
 }
 
 void GameHandler::addFriend(const std::string& playerName, const std::string& note) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot add friend: not in world or not connected");
-        return;
-    }
-
-    if (playerName.empty()) {
-        addSystemChatMessage("You must specify a player name.");
-        return;
-    }
-
-    auto packet = AddFriendPacket::build(playerName, note);
-    socket->send(packet);
-    addSystemChatMessage("Sending friend request to " + playerName + "...");
-    LOG_INFO("Sent friend request to: ", playerName);
+    if (socialHandler_) socialHandler_->addFriend(playerName, note);
 }
 
 void GameHandler::removeFriend(const std::string& playerName) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot remove friend: not in world or not connected");
-        return;
-    }
-
-    if (playerName.empty()) {
-        addSystemChatMessage("You must specify a player name.");
-        return;
-    }
-
-    // Look up GUID from cache
-    auto it = friendsCache.find(playerName);
-    if (it == friendsCache.end()) {
-        addSystemChatMessage(playerName + " is not in your friends list.");
-        LOG_WARNING("Friend not found in cache: ", playerName);
-        return;
-    }
-
-    auto packet = DelFriendPacket::build(it->second);
-    socket->send(packet);
-    addSystemChatMessage("Removing " + playerName + " from friends list...");
-    LOG_INFO("Sent remove friend request for: ", playerName, " (GUID: 0x", std::hex, it->second, std::dec, ")");
+    if (socialHandler_) socialHandler_->removeFriend(playerName);
 }
 
 void GameHandler::setFriendNote(const std::string& playerName, const std::string& note) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot set friend note: not in world or not connected");
-        return;
-    }
-
-    if (playerName.empty()) {
-        addSystemChatMessage("You must specify a player name.");
-        return;
-    }
-
-    // Look up GUID from cache
-    auto it = friendsCache.find(playerName);
-    if (it == friendsCache.end()) {
-        addSystemChatMessage(playerName + " is not in your friends list.");
-        return;
-    }
-
-    auto packet = SetContactNotesPacket::build(it->second, note);
-    socket->send(packet);
-    addSystemChatMessage("Updated note for " + playerName);
-    LOG_INFO("Set friend note for: ", playerName);
+    if (socialHandler_) socialHandler_->setFriendNote(playerName, note);
 }
 
 void GameHandler::randomRoll(uint32_t minRoll, uint32_t maxRoll) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot roll: not in world or not connected");
-        return;
-    }
-
-    if (minRoll > maxRoll) {
-        std::swap(minRoll, maxRoll);
-    }
-
-    if (maxRoll > 10000) {
-        maxRoll = 10000;  // Cap at reasonable value
-    }
-
-    auto packet = RandomRollPacket::build(minRoll, maxRoll);
-    socket->send(packet);
-    LOG_INFO("Rolled ", minRoll, "-", maxRoll);
+    if (socialHandler_) socialHandler_->randomRoll(minRoll, maxRoll);
 }
 
 void GameHandler::addIgnore(const std::string& playerName) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot add ignore: not in world or not connected");
-        return;
-    }
-
-    if (playerName.empty()) {
-        addSystemChatMessage("You must specify a player name.");
-        return;
-    }
-
-    auto packet = AddIgnorePacket::build(playerName);
-    socket->send(packet);
-    addSystemChatMessage("Adding " + playerName + " to ignore list...");
-    LOG_INFO("Sent ignore request for: ", playerName);
+    if (socialHandler_) socialHandler_->addIgnore(playerName);
 }
 
 void GameHandler::removeIgnore(const std::string& playerName) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot remove ignore: not in world or not connected");
-        return;
-    }
-
-    if (playerName.empty()) {
-        addSystemChatMessage("You must specify a player name.");
-        return;
-    }
-
-    // Look up GUID from cache
-    auto it = ignoreCache.find(playerName);
-    if (it == ignoreCache.end()) {
-        addSystemChatMessage(playerName + " is not in your ignore list.");
-        LOG_WARNING("Ignored player not found in cache: ", playerName);
-        return;
-    }
-
-    auto packet = DelIgnorePacket::build(it->second);
-    socket->send(packet);
-    addSystemChatMessage("Removing " + playerName + " from ignore list...");
-    ignoreCache.erase(it);
-    LOG_INFO("Sent remove ignore request for: ", playerName, " (GUID: 0x", std::hex, it->second, std::dec, ")");
+    if (socialHandler_) socialHandler_->removeIgnore(playerName);
 }
 
 void GameHandler::requestLogout() {
-    if (!socket) {
-        LOG_WARNING("Cannot logout: not connected");
-        return;
-    }
-
-    if (loggingOut_) {
-        addSystemChatMessage("Already logging out.");
-        return;
-    }
-
-    auto packet = LogoutRequestPacket::build();
-    socket->send(packet);
-    loggingOut_ = true;
-    LOG_INFO("Sent logout request");
+    if (socialHandler_) socialHandler_->requestLogout();
 }
 
 void GameHandler::cancelLogout() {
-    if (!socket) {
-        LOG_WARNING("Cannot cancel logout: not connected");
-        return;
-    }
-
-    if (!loggingOut_) {
-        addSystemChatMessage("Not currently logging out.");
-        return;
-    }
-
-    auto packet = LogoutCancelPacket::build();
-    socket->send(packet);
-    loggingOut_ = false;
-    logoutCountdown_ = 0.0f;
-    addSystemChatMessage("Logout cancelled.");
-    LOG_INFO("Cancelled logout");
+    if (socialHandler_) socialHandler_->cancelLogout();
 }
 
 void GameHandler::sendSetDifficulty(uint32_t difficulty) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot change difficulty: not in world");
-        return;
-    }
-
-    network::Packet packet(wireOpcode(Opcode::CMSG_CHANGEPLAYER_DIFFICULTY));
-    packet.writeUInt32(difficulty);
-    socket->send(packet);
-    LOG_INFO("CMSG_CHANGEPLAYER_DIFFICULTY sent: difficulty=", difficulty);
+    if (socialHandler_) socialHandler_->sendSetDifficulty(difficulty);
 }
 
 void GameHandler::setStandState(uint8_t standState) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot change stand state: not in world or not connected");
-        return;
-    }
-
-    auto packet = StandStateChangePacket::build(standState);
-    socket->send(packet);
-    LOG_INFO("Changed stand state to: ", static_cast<int>(standState));
+    if (socialHandler_) socialHandler_->setStandState(standState);
 }
 
 void GameHandler::toggleHelm() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot toggle helm: not in world or not connected");
-        return;
-    }
-
-    helmVisible_ = !helmVisible_;
-    auto packet = ShowingHelmPacket::build(helmVisible_);
-    socket->send(packet);
-    addSystemChatMessage(helmVisible_ ? "Helm is now visible." : "Helm is now hidden.");
-    LOG_INFO("Helm visibility toggled: ", helmVisible_);
+    if (socialHandler_) socialHandler_->toggleHelm();
 }
 
 void GameHandler::toggleCloak() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot toggle cloak: not in world or not connected");
-        return;
-    }
-
-    cloakVisible_ = !cloakVisible_;
-    auto packet = ShowingCloakPacket::build(cloakVisible_);
-    socket->send(packet);
-    addSystemChatMessage(cloakVisible_ ? "Cloak is now visible." : "Cloak is now hidden.");
-    LOG_INFO("Cloak visibility toggled: ", cloakVisible_);
+    if (socialHandler_) socialHandler_->toggleCloak();
 }
 
 void GameHandler::followTarget() {
-    if (state != WorldState::IN_WORLD) {
-        LOG_WARNING("Cannot follow: not in world");
-        return;
-    }
-
-    if (targetGuid == 0) {
-        addSystemChatMessage("You must target someone to follow.");
-        return;
-    }
-
-    auto target = getTarget();
-    if (!target) {
-        addSystemChatMessage("Invalid target.");
-        return;
-    }
-
-    // Set follow target
-    followTargetGuid_ = targetGuid;
-
-    // Initialize render-space position from entity's canonical coords
-    followRenderPos_ = core::coords::canonicalToRender(glm::vec3(target->getX(), target->getY(), target->getZ()));
-
-    // Tell camera controller to start auto-following
-    if (autoFollowCallback_) {
-        autoFollowCallback_(&followRenderPos_);
-    }
-
-    // Get target name
-    std::string targetName = "Target";
-    if (target->getType() == ObjectType::PLAYER) {
-        auto player = std::static_pointer_cast<Player>(target);
-        if (!player->getName().empty()) {
-            targetName = player->getName();
-        }
-    } else if (target->getType() == ObjectType::UNIT) {
-        auto unit = std::static_pointer_cast<Unit>(target);
-        targetName = unit->getName();
-    }
-
-    addSystemChatMessage("Now following " + targetName + ".");
-    LOG_INFO("Following target: ", targetName, " (GUID: 0x", std::hex, targetGuid, std::dec, ")");
-    fireAddonEvent("AUTOFOLLOW_BEGIN", {});
+    if (movementHandler_) movementHandler_->followTarget();
 }
 
 void GameHandler::cancelFollow() {
-    if (followTargetGuid_ == 0) {
-        return;
-    }
-    followTargetGuid_ = 0;
-    if (autoFollowCallback_) {
-        autoFollowCallback_(nullptr);
-    }
-    addSystemChatMessage("You stop following.");
-    fireAddonEvent("AUTOFOLLOW_END", {});
+    if (movementHandler_) movementHandler_->cancelFollow();
 }
 
 void GameHandler::assistTarget() {
-    if (state != WorldState::IN_WORLD) {
-        LOG_WARNING("Cannot assist: not in world");
-        return;
-    }
-
-    if (targetGuid == 0) {
-        addSystemChatMessage("You must target someone to assist.");
-        return;
-    }
-
-    auto target = getTarget();
-    if (!target) {
-        addSystemChatMessage("Invalid target.");
-        return;
-    }
-
-    // Get target name
-    std::string targetName = "Target";
-    if (target->getType() == ObjectType::PLAYER) {
-        auto player = std::static_pointer_cast<Player>(target);
-        if (!player->getName().empty()) {
-            targetName = player->getName();
-        }
-    } else if (target->getType() == ObjectType::UNIT) {
-        auto unit = std::static_pointer_cast<Unit>(target);
-        targetName = unit->getName();
-    }
-
-    // Try to read target GUID from update fields (UNIT_FIELD_TARGET)
-    uint64_t assistTargetGuid = 0;
-    const auto& fields = target->getFields();
-    auto it = fields.find(fieldIndex(UF::UNIT_FIELD_TARGET_LO));
-    if (it != fields.end()) {
-        assistTargetGuid = it->second;
-        auto it2 = fields.find(fieldIndex(UF::UNIT_FIELD_TARGET_HI));
-        if (it2 != fields.end()) {
-            assistTargetGuid |= (static_cast<uint64_t>(it2->second) << 32);
-        }
-    }
-
-    if (assistTargetGuid == 0) {
-        addSystemChatMessage(targetName + " has no target.");
-        LOG_INFO("Assist: ", targetName, " has no target");
-        return;
-    }
-
-    // Set our target to their target
-    setTarget(assistTargetGuid);
-    LOG_INFO("Assisting ", targetName, ", now targeting GUID: 0x", std::hex, assistTargetGuid, std::dec);
+    if (combatHandler_) combatHandler_->assistTarget();
 }
 
 void GameHandler::togglePvp() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot toggle PvP: not in world or not connected");
-        return;
-    }
-
-    auto packet = TogglePvpPacket::build();
-    socket->send(packet);
-    // Check current PVP state from player's UNIT_FIELD_FLAGS (index 59)
-    // UNIT_FLAG_PVP = 0x00001000
-    auto entity = entityManager.getEntity(playerGuid);
-    bool currentlyPvp = false;
-    if (entity) {
-        currentlyPvp = (entity->getField(59) & 0x00001000) != 0;
-    }
-    // We're toggling, so report the NEW state
-    if (currentlyPvp) {
-        addSystemChatMessage("PvP flag disabled.");
-    } else {
-        addSystemChatMessage("PvP flag enabled.");
-    }
-    LOG_INFO("Toggled PvP flag");
+    if (combatHandler_) combatHandler_->togglePvp();
 }
 
 void GameHandler::requestGuildInfo() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot request guild info: not in world or not connected");
-        return;
-    }
-
-    auto packet = GuildInfoPacket::build();
-    socket->send(packet);
-    LOG_INFO("Requested guild info");
+    if (socialHandler_) socialHandler_->requestGuildInfo();
 }
 
 void GameHandler::requestGuildRoster() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot request guild roster: not in world or not connected");
-        return;
-    }
-
-    auto packet = GuildRosterPacket::build();
-    socket->send(packet);
-    addSystemChatMessage("Requesting guild roster...");
-    LOG_INFO("Requested guild roster");
+    if (socialHandler_) socialHandler_->requestGuildRoster();
 }
 
 void GameHandler::setGuildMotd(const std::string& motd) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot set guild MOTD: not in world or not connected");
-        return;
-    }
-
-    auto packet = GuildMotdPacket::build(motd);
-    socket->send(packet);
-    addSystemChatMessage("Guild MOTD updated.");
-    LOG_INFO("Set guild MOTD: ", motd);
+    if (socialHandler_) socialHandler_->setGuildMotd(motd);
 }
 
 void GameHandler::promoteGuildMember(const std::string& playerName) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot promote guild member: not in world or not connected");
-        return;
-    }
-
-    if (playerName.empty()) {
-        addSystemChatMessage("You must specify a player name.");
-        return;
-    }
-
-    auto packet = GuildPromotePacket::build(playerName);
-    socket->send(packet);
-    addSystemChatMessage("Promoting " + playerName + "...");
-    LOG_INFO("Promoting guild member: ", playerName);
+    if (socialHandler_) socialHandler_->promoteGuildMember(playerName);
 }
 
 void GameHandler::demoteGuildMember(const std::string& playerName) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot demote guild member: not in world or not connected");
-        return;
-    }
-
-    if (playerName.empty()) {
-        addSystemChatMessage("You must specify a player name.");
-        return;
-    }
-
-    auto packet = GuildDemotePacket::build(playerName);
-    socket->send(packet);
-    addSystemChatMessage("Demoting " + playerName + "...");
-    LOG_INFO("Demoting guild member: ", playerName);
+    if (socialHandler_) socialHandler_->demoteGuildMember(playerName);
 }
 
 void GameHandler::leaveGuild() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot leave guild: not in world or not connected");
-        return;
-    }
-
-    auto packet = GuildLeavePacket::build();
-    socket->send(packet);
-    addSystemChatMessage("Leaving guild...");
-    LOG_INFO("Leaving guild");
+    if (socialHandler_) socialHandler_->leaveGuild();
 }
 
 void GameHandler::inviteToGuild(const std::string& playerName) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot invite to guild: not in world or not connected");
-        return;
-    }
-
-    if (playerName.empty()) {
-        addSystemChatMessage("You must specify a player name.");
-        return;
-    }
-
-    auto packet = GuildInvitePacket::build(playerName);
-    socket->send(packet);
-    addSystemChatMessage("Inviting " + playerName + " to guild...");
-    LOG_INFO("Inviting to guild: ", playerName);
+    if (socialHandler_) socialHandler_->inviteToGuild(playerName);
 }
 
 void GameHandler::initiateReadyCheck() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot initiate ready check: not in world or not connected");
-        return;
-    }
-
-    if (!isInGroup()) {
-        addSystemChatMessage("You must be in a group to initiate a ready check.");
-        return;
-    }
-
-    auto packet = ReadyCheckPacket::build();
-    socket->send(packet);
-    addSystemChatMessage("Ready check initiated.");
-    LOG_INFO("Initiated ready check");
+    if (socialHandler_) socialHandler_->initiateReadyCheck();
 }
 
 void GameHandler::respondToReadyCheck(bool ready) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot respond to ready check: not in world or not connected");
-        return;
-    }
-
-    auto packet = ReadyCheckConfirmPacket::build(ready);
-    socket->send(packet);
-    addSystemChatMessage(ready ? "You are ready." : "You are not ready.");
-    LOG_INFO("Responded to ready check: ", ready ? "ready" : "not ready");
+    if (socialHandler_) socialHandler_->respondToReadyCheck(ready);
 }
 
 void GameHandler::acceptDuel() {
-    if (!pendingDuelRequest_ || state != WorldState::IN_WORLD || !socket) return;
-    pendingDuelRequest_ = false;
-    auto pkt = DuelAcceptPacket::build();
-    socket->send(pkt);
-    addSystemChatMessage("You accept the duel.");
-    LOG_INFO("Accepted duel from guid=0x", std::hex, duelChallengerGuid_, std::dec);
+    if (socialHandler_) socialHandler_->acceptDuel();
 }
 
 void GameHandler::forfeitDuel() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot forfeit duel: not in world or not connected");
-        return;
-    }
-    pendingDuelRequest_ = false;  // cancel request if still pending
-    auto packet = DuelCancelPacket::build();
-    socket->send(packet);
-    addSystemChatMessage("You have forfeited the duel.");
-    LOG_INFO("Forfeited duel");
-}
-
-void GameHandler::handleDuelRequested(network::Packet& packet) {
-    if (!packet.hasRemaining(16)) {
-        packet.skipAll();
-        return;
-    }
-    duelChallengerGuid_ = packet.readUInt64();
-    duelFlagGuid_       = packet.readUInt64();
-
-    // Resolve challenger name from entity list
-    duelChallengerName_.clear();
-    if (auto* unit = getUnitByGuid(duelChallengerGuid_)) {
-        duelChallengerName_ = unit->getName();
-    }
-    if (duelChallengerName_.empty()) {
-        duelChallengerName_ = lookupName(duelChallengerGuid_);
-    }
-    if (duelChallengerName_.empty()) {
-        char tmp[32];
-        std::snprintf(tmp, sizeof(tmp), "0x%llX",
-                      static_cast<unsigned long long>(duelChallengerGuid_));
-        duelChallengerName_ = tmp;
-    }
-    pendingDuelRequest_ = true;
-
-    addSystemChatMessage(duelChallengerName_ + " challenges you to a duel!");
-    withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playTargetSelect(); });
-    LOG_INFO("SMSG_DUEL_REQUESTED: challenger=0x", std::hex, duelChallengerGuid_,
-             " flag=0x", duelFlagGuid_, std::dec, " name=", duelChallengerName_);
-    fireAddonEvent("DUEL_REQUESTED", {duelChallengerName_});
-}
-
-void GameHandler::handleDuelComplete(network::Packet& packet) {
-    if (!packet.hasRemaining(1)) return;
-    uint8_t started = packet.readUInt8();
-    // started=1: duel began, started=0: duel was cancelled before starting
-    pendingDuelRequest_ = false;
-    duelCountdownMs_    = 0; // clear countdown once duel is resolved
-    if (!started) {
-        addSystemChatMessage("The duel was cancelled.");
-    }
-    LOG_INFO("SMSG_DUEL_COMPLETE: started=", static_cast<int>(started));
-    fireAddonEvent("DUEL_FINISHED", {});
-}
-
-void GameHandler::handleDuelWinner(network::Packet& packet) {
-    if (!packet.hasRemaining(3)) return;
-    uint8_t duelType = packet.readUInt8();  // 0=normal win, 1=opponent fled duel area
-    std::string winner = packet.readString();
-    std::string loser  = packet.readString();
-
-    std::string msg;
-    if (duelType == 1) {
-        msg = loser + " has fled from the duel. " + winner + " wins!";
-    } else {
-        msg = winner + " has defeated " + loser + " in a duel!";
-    }
-    addSystemChatMessage(msg);
-    LOG_INFO("SMSG_DUEL_WINNER: winner=", winner, " loser=", loser, " type=", static_cast<int>(duelType));
+    if (socialHandler_) socialHandler_->forfeitDuel();
 }
 
 void GameHandler::toggleAfk(const std::string& message) {
-    afkStatus_ = !afkStatus_;
-    afkMessage_ = message;
-
-    if (afkStatus_) {
-        if (message.empty()) {
-            addSystemChatMessage("You are now AFK.");
-        } else {
-            addSystemChatMessage("You are now AFK: " + message);
-        }
-        // If DND was active, turn it off
-        if (dndStatus_) {
-            dndStatus_ = false;
-            dndMessage_.clear();
-        }
-    } else {
-        addSystemChatMessage("You are no longer AFK.");
-        afkMessage_.clear();
-    }
-
-    LOG_INFO("AFK status: ", afkStatus_, ", message: ", message);
+    if (chatHandler_) chatHandler_->toggleAfk(message);
 }
 
 void GameHandler::toggleDnd(const std::string& message) {
-    dndStatus_ = !dndStatus_;
-    dndMessage_ = message;
-
-    if (dndStatus_) {
-        if (message.empty()) {
-            addSystemChatMessage("You are now DND (Do Not Disturb).");
-        } else {
-            addSystemChatMessage("You are now DND: " + message);
-        }
-        // If AFK was active, turn it off
-        if (afkStatus_) {
-            afkStatus_ = false;
-            afkMessage_.clear();
-        }
-    } else {
-        addSystemChatMessage("You are no longer DND.");
-        dndMessage_.clear();
-    }
-
-    LOG_INFO("DND status: ", dndStatus_, ", message: ", message);
+    if (chatHandler_) chatHandler_->toggleDnd(message);
 }
 
 void GameHandler::replyToLastWhisper(const std::string& message) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot send whisper: not in world or not connected");
-        return;
-    }
-
-    if (lastWhisperSender_.empty()) {
-        addSystemChatMessage("No one has whispered you yet.");
-        return;
-    }
-
-    if (message.empty()) {
-        addSystemChatMessage("You must specify a message to send.");
-        return;
-    }
-
-    // Send whisper using the standard message chat function
-    sendChatMessage(ChatType::WHISPER, message, lastWhisperSender_);
-    LOG_INFO("Replied to ", lastWhisperSender_, ": ", message);
+    if (chatHandler_) chatHandler_->replyToLastWhisper(message);
 }
 
 void GameHandler::uninvitePlayer(const std::string& playerName) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot uninvite player: not in world or not connected");
-        return;
-    }
-
-    if (playerName.empty()) {
-        addSystemChatMessage("You must specify a player name to uninvite.");
-        return;
-    }
-
-    auto packet = GroupUninvitePacket::build(playerName);
-    socket->send(packet);
-    addSystemChatMessage("Removed " + playerName + " from the group.");
-    LOG_INFO("Uninvited player: ", playerName);
+    if (socialHandler_) socialHandler_->uninvitePlayer(playerName);
 }
 
 void GameHandler::leaveParty() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot leave party: not in world or not connected");
-        return;
-    }
-
-    auto packet = GroupDisbandPacket::build();
-    socket->send(packet);
-    addSystemChatMessage("You have left the group.");
-    LOG_INFO("Left party/raid");
+    if (socialHandler_) socialHandler_->leaveParty();
 }
 
 void GameHandler::setMainTank(uint64_t targetGuid) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot set main tank: not in world or not connected");
-        return;
-    }
-
-    if (targetGuid == 0) {
-        addSystemChatMessage("You must have a target selected.");
-        return;
-    }
-
-    // Main tank uses index 0
-    auto packet = RaidTargetUpdatePacket::build(0, targetGuid);
-    socket->send(packet);
-    addSystemChatMessage("Main tank set.");
-    LOG_INFO("Set main tank: 0x", std::hex, targetGuid, std::dec);
+    if (socialHandler_) socialHandler_->setMainTank(targetGuid);
 }
 
 void GameHandler::setMainAssist(uint64_t targetGuid) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot set main assist: not in world or not connected");
-        return;
-    }
-
-    if (targetGuid == 0) {
-        addSystemChatMessage("You must have a target selected.");
-        return;
-    }
-
-    // Main assist uses index 1
-    auto packet = RaidTargetUpdatePacket::build(1, targetGuid);
-    socket->send(packet);
-    addSystemChatMessage("Main assist set.");
-    LOG_INFO("Set main assist: 0x", std::hex, targetGuid, std::dec);
+    if (socialHandler_) socialHandler_->setMainAssist(targetGuid);
 }
 
 void GameHandler::clearMainTank() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot clear main tank: not in world or not connected");
-        return;
-    }
-
-    // Clear main tank by setting GUID to 0
-    auto packet = RaidTargetUpdatePacket::build(0, 0);
-    socket->send(packet);
-    addSystemChatMessage("Main tank cleared.");
-    LOG_INFO("Cleared main tank");
+    if (socialHandler_) socialHandler_->clearMainTank();
 }
 
 void GameHandler::clearMainAssist() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot clear main assist: not in world or not connected");
-        return;
-    }
-
-    // Clear main assist by setting GUID to 0
-    auto packet = RaidTargetUpdatePacket::build(1, 0);
-    socket->send(packet);
-    addSystemChatMessage("Main assist cleared.");
-    LOG_INFO("Cleared main assist");
+    if (socialHandler_) socialHandler_->clearMainAssist();
 }
 
 void GameHandler::setRaidMark(uint64_t guid, uint8_t icon) {
-    if (!isInWorld()) return;
-
-    static const char* kMarkNames[] = {
-        "Star", "Circle", "Diamond", "Triangle", "Moon", "Square", "Cross", "Skull"
-    };
-
-    if (icon == 0xFF) {
-        // Clear mark: find which slot this guid holds and send 0 GUID
-        for (int i = 0; i < 8; ++i) {
-            if (raidTargetGuids_[i] == guid) {
-                auto packet = RaidTargetUpdatePacket::build(static_cast<uint8_t>(i), 0);
-                socket->send(packet);
-                break;
-            }
-        }
-    } else if (icon < 8) {
-        auto packet = RaidTargetUpdatePacket::build(icon, guid);
-        socket->send(packet);
-        LOG_INFO("Set raid mark %s on guid %llu", kMarkNames[icon], (unsigned long long)guid);
-    }
+    if (socialHandler_) socialHandler_->setRaidMark(guid, icon);
 }
 
 void GameHandler::requestRaidInfo() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot request raid info: not in world or not connected");
-        return;
-    }
-
-    auto packet = RequestRaidInfoPacket::build();
-    socket->send(packet);
-    addSystemChatMessage("Requesting raid lockout information...");
-    LOG_INFO("Requested raid info");
+    if (socialHandler_) socialHandler_->requestRaidInfo();
 }
 
 void GameHandler::proposeDuel(uint64_t targetGuid) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot propose duel: not in world or not connected");
-        return;
-    }
-
-    if (targetGuid == 0) {
-        addSystemChatMessage("You must target a player to challenge to a duel.");
-        return;
-    }
-
-    auto packet = DuelProposedPacket::build(targetGuid);
-    socket->send(packet);
-    addSystemChatMessage("You have challenged your target to a duel.");
-    LOG_INFO("Proposed duel to target: 0x", std::hex, targetGuid, std::dec);
+    if (socialHandler_) socialHandler_->proposeDuel(targetGuid);
 }
 
 void GameHandler::initiateTrade(uint64_t targetGuid) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot initiate trade: not in world or not connected");
-        return;
-    }
-
-    if (targetGuid == 0) {
-        addSystemChatMessage("You must target a player to trade with.");
-        return;
-    }
-
-    auto packet = InitiateTradePacket::build(targetGuid);
-    socket->send(packet);
-    addSystemChatMessage("Requesting trade with target.");
-    LOG_INFO("Initiated trade with target: 0x", std::hex, targetGuid, std::dec);
+    if (inventoryHandler_) inventoryHandler_->initiateTrade(targetGuid);
 }
 
 void GameHandler::reportPlayer(uint64_t targetGuid, const std::string& reason) {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot report player: not in world or not connected");
-        return;
-    }
-
-    if (targetGuid == 0) {
-        addSystemChatMessage("You must target a player to report.");
-        return;
-    }
-
-    auto packet = ComplainPacket::build(targetGuid, reason);
-    socket->send(packet);
-    addSystemChatMessage("Player report submitted.");
-    LOG_INFO("Reported player: 0x", std::hex, targetGuid, std::dec, " reason=", reason);
+    if (socialHandler_) socialHandler_->reportPlayer(targetGuid, reason);
 }
 
 void GameHandler::stopCasting() {
-    if (!isInWorld()) {
-        LOG_WARNING("Cannot stop casting: not in world or not connected");
-        return;
-    }
+    if (spellHandler_) spellHandler_->stopCasting();
+}
 
-    if (!casting) {
-        return; // Not casting anything
-    }
+void GameHandler::resetCastState() {
+    if (spellHandler_) spellHandler_->resetCastState();
+}
 
-    // Send cancel cast packet only for real spell casts.
-    if (pendingGameObjectInteractGuid_ == 0 && currentCastSpellId != 0) {
-        auto packet = CancelCastPacket::build(currentCastSpellId);
-        socket->send(packet);
-    }
-
-    // Reset casting state and clear any queued spell so it doesn't fire later
-    casting = false;
-    castIsChannel = false;
-    currentCastSpellId = 0;
-    pendingGameObjectInteractGuid_ = 0;
-    lastInteractedGoGuid_ = 0;
-    castTimeRemaining = 0.0f;
-    castTimeTotal = 0.0f;
-    craftQueueSpellId_ = 0;
-    craftQueueRemaining_ = 0;
-    queuedSpellId_ = 0;
-    queuedSpellTarget_ = 0;
-
-    LOG_INFO("Cancelled spell cast");
+void GameHandler::clearUnitCaches() {
+    if (spellHandler_) spellHandler_->clearUnitCaches();
 }
 
 void GameHandler::releaseSpirit() {
-    if (socket && state == WorldState::IN_WORLD) {
-        auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-        if (repopPending_ && now - static_cast<int64_t>(lastRepopRequestMs_) < 1000) {
-            return;
-        }
-        auto packet = RepopRequestPacket::build();
-        socket->send(packet);
-        // Do NOT set releasedSpirit_ = true here.  Setting it optimistically races
-        // with PLAYER_FLAGS field updates that arrive before the server processes
-        // CMSG_REPOP_REQUEST: the PLAYER_FLAGS handler sees wasGhost=true/nowGhost=false
-        // and fires the "ghost cleared" path, wiping corpseMapId_/corpseGuid_.
-        // Let the server drive ghost state via PLAYER_FLAGS_GHOST (field update path).
-        selfResAvailable_ = false;  // self-res window closes when spirit is released
-        repopPending_ = true;
-        lastRepopRequestMs_ = static_cast<uint64_t>(now);
-        LOG_INFO("Sent CMSG_REPOP_REQUEST (Release Spirit)");
-        // Query server for authoritative corpse position (response updates corpseX_/Y_/Z_)
-        network::Packet cq(wireOpcode(Opcode::MSG_CORPSE_QUERY));
-        socket->send(cq);
-    }
+    if (combatHandler_) combatHandler_->releaseSpirit();
 }
 
 bool GameHandler::canReclaimCorpse() const {
-    // Need: ghost state + corpse object GUID (required by CMSG_RECLAIM_CORPSE) +
-    // corpse map known + same map + within 40 yards.
-    if (!releasedSpirit_ || corpseGuid_ == 0 || corpseMapId_ == 0) return false;
-    if (currentMapId_ != corpseMapId_) return false;
-    // movementInfo.x/y are canonical (x=north=server_y, y=west=server_x).
-    // corpseX_/Y_ are raw server coords (x=west, y=north).
-    float dx = movementInfo.x - corpseY_;  // canonical north - server.y
-    float dy = movementInfo.y - corpseX_;  // canonical west  - server.x
-    float dz = movementInfo.z - corpseZ_;
-    return (dx*dx + dy*dy + dz*dz) <= (40.0f * 40.0f);
+    return combatHandler_ ? combatHandler_->canReclaimCorpse() : false;
 }
 
 float GameHandler::getCorpseReclaimDelaySec() const {
-    if (corpseReclaimAvailableMs_ == 0) return 0.0f;
-    auto nowMs = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count());
-    if (nowMs >= corpseReclaimAvailableMs_) return 0.0f;
-    return static_cast<float>(corpseReclaimAvailableMs_ - nowMs) / 1000.0f;
+    return combatHandler_ ? combatHandler_->getCorpseReclaimDelaySec() : 0.0f;
 }
 
 void GameHandler::reclaimCorpse() {
-    if (!canReclaimCorpse() || !socket) return;
-    // CMSG_RECLAIM_CORPSE requires the corpse object's own GUID.
-    // Servers look up the corpse by this GUID; sending the player GUID silently fails.
-    if (corpseGuid_ == 0) {
-        LOG_WARNING("reclaimCorpse: corpse GUID not yet known (corpse object not received); cannot reclaim");
-        return;
-    }
-    auto packet = ReclaimCorpsePacket::build(corpseGuid_);
-    socket->send(packet);
-    LOG_INFO("Sent CMSG_RECLAIM_CORPSE for corpse guid=0x", std::hex, corpseGuid_, std::dec);
+    if (combatHandler_) combatHandler_->reclaimCorpse();
 }
 
 void GameHandler::useSelfRes() {
-    if (!selfResAvailable_ || !socket) return;
-    // CMSG_SELF_RES: empty body — server confirms resurrection via SMSG_UPDATE_OBJECT.
-    network::Packet pkt(wireOpcode(Opcode::CMSG_SELF_RES));
-    socket->send(pkt);
-    selfResAvailable_ = false;
-    LOG_INFO("Sent CMSG_SELF_RES (Reincarnation / Twisting Nether)");
+    if (combatHandler_) combatHandler_->useSelfRes();
 }
 
 void GameHandler::activateSpiritHealer(uint64_t npcGuid) {
-    if (!isInWorld()) return;
-    pendingSpiritHealerGuid_ = npcGuid;
-    auto packet = SpiritHealerActivatePacket::build(npcGuid);
-    socket->send(packet);
-    resurrectPending_ = true;
-    LOG_INFO("Sent CMSG_SPIRIT_HEALER_ACTIVATE for 0x", std::hex, npcGuid, std::dec);
+    if (combatHandler_) combatHandler_->activateSpiritHealer(npcGuid);
 }
 
 void GameHandler::acceptResurrect() {
-    if (state != WorldState::IN_WORLD || !socket || !resurrectRequestPending_) return;
-    if (resurrectIsSpiritHealer_) {
-        // Spirit healer resurrection — SMSG_SPIRIT_HEALER_CONFIRM → CMSG_SPIRIT_HEALER_ACTIVATE
-        auto activate = SpiritHealerActivatePacket::build(resurrectCasterGuid_);
-        socket->send(activate);
-        LOG_INFO("Sent CMSG_SPIRIT_HEALER_ACTIVATE for 0x",
-                 std::hex, resurrectCasterGuid_, std::dec);
-    } else {
-        // Player-cast resurrection — SMSG_RESURRECT_REQUEST → CMSG_RESURRECT_RESPONSE (accept=1)
-        auto resp = ResurrectResponsePacket::build(resurrectCasterGuid_, true);
-        socket->send(resp);
-        LOG_INFO("Sent CMSG_RESURRECT_RESPONSE (accept) for 0x",
-                 std::hex, resurrectCasterGuid_, std::dec);
-    }
-    resurrectRequestPending_ = false;
-    resurrectPending_ = true;
+    if (combatHandler_) combatHandler_->acceptResurrect();
 }
 
 void GameHandler::declineResurrect() {
-    if (state != WorldState::IN_WORLD || !socket || !resurrectRequestPending_) return;
-    auto resp = ResurrectResponsePacket::build(resurrectCasterGuid_, false);
-    socket->send(resp);
-    LOG_INFO("Sent CMSG_RESURRECT_RESPONSE (decline) for 0x",
-             std::hex, resurrectCasterGuid_, std::dec);
-    resurrectRequestPending_ = false;
+    if (combatHandler_) combatHandler_->declineResurrect();
 }
 
 void GameHandler::tabTarget(float playerX, float playerY, float playerZ) {
-    // Helper: returns true if the entity is a living hostile that can be tab-targeted.
-    auto isValidTabTarget = [&](const std::shared_ptr<Entity>& e) -> bool {
-        if (!e) return false;
-        const uint64_t guid = e->getGuid();
-        auto* unit = dynamic_cast<Unit*>(e.get());
-        if (!unit) return false;           // Not a unit (shouldn't happen after type filter)
-        if (unit->getHealth() == 0) {
-            // Dead corpse: only targetable if it has loot or is skinnableable
-            // If corpse was looted and is now empty, skip it (except for skinning)
-            auto lootIt = localLootState_.find(guid);
-            if (lootIt == localLootState_.end() || lootIt->second.data.items.empty()) {
-                // No loot data or all items taken; check if skinnableable
-                // For now, skip empty looted corpses (proper skinning check requires
-                // creature type data that may not be immediately available)
-                return false;
-            }
-            // Has unlooted items available
-            return true;
-        }
-        const bool hostileByFaction = unit->isHostile();
-        const bool hostileByCombat = isAggressiveTowardPlayer(guid);
-        if (!hostileByFaction && !hostileByCombat) return false;
-        return true;
-    };
-
-    // Rebuild cycle list if stale (entity added/removed since last tab press).
-    if (tabCycleStale) {
-        tabCycleList.clear();
-        tabCycleIndex = -1;
-
-        struct EntityDist { uint64_t guid; float distance; };
-        std::vector<EntityDist> sortable;
-
-        for (const auto& [guid, entity] : entityManager.getEntities()) {
-            auto t = entity->getType();
-            if (t != ObjectType::UNIT && t != ObjectType::PLAYER) continue;
-            if (guid == playerGuid) continue;
-            if (!isValidTabTarget(entity)) continue;  // Skip dead / non-hostile
-            float dx = entity->getX() - playerX;
-            float dy = entity->getY() - playerY;
-            float dz = entity->getZ() - playerZ;
-            sortable.push_back({guid, std::sqrt(dx*dx + dy*dy + dz*dz)});
-        }
-
-        std::sort(sortable.begin(), sortable.end(),
-                  [](const EntityDist& a, const EntityDist& b) { return a.distance < b.distance; });
-
-        for (const auto& ed : sortable) {
-            tabCycleList.push_back(ed.guid);
-        }
-        tabCycleStale = false;
-    }
-
-    if (tabCycleList.empty()) {
-        clearTarget();
-        return;
-    }
-
-    // Advance through the cycle, skipping any entry that has since died or
-    // turned friendly (e.g. NPC killed between two tab presses).
-    int tries = static_cast<int>(tabCycleList.size());
-    while (tries-- > 0) {
-        tabCycleIndex = (tabCycleIndex + 1) % static_cast<int>(tabCycleList.size());
-        uint64_t guid = tabCycleList[tabCycleIndex];
-        auto entity = entityManager.getEntity(guid);
-        if (isValidTabTarget(entity)) {
-            setTarget(guid);
-            return;
-        }
-    }
-
-    // All cached entries are stale — clear target and force a fresh rebuild next time.
-    tabCycleStale = true;
-    clearTarget();
+    if (combatHandler_) combatHandler_->tabTarget(playerX, playerY, playerZ);
 }
 
 void GameHandler::addLocalChatMessage(const MessageChatData& msg) {
-    chatHistory.push_back(msg);
-    if (chatHistory.size() > maxChatHistory) {
-        chatHistory.pop_front();
-    }
-    if (addonChatCallback_) addonChatCallback_(msg);
+    if (chatHandler_) chatHandler_->addLocalChatMessage(msg);
+}
 
-    // Fire CHAT_MSG_* for local echoes (player's own messages, system messages)
-    // so Lua chat frame addons display them.
-    if (addonEventCallback_) {
-        std::string eventName = "CHAT_MSG_";
-        eventName += getChatTypeString(msg.type);
-        const Character* ac = getActiveCharacter();
-        std::string senderName = msg.senderName.empty()
-            ? (ac ? ac->name : std::string{}) : msg.senderName;
-        char guidBuf[32];
-        snprintf(guidBuf, sizeof(guidBuf), "0x%016llX",
-                 (unsigned long long)(msg.senderGuid != 0 ? msg.senderGuid : playerGuid));
-        fireAddonEvent(eventName, {
-            msg.message, senderName,
-            std::to_string(static_cast<int>(msg.language)),
-            msg.channelName, senderName, "", "0", "0", "", "0", "0", guidBuf
-        });
-    }
+const std::deque<MessageChatData>& GameHandler::getChatHistory() const {
+    if (chatHandler_) return chatHandler_->getChatHistory();
+    static const std::deque<MessageChatData> kEmpty;
+    return kEmpty;
+}
+
+void GameHandler::clearChatHistory() {
+    if (chatHandler_) chatHandler_->getChatHistory().clear();
+}
+
+const std::vector<std::string>& GameHandler::getJoinedChannels() const {
+    if (chatHandler_) return chatHandler_->getJoinedChannels();
+    static const std::vector<std::string> kEmpty;
+    return kEmpty;
 }
 
 // ============================================================
@@ -14126,9 +7284,11 @@ void GameHandler::handleNameQueryResponse(network::Packet& packet) {
         }
 
         // Backfill chat history entries that arrived before we knew the name.
-        for (auto& msg : chatHistory) {
-            if (msg.senderGuid == data.guid && msg.senderName.empty()) {
-                msg.senderName = data.name;
+        if (chatHandler_) {
+            for (auto& msg : chatHandler_->getChatHistory()) {
+                if (msg.senderGuid == data.guid && msg.senderName.empty()) {
+                    msg.senderName = data.name;
+                }
             }
         }
 
@@ -14284,2018 +7444,158 @@ void GameHandler::handlePageTextQueryResponse(network::Packet& packet) {
 }
 
 // ============================================================
-// Item Query
+// Item Query (forwarded to InventoryHandler)
 // ============================================================
 
 void GameHandler::queryItemInfo(uint32_t entry, uint64_t guid) {
-    if (itemInfoCache_.count(entry) || pendingItemQueries_.count(entry)) return;
-    if (!isInWorld()) return;
-
-    pendingItemQueries_.insert(entry);
-    // Some cores reject CMSG_ITEM_QUERY_SINGLE when the GUID is 0.
-    // If we don't have the item object's GUID (e.g. visible equipment decoding),
-    // fall back to the player's GUID to keep the request non-zero.
-    uint64_t queryGuid = (guid != 0) ? guid : playerGuid;
-    auto packet = packetParsers_
-        ? packetParsers_->buildItemQuery(entry, queryGuid)
-        : ItemQueryPacket::build(entry, queryGuid);
-    socket->send(packet);
-    LOG_DEBUG("queryItemInfo: entry=", entry, " guid=0x", std::hex, queryGuid, std::dec,
-              " pending=", pendingItemQueries_.size());
+    if (inventoryHandler_) inventoryHandler_->queryItemInfo(entry, guid);
 }
 
 void GameHandler::handleItemQueryResponse(network::Packet& packet) {
-    ItemQueryResponseData data;
-    bool parsed = packetParsers_
-        ? packetParsers_->parseItemQueryResponse(packet, data)
-        : ItemQueryResponseParser::parse(packet, data);
-    if (!parsed) {
-        LOG_WARNING("handleItemQueryResponse: parse failed, size=", packet.getSize());
-        return;
-    }
-
-    pendingItemQueries_.erase(data.entry);
-    LOG_DEBUG("handleItemQueryResponse: entry=", data.entry, " name='", data.name,
-              "' displayInfoId=", data.displayInfoId, " pending=", pendingItemQueries_.size());
-
-    if (data.valid) {
-        itemInfoCache_[data.entry] = data;
-        rebuildOnlineInventory();
-        maybeDetectVisibleItemLayout();
-
-        // Flush any deferred loot notifications waiting on this item's name/quality.
-        for (auto it = pendingItemPushNotifs_.begin(); it != pendingItemPushNotifs_.end(); ) {
-            if (it->itemId == data.entry) {
-                std::string itemName = data.name.empty() ? ("item #" + std::to_string(data.entry)) : data.name;
-                std::string link = buildItemLink(data.entry, data.quality, itemName);
-                std::string msg = "Received: " + link;
-                if (it->count > 1) msg += " x" + std::to_string(it->count);
-                addSystemChatMessage(msg);
-                withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playLootItem(); });
-                if (itemLootCallback_) itemLootCallback_(data.entry, it->count, data.quality, itemName);
-                it = pendingItemPushNotifs_.erase(it);
-            } else {
-                ++it;
-            }
-        }
-
-        // Selectively re-emit only players whose equipment references this item entry
-        const uint32_t resolvedEntry = data.entry;
-        for (const auto& [guid, entries] : otherPlayerVisibleItemEntries_) {
-            for (uint32_t e : entries) {
-                if (e == resolvedEntry) {
-                    emitOtherPlayerEquipment(guid);
-                    break;
-                }
-            }
-        }
-        // Same for inspect-based entries
-        if (playerEquipmentCallback_) {
-            for (const auto& [guid, entries] : inspectedPlayerItemEntries_) {
-                bool relevant = false;
-                for (uint32_t e : entries) {
-                    if (e == resolvedEntry) { relevant = true; break; }
-                }
-                if (!relevant) continue;
-                std::array<uint32_t, 19> displayIds{};
-                std::array<uint8_t, 19> invTypes{};
-                for (int s = 0; s < 19; s++) {
-                    uint32_t entry = entries[s];
-                    if (entry == 0) continue;
-                    auto infoIt = itemInfoCache_.find(entry);
-                    if (infoIt == itemInfoCache_.end()) continue;
-                    displayIds[s] = infoIt->second.displayInfoId;
-                    invTypes[s] = static_cast<uint8_t>(infoIt->second.inventoryType);
-                }
-                playerEquipmentCallback_(guid, displayIds, invTypes);
-            }
-        }
-    }
-}
-
-void GameHandler::handleInspectResults(network::Packet& packet) {
-    // SMSG_TALENTS_INFO (0x3F4) format:
-    // uint8 talentType: 0 = own talents (sent on login/respec), 1 = inspect result
-    // If type==1: PackedGUID of inspected player
-    // Then: uint32 unspentTalents, uint8 talentGroupCount, uint8 activeTalentGroup
-    // Per talent group: uint8 talentCount, [talentId(u32) + rank(u8)]..., uint8 glyphCount, [glyphId(u16)]...
-    if (!packet.hasRemaining(1)) return;
-
-    uint8_t talentType = packet.readUInt8();
-
-    if (talentType == 0) {
-        // Own talent info (type 0): uint32 unspentTalents, uint8 groupCount, uint8 activeGroup
-        // Per group: uint8 talentCount, [talentId(4)+rank(1)]..., uint8 glyphCount, [glyphId(2)]...
-        if (!packet.hasRemaining(6)) {
-            LOG_DEBUG("SMSG_TALENTS_INFO type=0: too short");
-            return;
-        }
-        uint32_t unspentTalents    = packet.readUInt32();
-        uint8_t  talentGroupCount  = packet.readUInt8();
-        uint8_t  activeTalentGroup = packet.readUInt8();
-
-        if (activeTalentGroup > 1) activeTalentGroup = 0;
-        activeTalentSpec_ = activeTalentGroup;
-
-        for (uint8_t g = 0; g < talentGroupCount && g < 2; ++g) {
-            if (!packet.hasRemaining(1)) break;
-            uint8_t talentCount = packet.readUInt8();
-            learnedTalents_[g].clear();
-            for (uint8_t t = 0; t < talentCount; ++t) {
-                if (!packet.hasRemaining(5)) break;
-                uint32_t talentId = packet.readUInt32();
-                uint8_t  rank     = packet.readUInt8();
-                learnedTalents_[g][talentId] = rank + 1u; // wire sends 0-indexed; store 1-indexed
-            }
-            if (!packet.hasRemaining(1)) break;
-            learnedGlyphs_[g].fill(0);
-            uint8_t glyphCount = packet.readUInt8();
-            for (uint8_t gl = 0; gl < glyphCount; ++gl) {
-                if (!packet.hasRemaining(2)) break;
-                uint16_t glyphId = packet.readUInt16();
-                if (gl < MAX_GLYPH_SLOTS) learnedGlyphs_[g][gl] = glyphId;
-            }
-        }
-
-        unspentTalentPoints_[activeTalentGroup] = static_cast<uint8_t>(
-            unspentTalents > 255 ? 255 : unspentTalents);
-
-        if (!talentsInitialized_) {
-            talentsInitialized_ = true;
-            if (unspentTalents > 0) {
-                addSystemChatMessage("You have " + std::to_string(unspentTalents)
-                    + " unspent talent point" + (unspentTalents != 1 ? "s" : "") + ".");
-            }
-        }
-
-        LOG_INFO("SMSG_TALENTS_INFO type=0: unspent=", unspentTalents,
-                 " groups=", static_cast<int>(talentGroupCount), " active=", static_cast<int>(activeTalentGroup),
-                 " learned=", learnedTalents_[activeTalentGroup].size());
-        return;
-    }
-
-    // talentType == 1: inspect result
-    // WotLK: packed GUID; TBC: full uint64
-    const bool talentTbc = isPreWotlk();
-    if (!packet.hasRemaining(talentTbc ? 8u : 2u) ) return;
-
-    uint64_t guid = talentTbc
-        ? packet.readUInt64() : packet.readPackedGuid();
-    if (guid == 0) return;
-
-    size_t bytesLeft = packet.getRemainingSize();
-    if (bytesLeft < 6) {
-        LOG_WARNING("SMSG_TALENTS_INFO: too short after guid, ", bytesLeft, " bytes");
-        auto entity = entityManager.getEntity(guid);
-        std::string name = "Target";
-        if (entity) {
-            auto player = std::dynamic_pointer_cast<Player>(entity);
-            if (player && !player->getName().empty()) name = player->getName();
-        }
-        addSystemChatMessage("Inspecting " + name + " (no talent data available).");
-        return;
-    }
-
-    uint32_t unspentTalents = packet.readUInt32();
-    uint8_t talentGroupCount = packet.readUInt8();
-    uint8_t activeTalentGroup = packet.readUInt8();
-
-    // Resolve player name
-    auto entity = entityManager.getEntity(guid);
-    std::string playerName = "Target";
-    if (entity) {
-        auto player = std::dynamic_pointer_cast<Player>(entity);
-        if (player && !player->getName().empty()) playerName = player->getName();
-    }
-
-    // Parse talent groups
-    uint32_t totalTalents = 0;
-    for (uint8_t g = 0; g < talentGroupCount && g < 2; ++g) {
-        bytesLeft = packet.getRemainingSize();
-        if (bytesLeft < 1) break;
-
-        uint8_t talentCount = packet.readUInt8();
-        for (uint8_t t = 0; t < talentCount; ++t) {
-            bytesLeft = packet.getRemainingSize();
-            if (bytesLeft < 5) break;
-            packet.readUInt32(); // talentId
-            packet.readUInt8();  // rank
-            totalTalents++;
-        }
-
-        bytesLeft = packet.getRemainingSize();
-        if (bytesLeft < 1) break;
-        uint8_t glyphCount = packet.readUInt8();
-        for (uint8_t gl = 0; gl < glyphCount; ++gl) {
-            bytesLeft = packet.getRemainingSize();
-            if (bytesLeft < 2) break;
-            packet.readUInt16(); // glyphId
-        }
-    }
-
-    // Parse enchantment slot mask + enchant IDs
-    std::array<uint16_t, 19> enchantIds{};
-    bytesLeft = packet.getRemainingSize();
-    if (bytesLeft >= 4) {
-        uint32_t slotMask = packet.readUInt32();
-        for (int slot = 0; slot < 19; ++slot) {
-            if (slotMask & (1u << slot)) {
-                bytesLeft = packet.getRemainingSize();
-                if (bytesLeft < 2) break;
-                enchantIds[slot] = packet.readUInt16();
-            }
-        }
-    }
-
-    // Store inspect result for UI display
-    inspectResult_.guid              = guid;
-    inspectResult_.playerName        = playerName;
-    inspectResult_.totalTalents      = totalTalents;
-    inspectResult_.unspentTalents    = unspentTalents;
-    inspectResult_.talentGroups      = talentGroupCount;
-    inspectResult_.activeTalentGroup = activeTalentGroup;
-    inspectResult_.enchantIds        = enchantIds;
-
-    // Merge any gear we already have from a prior inspect request
-    auto gearIt = inspectedPlayerItemEntries_.find(guid);
-    if (gearIt != inspectedPlayerItemEntries_.end()) {
-        inspectResult_.itemEntries = gearIt->second;
-    } else {
-        inspectResult_.itemEntries = {};
-    }
-
-    LOG_INFO("Inspect results for ", playerName, ": ", totalTalents, " talents, ",
-             unspentTalents, " unspent, ", static_cast<int>(talentGroupCount), " specs");
-    if (addonEventCallback_) {
-        char guidBuf[32];
-        snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", (unsigned long long)guid);
-        fireAddonEvent("INSPECT_READY", {guidBuf});
-    }
+    if (inventoryHandler_) inventoryHandler_->handleItemQueryResponse(packet);
 }
 
 uint64_t GameHandler::resolveOnlineItemGuid(uint32_t itemId) const {
-    if (itemId == 0) return 0;
-    for (const auto& [guid, info] : onlineItems_) {
-        if (info.entry == itemId) return guid;
-    }
-    return 0;
+    return inventoryHandler_ ? inventoryHandler_->resolveOnlineItemGuid(itemId) : 0;
 }
 
 void GameHandler::detectInventorySlotBases(const std::map<uint16_t, uint32_t>& fields) {
-    if (invSlotBase_ >= 0 && packSlotBase_ >= 0) return;
-    if (fields.empty()) return;
-
-    std::vector<uint16_t> matchingPairs;
-    matchingPairs.reserve(32);
-
-    for (const auto& [idx, low] : fields) {
-        if ((idx % 2) != 0) continue;
-        auto itHigh = fields.find(static_cast<uint16_t>(idx + 1));
-        if (itHigh == fields.end()) continue;
-        uint64_t guid = (uint64_t(itHigh->second) << 32) | low;
-        if (guid == 0) continue;
-        // Primary signal: GUID pairs that match spawned ITEM objects.
-        if (!onlineItems_.empty() && onlineItems_.count(guid)) {
-            matchingPairs.push_back(idx);
-        }
-    }
-
-    // Fallback signal (when ITEM objects haven't been seen yet):
-    // collect any plausible non-zero GUID pairs and derive a base by density.
-    if (matchingPairs.empty()) {
-        for (const auto& [idx, low] : fields) {
-            if ((idx % 2) != 0) continue;
-            auto itHigh = fields.find(static_cast<uint16_t>(idx + 1));
-            if (itHigh == fields.end()) continue;
-            uint64_t guid = (uint64_t(itHigh->second) << 32) | low;
-            if (guid == 0) continue;
-            // Heuristic: item GUIDs tend to be non-trivial and change often; ignore tiny values.
-            if (guid < 0x10000ull) continue;
-            matchingPairs.push_back(idx);
-        }
-    }
-
-    if (matchingPairs.empty()) return;
-    std::sort(matchingPairs.begin(), matchingPairs.end());
-
-    if (invSlotBase_ < 0) {
-        // The lowest matching field is the first EQUIPPED slot (not necessarily HEAD).
-        // With 2+ matches we can derive the true base: all matches must be at
-        // even offsets from the base, spaced 2 fields per slot.
-        const int knownBase = static_cast<int>(fieldIndex(UF::PLAYER_FIELD_INV_SLOT_HEAD));
-        constexpr int slotStride = 2;
-        bool allAlign = true;
-        for (uint16_t p : matchingPairs) {
-            if (p < knownBase || (p - knownBase) % slotStride != 0) {
-                allAlign = false;
-                break;
-            }
-        }
-        if (allAlign) {
-            invSlotBase_ = knownBase;
-        } else {
-            // Fallback: if we have 2+ matches, derive base from their spacing
-            if (matchingPairs.size() >= 2) {
-                uint16_t lo = matchingPairs[0];
-                // lo must be base + 2*slotN, and slotN is 0..22
-                // Try each possible slot for 'lo' and see if all others also land on valid slots
-                for (int s = 0; s <= 22; s++) {
-                    int candidate = lo - s * slotStride;
-                    if (candidate < 0) break;
-                    bool ok = true;
-                    for (uint16_t p : matchingPairs) {
-                        int off = p - candidate;
-                        if (off < 0 || off % slotStride != 0 || off / slotStride > 22) {
-                            ok = false;
-                            break;
-                        }
-                    }
-                    if (ok) {
-                        invSlotBase_ = candidate;
-                        break;
-                    }
-                }
-                if (invSlotBase_ < 0) invSlotBase_ = knownBase;
-            } else {
-                invSlotBase_ = knownBase;
-            }
-        }
-        packSlotBase_ = invSlotBase_ + (game::Inventory::NUM_EQUIP_SLOTS * 2);
-        LOG_INFO("Detected inventory field base: equip=", invSlotBase_,
-                 " pack=", packSlotBase_);
-    }
+    if (inventoryHandler_) inventoryHandler_->detectInventorySlotBases(fields);
 }
 
 bool GameHandler::applyInventoryFields(const std::map<uint16_t, uint32_t>& fields) {
-    bool slotsChanged = false;
-    int equipBase = (invSlotBase_ >= 0) ? invSlotBase_ : static_cast<int>(fieldIndex(UF::PLAYER_FIELD_INV_SLOT_HEAD));
-    int packBase = (packSlotBase_ >= 0) ? packSlotBase_ : static_cast<int>(fieldIndex(UF::PLAYER_FIELD_PACK_SLOT_1));
-    int bankBase = static_cast<int>(fieldIndex(UF::PLAYER_FIELD_BANK_SLOT_1));
-    int bankBagBase = static_cast<int>(fieldIndex(UF::PLAYER_FIELD_BANKBAG_SLOT_1));
-
-    // Derive slot counts from field gap (Classic=24/6, TBC/WotLK=28/7).
-    if (bankBase != 0xFFFF && bankBagBase != 0xFFFF) {
-        effectiveBankSlots_ = std::min((bankBagBase - bankBase) / 2, 28);
-        effectiveBankBagSlots_ = (effectiveBankSlots_ <= 24) ? 6 : 7;
-    }
-
-    int keyringBase = static_cast<int>(fieldIndex(UF::PLAYER_FIELD_KEYRING_SLOT_1));
-    if (keyringBase == 0xFFFF && bankBagBase != 0xFFFF) {
-        // Layout fallback for profiles that don't define PLAYER_FIELD_KEYRING_SLOT_1.
-        // Bank bag slots are followed by 12 vendor buyback slots (24 fields), then keyring.
-        keyringBase = bankBagBase + (effectiveBankBagSlots_ * 2) + 24;
-    }
-
-    for (const auto& [key, val] : fields) {
-        if (key >= equipBase && key <= equipBase + (game::Inventory::NUM_EQUIP_SLOTS * 2 - 1)) {
-            int slotIndex = (key - equipBase) / 2;
-            bool isLow = ((key - equipBase) % 2 == 0);
-            if (slotIndex < static_cast<int>(equipSlotGuids_.size())) {
-                uint64_t& guid = equipSlotGuids_[slotIndex];
-                if (isLow) guid = (guid & 0xFFFFFFFF00000000ULL) | val;
-                else guid = (guid & 0x00000000FFFFFFFFULL) | (uint64_t(val) << 32);
-                slotsChanged = true;
-            }
-        } else if (key >= packBase && key <= packBase + (game::Inventory::BACKPACK_SLOTS * 2 - 1)) {
-            int slotIndex = (key - packBase) / 2;
-            bool isLow = ((key - packBase) % 2 == 0);
-            if (slotIndex < static_cast<int>(backpackSlotGuids_.size())) {
-                uint64_t& guid = backpackSlotGuids_[slotIndex];
-                if (isLow) guid = (guid & 0xFFFFFFFF00000000ULL) | val;
-                else guid = (guid & 0x00000000FFFFFFFFULL) | (uint64_t(val) << 32);
-                slotsChanged = true;
-            }
-        } else if (keyringBase != 0xFFFF &&
-                   key >= keyringBase &&
-                   key <= keyringBase + (game::Inventory::KEYRING_SLOTS * 2 - 1)) {
-            int slotIndex = (key - keyringBase) / 2;
-            bool isLow = ((key - keyringBase) % 2 == 0);
-            if (slotIndex < static_cast<int>(keyringSlotGuids_.size())) {
-                uint64_t& guid = keyringSlotGuids_[slotIndex];
-                if (isLow) guid = (guid & 0xFFFFFFFF00000000ULL) | val;
-                else guid = (guid & 0x00000000FFFFFFFFULL) | (uint64_t(val) << 32);
-                slotsChanged = true;
-            }
-        }
-        if (bankBase != 0xFFFF && key >= static_cast<uint16_t>(bankBase) &&
-            key <= static_cast<uint16_t>(bankBase) + (effectiveBankSlots_ * 2 - 1)) {
-            int slotIndex = (key - bankBase) / 2;
-            bool isLow = ((key - bankBase) % 2 == 0);
-            if (slotIndex < static_cast<int>(bankSlotGuids_.size())) {
-                uint64_t& guid = bankSlotGuids_[slotIndex];
-                if (isLow) guid = (guid & 0xFFFFFFFF00000000ULL) | val;
-                else guid = (guid & 0x00000000FFFFFFFFULL) | (uint64_t(val) << 32);
-                slotsChanged = true;
-            }
-        }
-
-        // Bank bag slots starting at PLAYER_FIELD_BANKBAG_SLOT_1
-        if (bankBagBase != 0xFFFF && key >= static_cast<uint16_t>(bankBagBase) &&
-            key <= static_cast<uint16_t>(bankBagBase) + (effectiveBankBagSlots_ * 2 - 1)) {
-            int slotIndex = (key - bankBagBase) / 2;
-            bool isLow = ((key - bankBagBase) % 2 == 0);
-            if (slotIndex < static_cast<int>(bankBagSlotGuids_.size())) {
-                uint64_t& guid = bankBagSlotGuids_[slotIndex];
-                if (isLow) guid = (guid & 0xFFFFFFFF00000000ULL) | val;
-                else guid = (guid & 0x00000000FFFFFFFFULL) | (uint64_t(val) << 32);
-                slotsChanged = true;
-            }
-        }
-    }
-
-    return slotsChanged;
+    return inventoryHandler_ ? inventoryHandler_->applyInventoryFields(fields) : false;
 }
 
 void GameHandler::extractContainerFields(uint64_t containerGuid, const std::map<uint16_t, uint32_t>& fields) {
-    const uint16_t numSlotsIdx = fieldIndex(UF::CONTAINER_FIELD_NUM_SLOTS);
-    const uint16_t slot1Idx = fieldIndex(UF::CONTAINER_FIELD_SLOT_1);
-    if (numSlotsIdx == 0xFFFF || slot1Idx == 0xFFFF) return;
-
-    auto& info = containerContents_[containerGuid];
-
-    // Read number of slots
-    auto numIt = fields.find(numSlotsIdx);
-    if (numIt != fields.end()) {
-        info.numSlots = std::min(numIt->second, 36u);
-    }
-
-    // Read slot GUIDs (each is 2 uint32 fields: lo + hi)
-    for (const auto& [key, val] : fields) {
-        if (key < slot1Idx) continue;
-        int offset = key - slot1Idx;
-        int slotIndex = offset / 2;
-        if (slotIndex >= 36) continue;
-        bool isLow = (offset % 2 == 0);
-        uint64_t& guid = info.slotGuids[slotIndex];
-        if (isLow) guid = (guid & 0xFFFFFFFF00000000ULL) | val;
-        else guid = (guid & 0x00000000FFFFFFFFULL) | (uint64_t(val) << 32);
-    }
+    if (inventoryHandler_) inventoryHandler_->extractContainerFields(containerGuid, fields);
 }
 
 void GameHandler::rebuildOnlineInventory() {
-
-    uint8_t savedBankBagSlots = inventory.getPurchasedBankBagSlots();
-    inventory = Inventory();
-    inventory.setPurchasedBankBagSlots(savedBankBagSlots);
-
-    // Equipment slots
-    for (int i = 0; i < 23; i++) {
-        uint64_t guid = equipSlotGuids_[i];
-        if (guid == 0) continue;
-
-        auto itemIt = onlineItems_.find(guid);
-        if (itemIt == onlineItems_.end()) continue;
-
-        ItemDef def;
-        def.itemId = itemIt->second.entry;
-        def.stackCount = itemIt->second.stackCount;
-        def.curDurability = itemIt->second.curDurability;
-        def.maxDurability = itemIt->second.maxDurability;
-        def.maxStack = 1;
-
-        auto infoIt = itemInfoCache_.find(itemIt->second.entry);
-        if (infoIt != itemInfoCache_.end()) {
-            def.name = infoIt->second.name;
-            def.quality = static_cast<ItemQuality>(infoIt->second.quality);
-            def.inventoryType = infoIt->second.inventoryType;
-            def.maxStack = std::max(1, infoIt->second.maxStack);
-            def.displayInfoId = infoIt->second.displayInfoId;
-            def.subclassName = infoIt->second.subclassName;
-            def.damageMin = infoIt->second.damageMin;
-            def.damageMax = infoIt->second.damageMax;
-            def.delayMs = infoIt->second.delayMs;
-            def.armor = infoIt->second.armor;
-            def.stamina = infoIt->second.stamina;
-            def.strength = infoIt->second.strength;
-            def.agility = infoIt->second.agility;
-            def.intellect = infoIt->second.intellect;
-            def.spirit = infoIt->second.spirit;
-            def.sellPrice = infoIt->second.sellPrice;
-            def.itemLevel = infoIt->second.itemLevel;
-            def.requiredLevel = infoIt->second.requiredLevel;
-            def.bindType = infoIt->second.bindType;
-            def.description = infoIt->second.description;
-            def.startQuestId = infoIt->second.startQuestId;
-            def.extraStats.clear();
-            for (const auto& es : infoIt->second.extraStats)
-                def.extraStats.push_back({es.statType, es.statValue});
-        } else {
-            def.name = "Item " + std::to_string(def.itemId);
-            queryItemInfo(def.itemId, guid);
-        }
-
-        inventory.setEquipSlot(static_cast<EquipSlot>(i), def);
-    }
-
-    // Backpack slots
-    for (int i = 0; i < 16; i++) {
-        uint64_t guid = backpackSlotGuids_[i];
-        if (guid == 0) continue;
-
-        auto itemIt = onlineItems_.find(guid);
-        if (itemIt == onlineItems_.end()) continue;
-
-        ItemDef def;
-        def.itemId = itemIt->second.entry;
-        def.stackCount = itemIt->second.stackCount;
-        def.curDurability = itemIt->second.curDurability;
-        def.maxDurability = itemIt->second.maxDurability;
-        def.maxStack = 1;
-
-        auto infoIt = itemInfoCache_.find(itemIt->second.entry);
-        if (infoIt != itemInfoCache_.end()) {
-            def.name = infoIt->second.name;
-            def.quality = static_cast<ItemQuality>(infoIt->second.quality);
-            def.inventoryType = infoIt->second.inventoryType;
-            def.maxStack = std::max(1, infoIt->second.maxStack);
-            def.displayInfoId = infoIt->second.displayInfoId;
-            def.subclassName = infoIt->second.subclassName;
-            def.damageMin = infoIt->second.damageMin;
-            def.damageMax = infoIt->second.damageMax;
-            def.delayMs = infoIt->second.delayMs;
-            def.armor = infoIt->second.armor;
-            def.stamina = infoIt->second.stamina;
-            def.strength = infoIt->second.strength;
-            def.agility = infoIt->second.agility;
-            def.intellect = infoIt->second.intellect;
-            def.spirit = infoIt->second.spirit;
-            def.sellPrice = infoIt->second.sellPrice;
-            def.itemLevel = infoIt->second.itemLevel;
-            def.requiredLevel = infoIt->second.requiredLevel;
-            def.bindType = infoIt->second.bindType;
-            def.description = infoIt->second.description;
-            def.startQuestId = infoIt->second.startQuestId;
-            def.extraStats.clear();
-            for (const auto& es : infoIt->second.extraStats)
-                def.extraStats.push_back({es.statType, es.statValue});
-        } else {
-            def.name = "Item " + std::to_string(def.itemId);
-            queryItemInfo(def.itemId, guid);
-        }
-
-        inventory.setBackpackSlot(i, def);
-    }
-
-    // Keyring slots
-    for (int i = 0; i < game::Inventory::KEYRING_SLOTS; i++) {
-        uint64_t guid = keyringSlotGuids_[i];
-        if (guid == 0) continue;
-
-        auto itemIt = onlineItems_.find(guid);
-        if (itemIt == onlineItems_.end()) continue;
-
-        ItemDef def;
-        def.itemId = itemIt->second.entry;
-        def.stackCount = itemIt->second.stackCount;
-        def.curDurability = itemIt->second.curDurability;
-        def.maxDurability = itemIt->second.maxDurability;
-        def.maxStack = 1;
-
-        auto infoIt = itemInfoCache_.find(itemIt->second.entry);
-        if (infoIt != itemInfoCache_.end()) {
-            def.name = infoIt->second.name;
-            def.quality = static_cast<ItemQuality>(infoIt->second.quality);
-            def.inventoryType = infoIt->second.inventoryType;
-            def.maxStack = std::max(1, infoIt->second.maxStack);
-            def.displayInfoId = infoIt->second.displayInfoId;
-            def.subclassName = infoIt->second.subclassName;
-            def.damageMin = infoIt->second.damageMin;
-            def.damageMax = infoIt->second.damageMax;
-            def.delayMs = infoIt->second.delayMs;
-            def.armor = infoIt->second.armor;
-            def.stamina = infoIt->second.stamina;
-            def.strength = infoIt->second.strength;
-            def.agility = infoIt->second.agility;
-            def.intellect = infoIt->second.intellect;
-            def.spirit = infoIt->second.spirit;
-            def.sellPrice = infoIt->second.sellPrice;
-            def.itemLevel = infoIt->second.itemLevel;
-            def.requiredLevel = infoIt->second.requiredLevel;
-            def.bindType = infoIt->second.bindType;
-            def.description = infoIt->second.description;
-            def.startQuestId = infoIt->second.startQuestId;
-            def.extraStats.clear();
-            for (const auto& es : infoIt->second.extraStats)
-                def.extraStats.push_back({es.statType, es.statValue});
-        } else {
-            def.name = "Item " + std::to_string(def.itemId);
-            queryItemInfo(def.itemId, guid);
-        }
-
-        inventory.setKeyringSlot(i, def);
-    }
-
-    // Bag contents (BAG1-BAG4 are equip slots 19-22)
-    for (int bagIdx = 0; bagIdx < 4; bagIdx++) {
-        uint64_t bagGuid = equipSlotGuids_[19 + bagIdx];
-        if (bagGuid == 0) continue;
-
-        // Determine bag size from container fields or item template
-        int numSlots = 0;
-        auto contIt = containerContents_.find(bagGuid);
-        if (contIt != containerContents_.end()) {
-            numSlots = static_cast<int>(contIt->second.numSlots);
-        }
-        if (numSlots <= 0) {
-            auto bagItemIt = onlineItems_.find(bagGuid);
-            if (bagItemIt != onlineItems_.end()) {
-                auto bagInfoIt = itemInfoCache_.find(bagItemIt->second.entry);
-                if (bagInfoIt != itemInfoCache_.end()) {
-                    numSlots = bagInfoIt->second.containerSlots;
-                }
-            }
-        }
-        if (numSlots <= 0) continue;
-
-        // Set the bag size in the inventory bag data
-        inventory.setBagSize(bagIdx, numSlots);
-
-        // Also set bagSlots on the equipped bag item (for UI display)
-        auto& bagEquipSlot = inventory.getEquipSlot(static_cast<EquipSlot>(19 + bagIdx));
-        if (!bagEquipSlot.empty()) {
-            ItemDef bagDef = bagEquipSlot.item;
-            bagDef.bagSlots = numSlots;
-            inventory.setEquipSlot(static_cast<EquipSlot>(19 + bagIdx), bagDef);
-        }
-
-        // Populate bag slot items
-        if (contIt == containerContents_.end()) continue;
-        const auto& container = contIt->second;
-        for (int s = 0; s < numSlots && s < 36; s++) {
-            uint64_t itemGuid = container.slotGuids[s];
-            if (itemGuid == 0) continue;
-
-            auto itemIt = onlineItems_.find(itemGuid);
-            if (itemIt == onlineItems_.end()) continue;
-
-            ItemDef def;
-            def.itemId = itemIt->second.entry;
-            def.stackCount = itemIt->second.stackCount;
-        def.curDurability = itemIt->second.curDurability;
-        def.maxDurability = itemIt->second.maxDurability;
-            def.maxStack = 1;
-
-            auto infoIt = itemInfoCache_.find(itemIt->second.entry);
-            if (infoIt != itemInfoCache_.end()) {
-                def.name = infoIt->second.name;
-                def.quality = static_cast<ItemQuality>(infoIt->second.quality);
-                def.inventoryType = infoIt->second.inventoryType;
-                def.maxStack = std::max(1, infoIt->second.maxStack);
-                def.displayInfoId = infoIt->second.displayInfoId;
-                def.subclassName = infoIt->second.subclassName;
-                def.damageMin = infoIt->second.damageMin;
-                def.damageMax = infoIt->second.damageMax;
-                def.delayMs = infoIt->second.delayMs;
-                def.armor = infoIt->second.armor;
-                def.stamina = infoIt->second.stamina;
-                def.strength = infoIt->second.strength;
-                def.agility = infoIt->second.agility;
-                def.intellect = infoIt->second.intellect;
-                def.spirit = infoIt->second.spirit;
-                def.sellPrice = infoIt->second.sellPrice;
-                def.itemLevel = infoIt->second.itemLevel;
-                def.requiredLevel = infoIt->second.requiredLevel;
-                def.bindType = infoIt->second.bindType;
-                def.description = infoIt->second.description;
-                def.startQuestId = infoIt->second.startQuestId;
-                def.extraStats.clear();
-                for (const auto& es : infoIt->second.extraStats)
-                    def.extraStats.push_back({es.statType, es.statValue});
-                def.bagSlots = infoIt->second.containerSlots;
-            } else {
-                def.name = "Item " + std::to_string(def.itemId);
-                queryItemInfo(def.itemId, itemGuid);
-            }
-
-            inventory.setBagSlot(bagIdx, s, def);
-        }
-    }
-
-    // Bank slots (24 for Classic, 28 for TBC/WotLK)
-    for (int i = 0; i < effectiveBankSlots_; i++) {
-        uint64_t guid = bankSlotGuids_[i];
-        if (guid == 0) { inventory.clearBankSlot(i); continue; }
-
-        auto itemIt = onlineItems_.find(guid);
-        if (itemIt == onlineItems_.end()) { inventory.clearBankSlot(i); continue; }
-
-        ItemDef def;
-        def.itemId = itemIt->second.entry;
-        def.stackCount = itemIt->second.stackCount;
-        def.curDurability = itemIt->second.curDurability;
-        def.maxDurability = itemIt->second.maxDurability;
-        def.maxStack = 1;
-
-        auto infoIt = itemInfoCache_.find(itemIt->second.entry);
-        if (infoIt != itemInfoCache_.end()) {
-            def.name = infoIt->second.name;
-            def.quality = static_cast<ItemQuality>(infoIt->second.quality);
-            def.inventoryType = infoIt->second.inventoryType;
-            def.maxStack = std::max(1, infoIt->second.maxStack);
-            def.displayInfoId = infoIt->second.displayInfoId;
-            def.subclassName = infoIt->second.subclassName;
-            def.damageMin = infoIt->second.damageMin;
-            def.damageMax = infoIt->second.damageMax;
-            def.delayMs = infoIt->second.delayMs;
-            def.armor = infoIt->second.armor;
-            def.stamina = infoIt->second.stamina;
-            def.strength = infoIt->second.strength;
-            def.agility = infoIt->second.agility;
-            def.intellect = infoIt->second.intellect;
-            def.spirit = infoIt->second.spirit;
-            def.itemLevel = infoIt->second.itemLevel;
-            def.requiredLevel = infoIt->second.requiredLevel;
-            def.bindType = infoIt->second.bindType;
-            def.description = infoIt->second.description;
-            def.startQuestId = infoIt->second.startQuestId;
-            def.extraStats.clear();
-            for (const auto& es : infoIt->second.extraStats)
-                def.extraStats.push_back({es.statType, es.statValue});
-            def.sellPrice = infoIt->second.sellPrice;
-            def.bagSlots = infoIt->second.containerSlots;
-        } else {
-            def.name = "Item " + std::to_string(def.itemId);
-            queryItemInfo(def.itemId, guid);
-        }
-
-        inventory.setBankSlot(i, def);
-    }
-
-    // Bank bag contents (6 for Classic, 7 for TBC/WotLK)
-    for (int bagIdx = 0; bagIdx < effectiveBankBagSlots_; bagIdx++) {
-        uint64_t bagGuid = bankBagSlotGuids_[bagIdx];
-        if (bagGuid == 0) { inventory.setBankBagSize(bagIdx, 0); continue; }
-
-        int numSlots = 0;
-        auto contIt = containerContents_.find(bagGuid);
-        if (contIt != containerContents_.end()) {
-            numSlots = static_cast<int>(contIt->second.numSlots);
-        }
-
-        // Populate the bag item itself (for icon/name in the bank bag equip slot)
-        auto bagItemIt = onlineItems_.find(bagGuid);
-        if (bagItemIt != onlineItems_.end()) {
-            if (numSlots <= 0) {
-                auto bagInfoIt = itemInfoCache_.find(bagItemIt->second.entry);
-                if (bagInfoIt != itemInfoCache_.end()) {
-                    numSlots = bagInfoIt->second.containerSlots;
-                }
-            }
-            ItemDef bagDef;
-            bagDef.itemId = bagItemIt->second.entry;
-            bagDef.stackCount = 1;
-            bagDef.inventoryType = 18; // bag
-            auto bagInfoIt = itemInfoCache_.find(bagItemIt->second.entry);
-            if (bagInfoIt != itemInfoCache_.end()) {
-                bagDef.name = bagInfoIt->second.name;
-                bagDef.quality = static_cast<ItemQuality>(bagInfoIt->second.quality);
-                bagDef.displayInfoId = bagInfoIt->second.displayInfoId;
-                bagDef.bagSlots = bagInfoIt->second.containerSlots;
-            } else {
-                bagDef.name = "Bag";
-                queryItemInfo(bagDef.itemId, bagGuid);
-            }
-            inventory.setBankBagItem(bagIdx, bagDef);
-        }
-        if (numSlots <= 0) continue;
-
-        inventory.setBankBagSize(bagIdx, numSlots);
-
-        if (contIt == containerContents_.end()) continue;
-        const auto& container = contIt->second;
-        for (int s = 0; s < numSlots && s < 36; s++) {
-            uint64_t itemGuid = container.slotGuids[s];
-            if (itemGuid == 0) continue;
-
-            auto itemIt = onlineItems_.find(itemGuid);
-            if (itemIt == onlineItems_.end()) continue;
-
-            ItemDef def;
-            def.itemId = itemIt->second.entry;
-            def.stackCount = itemIt->second.stackCount;
-        def.curDurability = itemIt->second.curDurability;
-        def.maxDurability = itemIt->second.maxDurability;
-            def.maxStack = 1;
-
-            auto infoIt = itemInfoCache_.find(itemIt->second.entry);
-            if (infoIt != itemInfoCache_.end()) {
-                def.name = infoIt->second.name;
-                def.quality = static_cast<ItemQuality>(infoIt->second.quality);
-                def.inventoryType = infoIt->second.inventoryType;
-                def.maxStack = std::max(1, infoIt->second.maxStack);
-                def.displayInfoId = infoIt->second.displayInfoId;
-                def.subclassName = infoIt->second.subclassName;
-                def.damageMin = infoIt->second.damageMin;
-                def.damageMax = infoIt->second.damageMax;
-                def.delayMs = infoIt->second.delayMs;
-                def.armor = infoIt->second.armor;
-                def.stamina = infoIt->second.stamina;
-                def.strength = infoIt->second.strength;
-                def.agility = infoIt->second.agility;
-                def.intellect = infoIt->second.intellect;
-                def.spirit = infoIt->second.spirit;
-                def.itemLevel = infoIt->second.itemLevel;
-                def.requiredLevel = infoIt->second.requiredLevel;
-                def.sellPrice = infoIt->second.sellPrice;
-                def.bindType = infoIt->second.bindType;
-                def.description = infoIt->second.description;
-                def.startQuestId = infoIt->second.startQuestId;
-                def.extraStats.clear();
-                for (const auto& es : infoIt->second.extraStats)
-                    def.extraStats.push_back({es.statType, es.statValue});
-                def.bagSlots = infoIt->second.containerSlots;
-            } else {
-                def.name = "Item " + std::to_string(def.itemId);
-                queryItemInfo(def.itemId, itemGuid);
-            }
-
-            inventory.setBankBagSlot(bagIdx, s, def);
-        }
-    }
-
-    // Only mark equipment dirty if equipped item displayInfoIds actually changed
-    std::array<uint32_t, 19> currentEquipDisplayIds{};
-    for (int i = 0; i < 19; i++) {
-        const auto& slot = inventory.getEquipSlot(static_cast<EquipSlot>(i));
-        if (!slot.empty()) currentEquipDisplayIds[i] = slot.item.displayInfoId;
-    }
-    if (currentEquipDisplayIds != lastEquipDisplayIds_) {
-        lastEquipDisplayIds_ = currentEquipDisplayIds;
-        onlineEquipDirty_ = true;
-    }
-
-    LOG_DEBUG("Rebuilt online inventory: equip=", [&](){
-        int c = 0; for (auto g : equipSlotGuids_) if (g) c++; return c;
-    }(), " backpack=", [&](){
-        int c = 0; for (auto g : backpackSlotGuids_) if (g) c++; return c;
-    }(), " keyring=", [&](){
-        int c = 0; for (auto g : keyringSlotGuids_) if (g) c++; return c;
-    }());
+    if (inventoryHandler_) inventoryHandler_->rebuildOnlineInventory();
 }
 
 void GameHandler::maybeDetectVisibleItemLayout() {
-    if (visibleItemLayoutVerified_) return;
-    if (lastPlayerFields_.empty()) return;
-
-    std::array<uint32_t, 19> equipEntries{};
-    int nonZero = 0;
-    // Prefer authoritative equipped item entry IDs derived from item objects (onlineItems_),
-    // because Inventory::ItemDef may not be populated yet if templates haven't been queried.
-    for (int i = 0; i < 19; i++) {
-        uint64_t itemGuid = equipSlotGuids_[i];
-        if (itemGuid != 0) {
-            auto it = onlineItems_.find(itemGuid);
-            if (it != onlineItems_.end() && it->second.entry != 0) {
-                equipEntries[i] = it->second.entry;
-            }
-        }
-        if (equipEntries[i] == 0) {
-            const auto& slot = inventory.getEquipSlot(static_cast<EquipSlot>(i));
-            equipEntries[i] = slot.empty() ? 0u : slot.item.itemId;
-        }
-        if (equipEntries[i] != 0) nonZero++;
-    }
-    if (nonZero < 2) return;
-
-    const uint16_t maxKey = lastPlayerFields_.rbegin()->first;
-    int bestBase = -1;
-    int bestStride = 0;
-    int bestMatches = 0;
-    int bestMismatches = 9999;
-    int bestScore = -999999;
-
-    const int strides[] = {2, 3, 4, 1};
-    for (int stride : strides) {
-        for (const auto& [baseIdxU16, _v] : lastPlayerFields_) {
-            const int base = static_cast<int>(baseIdxU16);
-            if (base + 18 * stride > static_cast<int>(maxKey)) continue;
-
-            int matches = 0;
-            int mismatches = 0;
-            for (int s = 0; s < 19; s++) {
-                uint32_t want = equipEntries[s];
-                if (want == 0) continue;
-                const uint16_t idx = static_cast<uint16_t>(base + s * stride);
-                auto it = lastPlayerFields_.find(idx);
-                if (it == lastPlayerFields_.end()) continue;
-                if (it->second == want) {
-                    matches++;
-                } else if (it->second != 0) {
-                    mismatches++;
-                }
-            }
-
-            int score = matches * 2 - mismatches * 3;
-            if (score > bestScore ||
-                (score == bestScore && matches > bestMatches) ||
-                (score == bestScore && matches == bestMatches && mismatches < bestMismatches) ||
-                (score == bestScore && matches == bestMatches && mismatches == bestMismatches && base < bestBase)) {
-                bestScore = score;
-                bestMatches = matches;
-                bestMismatches = mismatches;
-                bestBase = base;
-                bestStride = stride;
-            }
-        }
-    }
-
-    if (bestMatches >= 2 && bestBase >= 0 && bestStride > 0 && bestMismatches <= 1) {
-        visibleItemEntryBase_ = bestBase;
-        visibleItemStride_ = bestStride;
-        visibleItemLayoutVerified_ = true;
-        LOG_INFO("Detected PLAYER_VISIBLE_ITEM entry layout: base=", visibleItemEntryBase_,
-                 " stride=", visibleItemStride_, " (matches=", bestMatches,
-                 " mismatches=", bestMismatches, " score=", bestScore, ")");
-
-        // Backfill existing player entities already in view.
-        for (const auto& [guid, ent] : entityManager.getEntities()) {
-            if (!ent || ent->getType() != ObjectType::PLAYER) continue;
-            if (guid == playerGuid) continue;
-            updateOtherPlayerVisibleItems(guid, ent->getFields());
-        }
-    }
-    // If heuristic didn't find a match, keep using the default WotLK layout (base=284, stride=2).
+    if (inventoryHandler_) inventoryHandler_->maybeDetectVisibleItemLayout();
 }
 
 void GameHandler::updateOtherPlayerVisibleItems(uint64_t guid, const std::map<uint16_t, uint32_t>& fields) {
-    if (guid == 0 || guid == playerGuid) return;
-
-    // Use the current base/stride (defaults are correct for WotLK 3.3.5a: base=284, stride=2).
-    // The heuristic may refine these later, but we proceed immediately with whatever values
-    // are set rather than waiting for verification.
-    const int base = visibleItemEntryBase_;
-    const int stride = visibleItemStride_;
-    if (base < 0 || stride <= 0) return; // Defensive: should never happen with defaults.
-
-    std::array<uint32_t, 19> newEntries{};
-    for (int s = 0; s < 19; s++) {
-        uint16_t idx = static_cast<uint16_t>(base + s * stride);
-        auto it = fields.find(idx);
-        if (it != fields.end()) newEntries[s] = it->second;
-    }
-
-    int nonZero = 0;
-    for (uint32_t e : newEntries) { if (e != 0) nonZero++; }
-    if (nonZero > 0) {
-        LOG_INFO("updateOtherPlayerVisibleItems: guid=0x", std::hex, guid, std::dec,
-                 " nonZero=", nonZero, " base=", base, " stride=", stride,
-                 " head=", newEntries[0], " shoulders=", newEntries[2],
-                 " chest=", newEntries[4], " legs=", newEntries[6],
-                 " mainhand=", newEntries[15], " offhand=", newEntries[16]);
-    }
-
-    bool changed = false;
-    auto& old = otherPlayerVisibleItemEntries_[guid];
-    if (old != newEntries) {
-        old = newEntries;
-        changed = true;
-    }
-
-    // Request item templates for any new visible entries.
-    for (uint32_t entry : newEntries) {
-        if (entry == 0) continue;
-        if (!itemInfoCache_.count(entry) && !pendingItemQueries_.count(entry)) {
-            queryItemInfo(entry, 0);
-        }
-    }
-
-    // Only fall back to auto-inspect if ALL extracted entries are zero (server didn't
-    // send visible item fields at all). If we got at least one non-zero entry, the
-    // update-field approach is working and inspect is unnecessary.
-    if (nonZero == 0) {
-        LOG_DEBUG("updateOtherPlayerVisibleItems: guid=0x", std::hex, guid, std::dec,
-                  " all entries zero (base=", base, " stride=", stride,
-                  " fieldCount=", fields.size(), ") — queuing auto-inspect");
-        if (socket && state == WorldState::IN_WORLD) {
-            pendingAutoInspect_.insert(guid);
-        }
-    }
-
-    if (changed) {
-        otherPlayerVisibleDirty_.insert(guid);
-        emitOtherPlayerEquipment(guid);
-    }
+    if (inventoryHandler_) inventoryHandler_->updateOtherPlayerVisibleItems(guid, fields);
 }
 
 void GameHandler::emitOtherPlayerEquipment(uint64_t guid) {
-    if (!playerEquipmentCallback_) return;
-    auto it = otherPlayerVisibleItemEntries_.find(guid);
-    if (it == otherPlayerVisibleItemEntries_.end()) return;
-
-    std::array<uint32_t, 19> displayIds{};
-    std::array<uint8_t, 19> invTypes{};
-    bool anyEntry = false;
-    int resolved = 0, unresolved = 0;
-
-    for (int s = 0; s < 19; s++) {
-        uint32_t entry = it->second[s];
-        if (entry == 0) continue;
-        anyEntry = true;
-        auto infoIt = itemInfoCache_.find(entry);
-        if (infoIt == itemInfoCache_.end()) { unresolved++; continue; }
-        displayIds[s] = infoIt->second.displayInfoId;
-        invTypes[s] = static_cast<uint8_t>(infoIt->second.inventoryType);
-        resolved++;
-    }
-
-    LOG_INFO("emitOtherPlayerEquipment: guid=0x", std::hex, guid, std::dec,
-             " entries=", (anyEntry ? "yes" : "none"),
-             " resolved=", resolved, " unresolved=", unresolved,
-             " head=", displayIds[0], " shoulders=", displayIds[2],
-             " chest=", displayIds[4], " legs=", displayIds[6],
-             " mainhand=", displayIds[15], " offhand=", displayIds[16]);
-
-    playerEquipmentCallback_(guid, displayIds, invTypes);
-    otherPlayerVisibleDirty_.erase(guid);
-
-    // If we had entries but couldn't resolve any templates, also try inspect as a fallback.
-    bool anyResolved = false;
-    for (uint32_t did : displayIds) { if (did != 0) { anyResolved = true; break; } }
-    if (anyEntry && !anyResolved) {
-        pendingAutoInspect_.insert(guid);
-    }
+    if (inventoryHandler_) inventoryHandler_->emitOtherPlayerEquipment(guid);
 }
 
 void GameHandler::emitAllOtherPlayerEquipment() {
-    if (!playerEquipmentCallback_) return;
-    for (const auto& [guid, _] : otherPlayerVisibleItemEntries_) {
-        emitOtherPlayerEquipment(guid);
-    }
+    if (inventoryHandler_) inventoryHandler_->emitAllOtherPlayerEquipment();
 }
 
 // ============================================================
-// Phase 2: Combat
+// Phase 2: Combat (delegated to CombatHandler)
 // ============================================================
 
 void GameHandler::startAutoAttack(uint64_t targetGuid) {
-    // Can't attack yourself
-    if (targetGuid == playerGuid) return;
-    if (targetGuid == 0) return;
-
-    // Dismount when entering combat
-    if (isMounted()) {
-        dismount();
-    }
-
-    // Client-side melee range gate to avoid starting "swing forever" loops when
-    // target is already clearly out of range.
-    if (auto target = entityManager.getEntity(targetGuid)) {
-        float dx = movementInfo.x - target->getLatestX();
-        float dy = movementInfo.y - target->getLatestY();
-        float dz = movementInfo.z - target->getLatestZ();
-        float dist3d = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (dist3d > 8.0f) {
-            if (autoAttackRangeWarnCooldown_ <= 0.0f) {
-                addSystemChatMessage("Target is too far away.");
-                autoAttackRangeWarnCooldown_ = 1.25f;
-            }
-            return;
-        }
-    }
-
-    autoAttackRequested_ = true;
-    autoAttackRetryPending_ = true;
-    // Keep combat animation/state server-authoritative. We only flip autoAttacking
-    // on SMSG_ATTACKSTART where attackerGuid == playerGuid.
-    autoAttacking = false;
-    autoAttackTarget = targetGuid;
-    autoAttackOutOfRange_ = false;
-    autoAttackOutOfRangeTime_ = 0.0f;
-    autoAttackResendTimer_ = 0.0f;
-    autoAttackFacingSyncTimer_ = 0.0f;
-    if (isInWorld()) {
-        auto packet = AttackSwingPacket::build(targetGuid);
-        socket->send(packet);
-    }
-    LOG_INFO("Starting auto-attack on 0x", std::hex, targetGuid, std::dec);
+    if (combatHandler_) combatHandler_->startAutoAttack(targetGuid);
 }
 
 void GameHandler::stopAutoAttack() {
-    if (!autoAttacking && !autoAttackRequested_) return;
-    autoAttackRequested_ = false;
-    autoAttacking = false;
-    autoAttackRetryPending_ = false;
-    autoAttackTarget = 0;
-    autoAttackOutOfRange_ = false;
-    autoAttackOutOfRangeTime_ = 0.0f;
-    autoAttackResendTimer_ = 0.0f;
-    autoAttackFacingSyncTimer_ = 0.0f;
-    if (isInWorld()) {
-        auto packet = AttackStopPacket::build();
-        socket->send(packet);
-    }
-    LOG_INFO("Stopping auto-attack");
-            fireAddonEvent("PLAYER_LEAVE_COMBAT", {});
+    if (combatHandler_) combatHandler_->stopAutoAttack();
 }
 
 void GameHandler::addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId, bool isPlayerSource, uint8_t powerType,
                                 uint64_t srcGuid, uint64_t dstGuid) {
-    CombatTextEntry entry;
-    entry.type = type;
-    entry.amount = amount;
-    entry.spellId = spellId;
-    entry.age = 0.0f;
-    entry.isPlayerSource = isPlayerSource;
-    entry.powerType = powerType;
-    entry.srcGuid = srcGuid;
-    entry.dstGuid = dstGuid;
-    // Random horizontal stagger so simultaneous hits don't stack vertically
-    static std::mt19937 rng(std::random_device{}());
-    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-    entry.xSeed = dist(rng);
-    combatText.push_back(entry);
-
-    // Persistent combat log — use explicit GUIDs if provided, else fall back to
-    // player/current-target (the old behaviour for events without specific participants).
-    CombatLogEntry log;
-    log.type     = type;
-    log.amount   = amount;
-    log.spellId  = spellId;
-    log.isPlayerSource = isPlayerSource;
-    log.powerType = powerType;
-    log.timestamp = std::time(nullptr);
-    // If the caller provided an explicit destination GUID but left source GUID as 0,
-    // preserve "unknown/no source" (e.g. environmental damage) instead of
-    // backfilling from current target.
-    uint64_t effectiveSrc = (srcGuid != 0) ? srcGuid
-                          : ((dstGuid != 0) ? 0 : (isPlayerSource ? playerGuid : targetGuid));
-    uint64_t effectiveDst = (dstGuid != 0) ? dstGuid
-                          : (isPlayerSource ? targetGuid : playerGuid);
-    log.sourceName = lookupName(effectiveSrc);
-    log.targetName = (effectiveDst != 0) ? lookupName(effectiveDst) : std::string{};
-    if (combatLog_.size() >= MAX_COMBAT_LOG)
-        combatLog_.pop_front();
-    combatLog_.push_back(std::move(log));
-
-    // Fire COMBAT_LOG_EVENT_UNFILTERED for Lua addons
-    // Args: subevent, sourceGUID, sourceName, 0 (sourceFlags), destGUID, destName, 0 (destFlags), spellId, spellName, amount
-    if (addonEventCallback_) {
-        static const char* kSubevents[] = {
-            "SWING_DAMAGE", "SPELL_DAMAGE", "SPELL_HEAL", "SWING_MISSED", "SWING_MISSED",
-            "SWING_MISSED", "SWING_MISSED", "SWING_MISSED", "SPELL_DAMAGE", "SPELL_HEAL",
-            "SPELL_PERIODIC_DAMAGE", "SPELL_PERIODIC_HEAL", "ENVIRONMENTAL_DAMAGE",
-            "SPELL_ENERGIZE", "SPELL_DRAIN", "PARTY_KILL", "SPELL_MISSED", "SPELL_ABSORBED",
-            "SPELL_MISSED", "SPELL_MISSED", "SPELL_MISSED", "SPELL_AURA_APPLIED",
-            "SPELL_DISPEL", "SPELL_STOLEN", "SPELL_INTERRUPT", "SPELL_INSTAKILL",
-            "PARTY_KILL", "SWING_DAMAGE", "SWING_DAMAGE"
-        };
-        const char* subevent = (type < sizeof(kSubevents)/sizeof(kSubevents[0]))
-            ? kSubevents[type] : "UNKNOWN";
-        char srcBuf[32], dstBuf[32];
-        snprintf(srcBuf, sizeof(srcBuf), "0x%016llX", (unsigned long long)effectiveSrc);
-        snprintf(dstBuf, sizeof(dstBuf), "0x%016llX", (unsigned long long)effectiveDst);
-        std::string spellName = (spellId != 0) ? getSpellName(spellId) : std::string{};
-        std::string timestamp = std::to_string(static_cast<double>(std::time(nullptr)));
-        fireAddonEvent("COMBAT_LOG_EVENT_UNFILTERED", {
-            timestamp, subevent,
-            srcBuf, log.sourceName, "0",
-            dstBuf, log.targetName, "0",
-            std::to_string(spellId), spellName,
-            std::to_string(amount)
-        });
-    }
+    if (combatHandler_) combatHandler_->addCombatText(type, amount, spellId, isPlayerSource, powerType, srcGuid, dstGuid);
 }
 
 bool GameHandler::shouldLogSpellstealAura(uint64_t casterGuid, uint64_t victimGuid, uint32_t spellId) {
-    if (spellId == 0) return false;
-
-    const auto now = std::chrono::steady_clock::now();
-    constexpr auto kRecentWindow = std::chrono::seconds(1);
-    while (!recentSpellstealLogs_.empty() &&
-           now - recentSpellstealLogs_.front().timestamp > kRecentWindow) {
-        recentSpellstealLogs_.pop_front();
-    }
-
-    for (auto it = recentSpellstealLogs_.begin(); it != recentSpellstealLogs_.end(); ++it) {
-        if (it->casterGuid == casterGuid &&
-            it->victimGuid == victimGuid &&
-            it->spellId == spellId) {
-            recentSpellstealLogs_.erase(it);
-            return false;
-        }
-    }
-
-    if (recentSpellstealLogs_.size() >= MAX_RECENT_SPELLSTEAL_LOGS)
-        recentSpellstealLogs_.pop_front();
-    recentSpellstealLogs_.push_back({casterGuid, victimGuid, spellId, now});
-    return true;
+    return combatHandler_ ? combatHandler_->shouldLogSpellstealAura(casterGuid, victimGuid, spellId) : false;
 }
 
 void GameHandler::updateCombatText(float deltaTime) {
-    for (auto& entry : combatText) {
-        entry.age += deltaTime;
-    }
-    combatText.erase(
-        std::remove_if(combatText.begin(), combatText.end(),
-                       [](const CombatTextEntry& e) { return e.isExpired(); }),
-        combatText.end());
+    if (combatHandler_) combatHandler_->updateCombatText(deltaTime);
 }
 
-void GameHandler::autoTargetAttacker(uint64_t attackerGuid) {
-    if (attackerGuid == 0 || attackerGuid == playerGuid) return;
-    if (targetGuid != 0) return;
-    if (!entityManager.hasEntity(attackerGuid)) return;
-    setTarget(attackerGuid);
+bool GameHandler::isAutoAttacking() const {
+    return combatHandler_ ? combatHandler_->isAutoAttacking() : false;
 }
 
-void GameHandler::handleAttackStart(network::Packet& packet) {
-    AttackStartData data;
-    if (!AttackStartParser::parse(packet, data)) return;
-
-    if (data.attackerGuid == playerGuid) {
-        autoAttackRequested_ = true;
-        autoAttacking = true;
-        autoAttackRetryPending_ = false;
-        autoAttackTarget = data.victimGuid;
-                    fireAddonEvent("PLAYER_ENTER_COMBAT", {});
-    } else if (data.victimGuid == playerGuid && data.attackerGuid != 0) {
-        hostileAttackers_.insert(data.attackerGuid);
-        autoTargetAttacker(data.attackerGuid);
-
-        // Play aggro sound when NPC attacks player
-        if (npcAggroCallback_) {
-            auto entity = entityManager.getEntity(data.attackerGuid);
-            if (entity && entity->getType() == ObjectType::UNIT) {
-                glm::vec3 pos(entity->getX(), entity->getY(), entity->getZ());
-                npcAggroCallback_(data.attackerGuid, pos);
-            }
-        }
-    }
-
-    // Force both participants to face each other at combat start.
-    // Uses atan2(-dy, dx): canonical orientation convention where the West/Y
-    // component is negated (renderYaw = orientation + 90°, model-forward = render+X).
-    auto attackerEnt = entityManager.getEntity(data.attackerGuid);
-    auto victimEnt   = entityManager.getEntity(data.victimGuid);
-    if (attackerEnt && victimEnt) {
-        float dx = victimEnt->getX() - attackerEnt->getX();
-        float dy = victimEnt->getY() - attackerEnt->getY();
-        if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
-            attackerEnt->setOrientation(std::atan2(-dy,  dx));   // attacker → victim
-            victimEnt->setOrientation  (std::atan2( dy, -dx));   // victim   → attacker
-        }
-    }
+bool GameHandler::hasAutoAttackIntent() const {
+    return combatHandler_ ? combatHandler_->hasAutoAttackIntent() : false;
 }
 
-void GameHandler::handleAttackStop(network::Packet& packet) {
-    AttackStopData data;
-    if (!AttackStopParser::parse(packet, data)) return;
+bool GameHandler::isInCombat() const {
+    return combatHandler_ ? combatHandler_->isInCombat() : false;
+}
 
-    // Keep intent, but clear server-confirmed active state until ATTACKSTART resumes.
-    if (data.attackerGuid == playerGuid) {
-        autoAttacking = false;
-        autoAttackRetryPending_ = autoAttackRequested_;
-        autoAttackResendTimer_ = 0.0f;
-        LOG_DEBUG("SMSG_ATTACKSTOP received (keeping auto-attack intent)");
-    } else if (data.victimGuid == playerGuid) {
-        hostileAttackers_.erase(data.attackerGuid);
-    }
+bool GameHandler::isInCombatWith(uint64_t guid) const {
+    return combatHandler_ ? combatHandler_->isInCombatWith(guid) : false;
+}
+
+uint64_t GameHandler::getAutoAttackTargetGuid() const {
+    return combatHandler_ ? combatHandler_->getAutoAttackTargetGuid() : 0;
+}
+
+bool GameHandler::isAggressiveTowardPlayer(uint64_t guid) const {
+    return combatHandler_ ? combatHandler_->isAggressiveTowardPlayer(guid) : false;
+}
+
+uint64_t GameHandler::getLastMeleeSwingMs() const {
+    return combatHandler_ ? combatHandler_->getLastMeleeSwingMs() : 0;
+}
+
+const std::vector<CombatTextEntry>& GameHandler::getCombatText() const {
+    static const std::vector<CombatTextEntry> empty;
+    return combatHandler_ ? combatHandler_->getCombatText() : empty;
+}
+
+const std::deque<CombatLogEntry>& GameHandler::getCombatLog() const {
+    static const std::deque<CombatLogEntry> empty;
+    return combatHandler_ ? combatHandler_->getCombatLog() : empty;
+}
+
+void GameHandler::clearCombatLog() {
+    if (combatHandler_) combatHandler_->clearCombatLog();
+}
+
+void GameHandler::clearCombatText() {
+    if (combatHandler_) combatHandler_->clearCombatText();
+}
+
+void GameHandler::clearHostileAttackers() {
+    if (combatHandler_) combatHandler_->clearHostileAttackers();
+}
+
+const std::vector<GameHandler::ThreatEntry>* GameHandler::getThreatList(uint64_t unitGuid) const {
+    return combatHandler_ ? combatHandler_->getThreatList(unitGuid) : nullptr;
+}
+
+const std::vector<GameHandler::ThreatEntry>* GameHandler::getTargetThreatList() const {
+    return targetGuid ? getThreatList(targetGuid) : nullptr;
+}
+
+bool GameHandler::isHostileAttacker(uint64_t guid) const {
+    return combatHandler_ ? combatHandler_->isHostileAttacker(guid) : false;
 }
 
 void GameHandler::dismount() {
-    if (!socket) return;
-    // Clear local mount state immediately (optimistic dismount).
-    // Server will confirm via SMSG_UPDATE_OBJECT with mountDisplayId=0.
-    uint32_t savedMountAura = mountAuraSpellId_;
-    if (currentMountDisplayId_ != 0 || taxiMountActive_) {
-        if (mountCallback_) {
-            mountCallback_(0);
-        }
-        currentMountDisplayId_ = 0;
-        taxiMountActive_ = false;
-        taxiMountDisplayId_ = 0;
-        mountAuraSpellId_ = 0;
-        LOG_INFO("Dismount: cleared local mount state");
-    }
-    // CMSG_CANCEL_MOUNT_AURA exists in TBC+ (0x0375). Classic/Vanilla doesn't have it.
-    uint16_t cancelMountWire = wireOpcode(Opcode::CMSG_CANCEL_MOUNT_AURA);
-    if (cancelMountWire != 0xFFFF) {
-        network::Packet pkt(cancelMountWire);
-        socket->send(pkt);
-        LOG_INFO("Sent CMSG_CANCEL_MOUNT_AURA");
-    } else if (savedMountAura != 0) {
-        // Fallback for Classic/Vanilla: cancel the mount aura by spell ID
-        auto pkt = CancelAuraPacket::build(savedMountAura);
-        socket->send(pkt);
-        LOG_INFO("Sent CMSG_CANCEL_AURA (mount spell ", savedMountAura, ") — Classic fallback");
-    } else {
-        // No tracked mount aura — try cancelling all indefinite self-cast auras
-        // (mount aura detection may have missed if aura arrived after mount field)
-        for (const auto& a : playerAuras) {
-            if (!a.isEmpty() && a.maxDurationMs < 0 && a.casterGuid == playerGuid) {
-                auto pkt = CancelAuraPacket::build(a.spellId);
-                socket->send(pkt);
-                LOG_INFO("Sent CMSG_CANCEL_AURA (spell ", a.spellId, ") — brute force dismount");
-            }
-        }
-    }
-}
-
-void GameHandler::handleForceSpeedChange(network::Packet& packet, const char* name,
-                                          Opcode ackOpcode, float* speedStorage) {
-    // WotLK: packed GUID; TBC/Classic: full uint64
-    const bool fscTbcLike = isPreWotlk();
-    uint64_t guid = fscTbcLike
-        ? packet.readUInt64() : packet.readPackedGuid();
-    // uint32 counter
-    uint32_t counter = packet.readUInt32();
-
-    // Determine format from remaining bytes:
-    //   5 bytes remaining = uint8(1) + float(4)  — standard 3.3.5a
-    //   8 bytes remaining = uint32(4) + float(4) — some forks
-    //   4 bytes remaining = float(4)             — no unknown field
-    size_t remaining = packet.getRemainingSize();
-    if (remaining >= 8) {
-        packet.readUInt32();  // unknown (extended format)
-    } else if (remaining >= 5) {
-        packet.readUInt8();   // unknown (standard 3.3.5a)
-    }
-    // float newSpeed
-    float newSpeed = packet.readFloat();
-
-    LOG_INFO("SMSG_FORCE_", name, "_CHANGE: guid=0x", std::hex, guid, std::dec,
-             " counter=", counter, " speed=", newSpeed);
-
-    if (guid != playerGuid) return;
-
-    // Always ACK the speed change to prevent server stall.
-    // Classic/TBC use full uint64 GUID; WotLK uses packed GUID.
-    if (socket) {
-        network::Packet ack(wireOpcode(ackOpcode));
-        const bool legacyGuidAck =
-            isActiveExpansion("classic") || isActiveExpansion("tbc") || isActiveExpansion("turtle");
-        if (legacyGuidAck) {
-            ack.writeUInt64(playerGuid);
-        } else {
-            ack.writePackedGuid(playerGuid);
-        }
-        ack.writeUInt32(counter);
-
-        MovementInfo wire = movementInfo;
-        wire.time = nextMovementTimestampMs();
-        if (wire.hasFlag(MovementFlags::ONTRANSPORT)) {
-            wire.transportTime = wire.time;
-            wire.transportTime2 = wire.time;
-        }
-        glm::vec3 serverPos = core::coords::canonicalToServer(glm::vec3(wire.x, wire.y, wire.z));
-        wire.x = serverPos.x;
-        wire.y = serverPos.y;
-        wire.z = serverPos.z;
-        if (wire.hasFlag(MovementFlags::ONTRANSPORT)) {
-            glm::vec3 serverTransport =
-                core::coords::canonicalToServer(glm::vec3(wire.transportX, wire.transportY, wire.transportZ));
-            wire.transportX = serverTransport.x;
-            wire.transportY = serverTransport.y;
-            wire.transportZ = serverTransport.z;
-        }
-        if (packetParsers_) {
-            packetParsers_->writeMovementPayload(ack, wire);
-        } else {
-            MovementPacket::writeMovementPayload(ack, wire);
-        }
-
-        ack.writeFloat(newSpeed);
-        socket->send(ack);
-    }
-
-    // Validate speed - reject garbage/NaN values but still ACK
-    if (std::isnan(newSpeed) || newSpeed < 0.1f || newSpeed > 100.0f) {
-        LOG_WARNING("Ignoring invalid ", name, " speed: ", newSpeed);
-        return;
-    }
-
-    if (speedStorage) *speedStorage = newSpeed;
-}
-
-void GameHandler::handleForceRunSpeedChange(network::Packet& packet) {
-    handleForceSpeedChange(packet, "RUN_SPEED", Opcode::CMSG_FORCE_RUN_SPEED_CHANGE_ACK, &serverRunSpeed_);
-
-    // Server can auto-dismount (e.g. entering no-mount areas) and only send a speed change.
-    // Keep client mount visuals in sync with server-authoritative movement speed.
-    if (!onTaxiFlight_ && !taxiMountActive_ && currentMountDisplayId_ != 0 && serverRunSpeed_ <= 8.5f) {
-        LOG_INFO("Auto-clearing mount from speed change: speed=", serverRunSpeed_,
-                 " displayId=", currentMountDisplayId_);
-        currentMountDisplayId_ = 0;
-        if (mountCallback_) {
-            mountCallback_(0);
-        }
-    }
-}
-
-void GameHandler::handleForceMoveRootState(network::Packet& packet, bool rooted) {
-    // Packet is server movement control update:
-    // WotLK: packed GUID + uint32 counter + [optional unknown field(s)]
-    // TBC/Classic: full uint64 + uint32 counter
-    // We always ACK with current movement state, same pattern as speed-change ACKs.
-    const bool rootTbc = isPreWotlk();
-    if (!packet.hasRemaining(rootTbc ? 8u : 2u) ) return;
-    uint64_t guid = rootTbc
-        ? packet.readUInt64() : packet.readPackedGuid();
-    if (!packet.hasRemaining(4)) return;
-    uint32_t counter = packet.readUInt32();
-
-    LOG_INFO(rooted ? "SMSG_FORCE_MOVE_ROOT" : "SMSG_FORCE_MOVE_UNROOT",
-             ": guid=0x", std::hex, guid, std::dec, " counter=", counter);
-
-    if (guid != playerGuid) return;
-
-    // Keep local movement flags aligned with server authoritative root state.
-    if (rooted) {
-        movementInfo.flags |= static_cast<uint32_t>(MovementFlags::ROOT);
-    } else {
-        movementInfo.flags &= ~static_cast<uint32_t>(MovementFlags::ROOT);
-    }
-
-    if (!socket) return;
-    uint16_t ackWire = wireOpcode(rooted ? Opcode::CMSG_FORCE_MOVE_ROOT_ACK
-                                         : Opcode::CMSG_FORCE_MOVE_UNROOT_ACK);
-    if (ackWire == 0xFFFF) return;
-
-    network::Packet ack(ackWire);
-    const bool legacyGuidAck =
-        isActiveExpansion("classic") || isActiveExpansion("tbc") || isActiveExpansion("turtle");
-    if (legacyGuidAck) {
-        ack.writeUInt64(playerGuid);  // CMaNGOS expects full GUID for root/unroot ACKs
-    } else {
-        ack.writePackedGuid(playerGuid);
-    }
-    ack.writeUInt32(counter);
-
-    MovementInfo wire = movementInfo;
-    wire.time = nextMovementTimestampMs();
-    if (wire.hasFlag(MovementFlags::ONTRANSPORT)) {
-        wire.transportTime = wire.time;
-        wire.transportTime2 = wire.time;
-    }
-    glm::vec3 serverPos = core::coords::canonicalToServer(glm::vec3(wire.x, wire.y, wire.z));
-    wire.x = serverPos.x;
-    wire.y = serverPos.y;
-    wire.z = serverPos.z;
-    if (wire.hasFlag(MovementFlags::ONTRANSPORT)) {
-        glm::vec3 serverTransport =
-            core::coords::canonicalToServer(glm::vec3(wire.transportX, wire.transportY, wire.transportZ));
-        wire.transportX = serverTransport.x;
-        wire.transportY = serverTransport.y;
-        wire.transportZ = serverTransport.z;
-    }
-    if (packetParsers_) packetParsers_->writeMovementPayload(ack, wire);
-    else MovementPacket::writeMovementPayload(ack, wire);
-
-    socket->send(ack);
-}
-
-void GameHandler::handleForceMoveFlagChange(network::Packet& packet, const char* name,
-                                             Opcode ackOpcode, uint32_t flag, bool set) {
-    // WotLK: packed GUID; TBC/Classic: full uint64
-    const bool fmfTbcLike = isPreWotlk();
-    if (!packet.hasRemaining(fmfTbcLike ? 8u : 2u) ) return;
-    uint64_t guid = fmfTbcLike
-        ? packet.readUInt64() : packet.readPackedGuid();
-    if (!packet.hasRemaining(4)) return;
-    uint32_t counter = packet.readUInt32();
-
-    LOG_INFO("SMSG_FORCE_", name, ": guid=0x", std::hex, guid, std::dec, " counter=", counter);
-
-    if (guid != playerGuid) return;
-
-    // Update local movement flags if a flag was specified
-    if (flag != 0) {
-        if (set) {
-            movementInfo.flags |= flag;
-        } else {
-            movementInfo.flags &= ~flag;
-        }
-    }
-
-    if (!socket) return;
-    uint16_t ackWire = wireOpcode(ackOpcode);
-    if (ackWire == 0xFFFF) return;
-
-    network::Packet ack(ackWire);
-    const bool legacyGuidAck =
-        isActiveExpansion("classic") || isActiveExpansion("tbc") || isActiveExpansion("turtle");
-    if (legacyGuidAck) {
-        ack.writeUInt64(playerGuid);
-    } else {
-        ack.writePackedGuid(playerGuid);
-    }
-    ack.writeUInt32(counter);
-
-    MovementInfo wire = movementInfo;
-    wire.time = nextMovementTimestampMs();
-    if (wire.hasFlag(MovementFlags::ONTRANSPORT)) {
-        wire.transportTime = wire.time;
-        wire.transportTime2 = wire.time;
-    }
-    glm::vec3 serverPos = core::coords::canonicalToServer(glm::vec3(wire.x, wire.y, wire.z));
-    wire.x = serverPos.x;
-    wire.y = serverPos.y;
-    wire.z = serverPos.z;
-    if (wire.hasFlag(MovementFlags::ONTRANSPORT)) {
-        glm::vec3 serverTransport =
-            core::coords::canonicalToServer(glm::vec3(wire.transportX, wire.transportY, wire.transportZ));
-        wire.transportX = serverTransport.x;
-        wire.transportY = serverTransport.y;
-        wire.transportZ = serverTransport.z;
-    }
-    if (packetParsers_) packetParsers_->writeMovementPayload(ack, wire);
-    else MovementPacket::writeMovementPayload(ack, wire);
-
-    socket->send(ack);
-}
-
-void GameHandler::handleMoveSetCollisionHeight(network::Packet& packet) {
-    // SMSG_MOVE_SET_COLLISION_HGT: packed guid + counter + float (height)
-    // ACK: CMSG_MOVE_SET_COLLISION_HGT_ACK = packed guid + counter + movement block + float (height)
-    const bool legacyGuid = isPreWotlk();
-    if (!packet.hasRemaining(legacyGuid ? 8u : 2u) ) return;
-    uint64_t guid = legacyGuid ? packet.readUInt64() : packet.readPackedGuid();
-    if (!packet.hasRemaining(8)) return;  // counter(4) + height(4)
-    uint32_t counter = packet.readUInt32();
-    float height = packet.readFloat();
-
-    LOG_INFO("SMSG_MOVE_SET_COLLISION_HGT: guid=0x", std::hex, guid, std::dec,
-             " counter=", counter, " height=", height);
-
-    if (guid != playerGuid) return;
-    if (!socket) return;
-
-    uint16_t ackWire = wireOpcode(Opcode::CMSG_MOVE_SET_COLLISION_HGT_ACK);
-    if (ackWire == 0xFFFF) return;
-
-    network::Packet ack(ackWire);
-    const bool legacyGuidAck = isActiveExpansion("classic") || isActiveExpansion("tbc") || isActiveExpansion("turtle");
-    if (legacyGuidAck) {
-        ack.writeUInt64(playerGuid);
-    } else {
-        ack.writePackedGuid(playerGuid);
-    }
-    ack.writeUInt32(counter);
-
-    MovementInfo wire = movementInfo;
-    wire.time = nextMovementTimestampMs();
-    glm::vec3 serverPos = core::coords::canonicalToServer(glm::vec3(wire.x, wire.y, wire.z));
-    wire.x = serverPos.x;
-    wire.y = serverPos.y;
-    wire.z = serverPos.z;
-    if (packetParsers_) packetParsers_->writeMovementPayload(ack, wire);
-    else MovementPacket::writeMovementPayload(ack, wire);
-    ack.writeFloat(height);
-
-    socket->send(ack);
-}
-
-void GameHandler::handleMoveKnockBack(network::Packet& packet) {
-    // WotLK: packed GUID; TBC/Classic: full uint64
-    const bool mkbTbc = isPreWotlk();
-    if (!packet.hasRemaining(mkbTbc ? 8u : 2u) ) return;
-    uint64_t guid = mkbTbc
-        ? packet.readUInt64() : packet.readPackedGuid();
-    if (!packet.hasRemaining(20)) return;  // counter(4) + vcos(4) + vsin(4) + hspeed(4) + vspeed(4)
-    uint32_t counter = packet.readUInt32();
-    float vcos    = packet.readFloat();
-    float vsin    = packet.readFloat();
-    float hspeed  = packet.readFloat();
-    float vspeed  = packet.readFloat();
-
-    LOG_INFO("SMSG_MOVE_KNOCK_BACK: guid=0x", std::hex, guid, std::dec,
-             " counter=", counter, " vcos=", vcos, " vsin=", vsin,
-             " hspeed=", hspeed, " vspeed=", vspeed);
-
-    if (guid != playerGuid) return;
-
-    // Apply knockback physics locally so the player visually flies through the air.
-    // The callback forwards to CameraController::applyKnockBack().
-    if (knockBackCallback_) {
-        knockBackCallback_(vcos, vsin, hspeed, vspeed);
-    }
-
-    if (!socket) return;
-    uint16_t ackWire = wireOpcode(Opcode::CMSG_MOVE_KNOCK_BACK_ACK);
-    if (ackWire == 0xFFFF) return;
-
-    network::Packet ack(ackWire);
-    const bool legacyGuidAck =
-        isActiveExpansion("classic") || isActiveExpansion("tbc") || isActiveExpansion("turtle");
-    if (legacyGuidAck) {
-        ack.writeUInt64(playerGuid);
-    } else {
-        ack.writePackedGuid(playerGuid);
-    }
-    ack.writeUInt32(counter);
-
-    MovementInfo wire = movementInfo;
-    wire.time = nextMovementTimestampMs();
-    if (wire.hasFlag(MovementFlags::ONTRANSPORT)) {
-        wire.transportTime = wire.time;
-        wire.transportTime2 = wire.time;
-    }
-    glm::vec3 serverPos = core::coords::canonicalToServer(glm::vec3(wire.x, wire.y, wire.z));
-    wire.x = serverPos.x;
-    wire.y = serverPos.y;
-    wire.z = serverPos.z;
-    if (wire.hasFlag(MovementFlags::ONTRANSPORT)) {
-        glm::vec3 serverTransport =
-            core::coords::canonicalToServer(glm::vec3(wire.transportX, wire.transportY, wire.transportZ));
-        wire.transportX = serverTransport.x;
-        wire.transportY = serverTransport.y;
-        wire.transportZ = serverTransport.z;
-    }
-    if (packetParsers_) packetParsers_->writeMovementPayload(ack, wire);
-    else MovementPacket::writeMovementPayload(ack, wire);
-
-    socket->send(ack);
+    if (movementHandler_) movementHandler_->dismount();
 }
 
 // ============================================================
 // Arena / Battleground Handlers
 // ============================================================
 
-void GameHandler::handleBattlefieldStatus(network::Packet& packet) {
-    // SMSG_BATTLEFIELD_STATUS wire format differs by expansion:
-    //
-    // Classic 1.12 (vmangos/cmangos):
-    //   queueSlot(4) bgTypeId(4) unk(2) instanceId(4) isRegistered(1) statusId(4) [status fields...]
-    //   STATUS_NONE sends only: queueSlot(4) bgTypeId(4)
-    //
-    // TBC 2.4.3 / WotLK 3.3.5a:
-    //   queueSlot(4) arenaType(1) unk(1) bgTypeId(4) unk2(2) instanceId(4) isRated(1) statusId(4) [status fields...]
-    //   STATUS_NONE sends only: queueSlot(4) arenaType(1)
-
-    if (!packet.hasRemaining(4)) return;
-    uint32_t queueSlot = packet.readUInt32();
-
-    const bool classicFormat = isClassicLikeExpansion();
-
-    uint8_t arenaType = 0;
-    if (!classicFormat) {
-        // TBC/WotLK: arenaType(1) + unk(1) before bgTypeId
-        // STATUS_NONE sends only queueSlot + arenaType
-        if (!packet.hasRemaining(1)) {
-            LOG_INFO("Battlefield status: queue slot ", queueSlot, " cleared");
-            return;
-        }
-        arenaType = packet.readUInt8();
-        if (!packet.hasRemaining(1)) return;
-        packet.readUInt8();  // unk
-    } else {
-        // Classic STATUS_NONE sends only queueSlot + bgTypeId (4 bytes)
-        if (!packet.hasRemaining(4)) {
-            LOG_INFO("Battlefield status: queue slot ", queueSlot, " cleared");
-            return;
-        }
-    }
-
-    if (!packet.hasRemaining(4)) return;
-    uint32_t bgTypeId = packet.readUInt32();
-
-    if (!packet.hasRemaining(2)) return;
-    uint16_t unk2 = packet.readUInt16();
-    (void)unk2;
-
-    if (!packet.hasRemaining(4)) return;
-    uint32_t clientInstanceId = packet.readUInt32();
-    (void)clientInstanceId;
-
-    if (!packet.hasRemaining(1)) return;
-    uint8_t isRatedArena = packet.readUInt8();
-    (void)isRatedArena;
-
-    if (!packet.hasRemaining(4)) return;
-    uint32_t statusId = packet.readUInt32();
-
-    // Map BG type IDs to their names (stable across all three expansions)
-    // BattlemasterList.dbc IDs (3.3.5a)
-    static const std::pair<uint32_t, const char*> kBgNames[] = {
-        {1,  "Alterac Valley"},
-        {2,  "Warsong Gulch"},
-        {3,  "Arathi Basin"},
-        {4,  "Nagrand Arena"},
-        {5,  "Blade's Edge Arena"},
-        {6,  "All Arenas"},
-        {7,  "Eye of the Storm"},
-        {8,  "Ruins of Lordaeron"},
-        {9,  "Strand of the Ancients"},
-        {10, "Dalaran Sewers"},
-        {11, "Ring of Valor"},
-        {30, "Isle of Conquest"},
-        {32, "Random Battleground"},
-    };
-    std::string bgName = "Battleground";
-    for (const auto& kv : kBgNames) {
-        if (kv.first == bgTypeId) { bgName = kv.second; break; }
-    }
-    if (bgName == "Battleground")
-        bgName = "Battleground #" + std::to_string(bgTypeId);
-    if (arenaType > 0) {
-        bgName = std::to_string(arenaType) + "v" + std::to_string(arenaType) + " Arena";
-        // If bgTypeId matches a named arena, prefer that name
-        for (const auto& kv : kBgNames) {
-            if (kv.first == bgTypeId) {
-                bgName += " (" + std::string(kv.second) + ")";
-                break;
-            }
-        }
-    }
-
-    // Parse status-specific fields
-    uint32_t inviteTimeout = 80;  // default WoW BG invite window (seconds)
-    uint32_t avgWaitSec = 0, timeInQueueSec = 0;
-    if (statusId == 1) {
-        // STATUS_WAIT_QUEUE: avgWaitTime(4) + timeInQueue(4)
-        if (packet.hasRemaining(8)) {
-            avgWaitSec    = packet.readUInt32() / 1000;  // ms → seconds
-            timeInQueueSec = packet.readUInt32() / 1000;
-        }
-    } else if (statusId == 2) {
-        // STATUS_WAIT_JOIN: timeout(4) + mapId(4)
-        if (packet.hasRemaining(4)) {
-            inviteTimeout = packet.readUInt32();
-        }
-        if (packet.hasRemaining(4)) {
-            /*uint32_t mapId =*/ packet.readUInt32();
-        }
-    } else if (statusId == 3) {
-        // STATUS_IN_PROGRESS: mapId(4) + timeSinceStart(4)
-        if (packet.hasRemaining(8)) {
-            /*uint32_t mapId =*/ packet.readUInt32();
-            /*uint32_t elapsed =*/ packet.readUInt32();
-        }
-    }
-
-    // Store queue state
-    if (queueSlot < bgQueues_.size()) {
-        bool wasInvite = (bgQueues_[queueSlot].statusId == 2);
-        bgQueues_[queueSlot].queueSlot = queueSlot;
-        bgQueues_[queueSlot].bgTypeId = bgTypeId;
-        bgQueues_[queueSlot].arenaType = arenaType;
-        bgQueues_[queueSlot].statusId = statusId;
-        bgQueues_[queueSlot].bgName = bgName;
-        if (statusId == 1) {
-            bgQueues_[queueSlot].avgWaitTimeSec = avgWaitSec;
-            bgQueues_[queueSlot].timeInQueueSec = timeInQueueSec;
-        }
-        if (statusId == 2 && !wasInvite) {
-            bgQueues_[queueSlot].inviteTimeout = inviteTimeout;
-            bgQueues_[queueSlot].inviteReceivedTime = std::chrono::steady_clock::now();
-        }
-    }
-
-    switch (statusId) {
-        case 0: // STATUS_NONE
-            LOG_INFO("Battlefield status: NONE for ", bgName);
-            break;
-        case 1: // STATUS_WAIT_QUEUE
-            addSystemChatMessage("Queued for " + bgName + ".");
-            LOG_INFO("Battlefield status: WAIT_QUEUE for ", bgName);
-            break;
-        case 2: // STATUS_WAIT_JOIN
-            // Popup shown by the UI; add chat notification too.
-            addSystemChatMessage(bgName + " is ready!");
-            LOG_INFO("Battlefield status: WAIT_JOIN for ", bgName,
-                     " timeout=", inviteTimeout, "s");
-            break;
-        case 3: // STATUS_IN_PROGRESS
-            addSystemChatMessage("Entered " + bgName + ".");
-            LOG_INFO("Battlefield status: IN_PROGRESS for ", bgName);
-            break;
-        case 4: // STATUS_WAIT_LEAVE
-            LOG_INFO("Battlefield status: WAIT_LEAVE for ", bgName);
-            break;
-        default:
-            LOG_INFO("Battlefield status: unknown (", statusId, ") for ", bgName);
-            break;
-    }
-            fireAddonEvent("UPDATE_BATTLEFIELD_STATUS", {std::to_string(statusId)});
-}
-
-void GameHandler::handleBattlefieldList(network::Packet& packet) {
-    // SMSG_BATTLEFIELD_LIST wire format by expansion:
-    //
-    // Classic 1.12 (vmangos/cmangos):
-    //   bgTypeId(4) isRegistered(1) count(4) [instanceId(4)...]
-    //
-    // TBC 2.4.3:
-    //   bgTypeId(4) isRegistered(1) isHoliday(1) count(4) [instanceId(4)...]
-    //
-    // WotLK 3.3.5a:
-    //   bgTypeId(4) isRegistered(1) isHoliday(1) minLevel(4) maxLevel(4) count(4) [instanceId(4)...]
-
-    if (!packet.hasRemaining(5)) return;
-
-    AvailableBgInfo info;
-    info.bgTypeId     = packet.readUInt32();
-    info.isRegistered = packet.readUInt8() != 0;
-
-    const bool isWotlk = isActiveExpansion("wotlk");
-    const bool isTbc   = isActiveExpansion("tbc");
-
-    if (isTbc || isWotlk) {
-        if (!packet.hasRemaining(1)) return;
-        info.isHoliday = packet.readUInt8() != 0;
-    }
-
-    if (isWotlk) {
-        if (!packet.hasRemaining(8)) return;
-        info.minLevel = packet.readUInt32();
-        info.maxLevel = packet.readUInt32();
-    }
-
-    if (!packet.hasRemaining(4)) return;
-    uint32_t count = packet.readUInt32();
-
-    // Sanity cap to avoid OOM from malformed packets
-    constexpr uint32_t kMaxInstances = 256;
-    count = std::min(count, kMaxInstances);
-    info.instanceIds.reserve(count);
-
-    for (uint32_t i = 0; i < count; ++i) {
-        if (!packet.hasRemaining(4)) break;
-        info.instanceIds.push_back(packet.readUInt32());
-    }
-
-    // Update or append the entry for this BG type
-    bool updated = false;
-    for (auto& existing : availableBgs_) {
-        if (existing.bgTypeId == info.bgTypeId) {
-            existing = std::move(info);
-            updated = true;
-            break;
-        }
-    }
-    if (!updated) {
-        availableBgs_.push_back(std::move(info));
-    }
-
-    const auto& stored = availableBgs_.back();
-    static const std::unordered_map<uint32_t, const char*> kBgNames = {
-        {1, "Alterac Valley"}, {2, "Warsong Gulch"}, {3, "Arathi Basin"},
-        {4, "Nagrand Arena"}, {5, "Blade's Edge Arena"}, {6, "All Arenas"},
-        {7, "Eye of the Storm"}, {8, "Ruins of Lordaeron"},
-        {9, "Strand of the Ancients"}, {10, "Dalaran Sewers"},
-        {11, "The Ring of Valor"}, {30, "Isle of Conquest"},
-    };
-    auto nameIt = kBgNames.find(stored.bgTypeId);
-    const char* bgName = (nameIt != kBgNames.end()) ? nameIt->second : "Unknown Battleground";
-
-    LOG_INFO("SMSG_BATTLEFIELD_LIST: ", bgName, " bgType=", stored.bgTypeId,
-             " registered=", stored.isRegistered ? "yes" : "no",
-             " instances=", stored.instanceIds.size());
-}
-
 void GameHandler::declineBattlefield(uint32_t queueSlot) {
-    if (state != WorldState::IN_WORLD) return;
-    if (!socket) return;
-
-    const BgQueueSlot* slot = nullptr;
-    if (queueSlot == 0xFFFFFFFF) {
-        for (const auto& s : bgQueues_) {
-            if (s.statusId == 2) { slot = &s; break; }
-        }
-    } else if (queueSlot < bgQueues_.size() && bgQueues_[queueSlot].statusId == 2) {
-        slot = &bgQueues_[queueSlot];
-    }
-
-    if (!slot) {
-        addSystemChatMessage("No battleground invitation pending.");
-        return;
-    }
-
-    // CMSG_BATTLEFIELD_PORT with action=0 (decline)
-    network::Packet pkt(wireOpcode(Opcode::CMSG_BATTLEFIELD_PORT));
-    pkt.writeUInt8(slot->arenaType);
-    pkt.writeUInt8(0x00);
-    pkt.writeUInt32(slot->bgTypeId);
-    pkt.writeUInt16(0x0000);
-    pkt.writeUInt8(0);  // 0 = decline
-
-    socket->send(pkt);
-
-    // Clear queue slot
-    uint32_t clearSlot = slot->queueSlot;
-    if (clearSlot < bgQueues_.size()) {
-        bgQueues_[clearSlot] = BgQueueSlot{};
-    }
-
-    addSystemChatMessage("Battleground invitation declined.");
-    LOG_INFO("Sent CMSG_BATTLEFIELD_PORT: decline");
+    if (socialHandler_) socialHandler_->declineBattlefield(queueSlot);
 }
 
 bool GameHandler::hasPendingBgInvite() const {
-    for (const auto& slot : bgQueues_) {
-        if (slot.statusId == 2) return true;  // STATUS_WAIT_JOIN
-    }
-    return false;
+    return socialHandler_ && socialHandler_->hasPendingBgInvite();
 }
 
 void GameHandler::acceptBattlefield(uint32_t queueSlot) {
-    if (state != WorldState::IN_WORLD) return;
-    if (!socket) return;
-
-    // Find first WAIT_JOIN slot if no specific slot given
-    const BgQueueSlot* slot = nullptr;
-    if (queueSlot == 0xFFFFFFFF) {
-        for (const auto& s : bgQueues_) {
-            if (s.statusId == 2) { slot = &s; break; }
-        }
-    } else if (queueSlot < bgQueues_.size() && bgQueues_[queueSlot].statusId == 2) {
-        slot = &bgQueues_[queueSlot];
-    }
-
-    if (!slot) {
-        addSystemChatMessage("No battleground invitation pending.");
-        return;
-    }
-
-    // CMSG_BATTLEFIELD_PORT: arenaType(1) + unk(1) + bgTypeId(4) + unk(2) + action(1) = 9 bytes
-    network::Packet pkt(wireOpcode(Opcode::CMSG_BATTLEFIELD_PORT));
-    pkt.writeUInt8(slot->arenaType);
-    pkt.writeUInt8(0x00);
-    pkt.writeUInt32(slot->bgTypeId);
-    pkt.writeUInt16(0x0000);
-    pkt.writeUInt8(1);  // 1 = accept, 0 = decline
-
-    socket->send(pkt);
-
-    // Optimistically clear the invite so the popup disappears immediately.
-    uint32_t clearSlot = slot->queueSlot;
-    if (clearSlot < bgQueues_.size()) {
-        bgQueues_[clearSlot].statusId = 3; // STATUS_IN_PROGRESS (server will confirm)
-    }
-
-    addSystemChatMessage("Accepting battleground invitation...");
-    LOG_INFO("Sent CMSG_BATTLEFIELD_PORT: accept bgTypeId=", slot->bgTypeId);
-}
-
-void GameHandler::handleRaidInstanceInfo(network::Packet& packet) {
-    // TBC 2.4.3 format: mapId(4) + difficulty(4) + resetTime(4 — uint32 seconds) + locked(1)
-    // WotLK 3.3.5a format: mapId(4) + difficulty(4) + resetTime(8 — uint64 timestamp) + locked(1) + extended(1)
-    const bool isTbc = isActiveExpansion("tbc");
-    const bool isClassic = isClassicLikeExpansion();
-    const bool useTbcFormat = isTbc || isClassic;
-
-    if (!packet.hasRemaining(4)) return;
-    uint32_t count = packet.readUInt32();
-
-    instanceLockouts_.clear();
-    instanceLockouts_.reserve(count);
-
-    const size_t kEntrySize = useTbcFormat ? (4 + 4 + 4 + 1) : (4 + 4 + 8 + 1 + 1);
-    for (uint32_t i = 0; i < count; ++i) {
-        if (!packet.hasRemaining(kEntrySize)) break;
-        InstanceLockout lo;
-        lo.mapId      = packet.readUInt32();
-        lo.difficulty = packet.readUInt32();
-        if (useTbcFormat) {
-            lo.resetTime = packet.readUInt32();   // TBC/Classic: 4-byte seconds
-            lo.locked    = packet.readUInt8() != 0;
-            lo.extended  = false;
-        } else {
-            lo.resetTime = packet.readUInt64();   // WotLK: 8-byte timestamp
-            lo.locked    = packet.readUInt8() != 0;
-            lo.extended  = packet.readUInt8() != 0;
-        }
-        instanceLockouts_.push_back(lo);
-        LOG_INFO("Instance lockout: mapId=", lo.mapId, " diff=", lo.difficulty,
-                 " reset=", lo.resetTime, " locked=", lo.locked, " extended=", lo.extended);
-    }
-    LOG_INFO("SMSG_RAID_INSTANCE_INFO: ", instanceLockouts_.size(), " lockout(s)");
-}
-
-void GameHandler::handleInstanceDifficulty(network::Packet& packet) {
-    // SMSG_INSTANCE_DIFFICULTY:    uint32 difficulty, uint32 heroic (8 bytes)
-    // MSG_SET_DUNGEON_DIFFICULTY:  uint32 difficulty[, uint32 isInGroup, uint32 savedBool] (4 or 12 bytes)
-    auto rem = [&]() { return packet.getRemainingSize(); };
-    if (rem() < 4) return;
-    uint32_t prevDifficulty = instanceDifficulty_;
-    instanceDifficulty_ = packet.readUInt32();
-    if (rem() >= 4) {
-        uint32_t secondField = packet.readUInt32();
-        // SMSG_INSTANCE_DIFFICULTY: second field is heroic flag (0 or 1)
-        // MSG_SET_DUNGEON_DIFFICULTY: second field is isInGroup (not heroic)
-        // Heroic = difficulty value 1 for 5-man, so use the field value for SMSG and
-        // infer from difficulty for MSG variant (which has larger payloads).
-        if (rem() >= 4) {
-            // Three+ fields: this is MSG_SET_DUNGEON_DIFFICULTY; heroic = (difficulty == 1)
-            instanceIsHeroic_ = (instanceDifficulty_ == 1);
-        } else {
-            // Two fields: SMSG_INSTANCE_DIFFICULTY format
-            instanceIsHeroic_ = (secondField != 0);
-        }
-    } else {
-        instanceIsHeroic_ = (instanceDifficulty_ == 1);
-    }
-    inInstance_ = true;
-    LOG_INFO("Instance difficulty: ", instanceDifficulty_, " heroic=", instanceIsHeroic_);
-
-    // Announce difficulty change to the player (only when it actually changes)
-    // difficulty values: 0=Normal, 1=Heroic, 2=25-Man Normal, 3=25-Man Heroic
-    if (instanceDifficulty_ != prevDifficulty) {
-        static const char* kDiffLabels[] = {"Normal", "Heroic", "25-Man Normal", "25-Man Heroic"};
-        const char* diffLabel = (instanceDifficulty_ < 4) ? kDiffLabels[instanceDifficulty_] : nullptr;
-        if (diffLabel)
-            addSystemChatMessage(std::string("Dungeon difficulty set to ") + diffLabel + ".");
-    }
+    if (socialHandler_) socialHandler_->acceptBattlefield(queueSlot);
 }
 
 // ---------------------------------------------------------------------------
@@ -16336,1667 +7636,48 @@ static const char* lfgTeleportDeniedString(uint8_t reason) {
     }
 }
 
-void GameHandler::handleLfgJoinResult(network::Packet& packet) {
-    size_t remaining = packet.getRemainingSize();
-    if (remaining < 2) return;
-
-    uint8_t result = packet.readUInt8();
-    uint8_t state  = packet.readUInt8();
-
-    if (result == 0) {
-        // Success — state tells us what phase we're entering
-        lfgState_ = static_cast<LfgState>(state);
-        LOG_INFO("SMSG_LFG_JOIN_RESULT: success, state=", static_cast<int>(state));
-        {
-            std::string dName = getLfgDungeonName(lfgDungeonId_);
-            if (!dName.empty())
-                addSystemChatMessage("Dungeon Finder: Joined the queue for " + dName + ".");
-            else
-                addSystemChatMessage("Dungeon Finder: Joined the queue.");
-        }
-    } else {
-        const char* msg = lfgJoinResultString(result);
-        std::string errMsg = std::string("Dungeon Finder: ") + (msg ? msg : "Join failed.");
-        addUIError(errMsg);
-        addSystemChatMessage(errMsg);
-        LOG_INFO("SMSG_LFG_JOIN_RESULT: result=", static_cast<int>(result),
-                 " state=", static_cast<int>(state));
-    }
-}
-
-void GameHandler::handleLfgQueueStatus(network::Packet& packet) {
-    size_t remaining = packet.getRemainingSize();
-    if (remaining < 4 + 6 * 4 + 1 + 4) return;  // dungeonId + 6 int32 + uint8 + uint32
-
-    lfgDungeonId_     = packet.readUInt32();
-    int32_t avgWait   = static_cast<int32_t>(packet.readUInt32());
-    int32_t waitTime  = static_cast<int32_t>(packet.readUInt32());
-    /*int32_t waitTimeTank   =*/ static_cast<int32_t>(packet.readUInt32());
-    /*int32_t waitTimeHealer =*/ static_cast<int32_t>(packet.readUInt32());
-    /*int32_t waitTimeDps    =*/ static_cast<int32_t>(packet.readUInt32());
-    /*uint8_t  queuedByNeeded=*/ packet.readUInt8();
-    lfgTimeInQueueMs_ = packet.readUInt32();
-
-    lfgAvgWaitSec_ = (waitTime >= 0) ? (waitTime / 1000) : (avgWait / 1000);
-    lfgState_ = LfgState::Queued;
-
-    LOG_INFO("SMSG_LFG_QUEUE_STATUS: dungeonId=", lfgDungeonId_,
-             " avgWait=", avgWait, "ms waitTime=", waitTime, "ms");
-}
-
-void GameHandler::handleLfgProposalUpdate(network::Packet& packet) {
-    size_t remaining = packet.getRemainingSize();
-    if (remaining < 16) return;
-
-    uint32_t dungeonId     = packet.readUInt32();
-    uint32_t proposalId    = packet.readUInt32();
-    uint32_t proposalState = packet.readUInt32();
-    /*uint32_t encounterMask =*/ packet.readUInt32();
-
-    if (remaining < 17) return;
-    /*bool canOverride =*/ packet.readUInt8();
-
-    lfgDungeonId_  = dungeonId;
-    lfgProposalId_ = proposalId;
-
-    switch (proposalState) {
-        case 0:
-            lfgState_      = LfgState::Queued;
-            lfgProposalId_ = 0;
-            addUIError("Dungeon Finder: Group proposal failed.");
-            addSystemChatMessage("Dungeon Finder: Group proposal failed.");
-            break;
-        case 1: {
-            lfgState_      = LfgState::InDungeon;
-            lfgProposalId_ = 0;
-            std::string dName = getLfgDungeonName(dungeonId);
-            if (!dName.empty())
-                addSystemChatMessage("Dungeon Finder: Group found for " + dName + "! Entering dungeon...");
-            else
-                addSystemChatMessage("Dungeon Finder: Group found! Entering dungeon...");
-            break;
-        }
-        case 2: {
-            lfgState_ = LfgState::Proposal;
-            std::string dName = getLfgDungeonName(dungeonId);
-            if (!dName.empty())
-                addSystemChatMessage("Dungeon Finder: A group has been found for " + dName + ". Accept or decline.");
-            else
-                addSystemChatMessage("Dungeon Finder: A group has been found. Accept or decline.");
-            break;
-        }
-        default:
-            break;
-    }
-
-    LOG_INFO("SMSG_LFG_PROPOSAL_UPDATE: dungeonId=", dungeonId,
-             " proposalId=", proposalId, " state=", proposalState);
-}
-
-void GameHandler::handleLfgRoleCheckUpdate(network::Packet& packet) {
-    size_t remaining = packet.getRemainingSize();
-    if (remaining < 6) return;
-
-    /*uint32_t dungeonId =*/ packet.readUInt32();
-    uint8_t  roleCheckState = packet.readUInt8();
-    /*bool     isBeginning =*/ packet.readUInt8();
-
-    // roleCheckState: 0=default, 1=finished, 2=initializing, 3=missing_role, 4=wrong_dungeons
-    if (roleCheckState == 1) {
-        lfgState_ = LfgState::Queued;
-        LOG_INFO("LFG role check finished");
-    } else if (roleCheckState == 3) {
-        lfgState_ = LfgState::None;
-        addUIError("Dungeon Finder: Role check failed — missing required role.");
-        addSystemChatMessage("Dungeon Finder: Role check failed — missing required role.");
-    } else if (roleCheckState == 2) {
-        lfgState_ = LfgState::RoleCheck;
-        addSystemChatMessage("Dungeon Finder: Performing role check...");
-    }
-
-    LOG_INFO("SMSG_LFG_ROLE_CHECK_UPDATE: roleCheckState=", static_cast<int>(roleCheckState));
-}
-
-void GameHandler::handleLfgUpdatePlayer(network::Packet& packet) {
-    // SMSG_LFG_UPDATE_PLAYER and SMSG_LFG_UPDATE_PARTY share the same layout.
-    size_t remaining = packet.getRemainingSize();
-    if (remaining < 1) return;
-
-    uint8_t updateType = packet.readUInt8();
-
-    // LFGUpdateType values that carry no extra payload
-    // 0=default, 1=leader_unk1, 4=rolecheck_aborted, 8=removed_from_queue,
-    // 9=proposal_failed, 10=proposal_declined, 15=leave_queue, 17=member_offline, 18=group_disband
-    bool hasExtra = (updateType != 0 && updateType != 1 && updateType != 15 &&
-                     updateType != 17 && updateType != 18);
-    if (!hasExtra || !packet.hasRemaining(3)) {
-        switch (updateType) {
-            case 8:  lfgState_ = LfgState::None;
-                     addSystemChatMessage("Dungeon Finder: Removed from queue."); break;
-            case 9:  lfgState_ = LfgState::Queued;
-                     addSystemChatMessage("Dungeon Finder: Proposal failed — re-queuing."); break;
-            case 10: lfgState_ = LfgState::Queued;
-                     addSystemChatMessage("Dungeon Finder: A member declined the proposal."); break;
-            case 15: lfgState_ = LfgState::None;
-                     addSystemChatMessage("Dungeon Finder: Left the queue."); break;
-            case 18: lfgState_ = LfgState::None;
-                     addSystemChatMessage("Dungeon Finder: Your group disbanded."); break;
-            default: break;
-        }
-        LOG_INFO("SMSG_LFG_UPDATE_PLAYER/PARTY: updateType=", static_cast<int>(updateType));
-        return;
-    }
-
-    /*bool queued =*/ packet.readUInt8();
-    packet.readUInt8(); // unk1
-    packet.readUInt8(); // unk2
-
-    if (packet.hasRemaining(1)) {
-        uint8_t count = packet.readUInt8();
-        for (uint8_t i = 0; i < count && packet.hasRemaining(4); ++i) {
-            uint32_t dungeonEntry = packet.readUInt32();
-            if (i == 0) lfgDungeonId_ = dungeonEntry;
-        }
-    }
-
-    switch (updateType) {
-        case 6:  lfgState_ = LfgState::Queued;
-                 addSystemChatMessage("Dungeon Finder: You have joined the queue."); break;
-        case 11: lfgState_ = LfgState::Proposal;
-                 addSystemChatMessage("Dungeon Finder: A group has been found!"); break;
-        case 12: lfgState_ = LfgState::Queued;
-                 addSystemChatMessage("Dungeon Finder: Added to queue."); break;
-        case 13: lfgState_ = LfgState::Proposal;
-                 addSystemChatMessage("Dungeon Finder: Proposal started."); break;
-        case 14: lfgState_ = LfgState::InDungeon; break;
-        case 16: addSystemChatMessage("Dungeon Finder: Two members are ready."); break;
-        default: break;
-    }
-    LOG_INFO("SMSG_LFG_UPDATE_PLAYER/PARTY: updateType=", static_cast<int>(updateType));
-}
-
-void GameHandler::handleLfgPlayerReward(network::Packet& packet) {
-    if (!packet.hasRemaining(4 + 4 + 1 + 4 + 4 + 4)) return;
-
-    /*uint32_t randomDungeonEntry =*/ packet.readUInt32();
-    /*uint32_t dungeonEntry       =*/ packet.readUInt32();
-    packet.readUInt8();  // unk
-    uint32_t money  = packet.readUInt32();
-    uint32_t xp     = packet.readUInt32();
-
-    // Convert copper to gold/silver/copper
-    uint32_t gold   = money / 10000;
-    uint32_t silver = (money % 10000) / 100;
-    uint32_t copper = money % 100;
-    char moneyBuf[64];
-    if (gold > 0)
-        snprintf(moneyBuf, sizeof(moneyBuf), "%ug %us %uc", gold, silver, copper);
-    else if (silver > 0)
-        snprintf(moneyBuf, sizeof(moneyBuf), "%us %uc", silver, copper);
-    else
-        snprintf(moneyBuf, sizeof(moneyBuf), "%uc", copper);
-
-    std::string rewardMsg = std::string("Dungeon Finder reward: ") + moneyBuf +
-                            ", " + std::to_string(xp) + " XP";
-
-    if (packet.hasRemaining(4)) {
-        uint32_t rewardCount = packet.readUInt32();
-        for (uint32_t i = 0; i < rewardCount && packet.hasRemaining(9); ++i) {
-            uint32_t itemId    = packet.readUInt32();
-            uint32_t itemCount = packet.readUInt32();
-            packet.readUInt8();  // unk
-            if (i == 0) {
-                std::string itemLabel = "item #" + std::to_string(itemId);
-                uint32_t lfgItemQuality = 1;
-                if (const ItemQueryResponseData* info = getItemInfo(itemId)) {
-                    if (!info->name.empty()) itemLabel = info->name;
-                    lfgItemQuality = info->quality;
-                }
-                rewardMsg += ", " + buildItemLink(itemId, lfgItemQuality, itemLabel);
-                if (itemCount > 1) rewardMsg += " x" + std::to_string(itemCount);
-            }
-        }
-    }
-
-    addSystemChatMessage(rewardMsg);
-    lfgState_ = LfgState::FinishedDungeon;
-    LOG_INFO("SMSG_LFG_PLAYER_REWARD: money=", money, " xp=", xp);
-}
-
-void GameHandler::handleLfgBootProposalUpdate(network::Packet& packet) {
-    if (!packet.hasRemaining(7 + 4 + 4 + 4 + 4)) return;
-
-    bool inProgress = packet.readUInt8() != 0;
-    /*bool myVote   =*/ packet.readUInt8();   // whether local player has voted
-    /*bool myAnswer =*/ packet.readUInt8();   // local player's vote (yes/no) — unused; result derived from counts
-    uint32_t totalVotes  = packet.readUInt32();
-    uint32_t bootVotes   = packet.readUInt32();
-    uint32_t timeLeft    = packet.readUInt32();
-    uint32_t votesNeeded = packet.readUInt32();
-
-    lfgBootVotes_    = bootVotes;
-    lfgBootTotal_    = totalVotes;
-    lfgBootTimeLeft_ = timeLeft;
-    lfgBootNeeded_   = votesNeeded;
-
-    // Optional: reason string and target name (null-terminated) follow the fixed fields
-    if (packet.hasData())
-        lfgBootReason_ = packet.readString();
-    if (packet.hasData())
-        lfgBootTargetName_ = packet.readString();
-
-    if (inProgress) {
-        lfgState_ = LfgState::Boot;
-    } else {
-        // Boot vote ended — pass/fail determined by whether enough yes votes were cast,
-        // not by the local player's own vote (myAnswer = what *I* voted, not the result).
-        const bool bootPassed = (bootVotes >= votesNeeded);
-        lfgBootVotes_ = lfgBootTotal_ = lfgBootTimeLeft_ = lfgBootNeeded_ = 0;
-        lfgBootTargetName_.clear();
-        lfgBootReason_.clear();
-        lfgState_ = LfgState::InDungeon;
-        if (bootPassed) {
-            addSystemChatMessage("Dungeon Finder: Vote kick passed — member removed.");
-        } else {
-            addSystemChatMessage("Dungeon Finder: Vote kick failed.");
-        }
-    }
-
-    LOG_INFO("SMSG_LFG_BOOT_PROPOSAL_UPDATE: inProgress=", inProgress,
-             " bootVotes=", bootVotes, "/", totalVotes,
-             " target=", lfgBootTargetName_, " reason=", lfgBootReason_);
-}
-
-void GameHandler::handleLfgTeleportDenied(network::Packet& packet) {
-    if (!packet.hasRemaining(1)) return;
-    uint8_t reason = packet.readUInt8();
-    const char* msg = lfgTeleportDeniedString(reason);
-    addSystemChatMessage(std::string("Dungeon Finder: ") + msg);
-    LOG_INFO("SMSG_LFG_TELEPORT_DENIED: reason=", static_cast<int>(reason));
-}
-
 // ---------------------------------------------------------------------------
 // LFG outgoing packets
 // ---------------------------------------------------------------------------
 
 void GameHandler::lfgJoin(uint32_t dungeonId, uint8_t roles) {
-    if (!isInWorld()) return;
-
-    network::Packet pkt(wireOpcode(Opcode::CMSG_LFG_JOIN));
-    pkt.writeUInt8(roles);
-    pkt.writeUInt8(0);  // needed
-    pkt.writeUInt8(0);  // unk
-    pkt.writeUInt8(1);  // 1 dungeon in list
-    pkt.writeUInt32(dungeonId);
-    pkt.writeString("");  // comment
-
-    socket->send(pkt);
-    LOG_INFO("Sent CMSG_LFG_JOIN: dungeonId=", dungeonId, " roles=", static_cast<int>(roles));
+    if (socialHandler_) socialHandler_->lfgJoin(dungeonId, roles);
 }
 
 void GameHandler::lfgLeave() {
-    if (!socket) return;
-
-    network::Packet pkt(wireOpcode(Opcode::CMSG_LFG_LEAVE));
-    // CMSG_LFG_LEAVE has an LFG identifier block; send zeroes to leave any active queue.
-    pkt.writeUInt32(0);  // slot
-    pkt.writeUInt32(0);  // unk
-    pkt.writeUInt32(0);  // dungeonId
-
-    socket->send(pkt);
-    lfgState_ = LfgState::None;
-    LOG_INFO("Sent CMSG_LFG_LEAVE");
+    if (socialHandler_) socialHandler_->lfgLeave();
 }
 
 void GameHandler::lfgSetRoles(uint8_t roles) {
-    if (!isInWorld()) return;
-    const uint32_t wire = wireOpcode(Opcode::CMSG_LFG_SET_ROLES);
-    if (wire == 0xFFFF) return;
-
-    network::Packet pkt(static_cast<uint16_t>(wire));
-    pkt.writeUInt8(roles);
-    socket->send(pkt);
-    LOG_INFO("Sent CMSG_LFG_SET_ROLES: roles=", static_cast<int>(roles));
+    if (socialHandler_) socialHandler_->lfgSetRoles(roles);
 }
 
 void GameHandler::lfgAcceptProposal(uint32_t proposalId, bool accept) {
-    if (!socket) return;
-
-    network::Packet pkt(wireOpcode(Opcode::CMSG_LFG_PROPOSAL_RESULT));
-    pkt.writeUInt32(proposalId);
-    pkt.writeUInt8(accept ? 1 : 0);
-
-    socket->send(pkt);
-    LOG_INFO("Sent CMSG_LFG_PROPOSAL_RESULT: proposalId=", proposalId, " accept=", accept);
+    if (socialHandler_) socialHandler_->lfgAcceptProposal(proposalId, accept);
 }
 
 void GameHandler::lfgTeleport(bool toLfgDungeon) {
-    if (!socket) return;
-
-    network::Packet pkt(wireOpcode(Opcode::CMSG_LFG_TELEPORT));
-    pkt.writeUInt8(toLfgDungeon ? 0 : 1);  // 0=teleport in, 1=teleport out
-
-    socket->send(pkt);
-    LOG_INFO("Sent CMSG_LFG_TELEPORT: toLfgDungeon=", toLfgDungeon);
+    if (socialHandler_) socialHandler_->lfgTeleport(toLfgDungeon);
 }
 
 void GameHandler::lfgSetBootVote(bool vote) {
-    if (!socket) return;
-    uint16_t wireOp = wireOpcode(Opcode::CMSG_LFG_SET_BOOT_VOTE);
-    if (wireOp == 0xFFFF) return;
-
-    network::Packet pkt(wireOp);
-    pkt.writeUInt8(vote ? 1 : 0);
-
-    socket->send(pkt);
-    LOG_INFO("Sent CMSG_LFG_SET_BOOT_VOTE: vote=", vote);
+    if (socialHandler_) socialHandler_->lfgSetBootVote(vote);
 }
 
 void GameHandler::loadAreaTriggerDbc() {
-    if (areaTriggerDbcLoaded_) return;
-    areaTriggerDbcLoaded_ = true;
-
-    auto* am = core::Application::getInstance().getAssetManager();
-    if (!am || !am->isInitialized()) return;
-
-    auto dbc = am->loadDBC("AreaTrigger.dbc");
-    if (!dbc || !dbc->isLoaded()) {
-        LOG_WARNING("Failed to load AreaTrigger.dbc");
-        return;
-    }
-
-    areaTriggers_.reserve(dbc->getRecordCount());
-    for (uint32_t i = 0; i < dbc->getRecordCount(); i++) {
-        AreaTriggerEntry at;
-        at.id     = dbc->getUInt32(i, 0);
-        at.mapId  = dbc->getUInt32(i, 1);
-        // DBC stores positions in server/wire format (X=west, Y=north) — swap to canonical
-        at.x = dbc->getFloat(i, 3);  // canonical X (north) = DBC field 3 (Y_wire)
-        at.y = dbc->getFloat(i, 2);  // canonical Y (west)  = DBC field 2 (X_wire)
-        at.z = dbc->getFloat(i, 4);
-        at.radius    = dbc->getFloat(i, 5);
-        at.boxLength = dbc->getFloat(i, 6);
-        at.boxWidth  = dbc->getFloat(i, 7);
-        at.boxHeight = dbc->getFloat(i, 8);
-        at.boxYaw    = dbc->getFloat(i, 9);
-        areaTriggers_.push_back(at);
-    }
-
-    LOG_WARNING("Loaded ", areaTriggers_.size(), " area triggers from AreaTrigger.dbc");
+    if (movementHandler_) movementHandler_->loadAreaTriggerDbc();
 }
 
 void GameHandler::checkAreaTriggers() {
-    if (!isInWorld()) return;
-    if (onTaxiFlight_ || taxiClientActive_) return;
-
-    loadAreaTriggerDbc();
-    if (areaTriggers_.empty()) return;
-
-    const float px = movementInfo.x;
-    const float py = movementInfo.y;
-    const float pz = movementInfo.z;
-
-    // On first check after map transfer, just mark which triggers we're inside
-    // without firing them — prevents exit portal from immediately sending us back
-    bool suppressFirst = areaTriggerSuppressFirst_;
-    if (suppressFirst) {
-        areaTriggerSuppressFirst_ = false;
-    }
-
-    for (const auto& at : areaTriggers_) {
-        if (at.mapId != currentMapId_) continue;
-
-        bool inside = false;
-        if (at.radius > 0.0f) {
-            // Sphere trigger — use actual radius, with small floor for very tiny triggers
-            float effectiveRadius = std::max(at.radius, 3.0f);
-            float dx = px - at.x;
-            float dy = py - at.y;
-            float dz = pz - at.z;
-            float distSq = dx * dx + dy * dy + dz * dz;
-            inside = (distSq <= effectiveRadius * effectiveRadius);
-        } else if (at.boxLength > 0.0f || at.boxWidth > 0.0f || at.boxHeight > 0.0f) {
-            // Box trigger — use actual size, with small floor for tiny triggers
-            float boxMin = 4.0f;
-            float effLength = std::max(at.boxLength, boxMin);
-            float effWidth = std::max(at.boxWidth, boxMin);
-            float effHeight = std::max(at.boxHeight, boxMin);
-
-            float dx = px - at.x;
-            float dy = py - at.y;
-            float dz = pz - at.z;
-
-            // Rotate into box-local space
-            float cosYaw = std::cos(-at.boxYaw);
-            float sinYaw = std::sin(-at.boxYaw);
-            float localX = dx * cosYaw - dy * sinYaw;
-            float localY = dx * sinYaw + dy * cosYaw;
-
-            inside = (std::abs(localX) <= effLength * 0.5f &&
-                      std::abs(localY) <= effWidth * 0.5f &&
-                      std::abs(dz) <= effHeight * 0.5f);
-        }
-
-        if (inside) {
-            if (activeAreaTriggers_.count(at.id) == 0) {
-                activeAreaTriggers_.insert(at.id);
-
-                if (suppressFirst) {
-                    // After map transfer: mark triggers we're inside of, but don't fire them.
-                    // This prevents the exit portal from immediately sending us back.
-                    LOG_WARNING("AreaTrigger suppressed (post-transfer): AT", at.id);
-                } else {
-                    // Temporarily move player to trigger center so the server's distance
-                    // check passes, then restore to actual position so the server doesn't
-                    // persist the fake position on disconnect.
-                    float savedX = movementInfo.x, savedY = movementInfo.y, savedZ = movementInfo.z;
-                    movementInfo.x = at.x;
-                    movementInfo.y = at.y;
-                    movementInfo.z = at.z;
-                    sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
-
-                    network::Packet pkt(wireOpcode(Opcode::CMSG_AREATRIGGER));
-                    pkt.writeUInt32(at.id);
-                    socket->send(pkt);
-                    LOG_WARNING("Fired CMSG_AREATRIGGER: id=", at.id,
-                             " at (", at.x, ", ", at.y, ", ", at.z, ")");
-
-                    // Restore actual player position
-                    movementInfo.x = savedX;
-                    movementInfo.y = savedY;
-                    movementInfo.z = savedZ;
-                    sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
-                }
-            }
-        } else {
-            // Player left the trigger — allow re-fire on re-entry
-            activeAreaTriggers_.erase(at.id);
-        }
-    }
-}
-
-void GameHandler::handleArenaTeamCommandResult(network::Packet& packet) {
-    if (!packet.hasRemaining(8)) return;
-    uint32_t command = packet.readUInt32();
-    std::string name = packet.readString();
-    uint32_t error = packet.readUInt32();
-
-    static const char* commands[] = { "create", "invite", "leave", "remove", "disband", "leader" };
-    std::string cmdName = (command < 6) ? commands[command] : "unknown";
-
-    if (error == 0) {
-        addSystemChatMessage("Arena team " + cmdName + " successful" +
-                           (name.empty() ? "." : ": " + name));
-    } else {
-        addSystemChatMessage("Arena team " + cmdName + " failed" +
-                           (name.empty() ? "." : " for " + name + "."));
-    }
-    LOG_INFO("Arena team command: ", cmdName, " name=", name, " error=", error);
-}
-
-void GameHandler::handleArenaTeamQueryResponse(network::Packet& packet) {
-    if (!packet.hasRemaining(4)) return;
-    uint32_t teamId = packet.readUInt32();
-    std::string teamName = packet.readString();
-    uint32_t teamType = 0;
-    if (packet.hasRemaining(4))
-        teamType = packet.readUInt32();
-    LOG_INFO("Arena team query response: id=", teamId, " name=", teamName, " type=", teamType);
-
-    // Store name and type in matching ArenaTeamStats entry
-    for (auto& s : arenaTeamStats_) {
-        if (s.teamId == teamId) {
-            s.teamName = teamName;
-            s.teamType = teamType;
-            return;
-        }
-    }
-    // No stats entry yet — create a placeholder so we can show the name
-    ArenaTeamStats stub;
-    stub.teamId   = teamId;
-    stub.teamName = teamName;
-    stub.teamType = teamType;
-    arenaTeamStats_.push_back(std::move(stub));
-}
-
-void GameHandler::handleArenaTeamRoster(network::Packet& packet) {
-    // SMSG_ARENA_TEAM_ROSTER (WotLK 3.3.5a):
-    //   uint32 teamId
-    //   uint8  unk (0 = not captainship packet)
-    //   uint32 memberCount
-    //   For each member:
-    //     uint64 guid
-    //     uint8  online (1=online, 0=offline)
-    //     string name (null-terminated)
-    //     uint32 gamesWeek
-    //     uint32 winsWeek
-    //     uint32 gamesSeason
-    //     uint32 winsSeason
-    //     uint32 personalRating
-    //     float  modDay   (unused here)
-    //     float  modWeek  (unused here)
-    if (!packet.hasRemaining(9)) return;
-
-    uint32_t teamId     = packet.readUInt32();
-    /*uint8_t unk =*/    packet.readUInt8();
-    uint32_t memberCount = packet.readUInt32();
-
-    // Sanity cap to avoid huge allocations from malformed packets
-    if (memberCount > 100) memberCount = 100;
-
-    ArenaTeamRoster roster;
-    roster.teamId = teamId;
-    roster.members.reserve(memberCount);
-
-    for (uint32_t i = 0; i < memberCount; ++i) {
-        if (!packet.hasRemaining(12)) break;
-
-        ArenaTeamMember m;
-        m.guid           = packet.readUInt64();
-        m.online         = (packet.readUInt8() != 0);
-        m.name           = packet.readString();
-        if (!packet.hasRemaining(20)) break;
-        m.weekGames      = packet.readUInt32();
-        m.weekWins       = packet.readUInt32();
-        m.seasonGames    = packet.readUInt32();
-        m.seasonWins     = packet.readUInt32();
-        m.personalRating = packet.readUInt32();
-        // skip 2 floats (modDay, modWeek)
-        if (packet.hasRemaining(8)) {
-            packet.readFloat();
-            packet.readFloat();
-        }
-        roster.members.push_back(std::move(m));
-    }
-
-    // Replace existing roster for this team or append
-    for (auto& r : arenaTeamRosters_) {
-        if (r.teamId == teamId) {
-            r = std::move(roster);
-            LOG_INFO("SMSG_ARENA_TEAM_ROSTER: updated teamId=", teamId,
-                     " members=", r.members.size());
-            return;
-        }
-    }
-    LOG_INFO("SMSG_ARENA_TEAM_ROSTER: new teamId=", teamId,
-             " members=", roster.members.size());
-    arenaTeamRosters_.push_back(std::move(roster));
-}
-
-void GameHandler::handleArenaTeamInvite(network::Packet& packet) {
-    std::string playerName = packet.readString();
-    std::string teamName = packet.readString();
-    addSystemChatMessage(playerName + " has invited you to join " + teamName + ".");
-    LOG_INFO("Arena team invite from ", playerName, " to ", teamName);
-}
-
-void GameHandler::handleArenaTeamEvent(network::Packet& packet) {
-    if (!packet.hasRemaining(1)) return;
-    uint8_t event = packet.readUInt8();
-
-    // Read string params (up to 3)
-    uint8_t strCount = 0;
-    if (packet.hasRemaining(1)) {
-        strCount = packet.readUInt8();
-    }
-
-    std::string param1, param2;
-    if (strCount >= 1 && packet.getSize() > packet.getReadPos()) param1 = packet.readString();
-    if (strCount >= 2 && packet.getSize() > packet.getReadPos()) param2 = packet.readString();
-
-    // Build natural-language message based on event type
-    // Event params: 0=joined(name), 1=left(name), 2=removed(name,kicker),
-    //               3=leader_changed(new,old), 4=disbanded, 5=created(name)
-    std::string msg;
-    switch (event) {
-        case 0: // joined
-            msg = param1.empty() ? "A player has joined your arena team."
-                                 : param1 + " has joined your arena team.";
-            break;
-        case 1: // left
-            msg = param1.empty() ? "A player has left the arena team."
-                                 : param1 + " has left the arena team.";
-            break;
-        case 2: // removed
-            if (!param1.empty() && !param2.empty())
-                msg = param1 + " has been removed from the arena team by " + param2 + ".";
-            else if (!param1.empty())
-                msg = param1 + " has been removed from the arena team.";
-            else
-                msg = "A player has been removed from the arena team.";
-            break;
-        case 3: // leader changed
-            msg = param1.empty() ? "The arena team captain has changed."
-                                 : param1 + " is now the arena team captain.";
-            break;
-        case 4: // disbanded
-            msg = "Your arena team has been disbanded.";
-            break;
-        case 5: // created
-            msg = param1.empty() ? "Your arena team has been created."
-                                 : "Arena team \"" + param1 + "\" has been created.";
-            break;
-        default:
-            msg = "Arena team event " + std::to_string(event);
-            if (!param1.empty()) msg += ": " + param1;
-            break;
-    }
-    addSystemChatMessage(msg);
-    LOG_INFO("Arena team event: ", static_cast<int>(event), " ", param1, " ", param2);
-}
-
-void GameHandler::handleArenaTeamStats(network::Packet& packet) {
-    // SMSG_ARENA_TEAM_STATS (WotLK 3.3.5a):
-    //   uint32 teamId, uint32 rating, uint32 weekGames, uint32 weekWins,
-    //   uint32 seasonGames, uint32 seasonWins, uint32 rank
-    if (!packet.hasRemaining(28)) return;
-
-    ArenaTeamStats stats;
-    stats.teamId      = packet.readUInt32();
-    stats.rating      = packet.readUInt32();
-    stats.weekGames   = packet.readUInt32();
-    stats.weekWins    = packet.readUInt32();
-    stats.seasonGames = packet.readUInt32();
-    stats.seasonWins  = packet.readUInt32();
-    stats.rank        = packet.readUInt32();
-
-    // Update or insert for this team (preserve name/type from query response)
-    for (auto& s : arenaTeamStats_) {
-        if (s.teamId == stats.teamId) {
-            stats.teamName = std::move(s.teamName);
-            stats.teamType = s.teamType;
-            s = std::move(stats);
-            LOG_INFO("SMSG_ARENA_TEAM_STATS: teamId=", s.teamId,
-                     " rating=", s.rating, " rank=", s.rank);
-            return;
-        }
-    }
-    arenaTeamStats_.push_back(std::move(stats));
-    LOG_INFO("SMSG_ARENA_TEAM_STATS: teamId=", arenaTeamStats_.back().teamId,
-             " rating=", arenaTeamStats_.back().rating,
-             " rank=", arenaTeamStats_.back().rank);
+    if (movementHandler_) movementHandler_->checkAreaTriggers();
 }
 
 void GameHandler::requestArenaTeamRoster(uint32_t teamId) {
-    if (!socket) return;
-    network::Packet pkt(wireOpcode(Opcode::CMSG_ARENA_TEAM_ROSTER));
-    pkt.writeUInt32(teamId);
-    socket->send(pkt);
-    LOG_INFO("Requesting arena team roster for teamId=", teamId);
-}
-
-void GameHandler::handleArenaError(network::Packet& packet) {
-    if (!packet.hasRemaining(4)) return;
-    uint32_t error = packet.readUInt32();
-
-    std::string msg;
-    switch (error) {
-        case 1: msg = "The other team is not big enough."; break;
-        case 2: msg = "That team is full."; break;
-        case 3: msg = "Not enough members to start."; break;
-        case 4: msg = "Too many members."; break;
-        default: msg = "Arena error (code " + std::to_string(error) + ")"; break;
-    }
-    addSystemChatMessage(msg);
-    LOG_INFO("Arena error: ", error, " - ", msg);
+    if (socialHandler_) socialHandler_->requestArenaTeamRoster(teamId);
 }
 
 void GameHandler::requestPvpLog() {
-    if (!isInWorld()) return;
-    // MSG_PVP_LOG_DATA is bidirectional: client sends an empty packet to request
-    network::Packet pkt(wireOpcode(Opcode::MSG_PVP_LOG_DATA));
-    socket->send(pkt);
-    LOG_INFO("Requested PvP log data");
-}
-
-void GameHandler::handlePvpLogData(network::Packet& packet) {
-    auto remaining = [&]() { return packet.getRemainingSize(); };
-    if (remaining() < 1) return;
-
-    bgScoreboard_ = BgScoreboardData{};
-    bgScoreboard_.isArena = (packet.readUInt8() != 0);
-
-    if (bgScoreboard_.isArena) {
-        // WotLK 3.3.5a MSG_PVP_LOG_DATA arena header:
-        //   two team blocks × (uint32 ratingChange + uint32 newRating + uint32 unk1 + uint32 unk2 + uint32 unk3 + CString teamName)
-        // After both team blocks: same player list and winner fields as battleground.
-        for (int t = 0; t < 2; ++t) {
-            if (remaining() < 20) { packet.skipAll(); return; }
-            bgScoreboard_.arenaTeams[t].ratingChange = packet.readUInt32();
-            bgScoreboard_.arenaTeams[t].newRating    = packet.readUInt32();
-            packet.readUInt32(); // unk1
-            packet.readUInt32(); // unk2
-            packet.readUInt32(); // unk3
-            bgScoreboard_.arenaTeams[t].teamName = remaining() > 0 ? packet.readString() : "";
-        }
-        // Fall through to parse player list and winner fields below (same layout as BG)
-    }
-
-    if (remaining() < 4) return;
-    uint32_t playerCount = packet.readUInt32();
-    bgScoreboard_.players.reserve(playerCount);
-
-    for (uint32_t i = 0; i < playerCount && remaining() >= 13; ++i) {
-        BgPlayerScore ps;
-        ps.guid           = packet.readUInt64();
-        ps.team           = packet.readUInt8();
-        ps.killingBlows   = packet.readUInt32();
-        ps.honorableKills = packet.readUInt32();
-        ps.deaths         = packet.readUInt32();
-        ps.bonusHonor     = packet.readUInt32();
-
-        // Resolve player name from entity manager
-        {
-            auto ent = entityManager.getEntity(ps.guid);
-            if (ent && (ent->getType() == game::ObjectType::PLAYER ||
-                        ent->getType() == game::ObjectType::UNIT)) {
-                auto u = std::static_pointer_cast<game::Unit>(ent);
-                if (!u->getName().empty()) ps.name = u->getName();
-            }
-        }
-
-        // BG-specific stat blocks: uint32 count + N × (string fieldName + uint32 value)
-        if (remaining() < 4) { bgScoreboard_.players.push_back(std::move(ps)); break; }
-        uint32_t statCount = packet.readUInt32();
-        for (uint32_t s = 0; s < statCount && remaining() >= 5; ++s) {
-            std::string fieldName;
-            while (remaining() > 0) {
-                char c = static_cast<char>(packet.readUInt8());
-                if (c == '\0') break;
-                fieldName += c;
-            }
-            uint32_t val = (remaining() >= 4) ? packet.readUInt32() : 0;
-            ps.bgStats.emplace_back(std::move(fieldName), val);
-        }
-
-        bgScoreboard_.players.push_back(std::move(ps));
-    }
-
-    if (remaining() >= 1) {
-        bgScoreboard_.hasWinner = (packet.readUInt8() != 0);
-        if (bgScoreboard_.hasWinner && remaining() >= 1)
-            bgScoreboard_.winner = packet.readUInt8();
-    }
-
-    if (bgScoreboard_.isArena) {
-        LOG_INFO("Arena log: ", bgScoreboard_.players.size(), " players, hasWinner=",
-                 bgScoreboard_.hasWinner, " winner=", static_cast<int>(bgScoreboard_.winner),
-                 " team0='", bgScoreboard_.arenaTeams[0].teamName,
-                 "' ratingChange=", static_cast<int32_t>(bgScoreboard_.arenaTeams[0].ratingChange),
-                 " team1='", bgScoreboard_.arenaTeams[1].teamName,
-                 "' ratingChange=", static_cast<int32_t>(bgScoreboard_.arenaTeams[1].ratingChange));
-    } else {
-        LOG_INFO("PvP log: ", bgScoreboard_.players.size(), " players, hasWinner=",
-                 bgScoreboard_.hasWinner, " winner=", static_cast<int>(bgScoreboard_.winner));
-    }
-}
-
-void GameHandler::handleMoveSetSpeed(network::Packet& packet) {
-    // MSG_MOVE_SET_*_SPEED: PackedGuid (WotLK) / full uint64 (Classic/TBC) + MovementInfo + float speed.
-    // The MovementInfo block is variable-length; rather than fully parsing it, we read the
-    // fixed prefix, skip over optional blocks by consuming remaining bytes until 4 remain,
-    // then read the speed float. This is safe because the speed is always the last field.
-    const bool useFull = isPreWotlk();
-    uint64_t moverGuid = useFull
-        ? packet.readUInt64() : packet.readPackedGuid();
-
-    // Skip to the last 4 bytes — the speed float — by advancing past the MovementInfo.
-    // This avoids duplicating the full variable-length MovementInfo parser here.
-    const size_t remaining = packet.getRemainingSize();
-    if (remaining < 4) return;
-    if (remaining > 4) {
-        // Advance past all MovementInfo bytes (flags, time, position, optional blocks).
-        // Speed is always the last 4 bytes in the packet.
-        packet.setReadPos(packet.getSize() - 4);
-    }
-
-    float speed = packet.readFloat();
-    if (!std::isfinite(speed) || speed <= 0.01f || speed > 200.0f) return;
-
-    // Update local player speed state if this broadcast targets us.
-    if (moverGuid != playerGuid) return;
-    const uint16_t wireOp = packet.getOpcode();
-    if      (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_RUN_SPEED))        serverRunSpeed_      = speed;
-    else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_RUN_BACK_SPEED))   serverRunBackSpeed_  = speed;
-    else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_WALK_SPEED))       serverWalkSpeed_     = speed;
-    else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_SWIM_SPEED))       serverSwimSpeed_     = speed;
-    else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_SWIM_BACK_SPEED))  serverSwimBackSpeed_ = speed;
-    else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_FLIGHT_SPEED))     serverFlightSpeed_   = speed;
-    else if (wireOp == wireOpcode(Opcode::MSG_MOVE_SET_FLIGHT_BACK_SPEED))serverFlightBackSpeed_= speed;
-}
-
-void GameHandler::handleOtherPlayerMovement(network::Packet& packet) {
-    // Server relays MSG_MOVE_* for other players: packed GUID (WotLK) or full uint64 (TBC/Classic)
-    const bool otherMoveTbc = isPreWotlk();
-    uint64_t moverGuid = otherMoveTbc
-        ? packet.readUInt64() : packet.readPackedGuid();
-    if (moverGuid == playerGuid || moverGuid == 0) {
-        return; // Skip our own echoes
-    }
-
-    // Read movement info (expansion-specific format)
-    // For classic: moveFlags(u32) + time(u32) + pos(4xf32) + [transport] + [pitch] + fallTime(u32) + [jump] + [splineElev]
-    MovementInfo info = {};
-    info.flags = packet.readUInt32();
-    // WotLK has u16 flags2, TBC has u8, Classic has none.
-    // Do NOT use build-number thresholds here (Turtle uses classic formats with a high build).
-    uint8_t flags2Size = packetParsers_ ? packetParsers_->movementFlags2Size() : 2;
-    if (flags2Size == 2) info.flags2 = packet.readUInt16();
-    else if (flags2Size == 1) info.flags2 = packet.readUInt8();
-    info.time = packet.readUInt32();
-    info.x = packet.readFloat();
-    info.y = packet.readFloat();
-    info.z = packet.readFloat();
-    info.orientation = packet.readFloat();
-
-    // Read transport data if the on-transport flag is set in wire-format move flags.
-    // The flag bit position differs between expansions (0x200 for WotLK/TBC, 0x02000000 for Classic/Turtle).
-    const uint32_t wireTransportFlag = packetParsers_ ? packetParsers_->wireOnTransportFlag() : 0x00000200;
-    const bool onTransport = (info.flags & wireTransportFlag) != 0;
-    uint64_t transportGuid = 0;
-    float tLocalX = 0, tLocalY = 0, tLocalZ = 0, tLocalO = 0;
-    if (onTransport) {
-        transportGuid = packet.readPackedGuid();
-        tLocalX = packet.readFloat();
-        tLocalY = packet.readFloat();
-        tLocalZ = packet.readFloat();
-        tLocalO = packet.readFloat();
-        // TBC and WotLK include a transport timestamp; Classic does not.
-        if (flags2Size >= 1) {
-            /*uint32_t transportTime =*/ packet.readUInt32();
-        }
-        // WotLK adds a transport seat byte.
-        if (flags2Size >= 2) {
-            /*int8_t transportSeat =*/ packet.readUInt8();
-            // Optional second transport time for interpolated movement.
-            if (info.flags2 & 0x0200) {
-                /*uint32_t transportTime2 =*/ packet.readUInt32();
-            }
-        }
-    }
-
-    // Update entity position in entity manager
-    auto entity = entityManager.getEntity(moverGuid);
-    if (!entity) {
-        return;
-    }
-
-    // Convert server coords to canonical
-    glm::vec3 canonical = core::coords::serverToCanonical(glm::vec3(info.x, info.y, info.z));
-    float canYaw = core::coords::serverToCanonicalYaw(info.orientation);
-
-    // Handle transport attachment: attach/detach the entity so it follows the transport
-    // smoothly between movement updates via updateAttachedTransportChildren().
-    if (onTransport && transportGuid != 0 && transportManager_) {
-        glm::vec3 localCanonical = core::coords::serverToCanonical(glm::vec3(tLocalX, tLocalY, tLocalZ));
-        setTransportAttachment(moverGuid, entity->getType(), transportGuid, localCanonical, true,
-                               core::coords::serverToCanonicalYaw(tLocalO));
-        // Derive world position from transport system for best accuracy.
-        glm::vec3 worldPos = transportManager_->getPlayerWorldPosition(transportGuid, localCanonical);
-        canonical = worldPos;
-    } else if (!onTransport) {
-        // Player left transport — clear any stale attachment.
-        clearTransportAttachment(moverGuid);
-    }
-    // Compute a smoothed interpolation window for this player.
-    // Using a raw packet delta causes jitter when timing spikes (e.g. 50ms then 300ms).
-    // An exponential moving average of intervals gives a stable playback speed that
-    // dead-reckoning in Entity::updateMovement() can bridge without a visible freeze.
-    uint32_t durationMs = 120;
-    auto itPrev = otherPlayerMoveTimeMs_.find(moverGuid);
-    if (itPrev != otherPlayerMoveTimeMs_.end()) {
-        uint32_t rawDt = info.time - itPrev->second;  // wraps naturally on uint32_t
-        if (rawDt >= 20 && rawDt <= 2000) {
-            float fDt = static_cast<float>(rawDt);
-            // EMA: smooth the interval so single spike packets don't stutter playback.
-            auto& smoothed = otherPlayerSmoothedIntervalMs_[moverGuid];
-            if (smoothed < 1.0f) smoothed = fDt;  // first observation — seed directly
-            smoothed = 0.7f * smoothed + 0.3f * fDt;
-            // Clamp to sane WoW movement rates: ~10 Hz (100ms) normal, up to 2Hz (500ms) slow
-            float clamped = std::max(60.0f, std::min(500.0f, smoothed));
-            durationMs = static_cast<uint32_t>(clamped);
-        }
-    }
-    otherPlayerMoveTimeMs_[moverGuid] = info.time;
-
-    // Classify the opcode so we can drive the correct entity update and animation.
-    const uint16_t wireOp = packet.getOpcode();
-    const bool isStopOpcode =
-        (wireOp == wireOpcode(Opcode::MSG_MOVE_STOP)) ||
-        (wireOp == wireOpcode(Opcode::MSG_MOVE_STOP_STRAFE)) ||
-        (wireOp == wireOpcode(Opcode::MSG_MOVE_STOP_TURN)) ||
-        (wireOp == wireOpcode(Opcode::MSG_MOVE_STOP_SWIM)) ||
-        (wireOp == wireOpcode(Opcode::MSG_MOVE_FALL_LAND));
-    const bool isJumpOpcode  = (wireOp == wireOpcode(Opcode::MSG_MOVE_JUMP));
-
-    // For stop opcodes snap the entity position (duration=0) so it doesn't keep interpolating,
-    // and pass durationMs=0 to the renderer so the Run-anim flash is suppressed.
-    // The per-frame sync will detect no movement and play Stand on the next frame.
-    const float entityDuration = isStopOpcode ? 0.0f : (durationMs / 1000.0f);
-    entity->startMoveTo(canonical.x, canonical.y, canonical.z, canYaw, entityDuration);
-
-    // Notify renderer of position change
-    if (creatureMoveCallback_) {
-        const uint32_t notifyDuration = isStopOpcode ? 0u : durationMs;
-        creatureMoveCallback_(moverGuid, canonical.x, canonical.y, canonical.z, notifyDuration);
-    }
-
-    // Signal specific animation transitions that the per-frame sync can't detect reliably.
-    // WoW M2 animation ID 38=JumpMid (loops during airborne).
-    // Swim/walking state is now authoritative from the movement flags field via unitMoveFlagsCallback_.
-    if (unitAnimHintCallback_ && isJumpOpcode) {
-        unitAnimHintCallback_(moverGuid, 38u);
-    }
-
-    // Fire move-flags callback so application.cpp can update swimming/walking state
-    // from the flags field embedded in every movement packet (covers heartbeats and cold joins).
-    if (unitMoveFlagsCallback_) {
-        unitMoveFlagsCallback_(moverGuid, info.flags);
-    }
-}
-
-void GameHandler::handleCompressedMoves(network::Packet& packet) {
-    // Vanilla-family SMSG_COMPRESSED_MOVES carries concatenated movement sub-packets.
-    // Turtle can additionally wrap the batch in the same uint32 decompressedSize + zlib
-    // envelope used by other compressed world packets.
-    //
-    // Within the decompressed stream, some realms encode the leading uint8 size as:
-    // - opcode(2) + payload bytes
-    // - payload bytes only
-    // Try both framing modes and use the one that cleanly consumes the batch.
-    std::vector<uint8_t> decompressedStorage;
-    const std::vector<uint8_t>* dataPtr = &packet.getData();
-
-    const auto& rawData = packet.getData();
-    const bool hasCompressedWrapper =
-        rawData.size() >= 6 &&
-        rawData[4] == 0x78 &&
-        (rawData[5] == 0x01 || rawData[5] == 0x9C ||
-         rawData[5] == 0xDA || rawData[5] == 0x5E);
-    if (hasCompressedWrapper) {
-        uint32_t decompressedSize = static_cast<uint32_t>(rawData[0]) |
-                                    (static_cast<uint32_t>(rawData[1]) << 8) |
-                                    (static_cast<uint32_t>(rawData[2]) << 16) |
-                                    (static_cast<uint32_t>(rawData[3]) << 24);
-        if (decompressedSize == 0 || decompressedSize > 65536) {
-            LOG_WARNING("SMSG_COMPRESSED_MOVES: bad decompressedSize=", decompressedSize);
-            return;
-        }
-
-        decompressedStorage.resize(decompressedSize);
-        uLongf destLen = decompressedSize;
-        int ret = uncompress(decompressedStorage.data(), &destLen,
-                             rawData.data() + 4, rawData.size() - 4);
-        if (ret != Z_OK) {
-            LOG_WARNING("SMSG_COMPRESSED_MOVES: zlib error ", ret);
-            return;
-        }
-
-        decompressedStorage.resize(destLen);
-        dataPtr = &decompressedStorage;
-    }
-
-    const auto& data = *dataPtr;
-    const size_t dataLen = data.size();
-
-    // Wire opcodes for sub-packet routing
-    uint16_t monsterMoveWire          = wireOpcode(Opcode::SMSG_MONSTER_MOVE);
-    uint16_t monsterMoveTransportWire = wireOpcode(Opcode::SMSG_MONSTER_MOVE_TRANSPORT);
-
-    // Player movement sub-opcodes (SMSG_MULTIPLE_MOVES carries MSG_MOVE_*)
-    // Not static — wireOpcode() depends on runtime active opcode table.
-    const std::array<uint16_t, 29> kMoveOpcodes = {
-        wireOpcode(Opcode::MSG_MOVE_START_FORWARD),
-        wireOpcode(Opcode::MSG_MOVE_START_BACKWARD),
-        wireOpcode(Opcode::MSG_MOVE_STOP),
-        wireOpcode(Opcode::MSG_MOVE_START_STRAFE_LEFT),
-        wireOpcode(Opcode::MSG_MOVE_START_STRAFE_RIGHT),
-        wireOpcode(Opcode::MSG_MOVE_STOP_STRAFE),
-        wireOpcode(Opcode::MSG_MOVE_JUMP),
-        wireOpcode(Opcode::MSG_MOVE_START_TURN_LEFT),
-        wireOpcode(Opcode::MSG_MOVE_START_TURN_RIGHT),
-        wireOpcode(Opcode::MSG_MOVE_STOP_TURN),
-        wireOpcode(Opcode::MSG_MOVE_SET_FACING),
-        wireOpcode(Opcode::MSG_MOVE_FALL_LAND),
-        wireOpcode(Opcode::MSG_MOVE_HEARTBEAT),
-        wireOpcode(Opcode::MSG_MOVE_START_SWIM),
-        wireOpcode(Opcode::MSG_MOVE_STOP_SWIM),
-        wireOpcode(Opcode::MSG_MOVE_SET_WALK_MODE),
-        wireOpcode(Opcode::MSG_MOVE_SET_RUN_MODE),
-        wireOpcode(Opcode::MSG_MOVE_START_PITCH_UP),
-        wireOpcode(Opcode::MSG_MOVE_START_PITCH_DOWN),
-        wireOpcode(Opcode::MSG_MOVE_STOP_PITCH),
-        wireOpcode(Opcode::MSG_MOVE_START_ASCEND),
-        wireOpcode(Opcode::MSG_MOVE_STOP_ASCEND),
-        wireOpcode(Opcode::MSG_MOVE_START_DESCEND),
-        wireOpcode(Opcode::MSG_MOVE_SET_PITCH),
-        wireOpcode(Opcode::MSG_MOVE_GRAVITY_CHNG),
-        wireOpcode(Opcode::MSG_MOVE_UPDATE_CAN_FLY),
-        wireOpcode(Opcode::MSG_MOVE_UPDATE_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY),
-        wireOpcode(Opcode::MSG_MOVE_ROOT),
-        wireOpcode(Opcode::MSG_MOVE_UNROOT),
-    };
-
-    struct CompressedMoveSubPacket {
-        uint16_t opcode = 0;
-        std::vector<uint8_t> payload;
-    };
-    struct DecodeResult {
-        bool ok = false;
-        bool overrun = false;
-        bool usedPayloadOnlySize = false;
-        size_t endPos = 0;
-        size_t recognizedCount = 0;
-        size_t subPacketCount = 0;
-        std::vector<CompressedMoveSubPacket> packets;
-    };
-
-    auto isRecognizedSubOpcode = [&](uint16_t subOpcode) {
-        return subOpcode == monsterMoveWire ||
-               subOpcode == monsterMoveTransportWire ||
-               std::find(kMoveOpcodes.begin(), kMoveOpcodes.end(), subOpcode) != kMoveOpcodes.end();
-    };
-
-    auto decodeSubPackets = [&](bool payloadOnlySize) -> DecodeResult {
-        DecodeResult result;
-        result.usedPayloadOnlySize = payloadOnlySize;
-        size_t pos = 0;
-        while (pos < dataLen) {
-            if (pos + 1 > dataLen) break;
-            uint8_t subSize = data[pos];
-            if (subSize == 0) {
-                result.ok = true;
-                result.endPos = pos + 1;
-                return result;
-            }
-
-            const size_t payloadLen = payloadOnlySize
-                ? static_cast<size_t>(subSize)
-                : (subSize >= 2 ? static_cast<size_t>(subSize) - 2 : 0);
-            if (!payloadOnlySize && subSize < 2) {
-                result.endPos = pos;
-                return result;
-            }
-
-            const size_t packetLen = 1 + 2 + payloadLen;
-            if (pos + packetLen > dataLen) {
-                result.overrun = true;
-                result.endPos = pos;
-                return result;
-            }
-
-            uint16_t subOpcode = static_cast<uint16_t>(data[pos + 1]) |
-                                 (static_cast<uint16_t>(data[pos + 2]) << 8);
-            size_t payloadStart = pos + 3;
-
-            CompressedMoveSubPacket subPacket;
-            subPacket.opcode = subOpcode;
-            subPacket.payload.assign(data.begin() + payloadStart,
-                                     data.begin() + payloadStart + payloadLen);
-            result.packets.push_back(std::move(subPacket));
-            ++result.subPacketCount;
-            if (isRecognizedSubOpcode(subOpcode)) {
-                ++result.recognizedCount;
-            }
-
-            pos += packetLen;
-        }
-        result.ok = (result.endPos == 0 || result.endPos == dataLen);
-        result.endPos = dataLen;
-        return result;
-    };
-
-    DecodeResult decoded = decodeSubPackets(false);
-    if (!decoded.ok || decoded.overrun) {
-        DecodeResult payloadOnlyDecoded = decodeSubPackets(true);
-        const bool preferPayloadOnly =
-            payloadOnlyDecoded.ok &&
-            (!decoded.ok || decoded.overrun || payloadOnlyDecoded.recognizedCount > decoded.recognizedCount);
-        if (preferPayloadOnly) {
-            decoded = std::move(payloadOnlyDecoded);
-            static uint32_t payloadOnlyFallbackCount = 0;
-            ++payloadOnlyFallbackCount;
-            if (payloadOnlyFallbackCount <= 10 || (payloadOnlyFallbackCount % 100) == 0) {
-                LOG_WARNING("SMSG_COMPRESSED_MOVES decoded via payload-only size fallback",
-                            " (occurrence=", payloadOnlyFallbackCount, ")");
-            }
-        }
-    }
-
-    if (!decoded.ok || decoded.overrun) {
-        LOG_WARNING("SMSG_COMPRESSED_MOVES: sub-packet overruns buffer at pos=", decoded.endPos);
-        return;
-    }
-
-    // Track unhandled sub-opcodes once per compressed packet (avoid log spam)
-    std::unordered_set<uint16_t> unhandledSeen;
-
-    for (const auto& entry : decoded.packets) {
-        network::Packet subPacket(entry.opcode, entry.payload);
-
-        if (entry.opcode == monsterMoveWire) {
-            handleMonsterMove(subPacket);
-        } else if (entry.opcode == monsterMoveTransportWire) {
-            handleMonsterMoveTransport(subPacket);
-        } else if (state == WorldState::IN_WORLD &&
-                   std::find(kMoveOpcodes.begin(), kMoveOpcodes.end(), entry.opcode) != kMoveOpcodes.end()) {
-            // Player/NPC movement update packed in SMSG_MULTIPLE_MOVES
-            handleOtherPlayerMovement(subPacket);
-        } else {
-            if (unhandledSeen.insert(entry.opcode).second) {
-                LOG_INFO("SMSG_COMPRESSED_MOVES: unhandled sub-opcode 0x",
-                         std::hex, entry.opcode, std::dec, " payloadLen=", entry.payload.size());
-            }
-        }
-    }
-}
-
-void GameHandler::handleMonsterMove(network::Packet& packet) {
-    if (isActiveExpansion("classic") || isActiveExpansion("turtle")) {
-        constexpr uint32_t kMaxMonsterMovesPerTick = 256;
-        ++monsterMovePacketsThisTick_;
-        if (monsterMovePacketsThisTick_ > kMaxMonsterMovesPerTick) {
-            ++monsterMovePacketsDroppedThisTick_;
-            if (monsterMovePacketsDroppedThisTick_ <= 3 ||
-                (monsterMovePacketsDroppedThisTick_ % 100) == 0) {
-                LOG_WARNING("SMSG_MONSTER_MOVE: per-tick cap exceeded, dropping packet",
-                            " (processed=", monsterMovePacketsThisTick_,
-                            " dropped=", monsterMovePacketsDroppedThisTick_, ")");
-            }
-            return;
-        }
-    }
-
-    MonsterMoveData data;
-    auto logMonsterMoveParseFailure = [&](const std::string& msg) {
-        static uint32_t failCount = 0;
-        ++failCount;
-        if (failCount <= 10 || (failCount % 100) == 0) {
-            LOG_WARNING(msg, " (occurrence=", failCount, ")");
-        }
-    };
-    auto logWrappedUncompressedFallbackUsed = [&]() {
-        static uint32_t wrappedUncompressedFallbackCount = 0;
-        ++wrappedUncompressedFallbackCount;
-        if (wrappedUncompressedFallbackCount <= 10 || (wrappedUncompressedFallbackCount % 100) == 0) {
-            LOG_WARNING("SMSG_MONSTER_MOVE parsed via uncompressed wrapped-subpacket fallback",
-                        " (occurrence=", wrappedUncompressedFallbackCount, ")");
-        }
-    };
-    auto stripWrappedSubpacket = [&](const std::vector<uint8_t>& bytes, std::vector<uint8_t>& stripped) -> bool {
-        if (bytes.size() < 3) return false;
-        uint8_t subSize = bytes[0];
-        if (subSize < 2) return false;
-        size_t wrappedLen = static_cast<size_t>(subSize) + 1; // size byte + body
-        if (wrappedLen != bytes.size()) return false;
-        size_t payloadLen = static_cast<size_t>(subSize) - 2; // opcode(2) stripped
-        if (3 + payloadLen > bytes.size()) return false;
-        stripped.assign(bytes.begin() + 3, bytes.begin() + 3 + payloadLen);
-        return true;
-    };
-    // Turtle WoW (1.17+) compresses each SMSG_MONSTER_MOVE individually:
-    // format: uint32 decompressedSize + zlib data (zlib magic = 0x78 ??)
-    const auto& rawData = packet.getData();
-    const bool allowTurtleMoveCompression = isActiveExpansion("turtle");
-    bool isCompressed = allowTurtleMoveCompression &&
-                        rawData.size() >= 6 &&
-                        rawData[4] == 0x78 &&
-                        (rawData[5] == 0x01 || rawData[5] == 0x9C ||
-                         rawData[5] == 0xDA || rawData[5] == 0x5E);
-    if (isCompressed) {
-        uint32_t decompSize = static_cast<uint32_t>(rawData[0]) |
-                              (static_cast<uint32_t>(rawData[1]) << 8) |
-                              (static_cast<uint32_t>(rawData[2]) << 16) |
-                              (static_cast<uint32_t>(rawData[3]) << 24);
-        if (decompSize == 0 || decompSize > 65536) {
-            LOG_WARNING("SMSG_MONSTER_MOVE: bad decompSize=", decompSize);
-            return;
-        }
-        std::vector<uint8_t> decompressed(decompSize);
-        uLongf destLen = decompSize;
-        int ret = uncompress(decompressed.data(), &destLen,
-                             rawData.data() + 4, rawData.size() - 4);
-        if (ret != Z_OK) {
-            LOG_WARNING("SMSG_MONSTER_MOVE: zlib error ", ret);
-            return;
-        }
-        decompressed.resize(destLen);
-        std::vector<uint8_t> stripped;
-        bool hasWrappedForm = stripWrappedSubpacket(decompressed, stripped);
-
-        bool parsed = false;
-        if (hasWrappedForm) {
-            network::Packet wrappedPacket(packet.getOpcode(), stripped);
-            if (packetParsers_->parseMonsterMove(wrappedPacket, data)) {
-                parsed = true;
-            }
-        }
-        if (!parsed) {
-            network::Packet decompPacket(packet.getOpcode(), decompressed);
-            if (packetParsers_->parseMonsterMove(decompPacket, data)) {
-                parsed = true;
-            }
-        }
-
-        if (!parsed) {
-            if (hasWrappedForm) {
-                logMonsterMoveParseFailure("Failed to parse SMSG_MONSTER_MOVE (decompressed " +
-                                           std::to_string(destLen) + " bytes, wrapped payload " +
-                                           std::to_string(stripped.size()) + " bytes)");
-            } else {
-                logMonsterMoveParseFailure("Failed to parse SMSG_MONSTER_MOVE (decompressed " +
-                                           std::to_string(destLen) + " bytes)");
-            }
-            return;
-        }
-    } else if (!packetParsers_->parseMonsterMove(packet, data)) {
-        // Some realms occasionally embed an extra [size|opcode] wrapper even when the
-        // outer packet wasn't zlib-compressed. Retry with wrapper stripped by structure.
-        std::vector<uint8_t> stripped;
-        if (stripWrappedSubpacket(rawData, stripped)) {
-            network::Packet wrappedPacket(packet.getOpcode(), stripped);
-            if (packetParsers_->parseMonsterMove(wrappedPacket, data)) {
-                logWrappedUncompressedFallbackUsed();
-            } else {
-                logMonsterMoveParseFailure("Failed to parse SMSG_MONSTER_MOVE");
-                return;
-            }
-        } else {
-            logMonsterMoveParseFailure("Failed to parse SMSG_MONSTER_MOVE");
-            return;
-        }
-    }
-
-    // Update entity position in entity manager
-    auto entity = entityManager.getEntity(data.guid);
-    if (!entity) {
-        return;
-    }
-
-    if (data.hasDest) {
-        // Convert destination from server to canonical coords
-        glm::vec3 destCanonical = core::coords::serverToCanonical(
-            glm::vec3(data.destX, data.destY, data.destZ));
-
-        // Calculate facing angle
-        float orientation = entity->getOrientation();
-        if (data.moveType == 4) {
-            // FacingAngle - server specifies exact angle
-            orientation = core::coords::serverToCanonicalYaw(data.facingAngle);
-        } else if (data.moveType == 3) {
-            // FacingTarget - face toward the target entity.
-            // Canonical orientation uses atan2(-dy, dx): the West/Y component
-            // must be negated because renderYaw = orientation + 90° and
-            // model-forward = render +X, so the sign convention flips.
-            auto target = entityManager.getEntity(data.facingTarget);
-            if (target) {
-                float dx = target->getX() - entity->getX();
-                float dy = target->getY() - entity->getY();
-                if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
-                    orientation = std::atan2(-dy, dx);
-                }
-            }
-        } else {
-            // Normal move - face toward destination.
-            float dx = destCanonical.x - entity->getX();
-            float dy = destCanonical.y - entity->getY();
-            if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
-                orientation = std::atan2(-dy, dx);
-            }
-        }
-
-        // Anti-backward-glide: if the computed orientation is more than 90° away from
-        // the actual travel direction, snap to the travel direction.  FacingTarget
-        // (moveType 3) is deliberately different from travel dir, so skip it there.
-        if (data.moveType != 3) {
-            glm::vec3 startCanonical = core::coords::serverToCanonical(
-                glm::vec3(data.x, data.y, data.z));
-            float travelDx = destCanonical.x - startCanonical.x;
-            float travelDy = destCanonical.y - startCanonical.y;
-            float travelLen = std::sqrt(travelDx * travelDx + travelDy * travelDy);
-            if (travelLen > 0.5f) {
-                float travelAngle = std::atan2(-travelDy, travelDx);
-                float diff = orientation - travelAngle;
-                // Normalise diff to [-π, π]
-                while (diff >  static_cast<float>(M_PI)) diff -= 2.0f * static_cast<float>(M_PI);
-                while (diff < -static_cast<float>(M_PI)) diff += 2.0f * static_cast<float>(M_PI);
-                if (std::abs(diff) > static_cast<float>(M_PI) * 0.5f) {
-                    orientation = travelAngle;
-                }
-            }
-        }
-
-        // Interpolate entity position alongside renderer (so targeting matches visual)
-        entity->startMoveTo(destCanonical.x, destCanonical.y, destCanonical.z,
-                            orientation, data.duration / 1000.0f);
-
-        // Notify renderer to smoothly move the creature
-        if (creatureMoveCallback_) {
-            creatureMoveCallback_(data.guid,
-                destCanonical.x, destCanonical.y, destCanonical.z,
-                data.duration);
-        }
-    } else if (data.moveType == 1) {
-        // Stop at current position
-        glm::vec3 posCanonical = core::coords::serverToCanonical(
-            glm::vec3(data.x, data.y, data.z));
-        entity->setPosition(posCanonical.x, posCanonical.y, posCanonical.z,
-                            entity->getOrientation());
-
-        if (creatureMoveCallback_) {
-            creatureMoveCallback_(data.guid,
-                posCanonical.x, posCanonical.y, posCanonical.z, 0);
-        }
-    } else if (data.moveType == 4) {
-        // FacingAngle without movement — rotate NPC in place
-        float orientation = core::coords::serverToCanonicalYaw(data.facingAngle);
-        glm::vec3 posCanonical = core::coords::serverToCanonical(
-            glm::vec3(data.x, data.y, data.z));
-        entity->setPosition(posCanonical.x, posCanonical.y, posCanonical.z, orientation);
-        if (creatureMoveCallback_) {
-            creatureMoveCallback_(data.guid,
-                posCanonical.x, posCanonical.y, posCanonical.z, 0);
-        }
-    } else if (data.moveType == 3 && data.facingTarget != 0) {
-        // FacingTarget without movement — rotate NPC to face a target
-        auto target = entityManager.getEntity(data.facingTarget);
-        if (target) {
-            float dx = target->getX() - entity->getX();
-            float dy = target->getY() - entity->getY();
-            if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f) {
-                float orientation = std::atan2(-dy, dx);
-                entity->setOrientation(orientation);
-            }
-        }
-    }
-}
-
-void GameHandler::handleMonsterMoveTransport(network::Packet& packet) {
-    // Parse transport-relative creature movement (NPCs on boats/zeppelins)
-    // Packet: moverGuid(8) + unk(1) + transportGuid(8) + localX/Y/Z(12) + spline data
-
-    if (!packet.hasRemaining(8) + 1 + 8 + 12) return;
-    uint64_t moverGuid = packet.readUInt64();
-    /*uint8_t unk =*/ packet.readUInt8();
-    uint64_t transportGuid = packet.readUInt64();
-
-    // Transport-local start position (server coords: x=east/west, y=north/south, z=up)
-    float localX = packet.readFloat();
-    float localY = packet.readFloat();
-    float localZ = packet.readFloat();
-
-    auto entity = entityManager.getEntity(moverGuid);
-    if (!entity) return;
-
-    // ---- Spline data (same format as SMSG_MONSTER_MOVE, transport-local coords) ----
-    if (!packet.hasRemaining(5)) {
-        // No spline data — snap to start position
-        if (transportManager_) {
-            glm::vec3 localCanonical = core::coords::serverToCanonical(glm::vec3(localX, localY, localZ));
-            setTransportAttachment(moverGuid, entity->getType(), transportGuid, localCanonical, false, 0.0f);
-            glm::vec3 worldPos = transportManager_->getPlayerWorldPosition(transportGuid, localCanonical);
-            entity->setPosition(worldPos.x, worldPos.y, worldPos.z, entity->getOrientation());
-            if (entity->getType() == ObjectType::UNIT && creatureMoveCallback_)
-                creatureMoveCallback_(moverGuid, worldPos.x, worldPos.y, worldPos.z, 0);
-        }
-        return;
-    }
-
-    /*uint32_t splineId =*/ packet.readUInt32();
-    uint8_t moveType = packet.readUInt8();
-
-    if (moveType == 1) {
-        // Stop — snap to start position
-        if (transportManager_) {
-            glm::vec3 localCanonical = core::coords::serverToCanonical(glm::vec3(localX, localY, localZ));
-            setTransportAttachment(moverGuid, entity->getType(), transportGuid, localCanonical, false, 0.0f);
-            glm::vec3 worldPos = transportManager_->getPlayerWorldPosition(transportGuid, localCanonical);
-            entity->setPosition(worldPos.x, worldPos.y, worldPos.z, entity->getOrientation());
-            if (entity->getType() == ObjectType::UNIT && creatureMoveCallback_)
-                creatureMoveCallback_(moverGuid, worldPos.x, worldPos.y, worldPos.z, 0);
-        }
-        return;
-    }
-
-    // Facing data based on moveType
-    float facingAngle = entity->getOrientation();
-    if (moveType == 2) {       // FacingSpot
-        if (!packet.hasRemaining(12)) return;
-        float sx = packet.readFloat(), sy = packet.readFloat(), sz = packet.readFloat();
-        facingAngle = std::atan2(-(sy - localY), sx - localX);
-        (void)sz;
-    } else if (moveType == 3) { // FacingTarget
-        if (!packet.hasRemaining(8)) return;
-        uint64_t tgtGuid = packet.readUInt64();
-        if (auto tgt = entityManager.getEntity(tgtGuid)) {
-            float dx = tgt->getX() - entity->getX();
-            float dy = tgt->getY() - entity->getY();
-            if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f)
-                facingAngle = std::atan2(-dy, dx);
-        }
-    } else if (moveType == 4) { // FacingAngle
-        if (!packet.hasRemaining(4)) return;
-        facingAngle = core::coords::serverToCanonicalYaw(packet.readFloat());
-    }
-
-    if (!packet.hasRemaining(4)) return;
-    uint32_t splineFlags = packet.readUInt32();
-
-    if (splineFlags & 0x00400000) { // Animation
-        if (!packet.hasRemaining(5)) return;
-        packet.readUInt8(); packet.readUInt32();
-    }
-
-    if (!packet.hasRemaining(4)) return;
-    uint32_t duration = packet.readUInt32();
-
-    if (splineFlags & 0x00000800) { // Parabolic
-        if (!packet.hasRemaining(8)) return;
-        packet.readFloat(); packet.readUInt32();
-    }
-
-    if (!packet.hasRemaining(4)) return;
-    uint32_t pointCount = packet.readUInt32();
-    constexpr uint32_t kMaxTransportSplinePoints = 1000;
-    if (pointCount > kMaxTransportSplinePoints) {
-        LOG_WARNING("SMSG_MONSTER_MOVE_TRANSPORT: pointCount=", pointCount,
-                    " clamped to ", kMaxTransportSplinePoints);
-        pointCount = kMaxTransportSplinePoints;
-    }
-
-    // Read destination point (transport-local server coords)
-    float destLocalX = localX, destLocalY = localY, destLocalZ = localZ;
-    bool hasDest = false;
-    if (pointCount > 0) {
-        const bool uncompressed = (splineFlags & (0x00080000 | 0x00002000)) != 0;
-        if (uncompressed) {
-            for (uint32_t i = 0; i < pointCount - 1; ++i) {
-                if (!packet.hasRemaining(12)) break;
-                packet.readFloat(); packet.readFloat(); packet.readFloat();
-            }
-            if (packet.hasRemaining(12)) {
-                destLocalX = packet.readFloat();
-                destLocalY = packet.readFloat();
-                destLocalZ = packet.readFloat();
-                hasDest = true;
-            }
-        } else {
-            if (packet.hasRemaining(12)) {
-                destLocalX = packet.readFloat();
-                destLocalY = packet.readFloat();
-                destLocalZ = packet.readFloat();
-                hasDest = true;
-            }
-        }
-    }
-
-    if (!transportManager_) {
-        LOG_WARNING("SMSG_MONSTER_MOVE_TRANSPORT: TransportManager not available for mover 0x",
-                    std::hex, moverGuid, std::dec);
-        return;
-    }
-
-    glm::vec3 startLocalCanonical = core::coords::serverToCanonical(glm::vec3(localX, localY, localZ));
-
-    if (hasDest && duration > 0) {
-        glm::vec3 destLocalCanonical = core::coords::serverToCanonical(glm::vec3(destLocalX, destLocalY, destLocalZ));
-        glm::vec3 destWorld  = transportManager_->getPlayerWorldPosition(transportGuid, destLocalCanonical);
-
-        // Face toward destination unless an explicit facing was given
-        if (moveType == 0) {
-            float dx = destLocalCanonical.x - startLocalCanonical.x;
-            float dy = destLocalCanonical.y - startLocalCanonical.y;
-            if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f)
-                facingAngle = std::atan2(-dy, dx);
-        }
-
-        setTransportAttachment(moverGuid, entity->getType(), transportGuid, destLocalCanonical, false, 0.0f);
-        entity->startMoveTo(destWorld.x, destWorld.y, destWorld.z, facingAngle, duration / 1000.0f);
-
-        if (entity->getType() == ObjectType::UNIT && creatureMoveCallback_)
-            creatureMoveCallback_(moverGuid, destWorld.x, destWorld.y, destWorld.z, duration);
-
-        LOG_DEBUG("SMSG_MONSTER_MOVE_TRANSPORT: mover=0x", std::hex, moverGuid,
-                  " transport=0x", transportGuid, std::dec,
-                  " dur=", duration, "ms dest=(", destWorld.x, ",", destWorld.y, ",", destWorld.z, ")");
-    } else {
-        glm::vec3 startWorld = transportManager_->getPlayerWorldPosition(transportGuid, startLocalCanonical);
-        setTransportAttachment(moverGuid, entity->getType(), transportGuid, startLocalCanonical, false, 0.0f);
-        entity->setPosition(startWorld.x, startWorld.y, startWorld.z, facingAngle);
-        if (entity->getType() == ObjectType::UNIT && creatureMoveCallback_)
-            creatureMoveCallback_(moverGuid, startWorld.x, startWorld.y, startWorld.z, 0);
-    }
-}
-
-void GameHandler::handleAttackerStateUpdate(network::Packet& packet) {
-    AttackerStateUpdateData data;
-    if (!packetParsers_->parseAttackerStateUpdate(packet, data)) return;
-
-    bool isPlayerAttacker = (data.attackerGuid == playerGuid);
-    bool isPlayerTarget = (data.targetGuid == playerGuid);
-    if (!isPlayerAttacker && !isPlayerTarget) return;  // Not our combat
-
-    if (isPlayerAttacker) {
-        lastMeleeSwingMs_ = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count());
-        if (meleeSwingCallback_) meleeSwingCallback_();
-    }
-    if (!isPlayerAttacker && npcSwingCallback_) {
-        npcSwingCallback_(data.attackerGuid);
-    }
-
-    if (isPlayerTarget && data.attackerGuid != 0) {
-        hostileAttackers_.insert(data.attackerGuid);
-        autoTargetAttacker(data.attackerGuid);
-    }
-
-    // Play combat sounds via CombatSoundManager + character vocalizations
-    if (auto* renderer = core::Application::getInstance().getRenderer()) {
-        if (auto* csm = renderer->getCombatSoundManager()) {
-            auto weaponSize = audio::CombatSoundManager::WeaponSize::MEDIUM;
-            if (data.isMiss()) {
-                csm->playWeaponMiss(false);
-            } else if (data.victimState == 1 || data.victimState == 2) {
-                // Dodge/parry — swing whoosh but no impact
-                csm->playWeaponSwing(weaponSize, false);
-            } else {
-                // Hit — swing + flesh impact
-                csm->playWeaponSwing(weaponSize, data.isCrit());
-                csm->playImpact(weaponSize, audio::CombatSoundManager::ImpactType::FLESH, data.isCrit());
-            }
-        }
-        // Character vocalizations
-        if (auto* asm_ = renderer->getActivitySoundManager()) {
-            if (isPlayerAttacker && !data.isMiss() && data.victimState != 1 && data.victimState != 2) {
-                asm_->playAttackGrunt();
-            }
-            if (isPlayerTarget && !data.isMiss() && data.victimState != 1 && data.victimState != 2) {
-                asm_->playWound(data.isCrit());
-            }
-        }
-    }
-
-    if (data.isMiss()) {
-        addCombatText(CombatTextEntry::MISS, 0, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
-    } else if (data.victimState == 1) {
-        addCombatText(CombatTextEntry::DODGE, 0, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
-    } else if (data.victimState == 2) {
-        addCombatText(CombatTextEntry::PARRY, 0, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
-    } else if (data.victimState == 4) {
-        // VICTIMSTATE_BLOCKS: show reduced damage and the blocked amount
-        if (data.totalDamage > 0)
-            addCombatText(CombatTextEntry::MELEE_DAMAGE, data.totalDamage, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
-        addCombatText(CombatTextEntry::BLOCK, static_cast<int32_t>(data.blocked), 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
-    } else if (data.victimState == 5) {
-        // VICTIMSTATE_EVADE: NPC evaded (out of combat zone).
-        addCombatText(CombatTextEntry::EVADE, 0, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
-    } else if (data.victimState == 6) {
-        // VICTIMSTATE_IS_IMMUNE: Target is immune to this attack.
-        addCombatText(CombatTextEntry::IMMUNE, 0, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
-    } else if (data.victimState == 7) {
-        // VICTIMSTATE_DEFLECT: Attack was deflected (e.g. shield slam reflect).
-        addCombatText(CombatTextEntry::DEFLECT, 0, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
-    } else {
-        CombatTextEntry::Type type;
-        if (data.isCrit())
-            type = CombatTextEntry::CRIT_DAMAGE;
-        else if (data.isCrushing())
-            type = CombatTextEntry::CRUSHING;
-        else if (data.isGlancing())
-            type = CombatTextEntry::GLANCING;
-        else
-            type = CombatTextEntry::MELEE_DAMAGE;
-        addCombatText(type, data.totalDamage, 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
-        // Show partial absorb/resist from sub-damage entries
-        uint32_t totalAbsorbed = 0, totalResisted = 0;
-        for (const auto& sub : data.subDamages) {
-            totalAbsorbed += sub.absorbed;
-            totalResisted += sub.resisted;
-        }
-        if (totalAbsorbed > 0)
-            addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(totalAbsorbed), 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
-        if (totalResisted > 0)
-            addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(totalResisted), 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
-    }
-
-    (void)isPlayerTarget;
-}
-
-void GameHandler::handleSpellDamageLog(network::Packet& packet) {
-    SpellDamageLogData data;
-    if (!packetParsers_->parseSpellDamageLog(packet, data)) return;
-
-    bool isPlayerSource = (data.attackerGuid == playerGuid);
-    bool isPlayerTarget = (data.targetGuid == playerGuid);
-    if (!isPlayerSource && !isPlayerTarget) return;  // Not our combat
-
-    if (isPlayerTarget && data.attackerGuid != 0) {
-        hostileAttackers_.insert(data.attackerGuid);
-        autoTargetAttacker(data.attackerGuid);
-    }
-
-    auto type = data.isCrit ? CombatTextEntry::CRIT_DAMAGE : CombatTextEntry::SPELL_DAMAGE;
-    if (data.damage > 0)
-        addCombatText(type, static_cast<int32_t>(data.damage), data.spellId, isPlayerSource, 0, data.attackerGuid, data.targetGuid);
-    if (data.absorbed > 0)
-        addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(data.absorbed), data.spellId, isPlayerSource, 0, data.attackerGuid, data.targetGuid);
-    if (data.resisted > 0)
-        addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(data.resisted), data.spellId, isPlayerSource, 0, data.attackerGuid, data.targetGuid);
-}
-
-void GameHandler::handleSpellHealLog(network::Packet& packet) {
-    SpellHealLogData data;
-    if (!packetParsers_->parseSpellHealLog(packet, data)) return;
-
-    bool isPlayerSource = (data.casterGuid == playerGuid);
-    bool isPlayerTarget = (data.targetGuid == playerGuid);
-    if (!isPlayerSource && !isPlayerTarget) return;  // Not our combat
-
-    auto type = data.isCrit ? CombatTextEntry::CRIT_HEAL : CombatTextEntry::HEAL;
-    addCombatText(type, static_cast<int32_t>(data.heal), data.spellId, isPlayerSource, 0, data.casterGuid, data.targetGuid);
-    if (data.absorbed > 0)
-        addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(data.absorbed), data.spellId, isPlayerSource, 0, data.casterGuid, data.targetGuid);
+    if (socialHandler_) socialHandler_->requestPvpLog();
 }
 
 // ============================================================
@@ -18004,354 +7685,63 @@ void GameHandler::handleSpellHealLog(network::Packet& packet) {
 // ============================================================
 
 void GameHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
-    // Attack (6603) routes to auto-attack instead of cast
-    if (spellId == 6603) {
-        uint64_t target = targetGuid != 0 ? targetGuid : this->targetGuid;
-        if (target != 0) {
-            if (autoAttacking) {
-                stopAutoAttack();
-            } else {
-                startAutoAttack(target);
-            }
-        }
-        return;
-    }
-
-    if (!isInWorld()) return;
-
-    // Casting any spell while mounted → dismount instead
-    if (isMounted()) {
-        dismount();
-        return;
-    }
-
-    if (casting) {
-        // Spell queue: if we're within 400ms of the cast completing (and not channeling),
-        // store the spell so it fires automatically when the cast finishes.
-        if (!castIsChannel && castTimeRemaining > 0.0f && castTimeRemaining <= 0.4f) {
-            queuedSpellId_     = spellId;
-            queuedSpellTarget_ = targetGuid != 0 ? targetGuid : this->targetGuid;
-            LOG_INFO("Spell queue: queued spellId=", spellId, " (", castTimeRemaining * 1000.0f,
-                     "ms remaining)");
-        }
-        return;
-    }
-
-    // Hearthstone: cast spell directly (server checks item in inventory)
-    // Using CMSG_CAST_SPELL is more reliable than CMSG_USE_ITEM which
-    // depends on slot indices matching between client and server.
-    uint64_t target = targetGuid != 0 ? targetGuid : this->targetGuid;
-    // Self-targeted spells like hearthstone should not send a target
-    if (spellId == 8690) target = 0;
-
-    // Warrior Charge (ranks 1-3): client-side range check + charge callback
-    // Must face target and validate range BEFORE sending packet to server
-    if (spellId == 100 || spellId == 6178 || spellId == 11578) {
-        if (target == 0) {
-            addSystemChatMessage("You have no target.");
-            return;
-        }
-        auto entity = entityManager.getEntity(target);
-        if (!entity) {
-            addSystemChatMessage("You have no target.");
-            return;
-        }
-        float tx = entity->getX(), ty = entity->getY(), tz = entity->getZ();
-        float dx = tx - movementInfo.x;
-        float dy = ty - movementInfo.y;
-        float dz = tz - movementInfo.z;
-        float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (dist < 8.0f) {
-            addSystemChatMessage("Target is too close.");
-            return;
-        }
-        if (dist > 25.0f) {
-            addSystemChatMessage("Out of range.");
-            return;
-        }
-        // Face the target before sending the cast packet to avoid "not in front" rejection
-        float yaw = std::atan2(dy, dx);
-        movementInfo.orientation = yaw;
-        sendMovement(Opcode::MSG_MOVE_SET_FACING);
-        if (chargeCallback_) {
-            chargeCallback_(target, tx, ty, tz);
-        }
-    }
-
-    // Instant melee abilities: client-side range + facing check to avoid server "not in front" errors
-    // Detected via physical school mask (1) from DBC cache — covers warrior, rogue, DK, paladin,
-    // feral druid, and hunter melee abilities generically.
-    {
-        bool isMeleeAbility = (getSpellSchoolMask(spellId) == 1);
-        if (isMeleeAbility && target != 0) {
-            auto entity = entityManager.getEntity(target);
-            if (entity) {
-                float dx = entity->getX() - movementInfo.x;
-                float dy = entity->getY() - movementInfo.y;
-                float dz = entity->getZ() - movementInfo.z;
-                float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-                if (dist > 8.0f) {
-                    addSystemChatMessage("Out of range.");
-                    return;
-                }
-                // Face the target to prevent "not in front" rejection
-                float yaw = std::atan2(dy, dx);
-                movementInfo.orientation = yaw;
-                sendMovement(Opcode::MSG_MOVE_SET_FACING);
-            }
-        }
-    }
-
-    auto packet = packetParsers_
-        ? packetParsers_->buildCastSpell(spellId, target, ++castCount)
-        : CastSpellPacket::build(spellId, target, ++castCount);
-    socket->send(packet);
-    LOG_INFO("Casting spell: ", spellId, " on 0x", std::hex, target, std::dec);
-
-    // Fire UNIT_SPELLCAST_SENT for cast bar addons (fires on client intent, before server confirms)
-    if (addonEventCallback_) {
-        std::string targetName;
-        if (target != 0) targetName = lookupName(target);
-        fireAddonEvent("UNIT_SPELLCAST_SENT", {"player", targetName, std::to_string(spellId)});
-    }
-
-    // Optimistically start GCD immediately on cast, but do not restart it while
-    // already active (prevents timeout animation reset on repeated key presses).
-    if (!isGCDActive()) {
-        gcdTotal_ = 1.5f;
-        gcdStartedAt_ = std::chrono::steady_clock::now();
-    }
+    if (spellHandler_) spellHandler_->castSpell(spellId, targetGuid);
 }
 
 void GameHandler::cancelCast() {
-    if (!casting) return;
-    // GameObject interaction cast is client-side timing only.
-    if (pendingGameObjectInteractGuid_ == 0 &&
-        isInWorld() &&
-        currentCastSpellId != 0) {
-        auto packet = CancelCastPacket::build(currentCastSpellId);
-        socket->send(packet);
-    }
-    pendingGameObjectInteractGuid_ = 0;
-    lastInteractedGoGuid_ = 0;
-    casting = false;
-    castIsChannel = false;
-    currentCastSpellId = 0;
-    castTimeRemaining = 0.0f;
-    // Cancel craft queue and spell queue when player manually cancels cast
-    craftQueueSpellId_ = 0;
-    craftQueueRemaining_ = 0;
-    queuedSpellId_ = 0;
-    queuedSpellTarget_ = 0;
-            fireAddonEvent("UNIT_SPELLCAST_STOP", {"player"});
+    if (spellHandler_) spellHandler_->cancelCast();
 }
 
 void GameHandler::startCraftQueue(uint32_t spellId, int count) {
-    craftQueueSpellId_ = spellId;
-    craftQueueRemaining_ = count;
-    // Cast the first one immediately
-    castSpell(spellId, 0);
+    if (spellHandler_) spellHandler_->startCraftQueue(spellId, count);
 }
 
 void GameHandler::cancelCraftQueue() {
-    craftQueueSpellId_ = 0;
-    craftQueueRemaining_ = 0;
+    if (spellHandler_) spellHandler_->cancelCraftQueue();
 }
 
 void GameHandler::cancelAura(uint32_t spellId) {
-    if (!isInWorld()) return;
-    auto packet = CancelAuraPacket::build(spellId);
-    socket->send(packet);
+    if (spellHandler_) spellHandler_->cancelAura(spellId);
 }
 
 uint32_t GameHandler::getTempEnchantRemainingMs(uint32_t slot) const {
-    uint64_t nowMs = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count());
-    for (const auto& t : tempEnchantTimers_) {
-        if (t.slot == slot) {
-            return (t.expireMs > nowMs)
-                ? static_cast<uint32_t>(t.expireMs - nowMs) : 0u;
-        }
-    }
-    return 0u;
+    return inventoryHandler_ ? inventoryHandler_->getTempEnchantRemainingMs(slot) : 0u;
 }
 
 void GameHandler::handlePetSpells(network::Packet& packet) {
-    const size_t remaining = packet.getRemainingSize();
-    if (remaining < 8) {
-        // Empty or undersized → pet cleared (dismissed / died)
-        petGuid_ = 0;
-        petSpellList_.clear();
-        petAutocastSpells_.clear();
-        memset(petActionSlots_, 0, sizeof(petActionSlots_));
-        LOG_INFO("SMSG_PET_SPELLS: pet cleared");
-        fireAddonEvent("UNIT_PET", {"player"});
-        return;
-    }
-
-    petGuid_ = packet.readUInt64();
-    if (petGuid_ == 0) {
-        petSpellList_.clear();
-        petAutocastSpells_.clear();
-        memset(petActionSlots_, 0, sizeof(petActionSlots_));
-        LOG_INFO("SMSG_PET_SPELLS: pet cleared (guid=0)");
-        fireAddonEvent("UNIT_PET", {"player"});
-        return;
-    }
-
-    // uint16 duration (ms, 0 = permanent), uint16 timer (ms)
-    if (!packet.hasRemaining(4)) goto done;
-    /*uint16_t dur =*/ packet.readUInt16();
-    /*uint16_t timer =*/ packet.readUInt16();
-
-    // uint8 reactState, uint8 commandState (packed order varies; WotLK: react first)
-    if (!packet.hasRemaining(2)) goto done;
-    petReact_   = packet.readUInt8();  // 0=passive, 1=defensive, 2=aggressive
-    petCommand_ = packet.readUInt8();  // 0=stay, 1=follow, 2=attack, 3=dismiss
-
-    // 10 × uint32 action bar slots
-    if (!packet.hasRemaining(PET_ACTION_BAR_SLOTS * 4u)) goto done;
-    for (int i = 0; i < PET_ACTION_BAR_SLOTS; ++i) {
-        petActionSlots_[i] = packet.readUInt32();
-    }
-
-    // uint8 spell count, then per-spell: uint32 spellId, uint16 active flags
-    if (!packet.hasRemaining(1)) goto done;
-    {
-        uint8_t spellCount = packet.readUInt8();
-        petSpellList_.clear();
-        petAutocastSpells_.clear();
-        for (uint8_t i = 0; i < spellCount; ++i) {
-            if (!packet.hasRemaining(6)) break;
-            uint32_t spellId = packet.readUInt32();
-            uint16_t activeFlags = packet.readUInt16();
-            petSpellList_.push_back(spellId);
-            // activeFlags bit 0 = autocast on
-            if (activeFlags & 0x0001) {
-                petAutocastSpells_.insert(spellId);
-            }
-        }
-    }
-
-done:
-    LOG_INFO("SMSG_PET_SPELLS: petGuid=0x", std::hex, petGuid_, std::dec,
-             " react=", static_cast<int>(petReact_), " command=", static_cast<int>(petCommand_),
-             " spells=", petSpellList_.size());
-        fireAddonEvent("UNIT_PET", {"player"});
-        fireAddonEvent("PET_BAR_UPDATE", {});
+    if (spellHandler_) spellHandler_->handlePetSpells(packet);
 }
 
 void GameHandler::sendPetAction(uint32_t action, uint64_t targetGuid) {
-    if (!hasPet() || state != WorldState::IN_WORLD || !socket) return;
-    auto pkt = PetActionPacket::build(petGuid_, action, targetGuid);
-    socket->send(pkt);
-    LOG_DEBUG("sendPetAction: petGuid=0x", std::hex, petGuid_,
-              " action=0x", action, " target=0x", targetGuid, std::dec);
+    if (spellHandler_) spellHandler_->sendPetAction(action, targetGuid);
 }
 
 void GameHandler::dismissPet() {
-    if (petGuid_ == 0 || state != WorldState::IN_WORLD || !socket) return;
-    auto packet = PetActionPacket::build(petGuid_, 0x07000000);
-    socket->send(packet);
+    if (spellHandler_) spellHandler_->dismissPet();
 }
 
 void GameHandler::togglePetSpellAutocast(uint32_t spellId) {
-    if (petGuid_ == 0 || spellId == 0 || state != WorldState::IN_WORLD || !socket) return;
-    bool currentlyOn = petAutocastSpells_.count(spellId) != 0;
-    uint8_t newState = currentlyOn ? 0 : 1;
-    // CMSG_PET_SPELL_AUTOCAST: petGuid(8) + spellId(4) + state(1)
-    network::Packet pkt(wireOpcode(Opcode::CMSG_PET_SPELL_AUTOCAST));
-    pkt.writeUInt64(petGuid_);
-    pkt.writeUInt32(spellId);
-    pkt.writeUInt8(newState);
-    socket->send(pkt);
-    // Optimistically update local state; server will confirm via SMSG_PET_SPELLS
-    if (newState)
-        petAutocastSpells_.insert(spellId);
-    else
-        petAutocastSpells_.erase(spellId);
-    LOG_DEBUG("togglePetSpellAutocast: spellId=", spellId, " autocast=", static_cast<int>(newState));
+    if (spellHandler_) spellHandler_->togglePetSpellAutocast(spellId);
 }
 
 void GameHandler::renamePet(const std::string& newName) {
-    if (petGuid_ == 0 || state != WorldState::IN_WORLD || !socket) return;
-    if (newName.empty() || newName.size() > 12) return;  // Server enforces max 12 chars
-    auto packet = PetRenamePacket::build(petGuid_, newName, 0);
-    socket->send(packet);
-    LOG_INFO("Sent CMSG_PET_RENAME: petGuid=0x", std::hex, petGuid_, std::dec, " name='", newName, "'");
+    if (spellHandler_) spellHandler_->renamePet(newName);
 }
 
 void GameHandler::requestStabledPetList() {
-    if (state != WorldState::IN_WORLD || !socket || stableMasterGuid_ == 0) return;
-    auto pkt = ListStabledPetsPacket::build(stableMasterGuid_);
-    socket->send(pkt);
-    LOG_INFO("Sent MSG_LIST_STABLED_PETS to npc=0x", std::hex, stableMasterGuid_, std::dec);
+    if (spellHandler_) spellHandler_->requestStabledPetList();
 }
 
 void GameHandler::stablePet(uint8_t slot) {
-    if (state != WorldState::IN_WORLD || !socket || stableMasterGuid_ == 0) return;
-    if (petGuid_ == 0) {
-        addSystemChatMessage("You do not have an active pet to stable.");
-        return;
-    }
-    auto pkt = StablePetPacket::build(stableMasterGuid_, slot);
-    socket->send(pkt);
-    LOG_INFO("Sent CMSG_STABLE_PET: slot=", static_cast<int>(slot));
+    if (spellHandler_) spellHandler_->stablePet(slot);
 }
 
 void GameHandler::unstablePet(uint32_t petNumber) {
-    if (state != WorldState::IN_WORLD || !socket || stableMasterGuid_ == 0 || petNumber == 0) return;
-    auto pkt = UnstablePetPacket::build(stableMasterGuid_, petNumber);
-    socket->send(pkt);
-    LOG_INFO("Sent CMSG_UNSTABLE_PET: petNumber=", petNumber);
+    if (spellHandler_) spellHandler_->unstablePet(petNumber);
 }
 
 void GameHandler::handleListStabledPets(network::Packet& packet) {
-    // SMSG MSG_LIST_STABLED_PETS:
-    //   uint64 stableMasterGuid
-    //   uint8  petCount
-    //   uint8  numSlots
-    //   per pet:
-    //     uint32 petNumber
-    //     uint32 entry
-    //     uint32 level
-    //     string name (null-terminated)
-    //     uint32 displayId
-    //     uint8  isActive  (1 = active/summoned, 0 = stabled)
-    constexpr size_t kMinHeader = 8 + 1 + 1;
-    if (!packet.hasRemaining(kMinHeader)) {
-        LOG_WARNING("MSG_LIST_STABLED_PETS: packet too short (", packet.getSize(), ")");
-        return;
-    }
-    stableMasterGuid_ = packet.readUInt64();
-    uint8_t petCount  = packet.readUInt8();
-    stableNumSlots_   = packet.readUInt8();
-
-    stabledPets_.clear();
-    stabledPets_.reserve(petCount);
-
-    for (uint8_t i = 0; i < petCount; ++i) {
-        if (!packet.hasRemaining(4) + 4 + 4) break;
-        StabledPet pet;
-        pet.petNumber = packet.readUInt32();
-        pet.entry     = packet.readUInt32();
-        pet.level     = packet.readUInt32();
-        pet.name      = packet.readString();
-        if (!packet.hasRemaining(4) + 1) break;
-        pet.displayId = packet.readUInt32();
-        pet.isActive  = (packet.readUInt8() != 0);
-        stabledPets_.push_back(std::move(pet));
-    }
-
-    stableWindowOpen_ = true;
-    LOG_INFO("MSG_LIST_STABLED_PETS: stableMasterGuid=0x", std::hex, stableMasterGuid_, std::dec,
-             " petCount=", static_cast<int>(petCount), " numSlots=", static_cast<int>(stableNumSlots_));
-    for (const auto& p : stabledPets_) {
-        LOG_DEBUG("  Pet: number=", p.petNumber, " entry=", p.entry,
-                  " level=", p.level, " name='", p.name, "' displayId=", p.displayId,
-                  " active=", p.isActive);
-    }
+    if (spellHandler_) spellHandler_->handleListStabledPets(packet);
 }
 
 void GameHandler::setActionBarSlot(int slot, ActionBarSlot::Type type, uint32_t id) {
@@ -18379,119 +7769,8 @@ void GameHandler::setActionBarSlot(int slot, ActionBarSlot::Type type, uint32_t 
 }
 
 float GameHandler::getSpellCooldown(uint32_t spellId) const {
-    auto it = spellCooldowns.find(spellId);
-    return (it != spellCooldowns.end()) ? it->second : 0.0f;
-}
-
-void GameHandler::handleInitialSpells(network::Packet& packet) {
-    InitialSpellsData data;
-    if (!packetParsers_->parseInitialSpells(packet, data)) return;
-
-    knownSpells = {data.spellIds.begin(), data.spellIds.end()};
-
-    LOG_DEBUG("Initial spells include: 527=", knownSpells.count(527u),
-              " 988=", knownSpells.count(988u), " 1180=", knownSpells.count(1180u));
-
-    // Ensure Attack (6603) and Hearthstone (8690) are always present
-    knownSpells.insert(6603u);
-    knownSpells.insert(8690u);
-
-    // Set initial cooldowns — use the longer of individual vs category cooldown.
-    // Spells like potions have cooldownMs=0 but categoryCooldownMs=120000.
-    for (const auto& cd : data.cooldowns) {
-        uint32_t effectiveMs = std::max(cd.cooldownMs, cd.categoryCooldownMs);
-        if (effectiveMs > 0) {
-            spellCooldowns[cd.spellId] = effectiveMs / 1000.0f;
-        }
-    }
-
-    // Load saved action bar or use defaults (Attack slot 1, Hearthstone slot 12)
-    actionBar[0].type = ActionBarSlot::SPELL;
-    actionBar[0].id = 6603;  // Attack
-    actionBar[11].type = ActionBarSlot::SPELL;
-    actionBar[11].id = 8690;  // Hearthstone
-    loadCharacterConfig();
-
-    // Sync login-time cooldowns into action bar slot overlays.  Without this, spells
-    // that are still on cooldown when the player logs in show no cooldown timer on the
-    // action bar even though spellCooldowns has the right remaining time.
-    for (auto& slot : actionBar) {
-        if (slot.type == ActionBarSlot::SPELL && slot.id != 0) {
-            auto it = spellCooldowns.find(slot.id);
-            if (it != spellCooldowns.end() && it->second > 0.0f) {
-                slot.cooldownTotal     = it->second;
-                slot.cooldownRemaining = it->second;
-            }
-        } else if (slot.type == ActionBarSlot::ITEM && slot.id != 0) {
-            const auto* qi = getItemInfo(slot.id);
-            if (qi && qi->valid) {
-                for (const auto& sp : qi->spells) {
-                    if (sp.spellId == 0) continue;
-                    auto it = spellCooldowns.find(sp.spellId);
-                    if (it != spellCooldowns.end() && it->second > 0.0f) {
-                        slot.cooldownTotal     = it->second;
-                        slot.cooldownRemaining = it->second;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    // Pre-load skill line DBCs so isProfessionSpell() works immediately
-    // (not just after opening a trainer window)
-    loadSkillLineDbc();
-    loadSkillLineAbilityDbc();
-
-    LOG_INFO("Learned ", knownSpells.size(), " spells");
-
-    // Notify addons that the full spell list is now available
-        fireAddonEvent("SPELLS_CHANGED", {});
-        fireAddonEvent("LEARNED_SPELL_IN_TAB", {});
-}
-
-void GameHandler::handleCastFailed(network::Packet& packet) {
-    CastFailedData data;
-    bool ok = packetParsers_ ? packetParsers_->parseCastFailed(packet, data)
-                             : CastFailedParser::parse(packet, data);
-    if (!ok) return;
-
-    casting = false;
-    castIsChannel = false;
-    currentCastSpellId = 0;
-    castTimeRemaining = 0.0f;
-    lastInteractedGoGuid_ = 0;
-    craftQueueSpellId_ = 0;
-    craftQueueRemaining_ = 0;
-    queuedSpellId_ = 0;
-    queuedSpellTarget_ = 0;
-
-    // Stop precast sound — spell failed before completing
-    withSoundManager(&rendering::Renderer::getSpellSoundManager, [](auto* ssm) { ssm->stopPrecast(); });
-
-    // Show failure reason in the UIError overlay and in chat
-    int powerType = -1;
-    auto playerEntity = entityManager.getEntity(playerGuid);
-    if (auto playerUnit = std::dynamic_pointer_cast<Unit>(playerEntity)) {
-        powerType = playerUnit->getPowerType();
-    }
-    const char* reason = getSpellCastResultString(data.result, powerType);
-    std::string errMsg = reason ? reason
-                                : ("Spell cast failed (error " + std::to_string(data.result) + ")");
-    addUIError(errMsg);
-    MessageChatData msg;
-    msg.type = ChatType::SYSTEM;
-    msg.language = ChatLanguage::UNIVERSAL;
-    msg.message = errMsg;
-    addLocalChatMessage(msg);
-
-    // Play error sound for cast failure feedback
-    withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playError(); });
-
-    // Fire UNIT_SPELLCAST_FAILED + UNIT_SPELLCAST_STOP so Lua addons can react
-        fireAddonEvent("UNIT_SPELLCAST_FAILED", {"player", std::to_string(data.spellId)});
-        fireAddonEvent("UNIT_SPELLCAST_STOP", {"player", std::to_string(data.spellId)});
-    if (spellCastFailedCallback_) spellCastFailedCallback_(data.spellId);
+    if (spellHandler_) return spellHandler_->getSpellCooldown(spellId);
+    return 0;
 }
 
 static audio::SpellSoundManager::MagicSchool schoolMaskToMagicSchool(uint32_t mask) {
@@ -18504,663 +7783,28 @@ static audio::SpellSoundManager::MagicSchool schoolMaskToMagicSchool(uint32_t ma
     return audio::SpellSoundManager::MagicSchool::ARCANE;
 }
 
-void GameHandler::handleSpellStart(network::Packet& packet) {
-    SpellStartData data;
-    if (!packetParsers_->parseSpellStart(packet, data)) return;
-
-    // Track cast bar for any non-player caster (target frame + boss frames)
-    if (data.casterUnit != playerGuid && data.castTime > 0) {
-        auto& s = unitCastStates_[data.casterUnit];
-        s.casting        = true;
-        s.isChannel      = false;
-        s.spellId        = data.spellId;
-        s.timeTotal      = data.castTime / 1000.0f;
-        s.timeRemaining  = s.timeTotal;
-        s.interruptible  = isSpellInterruptible(data.spellId);
-        // Trigger cast animation on the casting unit
-        if (spellCastAnimCallback_) {
-            spellCastAnimCallback_(data.casterUnit, true, false);
-        }
-    }
-
-    // If this is the player's own cast, start cast bar
-    if (data.casterUnit == playerGuid && data.castTime > 0) {
-        // CMSG_GAMEOBJ_USE was accepted — cancel pending USE retries so we don't
-        // re-send GAMEOBJ_USE mid-gather-cast and get SPELL_FAILED_BAD_TARGETS.
-        // Keep entries that only have sendLoot (no-cast chests that still need looting).
-        pendingGameObjectLootRetries_.erase(
-            std::remove_if(pendingGameObjectLootRetries_.begin(), pendingGameObjectLootRetries_.end(),
-                [](const PendingLootRetry&) { return true; /* cancel all retries once a gather cast starts */ }),
-            pendingGameObjectLootRetries_.end());
-
-        casting = true;
-        castIsChannel = false;
-        currentCastSpellId = data.spellId;
-        castTimeTotal = data.castTime / 1000.0f;
-        castTimeRemaining = castTimeTotal;
-        fireAddonEvent("CURRENT_SPELL_CAST_CHANGED", {});
-
-        // Play precast sound — skip profession/tradeskill spells (they use crafting
-        // animations/sounds, not magic spell audio).
-        if (!isProfessionSpell(data.spellId)) {
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                if (auto* ssm = renderer->getSpellSoundManager()) {
-                    auto school = schoolMaskToMagicSchool(getSpellSchoolMask(data.spellId));
-                    ssm->playPrecast(school, audio::SpellSoundManager::SpellPower::MEDIUM);
-                }
-            }
-        }
-
-        // Trigger cast animation on player character
-        if (spellCastAnimCallback_) {
-            spellCastAnimCallback_(playerGuid, true, false);
-        }
-
-        // Hearthstone cast: begin pre-loading terrain at bind point during cast time
-        // so tiles are ready when the teleport fires (avoids falling through un-loaded terrain).
-        // Spell IDs: 6948 = Vanilla Hearthstone (rank 1), 8690 = TBC/WotLK Hearthstone
-        const bool isHearthstone = (data.spellId == 6948 || data.spellId == 8690);
-        if (isHearthstone && hasHomeBind_ && hearthstonePreloadCallback_) {
-            hearthstonePreloadCallback_(homeBindMapId_, homeBindPos_.x, homeBindPos_.y, homeBindPos_.z);
-        }
-    }
-
-    // Fire UNIT_SPELLCAST_START for Lua addons
-    if (addonEventCallback_) {
-        auto unitId = guidToUnitId(data.casterUnit);
-        if (!unitId.empty())
-            fireAddonEvent("UNIT_SPELLCAST_START", {unitId, std::to_string(data.spellId)});
-    }
-}
-
-void GameHandler::handleSpellGo(network::Packet& packet) {
-    SpellGoData data;
-    if (!packetParsers_->parseSpellGo(packet, data)) return;
-
-    // Cast completed
-    if (data.casterUnit == playerGuid) {
-        // Play cast-complete sound — skip profession spells (no magic sound for crafting)
-        if (!isProfessionSpell(data.spellId)) {
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                if (auto* ssm = renderer->getSpellSoundManager()) {
-                    ssm->playCast(schoolMaskToMagicSchool(getSpellSchoolMask(data.spellId)));
-                }
-            }
-        }
-
-        // Instant melee abilities → trigger attack animation
-        // Detect via physical school mask (1 = Physical) from the spell DBC cache.
-        // Skip profession spells — crafting should not swing weapons.
-        // This covers warrior, rogue, DK, paladin, feral druid, and hunter melee
-        // abilities generically instead of maintaining a brittle per-spell-ID list.
-        uint32_t sid = data.spellId;
-        bool isMeleeAbility = false;
-        if (!isProfessionSpell(sid)) {
-            if (getSpellSchoolMask(sid) == 1) {
-                // Physical school — treat as instant melee ability if cast time is zero.
-                // We don't store cast time in the cache; use the fact that if we were not
-                // in a cast (casting == true with this spellId) then it was instant.
-                isMeleeAbility = (currentCastSpellId != sid);
-            }
-        }
-        if (isMeleeAbility) {
-            if (meleeSwingCallback_) meleeSwingCallback_();
-            // Play weapon swing + impact sound for instant melee abilities (Sinister Strike, etc.)
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                if (auto* csm = renderer->getCombatSoundManager()) {
-                    csm->playWeaponSwing(audio::CombatSoundManager::WeaponSize::MEDIUM, false);
-                    csm->playImpact(audio::CombatSoundManager::WeaponSize::MEDIUM,
-                                    audio::CombatSoundManager::ImpactType::FLESH, false);
-                }
-            }
-        }
-
-        // Capture cast state before clearing.  Guard with spellId match so that
-        // proc/triggered spells (which fire SMSG_SPELL_GO while a gather cast is
-        // still active and casting == true) do NOT trigger premature CMSG_LOOT.
-        // Only the spell that originally started the cast bar (currentCastSpellId)
-        // should count as "gather cast completed".
-        const bool wasInTimedCast = casting && (data.spellId == currentCastSpellId);
-
-        casting = false;
-        castIsChannel = false;
-        currentCastSpellId = 0;
-        castTimeRemaining = 0.0f;
-
-        // If we were gathering a node (mining/herbalism), send CMSG_LOOT now that
-        // the gather cast completed and the server has made the node lootable.
-        // Guard with wasInTimedCast to avoid firing on instant casts / procs.
-        if (wasInTimedCast && lastInteractedGoGuid_ != 0) {
-            lootTarget(lastInteractedGoGuid_);
-            lastInteractedGoGuid_ = 0;
-        }
-
-        // End cast animation on player character
-        if (spellCastAnimCallback_) {
-            spellCastAnimCallback_(playerGuid, false, false);
-        }
-
-        // Fire UNIT_SPELLCAST_STOP — cast bar should disappear
-                    fireAddonEvent("UNIT_SPELLCAST_STOP", {"player", std::to_string(data.spellId)});
-
-        // Spell queue: fire the next queued spell now that casting has ended
-        if (queuedSpellId_ != 0) {
-            uint32_t nextSpell  = queuedSpellId_;
-            uint64_t nextTarget = queuedSpellTarget_;
-            queuedSpellId_     = 0;
-            queuedSpellTarget_ = 0;
-            LOG_INFO("Spell queue: firing queued spellId=", nextSpell);
-            castSpell(nextSpell, nextTarget);
-        }
-    } else {
-        if (spellCastAnimCallback_) {
-            // End cast animation on other unit
-            spellCastAnimCallback_(data.casterUnit, false, false);
-        }
-        // Play cast-complete sound for enemy spells targeting the player
-        bool targetsPlayer = false;
-        for (const auto& tgt : data.hitTargets) {
-            if (tgt == playerGuid) { targetsPlayer = true; break; }
-        }
-        if (targetsPlayer) {
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                if (auto* ssm = renderer->getSpellSoundManager()) {
-                    ssm->playCast(schoolMaskToMagicSchool(getSpellSchoolMask(data.spellId)));
-                }
-            }
-        }
-    }
-
-    // Clear unit cast bar when the spell lands (for any tracked unit)
-    unitCastStates_.erase(data.casterUnit);
-
-    // Preserve spellId and actual participants for spell-go miss results.
-    // This keeps the persistent combat log aligned with the later GUID fixes.
-    if (!data.missTargets.empty()) {
-        const uint64_t spellCasterGuid = data.casterUnit != 0 ? data.casterUnit : data.casterGuid;
-        const bool playerIsCaster = (spellCasterGuid == playerGuid);
-
-        for (const auto& m : data.missTargets) {
-            if (!playerIsCaster && m.targetGuid != playerGuid) {
-                continue;
-            }
-            CombatTextEntry::Type ct = combatTextTypeFromSpellMissInfo(m.missType);
-            addCombatText(ct, 0, data.spellId, playerIsCaster, 0, spellCasterGuid, m.targetGuid);
-        }
-    }
-
-    // Play impact sound for spell hits involving the player
-    // - When player is hit by an enemy spell
-    // - When player's spell hits an enemy target
-    bool playerIsHit = false;
-    bool playerHitEnemy = false;
-    for (const auto& tgt : data.hitTargets) {
-        if (tgt == playerGuid) { playerIsHit = true; }
-        if (data.casterUnit == playerGuid && tgt != playerGuid && tgt != 0) { playerHitEnemy = true; }
-    }
-    // Fire UNIT_SPELLCAST_SUCCEEDED for Lua addons
-    if (addonEventCallback_) {
-        auto unitId = guidToUnitId(data.casterUnit);
-        if (!unitId.empty())
-            fireAddonEvent("UNIT_SPELLCAST_SUCCEEDED", {unitId, std::to_string(data.spellId)});
-    }
-
-    if (playerIsHit || playerHitEnemy) {
-        if (auto* renderer = core::Application::getInstance().getRenderer()) {
-            if (auto* ssm = renderer->getSpellSoundManager()) {
-                ssm->playImpact(schoolMaskToMagicSchool(getSpellSchoolMask(data.spellId)),
-                                audio::SpellSoundManager::SpellPower::MEDIUM);
-            }
-        }
-    }
-}
-
-void GameHandler::handleSpellCooldown(network::Packet& packet) {
-    // Classic 1.12: guid(8) + N×[spellId(4) + itemId(4) + cooldown(4)]  — no flags byte, 12 bytes/entry
-    // TBC 2.4.3 / WotLK 3.3.5a: guid(8) + flags(1) + N×[spellId(4) + cooldown(4)]  — 8 bytes/entry
-    const bool isClassicFormat = isClassicLikeExpansion();
-
-    if (!packet.hasRemaining(8)) return;
-    /*data.guid =*/ packet.readUInt64();  // guid (not used further)
-
-    if (!isClassicFormat) {
-        if (!packet.hasRemaining(1)) return;
-        /*data.flags =*/ packet.readUInt8();  // flags (consumed but not stored)
-    }
-
-    const size_t entrySize = isClassicFormat ? 12u : 8u;
-    while (packet.hasRemaining(entrySize)) {
-        uint32_t spellId    = packet.readUInt32();
-        uint32_t cdItemId   = 0;
-        if (isClassicFormat) cdItemId = packet.readUInt32();  // itemId in Classic format
-        uint32_t cooldownMs = packet.readUInt32();
-
-        float seconds = cooldownMs / 1000.0f;
-
-        // spellId=0 is the Global Cooldown marker (server sends it for GCD triggers)
-        if (spellId == 0 && cooldownMs > 0 && cooldownMs <= 2000) {
-            gcdTotal_ = seconds;
-            gcdStartedAt_ = std::chrono::steady_clock::now();
-            continue;
-        }
-
-        auto it = spellCooldowns.find(spellId);
-        if (it == spellCooldowns.end()) {
-            spellCooldowns[spellId] = seconds;
-        } else {
-            it->second = mergeCooldownSeconds(it->second, seconds);
-        }
-        for (auto& slot : actionBar) {
-            bool match = (slot.type == ActionBarSlot::SPELL && slot.id == spellId)
-                      || (cdItemId != 0 && slot.type == ActionBarSlot::ITEM && slot.id == cdItemId);
-            if (match) {
-                float prevRemaining = slot.cooldownRemaining;
-                float merged = mergeCooldownSeconds(slot.cooldownRemaining, seconds);
-                slot.cooldownRemaining = merged;
-                if (slot.cooldownTotal <= 0.0f || prevRemaining <= 0.0f) {
-                    slot.cooldownTotal = seconds;
-                } else {
-                    slot.cooldownTotal = std::max(slot.cooldownTotal, merged);
-                }
-            }
-        }
-    }
-    LOG_DEBUG("handleSpellCooldown: parsed for ",
-              isClassicFormat ? "Classic" : "TBC/WotLK", " format");
-        fireAddonEvent("SPELL_UPDATE_COOLDOWN", {});
-        fireAddonEvent("ACTIONBAR_UPDATE_COOLDOWN", {});
-}
-
-void GameHandler::handleCooldownEvent(network::Packet& packet) {
-    if (!packet.hasRemaining(4)) return;
-    uint32_t spellId = packet.readUInt32();
-    // WotLK appends the target unit guid (8 bytes) — skip it
-    if (packet.hasRemaining(8))
-        packet.readUInt64();
-    // Cooldown finished
-    spellCooldowns.erase(spellId);
-    for (auto& slot : actionBar) {
-        if (slot.type == ActionBarSlot::SPELL && slot.id == spellId) {
-            slot.cooldownRemaining = 0.0f;
-        }
-    }
-        fireAddonEvent("SPELL_UPDATE_COOLDOWN", {});
-        fireAddonEvent("ACTIONBAR_UPDATE_COOLDOWN", {});
-}
-
-void GameHandler::handleAuraUpdate(network::Packet& packet, bool isAll) {
-    AuraUpdateData data;
-    if (!packetParsers_->parseAuraUpdate(packet, data, isAll)) return;
-
-    // Determine which aura list to update
-    std::vector<AuraSlot>* auraList = nullptr;
-    if (data.guid == playerGuid) {
-        auraList = &playerAuras;
-    } else if (data.guid == targetGuid) {
-        auraList = &targetAuras;
-    }
-    // Also maintain a per-unit cache for any unit (party members, etc.)
-    if (data.guid != 0 && data.guid != playerGuid && data.guid != targetGuid) {
-        auraList = &unitAurasCache_[data.guid];
-    }
-
-    if (auraList) {
-        if (isAll) {
-            auraList->clear();
-        }
-        uint64_t nowMs = static_cast<uint64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count());
-        for (auto [slot, aura] : data.updates) {
-            // Stamp client timestamp so the UI can count down duration locally
-            if (aura.durationMs >= 0) {
-                aura.receivedAtMs = nowMs;
-            }
-            // Ensure vector is large enough
-            while (auraList->size() <= slot) {
-                auraList->push_back(AuraSlot{});
-            }
-            (*auraList)[slot] = aura;
-        }
-
-        // Fire UNIT_AURA event for Lua addons
-        if (addonEventCallback_) {
-            auto unitId = guidToUnitId(data.guid);
-            if (!unitId.empty())
-                fireAddonEvent("UNIT_AURA", {unitId});
-        }
-
-        // If player is mounted but we haven't identified the mount aura yet,
-        // check newly added auras (aura update may arrive after mountDisplayId)
-        if (data.guid == playerGuid && currentMountDisplayId_ != 0 && mountAuraSpellId_ == 0) {
-            for (const auto& [slot, aura] : data.updates) {
-                if (!aura.isEmpty() && aura.maxDurationMs < 0 && aura.casterGuid == playerGuid) {
-                    mountAuraSpellId_ = aura.spellId;
-                    LOG_INFO("Mount aura detected from aura update: spellId=", aura.spellId);
-                }
-            }
-        }
-    }
-}
-
-void GameHandler::handleLearnedSpell(network::Packet& packet) {
-    // Classic 1.12: uint16 spellId; TBC 2.4.3 / WotLK 3.3.5a: uint32 spellId
-    const bool classicSpellId = isClassicLikeExpansion();
-    const size_t minSz = classicSpellId ? 2u : 4u;
-    if (!packet.hasRemaining(minSz)) return;
-    uint32_t spellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
-
-    // Track whether we already knew this spell before inserting.
-    // SMSG_TRAINER_BUY_SUCCEEDED pre-inserts the spell and shows its own "You have
-    // learned X" message, so when the accompanying SMSG_LEARNED_SPELL arrives we
-    // must not duplicate it.
-    const bool alreadyKnown = knownSpells.count(spellId) > 0;
-    knownSpells.insert(spellId);
-    LOG_INFO("Learned spell: ", spellId, alreadyKnown ? " (already known, skipping chat)" : "");
-
-    // Check if this spell corresponds to a talent rank
-    bool isTalentSpell = false;
-    for (const auto& [talentId, talent] : talentCache_) {
-        for (int rank = 0; rank < 5; ++rank) {
-            if (talent.rankSpells[rank] == spellId) {
-                // Found the talent! Update the rank for the active spec
-                uint8_t newRank = rank + 1; // rank is 0-indexed in array, but stored as 1-indexed
-                learnedTalents_[activeTalentSpec_][talentId] = newRank;
-                LOG_INFO("Talent learned: id=", talentId, " rank=", static_cast<int>(newRank),
-                         " (spell ", spellId, ") in spec ", static_cast<int>(activeTalentSpec_));
-                isTalentSpell = true;
-                    fireAddonEvent("CHARACTER_POINTS_CHANGED", {});
-                    fireAddonEvent("PLAYER_TALENT_UPDATE", {});
-                break;
-            }
-        }
-        if (isTalentSpell) break;
-    }
-
-    // Fire LEARNED_SPELL_IN_TAB / SPELLS_CHANGED for Lua addons
-    if (!alreadyKnown) {
-        fireAddonEvent("LEARNED_SPELL_IN_TAB", {std::to_string(spellId)});
-        fireAddonEvent("SPELLS_CHANGED", {});
-    }
-
-    if (isTalentSpell) return; // talent spells don't show chat message
-
-    // Show chat message for non-talent spells, but only if not already announced by
-    // SMSG_TRAINER_BUY_SUCCEEDED (which pre-inserts into knownSpells).
-    if (!alreadyKnown) {
-        const std::string& name = getSpellName(spellId);
-        if (!name.empty()) {
-            addSystemChatMessage("You have learned a new spell: " + name + ".");
-        } else {
-            addSystemChatMessage("You have learned a new spell.");
-        }
-    }
-}
-
-void GameHandler::handleRemovedSpell(network::Packet& packet) {
-    // Classic 1.12: uint16 spellId; TBC 2.4.3 / WotLK 3.3.5a: uint32 spellId
-    const bool classicSpellId = isClassicLikeExpansion();
-    const size_t minSz = classicSpellId ? 2u : 4u;
-    if (!packet.hasRemaining(minSz)) return;
-    uint32_t spellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
-    knownSpells.erase(spellId);
-    LOG_INFO("Removed spell: ", spellId);
-    fireAddonEvent("SPELLS_CHANGED", {});
-
-    const std::string& name = getSpellName(spellId);
-    if (!name.empty())
-        addSystemChatMessage("You have unlearned: " + name + ".");
-    else
-        addSystemChatMessage("A spell has been removed.");
-
-    // Clear any action bar slots referencing this spell
-    bool barChanged = false;
-    for (auto& slot : actionBar) {
-        if (slot.type == ActionBarSlot::SPELL && slot.id == spellId) {
-            slot = ActionBarSlot{};
-            barChanged = true;
-        }
-    }
-    if (barChanged) saveCharacterConfig();
-}
-
-void GameHandler::handleSupercededSpell(network::Packet& packet) {
-    // Old spell replaced by new rank (e.g., Fireball Rank 1 -> Fireball Rank 2)
-    // Classic 1.12: uint16 oldSpellId + uint16 newSpellId (4 bytes total)
-    // TBC 2.4.3 / WotLK 3.3.5a: uint32 oldSpellId + uint32 newSpellId (8 bytes total)
-    const bool classicSpellId = isClassicLikeExpansion();
-    const size_t minSz = classicSpellId ? 4u : 8u;
-    if (!packet.hasRemaining(minSz)) return;
-    uint32_t oldSpellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
-    uint32_t newSpellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
-
-    // Remove old spell
-    knownSpells.erase(oldSpellId);
-
-    // Track whether the new spell was already announced via SMSG_TRAINER_BUY_SUCCEEDED.
-    // If it was pre-inserted there, that handler already showed "You have learned X" so
-    // we should skip the "Upgraded to X" message to avoid a duplicate.
-    const bool newSpellAlreadyAnnounced = knownSpells.count(newSpellId) > 0;
-
-    // Add new spell
-    knownSpells.insert(newSpellId);
-
-    LOG_INFO("Spell superceded: ", oldSpellId, " -> ", newSpellId);
-
-    // Update all action bar slots that reference the old spell rank to the new rank.
-    // This matches the WoW client behaviour: the action bar automatically upgrades
-    // to the new rank when you train it.
-    bool barChanged = false;
-    for (auto& slot : actionBar) {
-        if (slot.type == ActionBarSlot::SPELL && slot.id == oldSpellId) {
-            slot.id = newSpellId;
-            slot.cooldownRemaining = 0.0f;
-            slot.cooldownTotal = 0.0f;
-            barChanged = true;
-            LOG_DEBUG("Action bar slot upgraded: spell ", oldSpellId, " -> ", newSpellId);
-        }
-    }
-    if (barChanged) {
-        saveCharacterConfig();
-        fireAddonEvent("ACTIONBAR_SLOT_CHANGED", {});
-    }
-
-    // Show "Upgraded to X" only when the new spell wasn't already announced by the
-    // trainer-buy handler.  For non-trainer supersedes (e.g. quest rewards), the new
-    // spell won't be pre-inserted so we still show the message.
-    if (!newSpellAlreadyAnnounced) {
-        const std::string& newName = getSpellName(newSpellId);
-        if (!newName.empty()) {
-            addSystemChatMessage("Upgraded to " + newName);
-        }
-    }
-}
-
-void GameHandler::handleUnlearnSpells(network::Packet& packet) {
-    // Sent when unlearning multiple spells (e.g., spec change, respec)
-    if (!packet.hasRemaining(4)) return;
-    uint32_t spellCount = packet.readUInt32();
-    LOG_INFO("Unlearning ", spellCount, " spells");
-
-    bool barChanged = false;
-    for (uint32_t i = 0; i < spellCount && packet.hasRemaining(4); ++i) {
-        uint32_t spellId = packet.readUInt32();
-        knownSpells.erase(spellId);
-        LOG_INFO("  Unlearned spell: ", spellId);
-        for (auto& slot : actionBar) {
-            if (slot.type == ActionBarSlot::SPELL && slot.id == spellId) {
-                slot = ActionBarSlot{};
-                barChanged = true;
-            }
-        }
-    }
-    if (barChanged) saveCharacterConfig();
-
-    if (spellCount > 0) {
-        addSystemChatMessage("Unlearned " + std::to_string(spellCount) + " spells");
-    }
-}
-
 // ============================================================
 // Talents
 // ============================================================
 
-void GameHandler::handleTalentsInfo(network::Packet& packet) {
-    // SMSG_TALENTS_INFO (WotLK 3.3.5a) correct wire format:
-    // uint8  talentType  (0 = own talents, 1 = inspect result — own talent packets always 0)
-    // uint32 unspentTalents
-    // uint8  talentGroupCount
-    // uint8  activeTalentGroup
-    // Per group: uint8 talentCount, [uint32 talentId + uint8 rank] × count,
-    //            uint8 glyphCount, [uint16 glyphId] × count
-
-    if (!packet.hasRemaining(1)) return;
-    uint8_t talentType = packet.readUInt8();
-    if (talentType != 0) {
-        // type 1 = inspect result; handled by handleInspectResults — ignore here
-        return;
-    }
-    if (!packet.hasRemaining(6)) {
-        LOG_WARNING("handleTalentsInfo: packet too short for header");
-        return;
-    }
-
-    uint32_t unspentTalents    = packet.readUInt32();
-    uint8_t  talentGroupCount  = packet.readUInt8();
-    uint8_t  activeTalentGroup = packet.readUInt8();
-    if (activeTalentGroup > 1) activeTalentGroup = 0;
-
-    // Ensure talent DBCs are loaded
-    loadTalentDbc();
-
-    activeTalentSpec_ = activeTalentGroup;
-
-    for (uint8_t g = 0; g < talentGroupCount && g < 2; ++g) {
-        if (!packet.hasRemaining(1)) break;
-        uint8_t talentCount = packet.readUInt8();
-        learnedTalents_[g].clear();
-        for (uint8_t t = 0; t < talentCount; ++t) {
-            if (!packet.hasRemaining(5)) break;
-            uint32_t talentId = packet.readUInt32();
-            uint8_t  rank     = packet.readUInt8();
-            learnedTalents_[g][talentId] = rank + 1u; // wire sends 0-indexed; store 1-indexed
-        }
-        learnedGlyphs_[g].fill(0);
-        if (!packet.hasRemaining(1)) break;
-        uint8_t glyphCount = packet.readUInt8();
-        for (uint8_t gl = 0; gl < glyphCount; ++gl) {
-            if (!packet.hasRemaining(2)) break;
-            uint16_t glyphId = packet.readUInt16();
-            if (gl < MAX_GLYPH_SLOTS) learnedGlyphs_[g][gl] = glyphId;
-        }
-    }
-
-    unspentTalentPoints_[activeTalentGroup] =
-        static_cast<uint8_t>(unspentTalents > 255 ? 255 : unspentTalents);
-
-    LOG_INFO("handleTalentsInfo: unspent=", unspentTalents,
-             " groups=", static_cast<int>(talentGroupCount), " active=", static_cast<int>(activeTalentGroup),
-             " learned=", learnedTalents_[activeTalentGroup].size());
-
-    // Fire talent-related events for addons
-        fireAddonEvent("CHARACTER_POINTS_CHANGED", {});
-        fireAddonEvent("ACTIVE_TALENT_GROUP_CHANGED", {});
-        fireAddonEvent("PLAYER_TALENT_UPDATE", {});
-
-    if (!talentsInitialized_) {
-        talentsInitialized_ = true;
-        if (unspentTalents > 0) {
-            addSystemChatMessage("You have " + std::to_string(unspentTalents)
-                + " unspent talent point" + (unspentTalents != 1 ? "s" : "") + ".");
-        }
-    }
-}
-
 void GameHandler::learnTalent(uint32_t talentId, uint32_t requestedRank) {
-    if (!isInWorld()) {
-        LOG_WARNING("learnTalent: Not in world or no socket connection");
-        return;
-    }
-
-    LOG_INFO("Requesting to learn talent: id=", talentId, " rank=", requestedRank);
-
-    auto packet = LearnTalentPacket::build(talentId, requestedRank);
-    socket->send(packet);
+    if (spellHandler_) spellHandler_->learnTalent(talentId, requestedRank);
 }
 
 void GameHandler::switchTalentSpec(uint8_t newSpec) {
-    if (newSpec > 1) {
-        LOG_WARNING("Invalid talent spec: ", static_cast<int>(newSpec));
-        return;
-    }
-
-    if (newSpec == activeTalentSpec_) {
-        LOG_INFO("Already on spec ", static_cast<int>(newSpec));
-        return;
-    }
-
-    // Send CMSG_SET_ACTIVE_TALENT_GROUP_OBSOLETE (0x4C3) to the server.
-    // The server will validate the swap, apply the new spec's spells/auras,
-    // and respond with SMSG_TALENTS_INFO for the newly active group.
-    // We optimistically update the local state so the UI reflects the change
-    // immediately; the server response will correct us if needed.
-    if (isInWorld()) {
-        auto pkt = ActivateTalentGroupPacket::build(static_cast<uint32_t>(newSpec));
-        socket->send(pkt);
-        LOG_INFO("Sent CMSG_SET_ACTIVE_TALENT_GROUP_OBSOLETE: group=", static_cast<int>(newSpec));
-    }
-    activeTalentSpec_ = newSpec;
-
-    LOG_INFO("Switched to talent spec ", static_cast<int>(newSpec),
-             " (unspent=", static_cast<int>(unspentTalentPoints_[newSpec]),
-             ", learned=", learnedTalents_[newSpec].size(), ")");
-
-    std::string msg = "Switched to spec " + std::to_string(newSpec + 1);
-    if (unspentTalentPoints_[newSpec] > 0) {
-        msg += " (" + std::to_string(unspentTalentPoints_[newSpec]) + " unspent point";
-        if (unspentTalentPoints_[newSpec] > 1) msg += "s";
-        msg += ")";
-    }
-    addSystemChatMessage(msg);
+    if (spellHandler_) spellHandler_->switchTalentSpec(newSpec);
 }
 
 void GameHandler::confirmPetUnlearn() {
-    if (!petUnlearnPending_) return;
-    petUnlearnPending_ = false;
-    if (!isInWorld()) return;
-
-    // Respond with CMSG_PET_UNLEARN_TALENTS (no payload in 3.3.5a)
-    network::Packet pkt(wireOpcode(Opcode::CMSG_PET_UNLEARN_TALENTS));
-    socket->send(pkt);
-    LOG_INFO("confirmPetUnlearn: sent CMSG_PET_UNLEARN_TALENTS");
-    addSystemChatMessage("Pet talent reset confirmed.");
-    petUnlearnGuid_ = 0;
-    petUnlearnCost_ = 0;
+    if (spellHandler_) spellHandler_->confirmPetUnlearn();
 }
 
 void GameHandler::confirmTalentWipe() {
-    if (!talentWipePending_) return;
-    talentWipePending_ = false;
-
-    if (!isInWorld()) return;
-
-    // Respond to MSG_TALENT_WIPE_CONFIRM with the trainer GUID to trigger the reset.
-    // Packet: opcode(2) + uint64 npcGuid = 10 bytes.
-    network::Packet pkt(wireOpcode(Opcode::MSG_TALENT_WIPE_CONFIRM));
-    pkt.writeUInt64(talentWipeNpcGuid_);
-    socket->send(pkt);
-
-    LOG_INFO("confirmTalentWipe: sent confirm for npc=0x", std::hex, talentWipeNpcGuid_, std::dec);
-    addSystemChatMessage("Talent reset confirmed. The server will update your talents.");
-    talentWipeNpcGuid_ = 0;
-    talentWipeCost_ = 0;
+    if (spellHandler_) spellHandler_->confirmTalentWipe();
 }
 
 void GameHandler::sendAlterAppearance(uint32_t hairStyle, uint32_t hairColor, uint32_t facialHair) {
-    if (!isInWorld()) return;
-    auto pkt = AlterAppearancePacket::build(hairStyle, hairColor, facialHair);
-    socket->send(pkt);
-    LOG_INFO("sendAlterAppearance: hair=", hairStyle, " color=", hairColor, " facial=", facialHair);
+    if (socialHandler_) socialHandler_->sendAlterAppearance(hairStyle, hairColor, facialHair);
 }
 
 // ============================================================
@@ -19168,405 +7812,27 @@ void GameHandler::sendAlterAppearance(uint32_t hairStyle, uint32_t hairColor, ui
 // ============================================================
 
 void GameHandler::inviteToGroup(const std::string& playerName) {
-    if (!isInWorld()) return;
-    auto packet = GroupInvitePacket::build(playerName);
-    socket->send(packet);
-    LOG_INFO("Inviting ", playerName, " to group");
+    if (socialHandler_) socialHandler_->inviteToGroup(playerName);
 }
 
 void GameHandler::acceptGroupInvite() {
-    if (!isInWorld()) return;
-    pendingGroupInvite = false;
-    auto packet = GroupAcceptPacket::build();
-    socket->send(packet);
-    LOG_INFO("Accepted group invite");
+    if (socialHandler_) socialHandler_->acceptGroupInvite();
 }
 
 void GameHandler::declineGroupInvite() {
-    if (!isInWorld()) return;
-    pendingGroupInvite = false;
-    auto packet = GroupDeclinePacket::build();
-    socket->send(packet);
-    LOG_INFO("Declined group invite");
+    if (socialHandler_) socialHandler_->declineGroupInvite();
 }
 
 void GameHandler::leaveGroup() {
-    if (!isInWorld()) return;
-    auto packet = GroupDisbandPacket::build();
-    socket->send(packet);
-    partyData = GroupListData{};
-    LOG_INFO("Left group");
-        fireAddonEvent("GROUP_ROSTER_UPDATE", {});
-        fireAddonEvent("PARTY_MEMBERS_CHANGED", {});
+    if (socialHandler_) socialHandler_->leaveGroup();
 }
 
 void GameHandler::convertToRaid() {
-    if (!isInWorld()) return;
-    if (!isInGroup()) {
-        addSystemChatMessage("You are not in a group.");
-        return;
-    }
-    if (partyData.leaderGuid != getPlayerGuid()) {
-        addSystemChatMessage("You must be the party leader to convert to raid.");
-        return;
-    }
-    if (partyData.groupType == 1) {
-        addSystemChatMessage("You are already in a raid group.");
-        return;
-    }
-    auto packet = GroupRaidConvertPacket::build();
-    socket->send(packet);
-    LOG_INFO("Sent CMSG_GROUP_RAID_CONVERT");
+    if (socialHandler_) socialHandler_->convertToRaid();
 }
 
 void GameHandler::sendSetLootMethod(uint32_t method, uint32_t threshold, uint64_t masterLooterGuid) {
-    if (!isInWorld()) return;
-    auto packet = SetLootMethodPacket::build(method, threshold, masterLooterGuid);
-    socket->send(packet);
-    LOG_INFO("sendSetLootMethod: method=", method, " threshold=", threshold);
-}
-
-void GameHandler::handleGroupInvite(network::Packet& packet) {
-    GroupInviteResponseData data;
-    if (!GroupInviteResponseParser::parse(packet, data)) return;
-
-    pendingGroupInvite = true;
-    pendingInviterName = data.inviterName;
-    LOG_INFO("Group invite from: ", data.inviterName);
-    if (!data.inviterName.empty()) {
-        addSystemChatMessage(data.inviterName + " has invited you to a group.");
-    }
-    withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playTargetSelect(); });
-            fireAddonEvent("PARTY_INVITE_REQUEST", {data.inviterName});
-}
-
-void GameHandler::handleGroupDecline(network::Packet& packet) {
-    GroupDeclineData data;
-    if (!GroupDeclineResponseParser::parse(packet, data)) return;
-
-    MessageChatData msg;
-    msg.type = ChatType::SYSTEM;
-    msg.language = ChatLanguage::UNIVERSAL;
-    msg.message = data.playerName + " has declined your group invitation.";
-    addLocalChatMessage(msg);
-}
-
-void GameHandler::handleGroupList(network::Packet& packet) {
-    // WotLK 3.3.5a added a roles byte (group level + per-member) for the dungeon finder.
-    // Classic 1.12 and TBC 2.4.3 do not send the roles byte.
-    const bool hasRoles = isActiveExpansion("wotlk");
-    // Snapshot state before reset so we can detect transitions.
-    const uint32_t prevCount = partyData.memberCount;
-    const uint8_t prevLootMethod = partyData.lootMethod;
-    const bool wasInGroup = !partyData.isEmpty();
-    // Reset before parsing — SMSG_GROUP_LIST is a full replacement, not a delta.
-    // Without this, repeated GROUP_LIST packets push duplicate members.
-    partyData = GroupListData{};
-    if (!GroupListParser::parse(packet, partyData, hasRoles)) return;
-
-    const bool nowInGroup = !partyData.isEmpty();
-    if (!nowInGroup && wasInGroup) {
-        LOG_INFO("No longer in a group");
-        addSystemChatMessage("You are no longer in a group.");
-    } else if (nowInGroup && !wasInGroup) {
-        LOG_INFO("Joined group with ", partyData.memberCount, " members");
-        addSystemChatMessage("You are now in a group.");
-    } else if (nowInGroup && partyData.memberCount != prevCount) {
-        LOG_INFO("Group updated: ", partyData.memberCount, " members");
-    }
-    // Loot method change notification
-    if (wasInGroup && nowInGroup && partyData.lootMethod != prevLootMethod) {
-        static const char* kLootMethods[] = {
-            "Free for All", "Round Robin", "Master Looter", "Group Loot", "Need Before Greed"
-        };
-        const char* methodName = (partyData.lootMethod < 5) ? kLootMethods[partyData.lootMethod] : "Unknown";
-        addSystemChatMessage(std::string("Loot method changed to ") + methodName + ".");
-    }
-    // Fire GROUP_ROSTER_UPDATE / PARTY_MEMBERS_CHANGED / RAID_ROSTER_UPDATE for Lua addons
-    if (addonEventCallback_) {
-        fireAddonEvent("GROUP_ROSTER_UPDATE", {});
-        fireAddonEvent("PARTY_MEMBERS_CHANGED", {});
-        if (partyData.groupType == 1)
-            fireAddonEvent("RAID_ROSTER_UPDATE", {});
-    }
-}
-
-void GameHandler::handleGroupUninvite(network::Packet& packet) {
-    (void)packet;
-    partyData = GroupListData{};
-    LOG_INFO("Removed from group");
-
-        fireAddonEvent("GROUP_ROSTER_UPDATE", {});
-        fireAddonEvent("PARTY_MEMBERS_CHANGED", {});
-        fireAddonEvent("RAID_ROSTER_UPDATE", {});
-
-    MessageChatData msg;
-    msg.type = ChatType::SYSTEM;
-    msg.language = ChatLanguage::UNIVERSAL;
-    msg.message = "You have been removed from the group.";
-    addUIError("You have been removed from the group.");
-    addLocalChatMessage(msg);
-}
-
-void GameHandler::handlePartyCommandResult(network::Packet& packet) {
-    PartyCommandResultData data;
-    if (!PartyCommandResultParser::parse(packet, data)) return;
-
-    if (data.result != PartyResult::OK) {
-        const char* errText = nullptr;
-        switch (data.result) {
-            case PartyResult::BAD_PLAYER_NAME:       errText = "No player named \"%s\" is currently online."; break;
-            case PartyResult::TARGET_NOT_IN_GROUP:   errText = "%s is not in your group."; break;
-            case PartyResult::TARGET_NOT_IN_INSTANCE:errText = "%s is not in your instance."; break;
-            case PartyResult::GROUP_FULL:            errText = "Your party is full."; break;
-            case PartyResult::ALREADY_IN_GROUP:      errText = "%s is already in a group."; break;
-            case PartyResult::NOT_IN_GROUP:          errText = "You are not in a group."; break;
-            case PartyResult::NOT_LEADER:            errText = "You are not the group leader."; break;
-            case PartyResult::PLAYER_WRONG_FACTION:  errText = "%s is the wrong faction for this group."; break;
-            case PartyResult::IGNORING_YOU:          errText = "%s is ignoring you."; break;
-            case PartyResult::LFG_PENDING:           errText = "You cannot do that while in a LFG queue."; break;
-            case PartyResult::INVITE_RESTRICTED:     errText = "Target is not accepting group invites."; break;
-            default:                                 errText = "Party command failed."; break;
-        }
-
-        char buf[256];
-        if (!data.name.empty() && errText && std::strstr(errText, "%s")) {
-            std::snprintf(buf, sizeof(buf), errText, data.name.c_str());
-        } else if (errText) {
-            std::snprintf(buf, sizeof(buf), "%s", errText);
-        } else {
-            std::snprintf(buf, sizeof(buf), "Party command failed (error %u).",
-                          static_cast<uint32_t>(data.result));
-        }
-
-        addUIError(buf);
-        MessageChatData msg;
-        msg.type = ChatType::SYSTEM;
-        msg.language = ChatLanguage::UNIVERSAL;
-        msg.message = buf;
-        addLocalChatMessage(msg);
-    }
-}
-
-void GameHandler::handlePartyMemberStats(network::Packet& packet, bool isFull) {
-    auto remaining = [&]() { return packet.getRemainingSize(); };
-
-    // Classic/TBC use uint16 for health fields and simpler aura format;
-    // WotLK uses uint32 health and uint32+uint8 per aura.
-    const bool isWotLK = isActiveExpansion("wotlk");
-
-    // SMSG_PARTY_MEMBER_STATS_FULL has a leading padding byte
-    if (isFull) {
-        if (remaining() < 1) return;
-        packet.readUInt8();
-    }
-
-    // WotLK and Classic/Vanilla use packed GUID; TBC uses full uint64
-    // (Classic uses ObjectGuid::WriteAsPacked() = packed format, same as WotLK)
-    const bool pmsTbc = isActiveExpansion("tbc");
-    if (remaining() < (pmsTbc ? 8u : 1u)) return;
-    uint64_t memberGuid = pmsTbc
-        ? packet.readUInt64() : packet.readPackedGuid();
-    if (remaining() < 4) return;
-    uint32_t updateFlags = packet.readUInt32();
-
-    // Find matching group member
-    game::GroupMember* member = nullptr;
-    for (auto& m : partyData.members) {
-        if (m.guid == memberGuid) {
-            member = &m;
-            break;
-        }
-    }
-    if (!member) {
-        packet.skipAll();
-        return;
-    }
-
-    // Parse each flag field in order
-    if (updateFlags & 0x0001) { // STATUS
-        if (remaining() >= 2)
-            member->onlineStatus = packet.readUInt16();
-    }
-    if (updateFlags & 0x0002) { // CUR_HP
-        if (isWotLK) {
-            if (remaining() >= 4)
-                member->curHealth = packet.readUInt32();
-        } else {
-            if (remaining() >= 2)
-                member->curHealth = packet.readUInt16();
-        }
-    }
-    if (updateFlags & 0x0004) { // MAX_HP
-        if (isWotLK) {
-            if (remaining() >= 4)
-                member->maxHealth = packet.readUInt32();
-        } else {
-            if (remaining() >= 2)
-                member->maxHealth = packet.readUInt16();
-        }
-    }
-    if (updateFlags & 0x0008) { // POWER_TYPE
-        if (remaining() >= 1)
-            member->powerType = packet.readUInt8();
-    }
-    if (updateFlags & 0x0010) { // CUR_POWER
-        if (remaining() >= 2)
-            member->curPower = packet.readUInt16();
-    }
-    if (updateFlags & 0x0020) { // MAX_POWER
-        if (remaining() >= 2)
-            member->maxPower = packet.readUInt16();
-    }
-    if (updateFlags & 0x0040) { // LEVEL
-        if (remaining() >= 2)
-            member->level = packet.readUInt16();
-    }
-    if (updateFlags & 0x0080) { // ZONE
-        if (remaining() >= 2)
-            member->zoneId = packet.readUInt16();
-    }
-    if (updateFlags & 0x0100) { // POSITION
-        if (remaining() >= 4) {
-            member->posX = static_cast<int16_t>(packet.readUInt16());
-            member->posY = static_cast<int16_t>(packet.readUInt16());
-        }
-    }
-    if (updateFlags & 0x0200) { // AURAS
-        if (remaining() >= 8) {
-            uint64_t auraMask = packet.readUInt64();
-            // Collect aura updates for this member and store in unitAurasCache_
-            // so party frame debuff dots can use them.
-            std::vector<AuraSlot> newAuras;
-            for (int i = 0; i < 64; ++i) {
-                if (auraMask & (uint64_t(1) << i)) {
-                    AuraSlot a;
-                    a.level = static_cast<uint8_t>(i);  // use slot index
-                    if (isWotLK) {
-                        // WotLK: uint32 spellId + uint8 auraFlags
-                        if (remaining() < 5) break;
-                        a.spellId = packet.readUInt32();
-                        a.flags   = packet.readUInt8();
-                    } else {
-                        // Classic/TBC: uint16 spellId only; negative auras not indicated here
-                        if (remaining() < 2) break;
-                        a.spellId = packet.readUInt16();
-                        // Infer negative/positive from dispel type: non-zero dispel → debuff
-                        uint8_t dt = getSpellDispelType(a.spellId);
-                        if (dt > 0) a.flags = 0x80; // mark as debuff
-                    }
-                    if (a.spellId != 0) newAuras.push_back(a);
-                }
-            }
-            // Populate unitAurasCache_ for this member (merge: keep existing per-GUID data
-            // only if we already have a richer source; otherwise replace with stats data)
-            if (memberGuid != 0 && memberGuid != playerGuid && memberGuid != targetGuid) {
-                unitAurasCache_[memberGuid] = std::move(newAuras);
-            }
-        }
-    }
-    if (updateFlags & 0x0400) { // PET_GUID
-        if (remaining() >= 8)
-            packet.readUInt64();
-    }
-    if (updateFlags & 0x0800) { // PET_NAME
-        if (remaining() > 0)
-            packet.readString();
-    }
-    if (updateFlags & 0x1000) { // PET_MODEL_ID
-        if (remaining() >= 2)
-            packet.readUInt16();
-    }
-    if (updateFlags & 0x2000) { // PET_CUR_HP
-        if (isWotLK) {
-            if (remaining() >= 4)
-                packet.readUInt32();
-        } else {
-            if (remaining() >= 2)
-                packet.readUInt16();
-        }
-    }
-    if (updateFlags & 0x4000) { // PET_MAX_HP
-        if (isWotLK) {
-            if (remaining() >= 4)
-                packet.readUInt32();
-        } else {
-            if (remaining() >= 2)
-                packet.readUInt16();
-        }
-    }
-    if (updateFlags & 0x8000) { // PET_POWER_TYPE
-        if (remaining() >= 1)
-            packet.readUInt8();
-    }
-    if (updateFlags & 0x10000) { // PET_CUR_POWER
-        if (remaining() >= 2)
-            packet.readUInt16();
-    }
-    if (updateFlags & 0x20000) { // PET_MAX_POWER
-        if (remaining() >= 2)
-            packet.readUInt16();
-    }
-    if (updateFlags & 0x40000) { // PET_AURAS
-        if (remaining() >= 8) {
-            uint64_t petAuraMask = packet.readUInt64();
-            for (int i = 0; i < 64; ++i) {
-                if (petAuraMask & (uint64_t(1) << i)) {
-                    if (isWotLK) {
-                        if (remaining() < 5) break;
-                        packet.readUInt32();
-                        packet.readUInt8();
-                    } else {
-                        if (remaining() < 2) break;
-                        packet.readUInt16();
-                    }
-                }
-            }
-        }
-    }
-    if (isWotLK && (updateFlags & 0x80000)) { // VEHICLE_SEAT (WotLK only)
-        if (remaining() >= 4)
-            packet.readUInt32();
-    }
-
-    member->hasPartyStats = true;
-    LOG_DEBUG("Party member stats for ", member->name,
-              ": HP=", member->curHealth, "/", member->maxHealth,
-              " Level=", member->level);
-
-    // Fire addon events for party/raid member health/power/aura changes
-    if (addonEventCallback_) {
-        // Resolve unit ID for this member (party1..4 or raid1..40)
-        std::string unitId;
-        if (partyData.groupType == 1) {
-            // Raid: find 1-based index
-            for (size_t i = 0; i < partyData.members.size(); ++i) {
-                if (partyData.members[i].guid == memberGuid) {
-                    unitId = "raid" + std::to_string(i + 1);
-                    break;
-                }
-            }
-        } else {
-            // Party: find 1-based index excluding self
-            int found = 0;
-            for (const auto& m : partyData.members) {
-                if (m.guid == playerGuid) continue;
-                ++found;
-                if (m.guid == memberGuid) {
-                    unitId = "party" + std::to_string(found);
-                    break;
-                }
-            }
-        }
-        if (!unitId.empty()) {
-            if (updateFlags & (0x0002 | 0x0004)) // CUR_HP or MAX_HP
-                fireAddonEvent("UNIT_HEALTH", {unitId});
-            if (updateFlags & (0x0010 | 0x0020)) // CUR_POWER or MAX_POWER
-                fireAddonEvent("UNIT_POWER", {unitId});
-            if (updateFlags & 0x0200) // AURAS
-                fireAddonEvent("UNIT_AURA", {unitId});
-        }
-    }
+    if (socialHandler_) socialHandler_->sendSetLootMethod(method, threshold, masterLooterGuid);
 }
 
 // ============================================================
@@ -19574,535 +7840,88 @@ void GameHandler::handlePartyMemberStats(network::Packet& packet, bool isFull) {
 // ============================================================
 
 void GameHandler::kickGuildMember(const std::string& playerName) {
-    if (!isInWorld()) return;
-    auto packet = GuildRemovePacket::build(playerName);
-    socket->send(packet);
-    LOG_INFO("Kicking guild member: ", playerName);
+    if (socialHandler_) socialHandler_->kickGuildMember(playerName);
 }
 
 void GameHandler::disbandGuild() {
-    if (!isInWorld()) return;
-    auto packet = GuildDisbandPacket::build();
-    socket->send(packet);
-    LOG_INFO("Disbanding guild");
+    if (socialHandler_) socialHandler_->disbandGuild();
 }
 
 void GameHandler::setGuildLeader(const std::string& name) {
-    if (!isInWorld()) return;
-    auto packet = GuildLeaderPacket::build(name);
-    socket->send(packet);
-    LOG_INFO("Setting guild leader: ", name);
+    if (socialHandler_) socialHandler_->setGuildLeader(name);
 }
 
 void GameHandler::setGuildPublicNote(const std::string& name, const std::string& note) {
-    if (!isInWorld()) return;
-    auto packet = GuildSetPublicNotePacket::build(name, note);
-    socket->send(packet);
-    LOG_INFO("Setting public note for ", name, ": ", note);
+    if (socialHandler_) socialHandler_->setGuildPublicNote(name, note);
 }
 
 void GameHandler::setGuildOfficerNote(const std::string& name, const std::string& note) {
-    if (!isInWorld()) return;
-    auto packet = GuildSetOfficerNotePacket::build(name, note);
-    socket->send(packet);
-    LOG_INFO("Setting officer note for ", name, ": ", note);
+    if (socialHandler_) socialHandler_->setGuildOfficerNote(name, note);
 }
 
 void GameHandler::acceptGuildInvite() {
-    if (!isInWorld()) return;
-    pendingGuildInvite_ = false;
-    auto packet = GuildAcceptPacket::build();
-    socket->send(packet);
-    LOG_INFO("Accepted guild invite");
+    if (socialHandler_) socialHandler_->acceptGuildInvite();
 }
 
 void GameHandler::declineGuildInvite() {
-    if (!isInWorld()) return;
-    pendingGuildInvite_ = false;
-    auto packet = GuildDeclineInvitationPacket::build();
-    socket->send(packet);
-    LOG_INFO("Declined guild invite");
+    if (socialHandler_) socialHandler_->declineGuildInvite();
 }
 
 void GameHandler::submitGmTicket(const std::string& text) {
-    if (!isInWorld()) return;
-
-    // CMSG_GMTICKET_CREATE (WotLK 3.3.5a):
-    // string   ticket_text
-    // float[3] position (server coords)
-    // float    facing
-    // uint32   mapId
-    // uint8    need_response (1 = yes)
-    network::Packet pkt(wireOpcode(Opcode::CMSG_GMTICKET_CREATE));
-    pkt.writeString(text);
-    pkt.writeFloat(movementInfo.x);
-    pkt.writeFloat(movementInfo.y);
-    pkt.writeFloat(movementInfo.z);
-    pkt.writeFloat(movementInfo.orientation);
-    pkt.writeUInt32(currentMapId_);
-    pkt.writeUInt8(1);  // need_response = yes
-    socket->send(pkt);
-    LOG_INFO("Submitted GM ticket: '", text, "'");
+    if (chatHandler_) chatHandler_->submitGmTicket(text);
 }
 
 void GameHandler::deleteGmTicket() {
-    if (!isInWorld()) return;
-    network::Packet pkt(wireOpcode(Opcode::CMSG_GMTICKET_DELETETICKET));
-    socket->send(pkt);
-    gmTicketActive_ = false;
-    gmTicketText_.clear();
-    LOG_INFO("Deleting GM ticket");
+    if (socialHandler_) socialHandler_->deleteGmTicket();
 }
 
 void GameHandler::requestGmTicket() {
-    if (!isInWorld()) return;
-    // CMSG_GMTICKET_GETTICKET has no payload — server responds with SMSG_GMTICKET_GETTICKET
-    network::Packet pkt(wireOpcode(Opcode::CMSG_GMTICKET_GETTICKET));
-    socket->send(pkt);
-    LOG_DEBUG("Sent CMSG_GMTICKET_GETTICKET — querying open ticket status");
+    if (socialHandler_) socialHandler_->requestGmTicket();
 }
 
 void GameHandler::queryGuildInfo(uint32_t guildId) {
-    if (!isInWorld()) return;
-    auto packet = GuildQueryPacket::build(guildId);
-    socket->send(packet);
-    LOG_INFO("Querying guild info: guildId=", guildId);
+    if (socialHandler_) socialHandler_->queryGuildInfo(guildId);
 }
 
 static const std::string kEmptyString;
 
 const std::string& GameHandler::lookupGuildName(uint32_t guildId) {
-    if (guildId == 0) return kEmptyString;
-    auto it = guildNameCache_.find(guildId);
-    if (it != guildNameCache_.end()) return it->second;
-    // Query the server if we haven't already
-    if (pendingGuildNameQueries_.insert(guildId).second) {
-        queryGuildInfo(guildId);
-    }
-    return kEmptyString;
+    static const std::string kEmpty;
+    if (socialHandler_) return socialHandler_->lookupGuildName(guildId);
+    return kEmpty;
 }
 
 uint32_t GameHandler::getEntityGuildId(uint64_t guid) const {
-    auto entity = entityManager.getEntity(guid);
-    if (!entity || entity->getType() != ObjectType::PLAYER) return 0;
-    // PLAYER_GUILDID = UNIT_END + 3 across all expansions
-    const uint16_t ufUnitEnd = fieldIndex(UF::UNIT_END);
-    if (ufUnitEnd == 0xFFFF) return 0;
-    return entity->getField(ufUnitEnd + 3);
+    if (socialHandler_) return socialHandler_->getEntityGuildId(guid);
+    return 0;
 }
 
 void GameHandler::createGuild(const std::string& guildName) {
-    if (!isInWorld()) return;
-    auto packet = GuildCreatePacket::build(guildName);
-    socket->send(packet);
-    LOG_INFO("Creating guild: ", guildName);
+    if (socialHandler_) socialHandler_->createGuild(guildName);
 }
 
 void GameHandler::addGuildRank(const std::string& rankName) {
-    if (!isInWorld()) return;
-    auto packet = GuildAddRankPacket::build(rankName);
-    socket->send(packet);
-    LOG_INFO("Adding guild rank: ", rankName);
-    // Refresh roster to update rank list
-    requestGuildRoster();
+    if (socialHandler_) socialHandler_->addGuildRank(rankName);
 }
 
 void GameHandler::deleteGuildRank() {
-    if (!isInWorld()) return;
-    auto packet = GuildDelRankPacket::build();
-    socket->send(packet);
-    LOG_INFO("Deleting last guild rank");
-    // Refresh roster to update rank list
-    requestGuildRoster();
+    if (socialHandler_) socialHandler_->deleteGuildRank();
 }
 
 void GameHandler::requestPetitionShowlist(uint64_t npcGuid) {
-    if (!isInWorld()) return;
-    auto packet = PetitionShowlistPacket::build(npcGuid);
-    socket->send(packet);
+    if (socialHandler_) socialHandler_->requestPetitionShowlist(npcGuid);
 }
 
 void GameHandler::buyPetition(uint64_t npcGuid, const std::string& guildName) {
-    if (!isInWorld()) return;
-    auto packet = PetitionBuyPacket::build(npcGuid, guildName);
-    socket->send(packet);
-    LOG_INFO("Buying guild petition: ", guildName);
-}
-
-void GameHandler::handlePetitionShowlist(network::Packet& packet) {
-    PetitionShowlistData data;
-    if (!PetitionShowlistParser::parse(packet, data)) return;
-
-    petitionNpcGuid_ = data.npcGuid;
-    petitionCost_ = data.cost;
-    showPetitionDialog_ = true;
-    LOG_INFO("Petition showlist: cost=", data.cost);
-}
-
-void GameHandler::handlePetitionQueryResponse(network::Packet& packet) {
-    // SMSG_PETITION_QUERY_RESPONSE (3.3.5a):
-    //   uint32 petitionEntry, uint64 petitionGuid, string guildName,
-    //   string bodyText (empty), uint32 flags, uint32 minSignatures,
-    //   uint32 maxSignatures, ...plus more fields we can skip
-    auto rem = [&]() { return packet.getRemainingSize(); };
-    if (rem() < 12) return;
-
-    /*uint32_t entry =*/ packet.readUInt32();
-    uint64_t petGuid  = packet.readUInt64();
-    std::string guildName = packet.readString();
-    /*std::string body =*/ packet.readString();
-
-    // Update petition info if it matches our current petition
-    if (petitionInfo_.petitionGuid == petGuid) {
-        petitionInfo_.guildName = guildName;
-    }
-
-    LOG_INFO("SMSG_PETITION_QUERY_RESPONSE: guid=", petGuid, " name=", guildName);
-    packet.skipAll(); // skip remaining fields
-}
-
-void GameHandler::handlePetitionShowSignatures(network::Packet& packet) {
-    // SMSG_PETITION_SHOW_SIGNATURES (3.3.5a):
-    //   uint64 itemGuid (petition item in inventory)
-    //   uint64 ownerGuid
-    //   uint32 petitionGuid (low part / entry)
-    //   uint8  signatureCount
-    //   For each signature:
-    //     uint64 playerGuid
-    //     uint32 unk (always 0)
-    auto rem = [&]() { return packet.getRemainingSize(); };
-    if (rem() < 21) return;
-
-    petitionInfo_ = PetitionInfo{};
-    petitionInfo_.petitionGuid = packet.readUInt64();
-    petitionInfo_.ownerGuid    = packet.readUInt64();
-    /*uint32_t petEntry =*/     packet.readUInt32();
-    uint8_t sigCount           = packet.readUInt8();
-
-    petitionInfo_.signatureCount = sigCount;
-    petitionInfo_.signatures.reserve(sigCount);
-
-    for (uint8_t i = 0; i < sigCount; ++i) {
-        if (rem() < 12) break;
-        PetitionSignature sig;
-        sig.playerGuid = packet.readUInt64();
-        /*uint32_t unk =*/ packet.readUInt32();
-        petitionInfo_.signatures.push_back(sig);
-    }
-
-    petitionInfo_.showUI = true;
-    LOG_INFO("SMSG_PETITION_SHOW_SIGNATURES: petGuid=", petitionInfo_.petitionGuid,
-             " owner=", petitionInfo_.ownerGuid,
-             " sigs=", sigCount);
-}
-
-void GameHandler::handlePetitionSignResults(network::Packet& packet) {
-    // SMSG_PETITION_SIGN_RESULTS (3.3.5a):
-    //   uint64 petitionGuid, uint64 playerGuid, uint32 result
-    auto rem = [&]() { return packet.getRemainingSize(); };
-    if (rem() < 20) return;
-
-    uint64_t petGuid    = packet.readUInt64();
-    uint64_t playerGuid = packet.readUInt64();
-    uint32_t result     = packet.readUInt32();
-
-    switch (result) {
-        case 0: // PETITION_SIGN_OK
-            addSystemChatMessage("Petition signed successfully.");
-            // Increment local count
-            if (petitionInfo_.petitionGuid == petGuid) {
-                petitionInfo_.signatureCount++;
-                PetitionSignature sig;
-                sig.playerGuid = playerGuid;
-                petitionInfo_.signatures.push_back(sig);
-            }
-            break;
-        case 1: // PETITION_SIGN_ALREADY_SIGNED
-            addSystemChatMessage("You have already signed that petition.");
-            break;
-        case 2: // PETITION_SIGN_ALREADY_IN_GUILD
-            addSystemChatMessage("You are already in a guild.");
-            break;
-        case 3: // PETITION_SIGN_CANT_SIGN_OWN
-            addSystemChatMessage("You cannot sign your own petition.");
-            break;
-        default:
-            addSystemChatMessage("Cannot sign petition (error " + std::to_string(result) + ").");
-            break;
-    }
-    LOG_INFO("SMSG_PETITION_SIGN_RESULTS: pet=", petGuid, " player=", playerGuid,
-             " result=", result);
+    if (socialHandler_) socialHandler_->buyPetition(npcGuid, guildName);
 }
 
 void GameHandler::signPetition(uint64_t petitionGuid) {
-    if (!socket || state != WorldState::IN_WORLD) return;
-    network::Packet pkt(wireOpcode(Opcode::CMSG_PETITION_SIGN));
-    pkt.writeUInt64(petitionGuid);
-    pkt.writeUInt8(0); // unk
-    socket->send(pkt);
-    LOG_INFO("Signing petition: ", petitionGuid);
+    if (socialHandler_) socialHandler_->signPetition(petitionGuid);
 }
 
 void GameHandler::turnInPetition(uint64_t petitionGuid) {
-    if (!socket || state != WorldState::IN_WORLD) return;
-    network::Packet pkt(wireOpcode(Opcode::CMSG_TURN_IN_PETITION));
-    pkt.writeUInt64(petitionGuid);
-    socket->send(pkt);
-    LOG_INFO("Turning in petition: ", petitionGuid);
-}
-
-void GameHandler::handleTurnInPetitionResults(network::Packet& packet) {
-    uint32_t result = 0;
-    if (!TurnInPetitionResultsParser::parse(packet, result)) return;
-
-    switch (result) {
-        case 0: addSystemChatMessage("Guild created successfully!"); break;
-        case 1: addSystemChatMessage("Guild creation failed: already in a guild."); break;
-        case 2: addSystemChatMessage("Guild creation failed: not enough signatures."); break;
-        case 3: addSystemChatMessage("Guild creation failed: name already taken."); break;
-        default: addSystemChatMessage("Guild creation failed (error " + std::to_string(result) + ")."); break;
-    }
-}
-
-void GameHandler::handleGuildInfo(network::Packet& packet) {
-    GuildInfoData data;
-    if (!GuildInfoParser::parse(packet, data)) return;
-
-    guildInfoData_ = data;
-    addSystemChatMessage("Guild: " + data.guildName + " (" +
-                         std::to_string(data.numMembers) + " members, " +
-                         std::to_string(data.numAccounts) + " accounts)");
-}
-
-void GameHandler::handleGuildRoster(network::Packet& packet) {
-    GuildRosterData data;
-    if (!packetParsers_->parseGuildRoster(packet, data)) return;
-
-    guildRoster_ = std::move(data);
-    hasGuildRoster_ = true;
-    LOG_INFO("Guild roster received: ", guildRoster_.members.size(), " members");
-    fireAddonEvent("GUILD_ROSTER_UPDATE", {});
-}
-
-void GameHandler::handleGuildQueryResponse(network::Packet& packet) {
-    GuildQueryResponseData data;
-    if (!packetParsers_->parseGuildQueryResponse(packet, data)) return;
-
-    // Always cache the guild name for nameplate lookups
-    if (data.guildId != 0 && !data.guildName.empty()) {
-        guildNameCache_[data.guildId] = data.guildName;
-        pendingGuildNameQueries_.erase(data.guildId);
-    }
-
-    // Check if this is the local player's guild
-    const Character* ch = getActiveCharacter();
-    bool isLocalGuild = (ch && ch->hasGuild() && ch->guildId == data.guildId);
-
-    if (isLocalGuild) {
-        const bool wasUnknown = guildName_.empty();
-        guildName_ = data.guildName;
-        guildQueryData_ = data;
-        guildRankNames_.clear();
-        for (uint32_t i = 0; i < 10; ++i) {
-            guildRankNames_.push_back(data.rankNames[i]);
-        }
-        LOG_INFO("Guild name set to: ", guildName_);
-        if (wasUnknown && !guildName_.empty()) {
-            addSystemChatMessage("Guild: <" + guildName_ + ">");
-            fireAddonEvent("PLAYER_GUILD_UPDATE", {});
-        }
-    } else {
-        LOG_INFO("Cached guild name: id=", data.guildId, " name=", data.guildName);
-    }
-}
-
-void GameHandler::handleGuildEvent(network::Packet& packet) {
-    GuildEventData data;
-    if (!GuildEventParser::parse(packet, data)) return;
-
-    std::string msg;
-    switch (data.eventType) {
-        case GuildEvent::PROMOTION:
-            if (data.numStrings >= 3)
-                msg = data.strings[0] + " has promoted " + data.strings[1] + " to " + data.strings[2] + ".";
-            break;
-        case GuildEvent::DEMOTION:
-            if (data.numStrings >= 3)
-                msg = data.strings[0] + " has demoted " + data.strings[1] + " to " + data.strings[2] + ".";
-            break;
-        case GuildEvent::MOTD:
-            if (data.numStrings >= 1)
-                msg = "Guild MOTD: " + data.strings[0];
-            break;
-        case GuildEvent::JOINED:
-            if (data.numStrings >= 1)
-                msg = data.strings[0] + " has joined the guild.";
-            break;
-        case GuildEvent::LEFT:
-            if (data.numStrings >= 1)
-                msg = data.strings[0] + " has left the guild.";
-            break;
-        case GuildEvent::REMOVED:
-            if (data.numStrings >= 2)
-                msg = data.strings[1] + " has been kicked from the guild by " + data.strings[0] + ".";
-            break;
-        case GuildEvent::LEADER_IS:
-            if (data.numStrings >= 1)
-                msg = data.strings[0] + " is the guild leader.";
-            break;
-        case GuildEvent::LEADER_CHANGED:
-            if (data.numStrings >= 2)
-                msg = data.strings[0] + " has made " + data.strings[1] + " the new guild leader.";
-            break;
-        case GuildEvent::DISBANDED:
-            msg = "Guild has been disbanded.";
-            guildName_.clear();
-            guildRankNames_.clear();
-            guildRoster_ = GuildRosterData{};
-            hasGuildRoster_ = false;
-            fireAddonEvent("PLAYER_GUILD_UPDATE", {});
-            break;
-        case GuildEvent::SIGNED_ON:
-            if (data.numStrings >= 1)
-                msg = "[Guild] " + data.strings[0] + " has come online.";
-            break;
-        case GuildEvent::SIGNED_OFF:
-            if (data.numStrings >= 1)
-                msg = "[Guild] " + data.strings[0] + " has gone offline.";
-            break;
-        default:
-            msg = "Guild event " + std::to_string(data.eventType);
-            break;
-    }
-
-    if (!msg.empty()) {
-        MessageChatData chatMsg;
-        chatMsg.type = ChatType::GUILD;
-        chatMsg.language = ChatLanguage::UNIVERSAL;
-        chatMsg.message = msg;
-        addLocalChatMessage(chatMsg);
-    }
-
-    // Fire addon events for guild state changes
-    if (addonEventCallback_) {
-        switch (data.eventType) {
-            case GuildEvent::MOTD:
-                fireAddonEvent("GUILD_MOTD", {data.numStrings >= 1 ? data.strings[0] : ""});
-                break;
-            case GuildEvent::SIGNED_ON:
-            case GuildEvent::SIGNED_OFF:
-            case GuildEvent::PROMOTION:
-            case GuildEvent::DEMOTION:
-            case GuildEvent::JOINED:
-            case GuildEvent::LEFT:
-            case GuildEvent::REMOVED:
-            case GuildEvent::LEADER_CHANGED:
-            case GuildEvent::DISBANDED:
-                fireAddonEvent("GUILD_ROSTER_UPDATE", {});
-                break;
-            default:
-                break;
-        }
-    }
-
-    // Auto-refresh roster after membership/rank changes
-    switch (data.eventType) {
-        case GuildEvent::PROMOTION:
-        case GuildEvent::DEMOTION:
-        case GuildEvent::JOINED:
-        case GuildEvent::LEFT:
-        case GuildEvent::REMOVED:
-        case GuildEvent::LEADER_CHANGED:
-            if (hasGuildRoster_) requestGuildRoster();
-            break;
-        default:
-            break;
-    }
-}
-
-void GameHandler::handleGuildInvite(network::Packet& packet) {
-    GuildInviteResponseData data;
-    if (!GuildInviteResponseParser::parse(packet, data)) return;
-
-    pendingGuildInvite_ = true;
-    pendingGuildInviterName_ = data.inviterName;
-    pendingGuildInviteGuildName_ = data.guildName;
-    LOG_INFO("Guild invite from: ", data.inviterName, " to guild: ", data.guildName);
-    addSystemChatMessage(data.inviterName + " has invited you to join " + data.guildName + ".");
-            fireAddonEvent("GUILD_INVITE_REQUEST", {data.inviterName, data.guildName});
-}
-
-void GameHandler::handleGuildCommandResult(network::Packet& packet) {
-    GuildCommandResultData data;
-    if (!GuildCommandResultParser::parse(packet, data)) return;
-
-    // command: 0=CREATE, 1=INVITE, 2=QUIT, 3=FOUNDER
-    if (data.errorCode == 0) {
-        switch (data.command) {
-            case 0: // CREATE
-                addSystemChatMessage("Guild created.");
-                break;
-            case 1: // INVITE — invited another player
-                if (!data.name.empty())
-                    addSystemChatMessage("You have invited " + data.name + " to the guild.");
-                break;
-            case 2: // QUIT — player successfully left
-                addSystemChatMessage("You have left the guild.");
-                guildName_.clear();
-                guildRankNames_.clear();
-                guildRoster_ = GuildRosterData{};
-                hasGuildRoster_ = false;
-                break;
-            default:
-                break;
-        }
-        return;
-    }
-
-    // Error codes from AzerothCore SharedDefines.h GuildCommandError
-    const char* errStr = nullptr;
-    switch (data.errorCode) {
-        case 2:  errStr = "You are not in a guild."; break;
-        case 3:  errStr = "That player is not in a guild."; break;
-        case 4:  errStr = "No player named \"%s\" is online."; break;
-        case 7:  errStr = "You are the guild leader."; break;
-        case 8:  errStr = "You must transfer leadership before leaving."; break;
-        case 11: errStr = "\"%s\" is already in a guild."; break;
-        case 13: errStr = "You are already in a guild."; break;
-        case 14: errStr = "\"%s\" has already been invited to a guild."; break;
-        case 15: errStr = "You cannot invite yourself."; break;
-        case 16:
-        case 17: errStr = "You are not the guild leader."; break;
-        case 18: errStr = "That player's rank is too high to remove."; break;
-        case 19: errStr = "You cannot remove someone with a higher rank."; break;
-        case 20: errStr = "Guild ranks are locked."; break;
-        case 21: errStr = "That rank is in use."; break;
-        case 22: errStr = "That player is ignoring you."; break;
-        case 25: errStr = "Insufficient guild bank withdrawal quota."; break;
-        case 26: errStr = "Guild doesn't have enough money."; break;
-        case 28: errStr = "Guild bank is full."; break;
-        case 31: errStr = "Too many guild ranks."; break;
-        case 37: errStr = "That player is the guild leader."; break;
-        case 49: errStr = "Guild reputation is too low."; break;
-        default: break;
-    }
-
-    std::string msg;
-    if (errStr) {
-        // Substitute %s with player name where applicable
-        std::string fmt = errStr;
-        auto pos = fmt.find("%s");
-        if (pos != std::string::npos && !data.name.empty())
-            fmt.replace(pos, 2, data.name);
-        else if (pos != std::string::npos)
-            fmt.replace(pos, 2, "that player");
-        msg = fmt;
-    } else {
-        msg = "Guild command failed";
-        if (!data.name.empty()) msg += " for " + data.name;
-        msg += " (error " + std::to_string(data.errorCode) + ")";
-    }
-    addSystemChatMessage(msg);
+    if (socialHandler_) socialHandler_->turnInPetition(petitionGuid);
 }
 
 // ============================================================
@@ -20110,40 +7929,19 @@ void GameHandler::handleGuildCommandResult(network::Packet& packet) {
 // ============================================================
 
 void GameHandler::lootTarget(uint64_t guid) {
-    if (!isInWorld()) return;
-    auto packet = LootPacket::build(guid);
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->lootTarget(guid);
 }
 
 void GameHandler::lootItem(uint8_t slotIndex) {
-    if (!isInWorld()) return;
-    auto packet = AutostoreLootItemPacket::build(slotIndex);
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->lootItem(slotIndex);
 }
 
 void GameHandler::closeLoot() {
-    if (!lootWindowOpen) return;
-    lootWindowOpen = false;
-    fireAddonEvent("LOOT_CLOSED", {});
-    masterLootCandidates_.clear();
-    if (currentLoot.lootGuid != 0 && targetGuid == currentLoot.lootGuid) {
-        clearTarget();
-    }
-    if (isInWorld()) {
-        auto packet = LootReleasePacket::build(currentLoot.lootGuid);
-        socket->send(packet);
-    }
-    currentLoot = LootResponseData{};
+    if (inventoryHandler_) inventoryHandler_->closeLoot();
 }
 
 void GameHandler::lootMasterGive(uint8_t lootSlot, uint64_t targetGuid) {
-    if (!isInWorld()) return;
-    // CMSG_LOOT_MASTER_GIVE: uint64 lootGuid + uint8 slotIndex + uint64 targetGuid
-    network::Packet pkt(wireOpcode(Opcode::CMSG_LOOT_MASTER_GIVE));
-    pkt.writeUInt64(currentLoot.lootGuid);
-    pkt.writeUInt8(lootSlot);
-    pkt.writeUInt64(targetGuid);
-    socket->send(pkt);
+    if (inventoryHandler_) inventoryHandler_->lootMasterGive(lootSlot, targetGuid);
 }
 
 void GameHandler::interactWithNpc(uint64_t guid) {
@@ -20156,7 +7954,7 @@ void GameHandler::interactWithGameObject(uint64_t guid) {
     if (guid == 0) return;
     if (!isInWorld()) return;
     // Do not overlap an actual spell cast.
-    if (casting && currentCastSpellId != 0) return;
+    if (spellHandler_ && spellHandler_->casting_ && spellHandler_->currentCastSpellId_ != 0) return;
     // Always clear melee intent before GO interactions.
     stopAutoAttack();
     // Interact immediately; server drives any real cast/channel feedback.
@@ -20296,262 +8094,19 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
 }
 
 void GameHandler::selectGossipOption(uint32_t optionId) {
-    if (state != WorldState::IN_WORLD || !socket || !gossipWindowOpen) return;
-    LOG_INFO("selectGossipOption: optionId=", optionId,
-             " npcGuid=0x", std::hex, currentGossip.npcGuid, std::dec,
-             " menuId=", currentGossip.menuId,
-             " numOptions=", currentGossip.options.size());
-    auto packet = GossipSelectOptionPacket::build(currentGossip.npcGuid, currentGossip.menuId, optionId);
-    socket->send(packet);
-
-    for (const auto& opt : currentGossip.options) {
-        if (opt.id != optionId) continue;
-        LOG_INFO("  matched option: id=", opt.id, " icon=", static_cast<int>(opt.icon), " text='", opt.text, "'");
-
-        // Icon-based NPC interaction fallbacks
-        // Some servers need the specific activate packet in addition to gossip select
-        if (opt.icon == 6) {
-            // GOSSIP_ICON_MONEY_BAG = banker
-            auto pkt = BankerActivatePacket::build(currentGossip.npcGuid);
-            socket->send(pkt);
-            LOG_INFO("Sent CMSG_BANKER_ACTIVATE for npc=0x", std::hex, currentGossip.npcGuid, std::dec);
-        }
-
-        // Text-based NPC type detection for servers using placeholder strings
-        std::string text = opt.text;
-        std::string textLower = text;
-        std::transform(textLower.begin(), textLower.end(), textLower.begin(),
-                       [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-
-        if (text == "GOSSIP_OPTION_AUCTIONEER" || textLower.find("auction") != std::string::npos) {
-            auto pkt = AuctionHelloPacket::build(currentGossip.npcGuid);
-            socket->send(pkt);
-            LOG_INFO("Sent MSG_AUCTION_HELLO for npc=0x", std::hex, currentGossip.npcGuid, std::dec);
-        }
-
-        if (text == "GOSSIP_OPTION_BANKER" || textLower.find("deposit box") != std::string::npos) {
-            auto pkt = BankerActivatePacket::build(currentGossip.npcGuid);
-            socket->send(pkt);
-            LOG_INFO("Sent CMSG_BANKER_ACTIVATE for npc=0x", std::hex, currentGossip.npcGuid, std::dec);
-        }
-
-        // Vendor / repair: some servers require an explicit CMSG_LIST_INVENTORY after gossip select.
-        const bool isVendor = (text == "GOSSIP_OPTION_VENDOR" ||
-                               (textLower.find("browse") != std::string::npos &&
-                                (textLower.find("goods") != std::string::npos || textLower.find("wares") != std::string::npos)));
-        const bool isArmorer = (text == "GOSSIP_OPTION_ARMORER" || textLower.find("repair") != std::string::npos);
-        if (isVendor || isArmorer) {
-            if (isArmorer) {
-                setVendorCanRepair(true);
-            }
-            auto pkt = ListInventoryPacket::build(currentGossip.npcGuid);
-            socket->send(pkt);
-            LOG_INFO("Sent CMSG_LIST_INVENTORY (gossip) to npc=0x", std::hex, currentGossip.npcGuid, std::dec,
-                     " vendor=", static_cast<int>(isVendor), " repair=", static_cast<int>(isArmorer));
-        }
-
-        if (textLower.find("make this inn your home") != std::string::npos ||
-            textLower.find("set your home") != std::string::npos) {
-            auto bindPkt = BinderActivatePacket::build(currentGossip.npcGuid);
-            socket->send(bindPkt);
-            LOG_INFO("Sent CMSG_BINDER_ACTIVATE for npc=0x", std::hex, currentGossip.npcGuid, std::dec);
-        }
-
-        // Stable master detection: GOSSIP_OPTION_STABLE or text keywords
-        if (text == "GOSSIP_OPTION_STABLE" ||
-            textLower.find("stable") != std::string::npos ||
-            textLower.find("my pet") != std::string::npos) {
-            stableMasterGuid_ = currentGossip.npcGuid;
-            stableWindowOpen_ = false;  // will open when list arrives
-            auto listPkt = ListStabledPetsPacket::build(currentGossip.npcGuid);
-            socket->send(listPkt);
-            LOG_INFO("Sent MSG_LIST_STABLED_PETS (gossip) to npc=0x",
-                     std::hex, currentGossip.npcGuid, std::dec);
-        }
-        break;
-    }
+    if (questHandler_) questHandler_->selectGossipOption(optionId);
 }
 
 void GameHandler::selectGossipQuest(uint32_t questId) {
-    if (state != WorldState::IN_WORLD || !socket || !gossipWindowOpen) return;
-
-    // Keep quest-log fallback for servers that don't provide stable icon semantics.
-    const QuestLogEntry* activeQuest = findQuestLogEntry(questId);
-
-    // Validate against server-auth quest slot fields to avoid stale local entries
-    // forcing turn-in flow for quests that are not actually accepted.
-    auto questInServerLogSlots = [&](uint32_t qid) -> bool {
-        if (qid == 0 || lastPlayerFields_.empty()) return false;
-        const uint16_t ufQuestStart = fieldIndex(UF::PLAYER_QUEST_LOG_START);
-        const uint8_t qStride = packetParsers_ ? packetParsers_->questLogStride() : 5;
-        const uint16_t ufQuestEnd = ufQuestStart + 25 * qStride;
-        for (const auto& [key, val] : lastPlayerFields_) {
-            if (key < ufQuestStart || key >= ufQuestEnd) continue;
-            if ((key - ufQuestStart) % qStride != 0) continue;
-            if (val == qid) return true;
-        }
-        return false;
-    };
-    const bool questInServerLog = questInServerLogSlots(questId);
-    if (questInServerLog && !activeQuest) {
-        addQuestToLocalLogIfMissing(questId, "Quest #" + std::to_string(questId), "");
-        requestQuestQuery(questId, false);
-        activeQuest = findQuestLogEntry(questId);
-    }
-    const bool activeQuestConfirmedByServer = questInServerLog;
-    // Only trust server quest-log slots for deciding "already accepted" flow.
-    // Gossip icon values can differ across cores/expansions and misclassify
-    // available quests as active, which blocks acceptance.
-    const bool shouldStartProgressFlow = activeQuestConfirmedByServer;
-    if (shouldStartProgressFlow) {
-        pendingTurnInQuestId_ = questId;
-        pendingTurnInNpcGuid_ = currentGossip.npcGuid;
-        pendingTurnInRewardRequest_ = activeQuest ? activeQuest->complete : false;
-        auto packet = QuestgiverCompleteQuestPacket::build(currentGossip.npcGuid, questId);
-        socket->send(packet);
-    } else {
-        pendingTurnInQuestId_ = 0;
-        pendingTurnInNpcGuid_ = 0;
-        pendingTurnInRewardRequest_ = false;
-        auto packet = packetParsers_
-            ? packetParsers_->buildQueryQuestPacket(currentGossip.npcGuid, questId)
-            : QuestgiverQueryQuestPacket::build(currentGossip.npcGuid, questId);
-        socket->send(packet);
-    }
-
-    gossipWindowOpen = false;
+    if (questHandler_) questHandler_->selectGossipQuest(questId);
 }
 
 bool GameHandler::requestQuestQuery(uint32_t questId, bool force) {
-    if (questId == 0 || state != WorldState::IN_WORLD || !socket) return false;
-    if (!force && pendingQuestQueryIds_.count(questId)) return false;
-
-    network::Packet pkt(wireOpcode(Opcode::CMSG_QUEST_QUERY));
-    pkt.writeUInt32(questId);
-    socket->send(pkt);
-    pendingQuestQueryIds_.insert(questId);
-
-    // WotLK supports CMSG_QUEST_POI_QUERY to get objective map locations.
-    // Only send if the opcode is mapped (stride==5 means WotLK).
-    if (packetParsers_ && packetParsers_->questLogStride() == 5) {
-        const uint32_t wirePoiQuery = wireOpcode(Opcode::CMSG_QUEST_POI_QUERY);
-        if (wirePoiQuery != 0xFFFF) {
-            network::Packet poiPkt(static_cast<uint16_t>(wirePoiQuery));
-            poiPkt.writeUInt32(1);          // count = 1
-            poiPkt.writeUInt32(questId);
-            socket->send(poiPkt);
-        }
-    }
-    return true;
-}
-
-void GameHandler::handleQuestPoiQueryResponse(network::Packet& packet) {
-    // WotLK 3.3.5a SMSG_QUEST_POI_QUERY_RESPONSE format:
-    //   uint32 questCount
-    //   per quest:
-    //     uint32 questId
-    //     uint32 poiCount
-    //     per poi:
-    //       uint32 poiId
-    //       int32  objIndex      (-1 = no specific objective)
-    //       uint32 mapId
-    //       uint32 areaId
-    //       uint32 floorId
-    //       uint32 unk1
-    //       uint32 unk2
-    //       uint32 pointCount
-    //       per point: int32 x, int32 y
-    if (!packet.hasRemaining(4)) return;
-    const uint32_t questCount = packet.readUInt32();
-    for (uint32_t qi = 0; qi < questCount; ++qi) {
-        if (!packet.hasRemaining(8)) return;
-        const uint32_t questId  = packet.readUInt32();
-        const uint32_t poiCount = packet.readUInt32();
-
-        // Remove any previously added POI markers for this quest to avoid duplicates
-        // on repeated queries (e.g. zone change or force-refresh).
-        gossipPois_.erase(
-            std::remove_if(gossipPois_.begin(), gossipPois_.end(),
-                [questId, this](const GossipPoi& p) {
-                    // Match by questId embedded in data field (set below).
-                    return p.data == questId;
-                }),
-            gossipPois_.end());
-
-        // Find the quest title for the marker label.
-        auto questTitle = getQuestTitle(questId);
-
-        for (uint32_t pi = 0; pi < poiCount; ++pi) {
-            if (!packet.hasRemaining(28)) return;
-            packet.readUInt32();  // poiId
-            packet.readUInt32();  // objIndex (int32)
-            const uint32_t mapId    = packet.readUInt32();
-            packet.readUInt32();  // areaId
-            packet.readUInt32();  // floorId
-            packet.readUInt32();  // unk1
-            packet.readUInt32();  // unk2
-            const uint32_t pointCount = packet.readUInt32();
-            if (pointCount == 0) continue;
-            if (!packet.hasRemaining(pointCount * 8)) return;
-            // Compute centroid of the poi region to place a minimap marker.
-            float sumX = 0.0f, sumY = 0.0f;
-            for (uint32_t pt = 0; pt < pointCount; ++pt) {
-                const int32_t px = static_cast<int32_t>(packet.readUInt32());
-                const int32_t py = static_cast<int32_t>(packet.readUInt32());
-                sumX += static_cast<float>(px);
-                sumY += static_cast<float>(py);
-            }
-            // Skip POIs for maps other than the player's current map.
-            if (mapId != currentMapId_) continue;
-            // Add as a GossipPoi; use data field to carry questId for later dedup.
-            GossipPoi poi;
-            poi.x    = sumX / static_cast<float>(pointCount);  // WoW canonical X
-            poi.y    = sumY / static_cast<float>(pointCount);  // WoW canonical Y
-            poi.icon = 6;  // generic quest POI icon
-            poi.data = questId;  // used for dedup on subsequent queries
-            poi.name = questTitle.empty() ? "Quest objective" : questTitle;
-            LOG_DEBUG("Quest POI: questId=", questId, " mapId=", mapId,
-                      " centroid=(", poi.x, ",", poi.y, ") title=", poi.name);
-            if (gossipPois_.size() >= 200) gossipPois_.erase(gossipPois_.begin());
-            gossipPois_.push_back(std::move(poi));
-        }
-    }
-}
-
-void GameHandler::handleQuestDetails(network::Packet& packet) {
-    QuestDetailsData data;
-    bool ok = packetParsers_ ? packetParsers_->parseQuestDetails(packet, data)
-                              : QuestDetailsParser::parse(packet, data);
-    if (!ok) {
-        LOG_WARNING("Failed to parse SMSG_QUESTGIVER_QUEST_DETAILS");
-        return;
-    }
-    currentQuestDetails = data;
-    for (auto& q : questLog_) {
-        if (q.questId != data.questId) continue;
-        if (!data.title.empty() && (isPlaceholderQuestTitle(q.title) || data.title.size() >= q.title.size())) {
-            q.title = data.title;
-        }
-        if (!data.objectives.empty() && (q.objectives.empty() || data.objectives.size() > q.objectives.size())) {
-            q.objectives = data.objectives;
-        }
-        break;
-    }
-    // Pre-fetch item info for all reward items so icons and names are ready
-    // both in this details window and later in the offer-reward dialog (after the player turns in).
-    for (const auto& item : data.rewardChoiceItems) queryItemInfo(item.itemId, 0);
-    for (const auto& item : data.rewardItems)       queryItemInfo(item.itemId, 0);
-    // Delay opening the window slightly to allow item queries to complete
-    questDetailsOpenTime = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
-    gossipWindowOpen = false;
-    fireAddonEvent("QUEST_DETAIL", {});
+    return questHandler_ && questHandler_->requestQuestQuery(questId, force);
 }
 
 bool GameHandler::hasQuestInLog(uint32_t questId) const {
-    for (const auto& q : questLog_) {
-        if (q.questId == questId) return true;
-    }
-    return false;
+    return questHandler_ && questHandler_->hasQuestInLog(questId);
 }
 
 Unit* GameHandler::getUnitByGuid(uint64_t guid) {
@@ -20580,514 +8135,78 @@ const GameHandler::QuestLogEntry* GameHandler::findQuestLogEntry(uint32_t questI
 }
 
 int GameHandler::findQuestLogSlotIndexFromServer(uint32_t questId) const {
-    if (questId == 0 || lastPlayerFields_.empty()) return -1;
-    const uint16_t ufQuestStart = fieldIndex(UF::PLAYER_QUEST_LOG_START);
-    const uint8_t qStride = packetParsers_ ? packetParsers_->questLogStride() : 5;
-    for (uint16_t slot = 0; slot < 25; ++slot) {
-        const uint16_t idField = ufQuestStart + slot * qStride;
-        auto it = lastPlayerFields_.find(idField);
-        if (it != lastPlayerFields_.end() && it->second == questId) {
-            return static_cast<int>(slot);
-        }
-    }
-    return -1;
+    if (questHandler_) return questHandler_->findQuestLogSlotIndexFromServer(questId);
+    return 0;
 }
 
 void GameHandler::addQuestToLocalLogIfMissing(uint32_t questId, const std::string& title, const std::string& objectives) {
-    if (questId == 0 || hasQuestInLog(questId)) return;
-    QuestLogEntry entry;
-    entry.questId = questId;
-    entry.title = title.empty() ? ("Quest #" + std::to_string(questId)) : title;
-    entry.objectives = objectives;
-    questLog_.push_back(std::move(entry));
-        fireAddonEvent("QUEST_ACCEPTED", {std::to_string(questId)});
-        fireAddonEvent("QUEST_LOG_UPDATE", {});
-        fireAddonEvent("UNIT_QUEST_LOG_CHANGED", {"player"});
+    if (questHandler_) questHandler_->addQuestToLocalLogIfMissing(questId, title, objectives);
 }
 
 bool GameHandler::resyncQuestLogFromServerSlots(bool forceQueryMetadata) {
-    if (lastPlayerFields_.empty()) return false;
-
-    const uint16_t ufQuestStart = fieldIndex(UF::PLAYER_QUEST_LOG_START);
-    const uint8_t qStride = packetParsers_ ? packetParsers_->questLogStride() : 5;
-
-    // Collect quest IDs and their completion state from update fields.
-    // State field (slot*stride+1) uses the same QuestStatus enum across all expansions:
-    //   0 = none, 1 = complete (ready to turn in), 3 = incomplete/active, etc.
-    static constexpr uint32_t kQuestStatusComplete = 1;
-
-    std::unordered_map<uint32_t, bool> serverQuestComplete;  // questId → complete
-    serverQuestComplete.reserve(25);
-    for (uint16_t slot = 0; slot < 25; ++slot) {
-        const uint16_t idField    = ufQuestStart + slot * qStride;
-        const uint16_t stateField = ufQuestStart + slot * qStride + 1;
-        auto it = lastPlayerFields_.find(idField);
-        if (it == lastPlayerFields_.end()) continue;
-        uint32_t questId = it->second;
-        if (questId == 0) continue;
-
-        bool complete = false;
-        if (qStride >= 2) {
-            auto stateIt = lastPlayerFields_.find(stateField);
-            if (stateIt != lastPlayerFields_.end()) {
-                // Lower byte is the quest state; treat any variant of "complete" as done.
-                uint32_t state = stateIt->second & 0xFF;
-                complete = (state == kQuestStatusComplete);
-            }
-        }
-        serverQuestComplete[questId] = complete;
-    }
-
-    std::unordered_set<uint32_t> serverQuestIds;
-    serverQuestIds.reserve(serverQuestComplete.size());
-    for (const auto& [qid, _] : serverQuestComplete) serverQuestIds.insert(qid);
-
-    const size_t localBefore = questLog_.size();
-    std::erase_if(questLog_, [&](const QuestLogEntry& q) {
-        return q.questId == 0 || serverQuestIds.count(q.questId) == 0;
-    });
-    const size_t removed = localBefore - questLog_.size();
-
-    size_t added = 0;
-    for (uint32_t questId : serverQuestIds) {
-        if (hasQuestInLog(questId)) continue;
-        addQuestToLocalLogIfMissing(questId, "Quest #" + std::to_string(questId), "");
-        ++added;
-    }
-
-    // Apply server-authoritative completion state to all tracked quests.
-    // This initialises quest.complete correctly on login for quests that were
-    // already complete before the current session started.
-    size_t marked = 0;
-    for (auto& quest : questLog_) {
-        auto it = serverQuestComplete.find(quest.questId);
-        if (it == serverQuestComplete.end()) continue;
-        if (it->second && !quest.complete) {
-            quest.complete = true;
-            ++marked;
-            LOG_DEBUG("Quest ", quest.questId, " marked complete from update fields");
-        }
-    }
-
-    if (forceQueryMetadata) {
-        for (uint32_t questId : serverQuestIds) {
-            requestQuestQuery(questId, false);
-        }
-    }
-
-    LOG_INFO("Quest log resync from server slots: server=", serverQuestIds.size(),
-             " localBefore=", localBefore, " removed=", removed, " added=", added,
-             " markedComplete=", marked);
-    return true;
+    return questHandler_ && questHandler_->resyncQuestLogFromServerSlots(forceQueryMetadata);
 }
 
 // Apply quest completion state from player update fields to already-tracked local quests.
 // Called from VALUES update handler so quests that complete mid-session (or that were
 // complete on login) get quest.complete=true without waiting for SMSG_QUESTUPDATE_COMPLETE.
 void GameHandler::applyQuestStateFromFields(const std::map<uint16_t, uint32_t>& fields) {
-    const uint16_t ufQuestStart = fieldIndex(UF::PLAYER_QUEST_LOG_START);
-    if (ufQuestStart == 0xFFFF || questLog_.empty()) return;
-
-    const uint8_t qStride = packetParsers_ ? packetParsers_->questLogStride() : 5;
-    if (qStride < 2) return;  // Need at least 2 fields per slot (id + state)
-
-    static constexpr uint32_t kQuestStatusComplete = 1;
-
-    for (uint16_t slot = 0; slot < 25; ++slot) {
-        const uint16_t idField    = ufQuestStart + slot * qStride;
-        const uint16_t stateField = idField + 1;
-        auto idIt = fields.find(idField);
-        if (idIt == fields.end()) continue;
-        uint32_t questId = idIt->second;
-        if (questId == 0) continue;
-
-        auto stateIt = fields.find(stateField);
-        if (stateIt == fields.end()) continue;
-        bool serverComplete = ((stateIt->second & 0xFF) == kQuestStatusComplete);
-        if (!serverComplete) continue;
-
-        for (auto& quest : questLog_) {
-            if (quest.questId == questId && !quest.complete) {
-                quest.complete = true;
-                LOG_INFO("Quest ", questId, " marked complete from VALUES update field state");
-                break;
-            }
-        }
-    }
+    if (questHandler_) questHandler_->applyQuestStateFromFields(fields);
 }
 
 // Extract packed 6-bit kill/objective counts from WotLK/TBC/Classic quest-log update fields
 // and populate quest.killCounts + quest.itemCounts using the structured objectives obtained
 // from a prior SMSG_QUEST_QUERY_RESPONSE.  Silently does nothing if objectives are absent.
 void GameHandler::applyPackedKillCountsFromFields(QuestLogEntry& quest) {
-    if (lastPlayerFields_.empty()) return;
-
-    const uint16_t ufQuestStart = fieldIndex(UF::PLAYER_QUEST_LOG_START);
-    if (ufQuestStart == 0xFFFF) return;
-
-    const uint8_t qStride = packetParsers_ ? packetParsers_->questLogStride() : 5;
-    if (qStride < 3) return;  // Need at least id + state + packed-counts field
-
-    // Find which server slot this quest occupies.
-    int slot = findQuestLogSlotIndexFromServer(quest.questId);
-    if (slot < 0) return;
-
-    // Packed count fields: stride+2 (all expansions), stride+3 (WotLK only, stride==5)
-    const uint16_t countField1 = ufQuestStart + static_cast<uint16_t>(slot) * qStride + 2;
-    const uint16_t countField2 = (qStride >= 5)
-                                     ? static_cast<uint16_t>(countField1 + 1)
-                                     : static_cast<uint16_t>(0xFFFF);
-
-    auto f1It = lastPlayerFields_.find(countField1);
-    if (f1It == lastPlayerFields_.end()) return;
-    const uint32_t packed1 = f1It->second;
-
-    uint32_t packed2 = 0;
-    if (countField2 != 0xFFFF) {
-        auto f2It = lastPlayerFields_.find(countField2);
-        if (f2It != lastPlayerFields_.end()) packed2 = f2It->second;
-    }
-
-    // Unpack six 6-bit counts (bit fields 0-5, 6-11, 12-17, 18-23 in packed1;
-    // bits 0-5, 6-11 in packed2 for objectives 4 and 5).
-    auto unpack6 = [](uint32_t word, int idx) -> uint8_t {
-        return static_cast<uint8_t>((word >> (idx * 6)) & 0x3F);
-    };
-    const uint8_t counts[6] = {
-        unpack6(packed1, 0), unpack6(packed1, 1),
-        unpack6(packed1, 2), unpack6(packed1, 3),
-        unpack6(packed2, 0), unpack6(packed2, 1),
-    };
-
-    // Apply kill objective counts (indices 0-3).
-    for (int i = 0; i < 4; ++i) {
-        const auto& obj = quest.killObjectives[i];
-        if (obj.npcOrGoId == 0 || obj.required == 0) continue;
-        // Negative npcOrGoId means game object; use absolute value as the map key
-        // (SMSG_QUESTUPDATE_ADD_KILL always sends a positive entry regardless of type).
-        const uint32_t entryKey = static_cast<uint32_t>(
-            obj.npcOrGoId > 0 ? obj.npcOrGoId : -obj.npcOrGoId);
-        // Don't overwrite live kill count with stale packed data if already non-zero.
-        if (counts[i] == 0 && quest.killCounts.count(entryKey)) continue;
-        quest.killCounts[entryKey] = {counts[i], obj.required};
-        LOG_DEBUG("Quest ", quest.questId, " objective[", i, "]: npcOrGo=",
-                  obj.npcOrGoId, " count=", static_cast<int>(counts[i]), "/", obj.required);
-    }
-
-    // Apply item objective counts (only available in WotLK stride+3 positions 4-5).
-    // Item counts also arrive live via SMSG_QUESTUPDATE_ADD_ITEM; just initialise here.
-    for (int i = 0; i < 6; ++i) {
-        const auto& obj = quest.itemObjectives[i];
-        if (obj.itemId == 0 || obj.required == 0) continue;
-        if (i < 2 && qStride >= 5) {
-            uint8_t cnt = counts[4 + i];
-            if (cnt > 0) {
-                quest.itemCounts[obj.itemId] = std::max(quest.itemCounts[obj.itemId], static_cast<uint32_t>(cnt));
-            }
-        }
-        quest.requiredItemCounts.emplace(obj.itemId, obj.required);
-    }
+    if (questHandler_) questHandler_->applyPackedKillCountsFromFields(quest);
 }
 
 void GameHandler::clearPendingQuestAccept(uint32_t questId) {
-    pendingQuestAcceptTimeouts_.erase(questId);
-    pendingQuestAcceptNpcGuids_.erase(questId);
+    if (questHandler_) questHandler_->clearPendingQuestAccept(questId);
 }
 
 void GameHandler::triggerQuestAcceptResync(uint32_t questId, uint64_t npcGuid, const char* reason) {
-    if (questId == 0 || !socket || state != WorldState::IN_WORLD) return;
-
-    LOG_INFO("Quest accept resync: questId=", questId, " reason=", reason ? reason : "unknown");
-    requestQuestQuery(questId, true);
-
-    if (npcGuid != 0) {
-        network::Packet qsPkt(wireOpcode(Opcode::CMSG_QUESTGIVER_STATUS_QUERY));
-        qsPkt.writeUInt64(npcGuid);
-        socket->send(qsPkt);
-
-        auto queryPkt = packetParsers_
-            ? packetParsers_->buildQueryQuestPacket(npcGuid, questId)
-            : QuestgiverQueryQuestPacket::build(npcGuid, questId);
-        socket->send(queryPkt);
-    }
+    if (questHandler_) questHandler_->triggerQuestAcceptResync(questId, npcGuid, reason);
 }
 
 void GameHandler::acceptQuest() {
-    if (!questDetailsOpen || state != WorldState::IN_WORLD || !socket) return;
-    const uint32_t questId = currentQuestDetails.questId;
-    if (questId == 0) return;
-    uint64_t npcGuid = currentQuestDetails.npcGuid;
-    if (pendingQuestAcceptTimeouts_.count(questId) != 0) {
-        LOG_DEBUG("Ignoring duplicate quest accept while pending: questId=", questId);
-        triggerQuestAcceptResync(questId, npcGuid, "duplicate-accept");
-        questDetailsOpen = false;
-        questDetailsOpenTime = std::chrono::steady_clock::time_point{};
-        currentQuestDetails = QuestDetailsData{};
-        return;
-    }
-    const bool inLocalLog = hasQuestInLog(questId);
-    const int serverSlot = findQuestLogSlotIndexFromServer(questId);
-    if (serverSlot >= 0) {
-        LOG_INFO("Ignoring duplicate quest accept already in server quest log: questId=", questId,
-                 " slot=", serverSlot);
-        questDetailsOpen = false;
-        questDetailsOpenTime = std::chrono::steady_clock::time_point{};
-        currentQuestDetails = QuestDetailsData{};
-        return;
-    }
-    if (inLocalLog) {
-        LOG_WARNING("Quest accept local/server mismatch, allowing re-accept: questId=", questId);
-        std::erase_if(questLog_, [&](const QuestLogEntry& q) { return q.questId == questId; });
-    }
-
-    network::Packet packet = packetParsers_
-        ? packetParsers_->buildAcceptQuestPacket(npcGuid, questId)
-        : QuestgiverAcceptQuestPacket::build(npcGuid, questId);
-    socket->send(packet);
-    pendingQuestAcceptTimeouts_[questId] = 5.0f;
-    pendingQuestAcceptNpcGuids_[questId] = npcGuid;
-
-    // Play quest-accept sound
-    withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playQuestActivate(); });
-
-    questDetailsOpen = false;
-    questDetailsOpenTime = std::chrono::steady_clock::time_point{};
-    currentQuestDetails = QuestDetailsData{};
-
-    // Re-query quest giver status so marker updates (! → ?)
-    if (npcGuid) {
-        network::Packet qsPkt(wireOpcode(Opcode::CMSG_QUESTGIVER_STATUS_QUERY));
-        qsPkt.writeUInt64(npcGuid);
-        socket->send(qsPkt);
-    }
+    if (questHandler_) questHandler_->acceptQuest();
 }
 
 void GameHandler::declineQuest() {
-    questDetailsOpen = false;
-    questDetailsOpenTime = std::chrono::steady_clock::time_point{};
-    currentQuestDetails = QuestDetailsData{};
+    if (questHandler_) questHandler_->declineQuest();
 }
 
 void GameHandler::abandonQuest(uint32_t questId) {
-    clearPendingQuestAccept(questId);
-    int localIndex = -1;
-    for (size_t i = 0; i < questLog_.size(); ++i) {
-        if (questLog_[i].questId == questId) {
-            localIndex = static_cast<int>(i);
-            break;
-        }
-    }
-
-    int slotIndex = findQuestLogSlotIndexFromServer(questId);
-    if (slotIndex < 0 && localIndex >= 0) {
-        // Best-effort fallback if update fields are stale/missing.
-        slotIndex = localIndex;
-        LOG_WARNING("Abandon quest using local slot fallback: questId=", questId, " slot=", slotIndex);
-    }
-
-    if (slotIndex >= 0 && slotIndex < 25) {
-        if (isInWorld()) {
-            network::Packet pkt(wireOpcode(Opcode::CMSG_QUESTLOG_REMOVE_QUEST));
-            pkt.writeUInt8(static_cast<uint8_t>(slotIndex));
-            socket->send(pkt);
-        }
-    } else {
-        LOG_WARNING("Abandon quest failed: no quest-log slot found for questId=", questId);
-    }
-
-    if (localIndex >= 0) {
-        questLog_.erase(questLog_.begin() + static_cast<ptrdiff_t>(localIndex));
-            fireAddonEvent("QUEST_LOG_UPDATE", {});
-            fireAddonEvent("UNIT_QUEST_LOG_CHANGED", {"player"});
-            fireAddonEvent("QUEST_REMOVED", {std::to_string(questId)});
-    }
-
-    // Remove any quest POI minimap markers for this quest.
-    gossipPois_.erase(
-        std::remove_if(gossipPois_.begin(), gossipPois_.end(),
-            [questId](const GossipPoi& p) { return p.data == questId; }),
-        gossipPois_.end());
+    if (questHandler_) questHandler_->abandonQuest(questId);
 }
 
 void GameHandler::shareQuestWithParty(uint32_t questId) {
-    if (!isInWorld()) {
-        addSystemChatMessage("Cannot share quest: not in world.");
-        return;
-    }
-    if (!isInGroup()) {
-        addSystemChatMessage("You must be in a group to share a quest.");
-        return;
-    }
-    network::Packet pkt(wireOpcode(Opcode::CMSG_PUSHQUESTTOPARTY));
-    pkt.writeUInt32(questId);
-    socket->send(pkt);
-    // Local feedback: find quest title
-    auto questTitle = getQuestTitle(questId);
-    addSystemChatMessage(questTitle.empty() ? std::string("Quest shared.")
-                                            : ("Sharing quest: " + questTitle));
-}
-
-void GameHandler::handleQuestRequestItems(network::Packet& packet) {
-    QuestRequestItemsData data;
-    if (!QuestRequestItemsParser::parse(packet, data)) {
-        LOG_WARNING("Failed to parse SMSG_QUESTGIVER_REQUEST_ITEMS");
-        return;
-    }
-    clearPendingQuestAccept(data.questId);
-
-    // Expansion-safe fallback: COMPLETE_QUEST is the default flow.
-    // If a server echoes REQUEST_ITEMS again while still completable,
-    // request the reward explicitly once.
-    if (pendingTurnInRewardRequest_ &&
-        data.questId == pendingTurnInQuestId_ &&
-        data.npcGuid == pendingTurnInNpcGuid_ &&
-        data.isCompletable() &&
-        socket) {
-        auto rewardReq = QuestgiverRequestRewardPacket::build(data.npcGuid, data.questId);
-        socket->send(rewardReq);
-        pendingTurnInRewardRequest_ = false;
-    }
-
-    currentQuestRequestItems_ = data;
-    questRequestItemsOpen_ = true;
-    gossipWindowOpen = false;
-    questDetailsOpen = false;
-    questDetailsOpenTime = std::chrono::steady_clock::time_point{};
-
-    // Query item names for required items
-    for (const auto& item : data.requiredItems) {
-        queryItemInfo(item.itemId, 0);
-    }
-
-    // Server-authoritative turn-in requirements: sync quest-log summary so
-    // UI doesn't show stale/inferred objective numbers.
-    for (auto& q : questLog_) {
-        if (q.questId != data.questId) continue;
-        q.complete = data.isCompletable();
-        q.requiredItemCounts.clear();
-
-        std::ostringstream oss;
-        if (!data.completionText.empty()) {
-            oss << data.completionText;
-            if (!data.requiredItems.empty() || data.requiredMoney > 0) oss << "\n\n";
-        }
-        if (!data.requiredItems.empty()) {
-            oss << "Required items:";
-            for (const auto& item : data.requiredItems) {
-                std::string itemLabel = "Item " + std::to_string(item.itemId);
-                if (const auto* info = getItemInfo(item.itemId)) {
-                    if (!info->name.empty()) itemLabel = info->name;
-                }
-                q.requiredItemCounts[item.itemId] = item.count;
-                oss << "\n- " << itemLabel << " x" << item.count;
-            }
-        }
-        if (data.requiredMoney > 0) {
-            if (!data.requiredItems.empty()) oss << "\n";
-            oss << "\nRequired money: " << formatCopperAmount(data.requiredMoney);
-        }
-        q.objectives = oss.str();
-        break;
-    }
-}
-
-void GameHandler::handleQuestOfferReward(network::Packet& packet) {
-    QuestOfferRewardData data;
-    if (!QuestOfferRewardParser::parse(packet, data)) {
-        LOG_WARNING("Failed to parse SMSG_QUESTGIVER_OFFER_REWARD");
-        return;
-    }
-    clearPendingQuestAccept(data.questId);
-    LOG_INFO("Quest offer reward: questId=", data.questId, " title=\"", data.title, "\"");
-    if (pendingTurnInQuestId_ == data.questId) {
-        pendingTurnInQuestId_ = 0;
-        pendingTurnInNpcGuid_ = 0;
-        pendingTurnInRewardRequest_ = false;
-    }
-    currentQuestOfferReward_ = data;
-    questOfferRewardOpen_ = true;
-    questRequestItemsOpen_ = false;
-    gossipWindowOpen = false;
-    questDetailsOpen = false;
-    questDetailsOpenTime = std::chrono::steady_clock::time_point{};
-    fireAddonEvent("QUEST_COMPLETE", {});
-
-    // Query item names for reward items
-    for (const auto& item : data.choiceRewards)
-        queryItemInfo(item.itemId, 0);
-    for (const auto& item : data.fixedRewards)
-        queryItemInfo(item.itemId, 0);
+    if (questHandler_) questHandler_->shareQuestWithParty(questId);
 }
 
 void GameHandler::completeQuest() {
-    if (!questRequestItemsOpen_ || state != WorldState::IN_WORLD || !socket) return;
-    pendingTurnInQuestId_ = currentQuestRequestItems_.questId;
-    pendingTurnInNpcGuid_ = currentQuestRequestItems_.npcGuid;
-    pendingTurnInRewardRequest_ = currentQuestRequestItems_.isCompletable();
-
-    // Default quest turn-in flow used by all branches.
-    auto packet = QuestgiverCompleteQuestPacket::build(
-        currentQuestRequestItems_.npcGuid, currentQuestRequestItems_.questId);
-    socket->send(packet);
-    questRequestItemsOpen_ = false;
-    currentQuestRequestItems_ = QuestRequestItemsData{};
+    if (questHandler_) questHandler_->completeQuest();
 }
 
 void GameHandler::closeQuestRequestItems() {
-    pendingTurnInRewardRequest_ = false;
-    questRequestItemsOpen_ = false;
-    currentQuestRequestItems_ = QuestRequestItemsData{};
+    if (questHandler_) questHandler_->closeQuestRequestItems();
 }
 
 void GameHandler::chooseQuestReward(uint32_t rewardIndex) {
-    if (!questOfferRewardOpen_ || state != WorldState::IN_WORLD || !socket) return;
-    uint64_t npcGuid = currentQuestOfferReward_.npcGuid;
-    LOG_INFO("Completing quest: questId=", currentQuestOfferReward_.questId,
-             " npcGuid=", npcGuid, " rewardIndex=", rewardIndex);
-    auto packet = QuestgiverChooseRewardPacket::build(
-        npcGuid, currentQuestOfferReward_.questId, rewardIndex);
-    socket->send(packet);
-    pendingTurnInQuestId_ = 0;
-    pendingTurnInNpcGuid_ = 0;
-    pendingTurnInRewardRequest_ = false;
-    questOfferRewardOpen_ = false;
-    currentQuestOfferReward_ = QuestOfferRewardData{};
-
-    // Re-query quest giver status so markers update
-    if (npcGuid) {
-        network::Packet qsPkt(wireOpcode(Opcode::CMSG_QUESTGIVER_STATUS_QUERY));
-        qsPkt.writeUInt64(npcGuid);
-        socket->send(qsPkt);
-    }
+    if (questHandler_) questHandler_->chooseQuestReward(rewardIndex);
 }
 
 void GameHandler::closeQuestOfferReward() {
-    pendingTurnInRewardRequest_ = false;
-    questOfferRewardOpen_ = false;
-    currentQuestOfferReward_ = QuestOfferRewardData{};
+    if (questHandler_) questHandler_->closeQuestOfferReward();
 }
 
 void GameHandler::closeGossip() {
-    gossipWindowOpen = false;
-    fireAddonEvent("GOSSIP_CLOSED", {});
-    currentGossip = GossipMessageData{};
+    if (questHandler_) questHandler_->closeGossip();
 }
 
 void GameHandler::offerQuestFromItem(uint64_t itemGuid, uint32_t questId) {
-    if (!isInWorld()) return;
-    if (itemGuid == 0 || questId == 0) {
-        addSystemChatMessage("Cannot start quest right now.");
-        return;
-    }
-    // Send CMSG_QUESTGIVER_QUERY_QUEST with the item GUID as the "questgiver."
-    // The server responds with SMSG_QUESTGIVER_QUEST_DETAILS which handleQuestDetails()
-    // picks up and opens the Accept/Decline dialog.
-    auto queryPkt = packetParsers_
-        ? packetParsers_->buildQueryQuestPacket(itemGuid, questId)
-        : QuestgiverQueryQuestPacket::build(itemGuid, questId);
-    socket->send(queryPkt);
-    LOG_INFO("offerQuestFromItem: itemGuid=0x", std::hex, itemGuid, std::dec,
-             " questId=", questId);
+    if (questHandler_) questHandler_->offerQuestFromItem(itemGuid, questId);
 }
 
 uint64_t GameHandler::getBagItemGuid(int bagIndex, int slotIndex) const {
@@ -21102,444 +8221,87 @@ uint64_t GameHandler::getBagItemGuid(int bagIndex, int slotIndex) const {
 }
 
 void GameHandler::openVendor(uint64_t npcGuid) {
-    if (!isInWorld()) return;
-    buybackItems_.clear();
-    auto packet = ListInventoryPacket::build(npcGuid);
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->openVendor(npcGuid);
 }
 
 void GameHandler::closeVendor() {
-    bool wasOpen = vendorWindowOpen;
-    vendorWindowOpen = false;
-    currentVendorItems = ListInventoryData{};
-    buybackItems_.clear();
-    pendingSellToBuyback_.clear();
-    pendingBuybackSlot_ = -1;
-    pendingBuybackWireSlot_ = 0;
-    pendingBuyItemId_ = 0;
-    pendingBuyItemSlot_ = 0;
-    if (wasOpen) fireAddonEvent("MERCHANT_CLOSED", {});
+    if (inventoryHandler_) inventoryHandler_->closeVendor();
 }
 
 void GameHandler::buyItem(uint64_t vendorGuid, uint32_t itemId, uint32_t slot, uint32_t count) {
-    if (!isInWorld()) return;
-    LOG_INFO("Buy request: vendorGuid=0x", std::hex, vendorGuid, std::dec,
-             " itemId=", itemId, " slot=", slot, " count=", count,
-             " wire=0x", std::hex, wireOpcode(Opcode::CMSG_BUY_ITEM), std::dec);
-    pendingBuyItemId_ = itemId;
-    pendingBuyItemSlot_ = slot;
-    // Build directly to avoid helper-signature drift across branches (3-arg vs 4-arg helper).
-    network::Packet packet(wireOpcode(Opcode::CMSG_BUY_ITEM));
-    packet.writeUInt64(vendorGuid);
-    packet.writeUInt32(itemId); // item entry
-    packet.writeUInt32(slot);   // vendor slot index
-    packet.writeUInt32(count);
-    // WotLK/AzerothCore expects a trailing byte; Classic/TBC do not
-    const bool isWotLk = isActiveExpansion("wotlk");
-    if (isWotLk) {
-        packet.writeUInt8(0);
-    }
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->buyItem(vendorGuid, itemId, slot, count);
 }
 
 void GameHandler::buyBackItem(uint32_t buybackSlot) {
-    if (state != WorldState::IN_WORLD || !socket || currentVendorItems.vendorGuid == 0) return;
-    // AzerothCore/WotLK expects absolute buyback inventory slot IDs, not 0-based UI row index.
-    // BUYBACK_SLOT_START is 74 in this protocol family.
-    constexpr uint32_t kBuybackSlotStart = 74;
-    uint32_t wireSlot = kBuybackSlotStart + buybackSlot;
-    // This request is independent from normal buy path; avoid stale pending buy context in logs.
-    pendingBuyItemId_ = 0;
-    pendingBuyItemSlot_ = 0;
-    // Build directly so this compiles even when Opcode::CMSG_BUYBACK_ITEM / BuybackItemPacket
-    // are not available in some branches.
-    constexpr uint16_t kWotlkCmsgBuybackItemOpcode = 0x290;
-    LOG_INFO("Buyback request: vendorGuid=0x", std::hex, currentVendorItems.vendorGuid,
-             std::dec, " uiSlot=", buybackSlot, " wireSlot=", wireSlot,
-             " source=absolute-buyback-slot",
-             " wire=0x", std::hex, kWotlkCmsgBuybackItemOpcode, std::dec);
-    pendingBuybackSlot_ = static_cast<int>(buybackSlot);
-    pendingBuybackWireSlot_ = wireSlot;
-    network::Packet packet(kWotlkCmsgBuybackItemOpcode);
-    packet.writeUInt64(currentVendorItems.vendorGuid);
-    packet.writeUInt32(wireSlot);
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->buyBackItem(buybackSlot);
 }
 
 void GameHandler::repairItem(uint64_t vendorGuid, uint64_t itemGuid) {
-    if (!isInWorld()) return;
-    // CMSG_REPAIR_ITEM: npcGuid(8) + itemGuid(8) + useGuildBank(uint8)
-    network::Packet packet(wireOpcode(Opcode::CMSG_REPAIR_ITEM));
-    packet.writeUInt64(vendorGuid);
-    packet.writeUInt64(itemGuid);
-    packet.writeUInt8(0);  // do not use guild bank
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->repairItem(vendorGuid, itemGuid);
 }
 
 void GameHandler::repairAll(uint64_t vendorGuid, bool useGuildBank) {
-    if (!isInWorld()) return;
-    // itemGuid = 0 signals "repair all equipped" to the server
-    network::Packet packet(wireOpcode(Opcode::CMSG_REPAIR_ITEM));
-    packet.writeUInt64(vendorGuid);
-    packet.writeUInt64(0);
-    packet.writeUInt8(useGuildBank ? 1 : 0);
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->repairAll(vendorGuid, useGuildBank);
 }
 
 void GameHandler::sellItem(uint64_t vendorGuid, uint64_t itemGuid, uint32_t count) {
-    if (!isInWorld()) return;
-    LOG_INFO("Sell request: vendorGuid=0x", std::hex, vendorGuid,
-             " itemGuid=0x", itemGuid, std::dec,
-             " count=", count, " wire=0x", std::hex, wireOpcode(Opcode::CMSG_SELL_ITEM), std::dec);
-    auto packet = SellItemPacket::build(vendorGuid, itemGuid, count);
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->sellItem(vendorGuid, itemGuid, count);
 }
 
 void GameHandler::sellItemBySlot(int backpackIndex) {
-    if (backpackIndex < 0 || backpackIndex >= inventory.getBackpackSize()) return;
-    const auto& slot = inventory.getBackpackSlot(backpackIndex);
-    if (slot.empty()) return;
-
-    uint32_t sellPrice = slot.item.sellPrice;
-    if (sellPrice == 0) {
-        if (auto* info = getItemInfo(slot.item.itemId); info && info->valid) {
-            sellPrice = info->sellPrice;
-        }
-    }
-    if (sellPrice == 0) {
-        addSystemChatMessage("Cannot sell: this item has no vendor value.");
-        return;
-    }
-
-    uint64_t itemGuid = backpackSlotGuids_[backpackIndex];
-    if (itemGuid == 0) {
-        itemGuid = resolveOnlineItemGuid(slot.item.itemId);
-    }
-    LOG_DEBUG("sellItemBySlot: slot=", backpackIndex,
-              " item=", slot.item.name,
-              " itemGuid=0x", std::hex, itemGuid, std::dec,
-              " vendorGuid=0x", std::hex, currentVendorItems.vendorGuid, std::dec);
-    if (itemGuid != 0 && currentVendorItems.vendorGuid != 0) {
-        BuybackItem sold;
-        sold.itemGuid = itemGuid;
-        sold.item = slot.item;
-        sold.count = 1;
-        buybackItems_.push_front(sold);
-        if (buybackItems_.size() > 12) buybackItems_.pop_back();
-        pendingSellToBuyback_[itemGuid] = sold;
-        sellItem(currentVendorItems.vendorGuid, itemGuid, 1);
-    } else if (itemGuid == 0) {
-        addSystemChatMessage("Cannot sell: item not found in inventory.");
-        LOG_WARNING("Sell failed: missing item GUID for slot ", backpackIndex);
-    } else {
-        addSystemChatMessage("Cannot sell: no vendor.");
-    }
+    if (inventoryHandler_) inventoryHandler_->sellItemBySlot(backpackIndex);
 }
 
 void GameHandler::autoEquipItemBySlot(int backpackIndex) {
-    if (backpackIndex < 0 || backpackIndex >= inventory.getBackpackSize()) return;
-    const auto& slot = inventory.getBackpackSlot(backpackIndex);
-    if (slot.empty()) return;
-
-    if (isInWorld()) {
-        // WoW inventory: equipment 0-18, bags 19-22, backpack 23-38
-        auto packet = AutoEquipItemPacket::build(0xFF, static_cast<uint8_t>(23 + backpackIndex));
-        socket->send(packet);
-    }
+    if (inventoryHandler_) inventoryHandler_->autoEquipItemBySlot(backpackIndex);
 }
 
 void GameHandler::autoEquipItemInBag(int bagIndex, int slotIndex) {
-    if (bagIndex < 0 || bagIndex >= inventory.NUM_BAG_SLOTS) return;
-    if (slotIndex < 0 || slotIndex >= inventory.getBagSize(bagIndex)) return;
-
-    if (isInWorld()) {
-        // Bag items: bag = equip slot 19+bagIndex, slot = index within bag
-        auto packet = AutoEquipItemPacket::build(
-            static_cast<uint8_t>(19 + bagIndex), static_cast<uint8_t>(slotIndex));
-        socket->send(packet);
-    }
+    if (inventoryHandler_) inventoryHandler_->autoEquipItemInBag(bagIndex, slotIndex);
 }
 
 void GameHandler::sellItemInBag(int bagIndex, int slotIndex) {
-    if (bagIndex < 0 || bagIndex >= inventory.NUM_BAG_SLOTS) return;
-    if (slotIndex < 0 || slotIndex >= inventory.getBagSize(bagIndex)) return;
-    const auto& slot = inventory.getBagSlot(bagIndex, slotIndex);
-    if (slot.empty()) return;
-
-    uint32_t sellPrice = slot.item.sellPrice;
-    if (sellPrice == 0) {
-        if (auto* info = getItemInfo(slot.item.itemId); info && info->valid) {
-            sellPrice = info->sellPrice;
-        }
-    }
-    if (sellPrice == 0) {
-        addSystemChatMessage("Cannot sell: this item has no vendor value.");
-        return;
-    }
-
-    // Resolve item GUID from container contents
-    uint64_t itemGuid = 0;
-    uint64_t bagGuid = equipSlotGuids_[19 + bagIndex];
-    if (bagGuid != 0) {
-        auto it = containerContents_.find(bagGuid);
-        if (it != containerContents_.end() && slotIndex < static_cast<int>(it->second.numSlots)) {
-            itemGuid = it->second.slotGuids[slotIndex];
-        }
-    }
-    if (itemGuid == 0) {
-        itemGuid = resolveOnlineItemGuid(slot.item.itemId);
-    }
-
-    if (itemGuid != 0 && currentVendorItems.vendorGuid != 0) {
-        BuybackItem sold;
-        sold.itemGuid = itemGuid;
-        sold.item = slot.item;
-        sold.count = 1;
-        buybackItems_.push_front(sold);
-        if (buybackItems_.size() > 12) buybackItems_.pop_back();
-        pendingSellToBuyback_[itemGuid] = sold;
-        sellItem(currentVendorItems.vendorGuid, itemGuid, 1);
-    } else if (itemGuid == 0) {
-        addSystemChatMessage("Cannot sell: item not found.");
-    } else {
-        addSystemChatMessage("Cannot sell: no vendor.");
-    }
+    if (inventoryHandler_) inventoryHandler_->sellItemInBag(bagIndex, slotIndex);
 }
 
 void GameHandler::unequipToBackpack(EquipSlot equipSlot) {
-    if (!isInWorld()) return;
-
-    int freeSlot = inventory.findFreeBackpackSlot();
-    if (freeSlot < 0) {
-        addSystemChatMessage("Cannot unequip: no free backpack slots.");
-        return;
-    }
-
-    // Use SWAP_ITEM for cross-container moves. For inventory slots we address bag as 0xFF.
-    uint8_t srcBag = 0xFF;
-    uint8_t srcSlot = static_cast<uint8_t>(equipSlot);
-    uint8_t dstBag = 0xFF;
-    uint8_t dstSlot = static_cast<uint8_t>(23 + freeSlot);
-
-    LOG_INFO("UnequipToBackpack: equipSlot=", static_cast<int>(srcSlot),
-             " -> backpackIndex=", freeSlot, " (dstSlot=", static_cast<int>(dstSlot), ")");
-
-    auto packet = SwapItemPacket::build(dstBag, dstSlot, srcBag, srcSlot);
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->unequipToBackpack(equipSlot);
 }
 
 void GameHandler::swapContainerItems(uint8_t srcBag, uint8_t srcSlot, uint8_t dstBag, uint8_t dstSlot) {
-    if (!socket || !socket->isConnected()) return;
-    LOG_INFO("swapContainerItems: src(bag=", static_cast<int>(srcBag), " slot=", static_cast<int>(srcSlot),
-             ") -> dst(bag=", static_cast<int>(dstBag), " slot=", static_cast<int>(dstSlot), ")");
-    auto packet = SwapItemPacket::build(dstBag, dstSlot, srcBag, srcSlot);
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->swapContainerItems(srcBag, srcSlot, dstBag, dstSlot);
 }
 
 void GameHandler::swapBagSlots(int srcBagIndex, int dstBagIndex) {
-    if (srcBagIndex < 0 || srcBagIndex > 3 || dstBagIndex < 0 || dstBagIndex > 3) return;
-    if (srcBagIndex == dstBagIndex) return;
-
-    // Local swap for immediate visual feedback
-    auto srcEquip = static_cast<game::EquipSlot>(static_cast<int>(game::EquipSlot::BAG1) + srcBagIndex);
-    auto dstEquip = static_cast<game::EquipSlot>(static_cast<int>(game::EquipSlot::BAG1) + dstBagIndex);
-    auto srcItem = inventory.getEquipSlot(srcEquip).item;
-    auto dstItem = inventory.getEquipSlot(dstEquip).item;
-    inventory.setEquipSlot(srcEquip, dstItem);
-    inventory.setEquipSlot(dstEquip, srcItem);
-
-    // Also swap bag contents locally
-    inventory.swapBagContents(srcBagIndex, dstBagIndex);
-
-    // Send to server using CMSG_SWAP_ITEM with INVENTORY_SLOT_BAG_0 (255)
-    // CMSG_SWAP_INV_ITEM doesn't support bag equip slots (19-22)
-    if (socket && socket->isConnected()) {
-        uint8_t srcSlot = static_cast<uint8_t>(19 + srcBagIndex);
-        uint8_t dstSlot = static_cast<uint8_t>(19 + dstBagIndex);
-        LOG_INFO("swapBagSlots: bag ", srcBagIndex, " (slot ", static_cast<int>(srcSlot),
-                 ") <-> bag ", dstBagIndex, " (slot ", static_cast<int>(dstSlot), ")");
-        auto packet = SwapItemPacket::build(255, dstSlot, 255, srcSlot);
-        socket->send(packet);
-    }
+    if (inventoryHandler_) inventoryHandler_->swapBagSlots(srcBagIndex, dstBagIndex);
 }
 
 void GameHandler::destroyItem(uint8_t bag, uint8_t slot, uint8_t count) {
-    if (!isInWorld()) return;
-    if (count == 0) count = 1;
-
-    // AzerothCore WotLK expects CMSG_DESTROYITEM(bag:u8, slot:u8, count:u32).
-    // This opcode is currently not modeled as a logical opcode in our table.
-    constexpr uint16_t kCmsgDestroyItem = 0x111;
-    network::Packet packet(kCmsgDestroyItem);
-    packet.writeUInt8(bag);
-    packet.writeUInt8(slot);
-    packet.writeUInt32(static_cast<uint32_t>(count));
-    LOG_DEBUG("Destroy item request: bag=", static_cast<int>(bag), " slot=", static_cast<int>(slot),
-              " count=", static_cast<int>(count), " wire=0x", std::hex, kCmsgDestroyItem, std::dec);
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->destroyItem(bag, slot, count);
 }
 
 void GameHandler::splitItem(uint8_t srcBag, uint8_t srcSlot, uint8_t count) {
-    if (!isInWorld()) return;
-    if (count == 0) return;
-
-    // Find a free slot for the split destination: try backpack first, then bags
-    int freeBp = inventory.findFreeBackpackSlot();
-    if (freeBp >= 0) {
-        uint8_t dstBag = 0xFF;
-        uint8_t dstSlot = static_cast<uint8_t>(23 + freeBp);
-        LOG_INFO("splitItem: src(bag=", static_cast<int>(srcBag), " slot=", static_cast<int>(srcSlot),
-                 ") count=", static_cast<int>(count), " -> dst(bag=0xFF slot=", static_cast<int>(dstSlot), ")");
-        auto packet = SplitItemPacket::build(srcBag, srcSlot, dstBag, dstSlot, count);
-        socket->send(packet);
-        return;
-    }
-    // Try equipped bags
-    for (int b = 0; b < inventory.NUM_BAG_SLOTS; b++) {
-        int bagSize = inventory.getBagSize(b);
-        for (int s = 0; s < bagSize; s++) {
-            if (inventory.getBagSlot(b, s).empty()) {
-                uint8_t dstBag = static_cast<uint8_t>(19 + b);
-                uint8_t dstSlot = static_cast<uint8_t>(s);
-                LOG_INFO("splitItem: src(bag=", static_cast<int>(srcBag), " slot=", static_cast<int>(srcSlot),
-                         ") count=", static_cast<int>(count), " -> dst(bag=", static_cast<int>(dstBag),
-                         " slot=", static_cast<int>(dstSlot), ")");
-                auto packet = SplitItemPacket::build(srcBag, srcSlot, dstBag, dstSlot, count);
-                socket->send(packet);
-                return;
-            }
-        }
-    }
-    addSystemChatMessage("Cannot split: no free inventory slots.");
+    if (inventoryHandler_) inventoryHandler_->splitItem(srcBag, srcSlot, count);
 }
 
 void GameHandler::useItemBySlot(int backpackIndex) {
-    if (backpackIndex < 0 || backpackIndex >= inventory.getBackpackSize()) return;
-    const auto& slot = inventory.getBackpackSlot(backpackIndex);
-    if (slot.empty()) return;
-
-    uint64_t itemGuid = backpackSlotGuids_[backpackIndex];
-    if (itemGuid == 0) {
-        itemGuid = resolveOnlineItemGuid(slot.item.itemId);
-    }
-
-    if (itemGuid != 0 && isInWorld()) {
-        // Find the item's on-use spell ID from cached item info
-        uint32_t useSpellId = 0;
-        if (auto* info = getItemInfo(slot.item.itemId)) {
-            for (const auto& sp : info->spells) {
-                // SpellTrigger: 0=Use, 5=Learn
-                if (sp.spellId != 0 && (sp.spellTrigger == 0 || sp.spellTrigger == 5)) {
-                    useSpellId = sp.spellId;
-                    break;
-                }
-            }
-        }
-
-        // WoW inventory: equipment 0-18, bags 19-22, backpack 23-38
-        auto packet = packetParsers_
-            ? packetParsers_->buildUseItem(0xFF, static_cast<uint8_t>(23 + backpackIndex), itemGuid, useSpellId)
-            : UseItemPacket::build(0xFF, static_cast<uint8_t>(23 + backpackIndex), itemGuid, useSpellId);
-        socket->send(packet);
-    } else if (itemGuid == 0) {
-        addSystemChatMessage("Cannot use that item right now.");
-    }
+    if (inventoryHandler_) inventoryHandler_->useItemBySlot(backpackIndex);
 }
 
 void GameHandler::useItemInBag(int bagIndex, int slotIndex) {
-    if (bagIndex < 0 || bagIndex >= inventory.NUM_BAG_SLOTS) return;
-    if (slotIndex < 0 || slotIndex >= inventory.getBagSize(bagIndex)) return;
-    const auto& slot = inventory.getBagSlot(bagIndex, slotIndex);
-    if (slot.empty()) return;
-
-    // Resolve item GUID from container contents
-    uint64_t itemGuid = 0;
-    uint64_t bagGuid = equipSlotGuids_[19 + bagIndex];
-    if (bagGuid != 0) {
-        auto it = containerContents_.find(bagGuid);
-        if (it != containerContents_.end() && slotIndex < static_cast<int>(it->second.numSlots)) {
-            itemGuid = it->second.slotGuids[slotIndex];
-        }
-    }
-    if (itemGuid == 0) {
-        itemGuid = resolveOnlineItemGuid(slot.item.itemId);
-    }
-
-    LOG_INFO("useItemInBag: bag=", bagIndex, " slot=", slotIndex, " itemId=", slot.item.itemId,
-             " itemGuid=0x", std::hex, itemGuid, std::dec);
-
-    if (itemGuid != 0 && isInWorld()) {
-        // Find the item's on-use spell ID
-        uint32_t useSpellId = 0;
-        if (auto* info = getItemInfo(slot.item.itemId)) {
-            for (const auto& sp : info->spells) {
-                if (sp.spellId != 0 && (sp.spellTrigger == 0 || sp.spellTrigger == 5)) {
-                    useSpellId = sp.spellId;
-                    break;
-                }
-            }
-        }
-
-        // WoW bag addressing: bagIndex = equip slot of bag container (19-22)
-        // For CMSG_USE_ITEM: bag = 19+bagIndex, slot = slot within bag
-        uint8_t wowBag = static_cast<uint8_t>(19 + bagIndex);
-        auto packet = packetParsers_
-            ? packetParsers_->buildUseItem(wowBag, static_cast<uint8_t>(slotIndex), itemGuid, useSpellId)
-            : UseItemPacket::build(wowBag, static_cast<uint8_t>(slotIndex), itemGuid, useSpellId);
-        LOG_INFO("useItemInBag: sending CMSG_USE_ITEM, bag=", static_cast<int>(wowBag), " slot=", slotIndex,
-                 " packetSize=", packet.getSize());
-        socket->send(packet);
-    } else if (itemGuid == 0) {
-        LOG_WARNING("Use item in bag failed: missing item GUID for bag ", bagIndex, " slot ", slotIndex);
-        addSystemChatMessage("Cannot use that item right now.");
-    }
+    if (inventoryHandler_) inventoryHandler_->useItemInBag(bagIndex, slotIndex);
 }
 
 void GameHandler::openItemBySlot(int backpackIndex) {
-    if (backpackIndex < 0 || backpackIndex >= inventory.getBackpackSize()) return;
-    if (inventory.getBackpackSlot(backpackIndex).empty()) return;
-    if (!isInWorld()) return;
-    auto packet = OpenItemPacket::build(0xFF, static_cast<uint8_t>(23 + backpackIndex));
-    LOG_INFO("openItemBySlot: CMSG_OPEN_ITEM bag=0xFF slot=", (23 + backpackIndex));
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->openItemBySlot(backpackIndex);
 }
 
 void GameHandler::openItemInBag(int bagIndex, int slotIndex) {
-    if (bagIndex < 0 || bagIndex >= inventory.NUM_BAG_SLOTS) return;
-    if (slotIndex < 0 || slotIndex >= inventory.getBagSize(bagIndex)) return;
-    if (inventory.getBagSlot(bagIndex, slotIndex).empty()) return;
-    if (!isInWorld()) return;
-    uint8_t wowBag = static_cast<uint8_t>(19 + bagIndex);
-    auto packet = OpenItemPacket::build(wowBag, static_cast<uint8_t>(slotIndex));
-    LOG_INFO("openItemInBag: CMSG_OPEN_ITEM bag=", static_cast<int>(wowBag), " slot=", slotIndex);
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->openItemInBag(bagIndex, slotIndex);
 }
 
 void GameHandler::useItemById(uint32_t itemId) {
-    if (itemId == 0) return;
-    LOG_DEBUG("useItemById: searching for itemId=", itemId);
-    // Search backpack first
-    for (int i = 0; i < inventory.getBackpackSize(); i++) {
-        const auto& slot = inventory.getBackpackSlot(i);
-        if (!slot.empty() && slot.item.itemId == itemId) {
-            LOG_DEBUG("useItemById: found itemId=", itemId, " at backpack slot ", i);
-            useItemBySlot(i);
-            return;
-        }
-    }
-    // Search bags
-    for (int bag = 0; bag < inventory.NUM_BAG_SLOTS; bag++) {
-        int bagSize = inventory.getBagSize(bag);
-        for (int slot = 0; slot < bagSize; slot++) {
-            const auto& bagSlot = inventory.getBagSlot(bag, slot);
-            if (!bagSlot.empty() && bagSlot.item.itemId == itemId) {
-                LOG_DEBUG("useItemById: found itemId=", itemId, " in bag ", bag, " slot ", slot);
-                useItemInBag(bag, slot);
-                return;
-            }
-        }
-    }
-    LOG_WARNING("useItemById: itemId=", itemId, " not found in inventory");
+    if (inventoryHandler_) inventoryHandler_->useItemById(itemId);
 }
 
 void GameHandler::unstuck() {
@@ -21565,452 +8327,16 @@ void GameHandler::unstuckHearth() {
     }
 }
 
-void GameHandler::handleLootResponse(network::Packet& packet) {
-    // All expansions use 22 bytes/item (slot+itemId+count+displayInfo+randSuffix+randProp+slotType).
-    // WotLK adds a quest item list after the regular items.
-    const bool wotlkLoot = isActiveExpansion("wotlk");
-    if (!LootResponseParser::parse(packet, currentLoot, wotlkLoot)) return;
-    const bool hasLoot = !currentLoot.items.empty() || currentLoot.gold > 0;
-    // If we're mid-gather-cast and got an empty loot response (premature CMSG_LOOT
-    // before the node became lootable), ignore it — don't clear our gather state.
-    if (!hasLoot && casting && currentCastSpellId != 0 && lastInteractedGoGuid_ != 0) {
-        LOG_DEBUG("Ignoring empty SMSG_LOOT_RESPONSE during gather cast");
-        return;
-    }
-    lootWindowOpen = true;
-        fireAddonEvent("LOOT_OPENED", {});
-        fireAddonEvent("LOOT_READY", {});
-    lastInteractedGoGuid_ = 0; // loot opened — no need to re-send in handleSpellGo
-    pendingGameObjectLootOpens_.erase(
-        std::remove_if(pendingGameObjectLootOpens_.begin(), pendingGameObjectLootOpens_.end(),
-                       [&](const PendingLootOpen& p) { return p.guid == currentLoot.lootGuid; }),
-        pendingGameObjectLootOpens_.end());
-    auto& localLoot = localLootState_[currentLoot.lootGuid];
-    localLoot.data = currentLoot;
-
-    // Query item info so loot window can show names instead of IDs
-    for (const auto& item : currentLoot.items) {
-        queryItemInfo(item.itemId, 0);
-    }
-
-    if (currentLoot.gold > 0) {
-        if (isInWorld()) {
-            // Auto-loot gold by sending CMSG_LOOT_MONEY (server handles the rest)
-            bool suppressFallback = false;
-            auto cooldownIt = recentLootMoneyAnnounceCooldowns_.find(currentLoot.lootGuid);
-            if (cooldownIt != recentLootMoneyAnnounceCooldowns_.end() && cooldownIt->second > 0.0f) {
-                suppressFallback = true;
-            }
-            pendingLootMoneyGuid_ = suppressFallback ? 0 : currentLoot.lootGuid;
-            pendingLootMoneyAmount_ = suppressFallback ? 0 : currentLoot.gold;
-            pendingLootMoneyNotifyTimer_ = suppressFallback ? 0.0f : 0.4f;
-            auto pkt = LootMoneyPacket::build();
-            socket->send(pkt);
-            currentLoot.gold = 0;
-        }
-    }
-
-    // Auto-loot items when enabled
-    if (autoLoot_ && isInWorld() && !localLoot.itemAutoLootSent) {
-        for (const auto& item : currentLoot.items) {
-            auto pkt = AutostoreLootItemPacket::build(item.slotIndex);
-            socket->send(pkt);
-        }
-        localLoot.itemAutoLootSent = true;
-    }
-}
-
-void GameHandler::handleLootReleaseResponse(network::Packet& packet) {
-    (void)packet;
-    localLootState_.erase(currentLoot.lootGuid);
-    lootWindowOpen = false;
-    fireAddonEvent("LOOT_CLOSED", {});
-    currentLoot = LootResponseData{};
-}
-
-void GameHandler::handleLootRemoved(network::Packet& packet) {
-    uint8_t slotIndex = packet.readUInt8();
-    for (auto it = currentLoot.items.begin(); it != currentLoot.items.end(); ++it) {
-        if (it->slotIndex == slotIndex) {
-            std::string itemName = "item #" + std::to_string(it->itemId);
-            uint32_t quality = 1;
-            if (const ItemQueryResponseData* info = getItemInfo(it->itemId)) {
-                if (!info->name.empty()) itemName = info->name;
-                quality = info->quality;
-            }
-            std::string link = buildItemLink(it->itemId, quality, itemName);
-            std::string msgStr = "Looted: " + link;
-            if (it->count > 1) msgStr += " x" + std::to_string(it->count);
-            addSystemChatMessage(msgStr);
-            withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playLootItem(); });
-            currentLoot.items.erase(it);
-                            fireAddonEvent("LOOT_SLOT_CLEARED", {std::to_string(slotIndex + 1)});
-            break;
-        }
-    }
-}
-
-void GameHandler::handleGossipMessage(network::Packet& packet) {
-    bool ok = packetParsers_ ? packetParsers_->parseGossipMessage(packet, currentGossip)
-                             : GossipMessageParser::parse(packet, currentGossip);
-    if (!ok) return;
-    if (questDetailsOpen) return; // Don't reopen gossip while viewing quest
-    gossipWindowOpen = true;
-    fireAddonEvent("GOSSIP_SHOW", {});
-    vendorWindowOpen = false; // Close vendor if gossip opens
-
-    // Update known quest-log entries based on gossip quests.
-    // Do not synthesize new "active quest" entries from gossip alone.
-    bool hasAvailableQuest = false;
-    bool hasRewardQuest = false;
-    bool hasIncompleteQuest = false;
-    auto questIconIsCompletable = [](uint32_t icon) {
-        return icon == 5 || icon == 6 || icon == 10;
-    };
-    auto questIconIsIncomplete = [](uint32_t icon) {
-        return icon == 3 || icon == 4;
-    };
-    auto questIconIsAvailable = [](uint32_t icon) {
-        return icon == 2 || icon == 7 || icon == 8;
-    };
-
-    for (const auto& questItem : currentGossip.quests) {
-        // WotLK gossip questIcon is an integer enum, NOT a bitmask:
-        //   2 = yellow !  (available, not yet accepted)
-        //   4 = gray ?    (active, objectives incomplete)
-        //   5 = gold ?    (complete, ready to turn in)
-        // Bit-masking these values is wrong: 4 & 0x04 = true, treating incomplete
-        // quests as completable and causing the server to reject the turn-in request.
-        bool isCompletable = questIconIsCompletable(questItem.questIcon);
-        bool isIncomplete  = questIconIsIncomplete(questItem.questIcon);
-        bool isAvailable   = questIconIsAvailable(questItem.questIcon);
-
-        hasAvailableQuest |= isAvailable;
-        hasRewardQuest |= isCompletable;
-        hasIncompleteQuest |= isIncomplete;
-
-        // Update existing quest entry if present
-        for (auto& quest : questLog_) {
-            if (quest.questId == questItem.questId) {
-                quest.complete = isCompletable;
-                quest.title = questItem.title;
-                LOG_INFO("Updated quest ", questItem.questId, " in log: complete=", isCompletable);
-                break;
-            }
-        }
-    }
-
-    // Keep overhead marker aligned with what this gossip actually offers.
-    if (currentGossip.npcGuid != 0) {
-        QuestGiverStatus derivedStatus = QuestGiverStatus::NONE;
-        if (hasRewardQuest) derivedStatus = QuestGiverStatus::REWARD;
-        else if (hasAvailableQuest) derivedStatus = QuestGiverStatus::AVAILABLE;
-        else if (hasIncompleteQuest) derivedStatus = QuestGiverStatus::INCOMPLETE;
-        if (derivedStatus != QuestGiverStatus::NONE) {
-            npcQuestStatus_[currentGossip.npcGuid] = derivedStatus;
-        }
-    }
-
-    // Play NPC greeting voice
-    if (npcGreetingCallback_ && currentGossip.npcGuid != 0) {
-        auto entity = entityManager.getEntity(currentGossip.npcGuid);
-        if (entity) {
-            glm::vec3 npcPos(entity->getX(), entity->getY(), entity->getZ());
-            npcGreetingCallback_(currentGossip.npcGuid, npcPos);
-        }
-    }
-}
-
-void GameHandler::handleQuestgiverQuestList(network::Packet& packet) {
-    if (!packet.hasRemaining(8)) return;
-
-    GossipMessageData data;
-    data.npcGuid = packet.readUInt64();
-    data.menuId = 0;
-    data.titleTextId = 0;
-
-    // Server text (header/greeting) and optional emote fields.
-    std::string header = packet.readString();
-    if (packet.hasRemaining(8)) {
-        (void)packet.readUInt32(); // emoteDelay / unk
-        (void)packet.readUInt32(); // emote / unk
-    }
-    (void)header;
-
-    // questCount is uint8 in all WoW versions for SMSG_QUESTGIVER_QUEST_LIST.
-    uint32_t questCount = 0;
-    if (packet.hasRemaining(1)) {
-        questCount = packet.readUInt8();
-    }
-
-    // Classic 1.12 and TBC 2.4.3 don't include questFlags(u32) + isRepeatable(u8)
-    // before the quest title. WotLK 3.3.5a added those 5 bytes.
-    const bool hasQuestFlagsField = !isClassicLikeExpansion() && !isActiveExpansion("tbc");
-
-    data.quests.reserve(questCount);
-    for (uint32_t i = 0; i < questCount; ++i) {
-        if (!packet.hasRemaining(12)) break;
-        GossipQuestItem q;
-        q.questId = packet.readUInt32();
-        q.questIcon = packet.readUInt32();
-        q.questLevel = static_cast<int32_t>(packet.readUInt32());
-
-        if (hasQuestFlagsField && packet.hasRemaining(5)) {
-            q.questFlags = packet.readUInt32();
-            q.isRepeatable = packet.readUInt8();
-        } else {
-            q.questFlags = 0;
-            q.isRepeatable = 0;
-        }
-        q.title = normalizeWowTextTokens(packet.readString());
-        if (q.questId != 0) {
-            data.quests.push_back(std::move(q));
-        }
-    }
-
-    currentGossip = std::move(data);
-    gossipWindowOpen = true;
-    fireAddonEvent("GOSSIP_SHOW", {});
-    vendorWindowOpen = false;
-
-    bool hasAvailableQuest = false;
-    bool hasRewardQuest = false;
-    bool hasIncompleteQuest = false;
-    auto questIconIsCompletable = [](uint32_t icon) {
-        return icon == 5 || icon == 6 || icon == 10;
-    };
-    auto questIconIsIncomplete = [](uint32_t icon) {
-        return icon == 3 || icon == 4;
-    };
-    auto questIconIsAvailable = [](uint32_t icon) {
-        return icon == 2 || icon == 7 || icon == 8;
-    };
-
-    for (const auto& questItem : currentGossip.quests) {
-        bool isCompletable = questIconIsCompletable(questItem.questIcon);
-        bool isIncomplete  = questIconIsIncomplete(questItem.questIcon);
-        bool isAvailable   = questIconIsAvailable(questItem.questIcon);
-        hasAvailableQuest |= isAvailable;
-        hasRewardQuest |= isCompletable;
-        hasIncompleteQuest |= isIncomplete;
-    }
-    if (currentGossip.npcGuid != 0) {
-        QuestGiverStatus derivedStatus = QuestGiverStatus::NONE;
-        if (hasRewardQuest) derivedStatus = QuestGiverStatus::REWARD;
-        else if (hasAvailableQuest) derivedStatus = QuestGiverStatus::AVAILABLE;
-        else if (hasIncompleteQuest) derivedStatus = QuestGiverStatus::INCOMPLETE;
-        if (derivedStatus != QuestGiverStatus::NONE) {
-            npcQuestStatus_[currentGossip.npcGuid] = derivedStatus;
-        }
-    }
-
-    LOG_INFO("Questgiver quest list: npc=0x", std::hex, currentGossip.npcGuid, std::dec,
-             " quests=", currentGossip.quests.size());
-}
-
-void GameHandler::handleGossipComplete(network::Packet& packet) {
-    (void)packet;
-
-    // Play farewell sound before closing
-    if (npcFarewellCallback_ && currentGossip.npcGuid != 0) {
-        auto entity = entityManager.getEntity(currentGossip.npcGuid);
-        if (entity && entity->getType() == ObjectType::UNIT) {
-            glm::vec3 pos(entity->getX(), entity->getY(), entity->getZ());
-            npcFarewellCallback_(currentGossip.npcGuid, pos);
-        }
-    }
-
-    gossipWindowOpen = false;
-    fireAddonEvent("GOSSIP_CLOSED", {});
-    currentGossip = GossipMessageData{};
-}
-
-void GameHandler::handleListInventory(network::Packet& packet) {
-    bool savedCanRepair = currentVendorItems.canRepair;  // preserve armorer flag set via gossip path
-    if (!ListInventoryParser::parse(packet, currentVendorItems)) return;
-
-    // Check NPC_FLAG_REPAIR (0x1000) on the vendor entity — this handles vendors that open
-    // directly without going through the gossip armorer option.
-    if (!savedCanRepair && currentVendorItems.vendorGuid != 0) {
-        auto entity = entityManager.getEntity(currentVendorItems.vendorGuid);
-        if (entity && entity->getType() == ObjectType::UNIT) {
-            auto unit = std::static_pointer_cast<Unit>(entity);
-            // MaNGOS/Trinity: UNIT_NPC_FLAG_REPAIR = 0x00001000.
-            if (unit->getNpcFlags() & 0x1000) {
-                savedCanRepair = true;
-            }
-        }
-    }
-    currentVendorItems.canRepair = savedCanRepair;
-    vendorWindowOpen = true;
-    gossipWindowOpen = false; // Close gossip if vendor opens
-    fireAddonEvent("MERCHANT_SHOW", {});
-
-    // Auto-sell grey items if enabled
-    if (autoSellGrey_ && currentVendorItems.vendorGuid != 0) {
-        uint32_t totalSellPrice = 0;
-        int itemsSold = 0;
-
-        // Helper lambda to attempt selling a poor-quality slot
-        auto tryAutoSell = [&](const ItemSlot& slot, uint64_t itemGuid) {
-            if (slot.empty()) return;
-            if (slot.item.quality != ItemQuality::POOR) return;
-            // Determine sell price (slot cache first, then item info fallback)
-            uint32_t sp = slot.item.sellPrice;
-            if (sp == 0) {
-                if (auto* info = getItemInfo(slot.item.itemId); info && info->valid)
-                    sp = info->sellPrice;
-            }
-            if (sp == 0 || itemGuid == 0) return;
-            BuybackItem sold;
-            sold.itemGuid = itemGuid;
-            sold.item = slot.item;
-            sold.count = 1;
-            buybackItems_.push_front(sold);
-            if (buybackItems_.size() > 12) buybackItems_.pop_back();
-            pendingSellToBuyback_[itemGuid] = sold;
-            sellItem(currentVendorItems.vendorGuid, itemGuid, 1);
-            totalSellPrice += sp;
-            ++itemsSold;
-        };
-
-        // Backpack slots
-        for (int i = 0; i < inventory.getBackpackSize(); ++i) {
-            uint64_t guid = backpackSlotGuids_[i];
-            if (guid == 0) guid = resolveOnlineItemGuid(inventory.getBackpackSlot(i).item.itemId);
-            tryAutoSell(inventory.getBackpackSlot(i), guid);
-        }
-
-        // Extra bag slots
-        for (int b = 0; b < inventory.NUM_BAG_SLOTS; ++b) {
-            uint64_t bagGuid = equipSlotGuids_[19 + b];
-            for (int s = 0; s < inventory.getBagSize(b); ++s) {
-                uint64_t guid = 0;
-                if (bagGuid != 0) {
-                    auto it = containerContents_.find(bagGuid);
-                    if (it != containerContents_.end() && s < static_cast<int>(it->second.numSlots))
-                        guid = it->second.slotGuids[s];
-                }
-                if (guid == 0) guid = resolveOnlineItemGuid(inventory.getBagSlot(b, s).item.itemId);
-                tryAutoSell(inventory.getBagSlot(b, s), guid);
-            }
-        }
-
-        if (itemsSold > 0) {
-            uint32_t gold = totalSellPrice / 10000;
-            uint32_t silver = (totalSellPrice % 10000) / 100;
-            uint32_t copper = totalSellPrice % 100;
-            char buf[128];
-            std::snprintf(buf, sizeof(buf),
-                "|cffaaaaaaAuto-sold %d grey item%s for %ug %us %uc.|r",
-                itemsSold, itemsSold == 1 ? "" : "s", gold, silver, copper);
-            addSystemChatMessage(buf);
-        }
-    }
-
-    // Auto-repair all items if enabled and vendor can repair
-    if (autoRepair_ && currentVendorItems.canRepair && currentVendorItems.vendorGuid != 0) {
-        // Check that at least one equipped item is actually damaged to avoid no-op
-        bool anyDamaged = false;
-        for (int i = 0; i < Inventory::NUM_EQUIP_SLOTS; ++i) {
-            const auto& slot = inventory.getEquipSlot(static_cast<EquipSlot>(i));
-            if (!slot.empty() && slot.item.maxDurability > 0
-                    && slot.item.curDurability < slot.item.maxDurability) {
-                anyDamaged = true;
-                break;
-            }
-        }
-        if (anyDamaged) {
-            repairAll(currentVendorItems.vendorGuid, false);
-            addSystemChatMessage("|cffaaaaaaAuto-repair triggered.|r");
-        }
-    }
-
-    // Play vendor sound
-    if (npcVendorCallback_ && currentVendorItems.vendorGuid != 0) {
-        auto entity = entityManager.getEntity(currentVendorItems.vendorGuid);
-        if (entity && entity->getType() == ObjectType::UNIT) {
-            glm::vec3 pos(entity->getX(), entity->getY(), entity->getZ());
-            npcVendorCallback_(currentVendorItems.vendorGuid, pos);
-        }
-    }
-
-    // Query item info for all vendor items so we can show names
-    for (const auto& item : currentVendorItems.items) {
-        queryItemInfo(item.itemId, 0);
-    }
-}
-
 // ============================================================
 // Trainer
 // ============================================================
 
-void GameHandler::handleTrainerList(network::Packet& packet) {
-    const bool isClassic = isClassicLikeExpansion();
-    if (!TrainerListParser::parse(packet, currentTrainerList_, isClassic)) return;
-    trainerWindowOpen_ = true;
-    gossipWindowOpen = false;
-    fireAddonEvent("TRAINER_SHOW", {});
-
-    LOG_INFO("Trainer list: ", currentTrainerList_.spells.size(), " spells");
-    LOG_DEBUG("Known spells count: ", knownSpells.size());
-    if (knownSpells.size() <= 50) {
-        std::string spellList;
-        for (uint32_t id : knownSpells) {
-            if (!spellList.empty()) spellList += ", ";
-            spellList += std::to_string(id);
-        }
-        LOG_DEBUG("Known spells: ", spellList);
-    }
-
-    LOG_DEBUG("Prerequisite check: 527=", knownSpells.count(527u),
-              " 25312=", knownSpells.count(25312u));
-    for (size_t i = 0; i < std::min(size_t(5), currentTrainerList_.spells.size()); ++i) {
-        const auto& s = currentTrainerList_.spells[i];
-        LOG_DEBUG("  Spell[", i, "]: id=", s.spellId, " state=", static_cast<int>(s.state),
-                  " cost=", s.spellCost, " reqLvl=", static_cast<int>(s.reqLevel),
-                  " chain=(", s.chainNode1, ",", s.chainNode2, ",", s.chainNode3, ")");
-    }
-
-
-    // Ensure caches are populated
-    loadSpellNameCache();
-    loadSkillLineDbc();
-    loadSkillLineAbilityDbc();
-    categorizeTrainerSpells();
-}
-
 void GameHandler::trainSpell(uint32_t spellId) {
-    LOG_INFO("trainSpell called: spellId=", spellId, " state=", static_cast<int>(state), " socket=", (socket ? "yes" : "no"));
-    if (!isInWorld()) {
-        LOG_WARNING("trainSpell: Not in world or no socket connection");
-        return;
-    }
-
-    // Find spell cost in trainer list
-    uint32_t spellCost = 0;
-    for (const auto& spell : currentTrainerList_.spells) {
-        if (spell.spellId == spellId) {
-            spellCost = spell.spellCost;
-            break;
-        }
-    }
-    LOG_INFO("Player money: ", playerMoneyCopper_, " copper, spell cost: ", spellCost, " copper");
-
-    LOG_INFO("Sending CMSG_TRAINER_BUY_SPELL: guid=", currentTrainerList_.trainerGuid,
-             " spellId=", spellId);
-    auto packet = TrainerBuySpellPacket::build(
-        currentTrainerList_.trainerGuid,
-        spellId);
-    socket->send(packet);
-    LOG_INFO("CMSG_TRAINER_BUY_SPELL sent");
+    if (inventoryHandler_) inventoryHandler_->trainSpell(spellId);
 }
 
 void GameHandler::closeTrainer() {
-    trainerWindowOpen_ = false;
-    fireAddonEvent("TRAINER_CLOSED", {});
-    currentTrainerList_ = TrainerListData{};
-    trainerTabs_.clear();
+    if (inventoryHandler_) inventoryHandler_->closeTrainer();
 }
 
 void GameHandler::preloadDBCCaches() const {
@@ -22030,449 +8356,82 @@ void GameHandler::preloadDBCCaches() const {
 }
 
 void GameHandler::loadSpellNameCache() const {
-    if (spellNameCacheLoaded_) return;
-    spellNameCacheLoaded_ = true;
-
-    auto* am = core::Application::getInstance().getAssetManager();
-    if (!am || !am->isInitialized()) return;
-
-    auto dbc = am->loadDBC("Spell.dbc");
-    if (!dbc || !dbc->isLoaded()) {
-        LOG_WARNING("Trainer: Could not load Spell.dbc for spell names");
-        return;
-    }
-
-    // Classic 1.12 Spell.dbc has 148 fields; TBC/WotLK have more.
-    // Require at least 148 so Classic trainers can resolve spell names.
-    if (dbc->getFieldCount() < 148) {
-        LOG_WARNING("Trainer: Spell.dbc has too few fields (", dbc->getFieldCount(), ")");
-        return;
-    }
-
-    const auto* spellL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("Spell") : nullptr;
-
-    // Determine school field (bitmask for TBC/WotLK, enum for Classic/Vanilla)
-    uint32_t schoolMaskField = 0, schoolEnumField = 0;
-    bool hasSchoolMask = false, hasSchoolEnum = false;
-    if (spellL) {
-        uint32_t f = spellL->field("SchoolMask");
-        if (f != 0xFFFFFFFF && f < dbc->getFieldCount()) { schoolMaskField = f; hasSchoolMask = true; }
-        f = spellL->field("SchoolEnum");
-        if (f != 0xFFFFFFFF && f < dbc->getFieldCount()) { schoolEnumField = f; hasSchoolEnum = true; }
-    }
-
-    // DispelType field (0=none,1=magic,2=curse,3=disease,4=poison,5=stealth,…)
-    uint32_t dispelField = 0xFFFFFFFF;
-    bool hasDispelField = false;
-    if (spellL) {
-        uint32_t f = spellL->field("DispelType");
-        if (f != 0xFFFFFFFF && f < dbc->getFieldCount()) { dispelField = f; hasDispelField = true; }
-    }
-
-    // AttributesEx field (bit 4 = SPELL_ATTR_EX_NOT_INTERRUPTIBLE)
-    uint32_t attrExField = 0xFFFFFFFF;
-    bool hasAttrExField = false;
-    if (spellL) {
-        uint32_t f = spellL->field("AttributesEx");
-        if (f != 0xFFFFFFFF && f < dbc->getFieldCount()) { attrExField = f; hasAttrExField = true; }
-    }
-
-    // Tooltip/description field
-    uint32_t tooltipField = 0xFFFFFFFF;
-    if (spellL) {
-        uint32_t f = spellL->field("Tooltip");
-        if (f != 0xFFFFFFFF && f < dbc->getFieldCount()) tooltipField = f;
-    }
-
-    // Cache field indices before the loop to avoid repeated layout lookups
-    const uint32_t idField   = spellL ? (*spellL)["ID"]   : 0;
-    const uint32_t nameField = spellL ? (*spellL)["Name"] : 136;
-    const uint32_t rankField = spellL ? (*spellL)["Rank"] : 153;
-    const uint32_t ebp0Field = spellL ? spellL->field("EffectBasePoints0") : 0xFFFFFFFF;
-    const uint32_t ebp1Field = spellL ? spellL->field("EffectBasePoints1") : 0xFFFFFFFF;
-    const uint32_t ebp2Field = spellL ? spellL->field("EffectBasePoints2") : 0xFFFFFFFF;
-    const uint32_t durIdxField = spellL ? spellL->field("DurationIndex") : 0xFFFFFFFF;
-
-    uint32_t count = dbc->getRecordCount();
-    for (uint32_t i = 0; i < count; ++i) {
-        uint32_t id = dbc->getUInt32(i, idField);
-        if (id == 0) continue;
-        std::string name = dbc->getString(i, nameField);
-        std::string rank = dbc->getString(i, rankField);
-        if (!name.empty()) {
-            SpellNameEntry entry{std::move(name), std::move(rank), {}, 0, 0, 0};
-            if (tooltipField != 0xFFFFFFFF) {
-                entry.description = dbc->getString(i, tooltipField);
-            }
-            if (hasSchoolMask) {
-                entry.schoolMask = dbc->getUInt32(i, schoolMaskField);
-            } else if (hasSchoolEnum) {
-                // Classic/Vanilla enum: 0=Physical,1=Holy,2=Fire,3=Nature,4=Frost,5=Shadow,6=Arcane
-                static const uint32_t enumToBitmask[] = {0x01,0x02,0x04,0x08,0x10,0x20,0x40};
-                uint32_t e = dbc->getUInt32(i, schoolEnumField);
-                entry.schoolMask = (e < 7) ? enumToBitmask[e] : 0;
-            }
-            if (hasDispelField) {
-                entry.dispelType = static_cast<uint8_t>(dbc->getUInt32(i, dispelField));
-            }
-            if (hasAttrExField) {
-                entry.attrEx = dbc->getUInt32(i, attrExField);
-            }
-            // Load effect base points for $s1/$s2/$s3 tooltip substitution
-            if (ebp0Field != 0xFFFFFFFF) entry.effectBasePoints[0] = static_cast<int32_t>(dbc->getUInt32(i, ebp0Field));
-            if (ebp1Field != 0xFFFFFFFF) entry.effectBasePoints[1] = static_cast<int32_t>(dbc->getUInt32(i, ebp1Field));
-            if (ebp2Field != 0xFFFFFFFF) entry.effectBasePoints[2] = static_cast<int32_t>(dbc->getUInt32(i, ebp2Field));
-            // Duration: read DurationIndex and resolve via SpellDuration.dbc later
-            if (durIdxField != 0xFFFFFFFF)
-                entry.durationSec = static_cast<float>(dbc->getUInt32(i, durIdxField)); // store index temporarily
-            spellNameCache_[id] = std::move(entry);
-        }
-    }
-    // Resolve DurationIndex → seconds via SpellDuration.dbc
-    auto durDbc = am->loadDBC("SpellDuration.dbc");
-    if (durDbc && durDbc->isLoaded()) {
-        std::unordered_map<uint32_t, float> durMap;
-        for (uint32_t di = 0; di < durDbc->getRecordCount(); ++di) {
-            uint32_t durId = durDbc->getUInt32(di, 0);
-            int32_t baseMs = static_cast<int32_t>(durDbc->getUInt32(di, 1));
-            if (baseMs > 0 && baseMs < 100000000) // filter out absurd values
-                durMap[durId] = baseMs / 1000.0f;
-        }
-        for (auto& [sid, entry] : spellNameCache_) {
-            uint32_t durIdx = static_cast<uint32_t>(entry.durationSec);
-            if (durIdx > 0) {
-                auto it = durMap.find(durIdx);
-                entry.durationSec = (it != durMap.end()) ? it->second : 0.0f;
-            }
-        }
-    }
-    LOG_INFO("Trainer: Loaded ", spellNameCache_.size(), " spell names from Spell.dbc");
+    if (spellHandler_) spellHandler_->loadSpellNameCache();
 }
 
 void GameHandler::loadSkillLineAbilityDbc() {
-    if (skillLineAbilityLoaded_) return;
-    skillLineAbilityLoaded_ = true;
-
-    auto* am = core::Application::getInstance().getAssetManager();
-    if (!am || !am->isInitialized()) return;
-
-    auto slaDbc = am->loadDBC("SkillLineAbility.dbc");
-    if (slaDbc && slaDbc->isLoaded()) {
-        const auto* slaL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("SkillLineAbility") : nullptr;
-        const uint32_t slaSkillField = slaL ? (*slaL)["SkillLineID"] : 1;
-        const uint32_t slaSpellField = slaL ? (*slaL)["SpellID"]     : 2;
-        for (uint32_t i = 0; i < slaDbc->getRecordCount(); i++) {
-            uint32_t skillLineId = slaDbc->getUInt32(i, slaSkillField);
-            uint32_t spellId = slaDbc->getUInt32(i, slaSpellField);
-            if (spellId > 0 && skillLineId > 0) {
-                spellToSkillLine_[spellId] = skillLineId;
-            }
-        }
-        LOG_INFO("Trainer: Loaded ", spellToSkillLine_.size(), " skill line abilities");
-    }
+    if (spellHandler_) spellHandler_->loadSkillLineAbilityDbc();
 }
 
 const std::vector<GameHandler::SpellBookTab>& GameHandler::getSpellBookTabs() {
-    // Rebuild when spell count changes (learns/unlearns)
-    static size_t lastSpellCount = 0;
-    if (lastSpellCount == knownSpells.size() && !spellBookTabsDirty_)
-        return spellBookTabs_;
-    lastSpellCount = knownSpells.size();
-    spellBookTabsDirty_ = false;
-    spellBookTabs_.clear();
-
-    static constexpr uint32_t SKILLLINE_CATEGORY_CLASS = 7;
-
-    // Group known spells by class skill line
-    std::map<uint32_t, std::vector<uint32_t>> bySkillLine;
-    std::vector<uint32_t> general;
-
-    for (uint32_t spellId : knownSpells) {
-        auto slIt = spellToSkillLine_.find(spellId);
-        if (slIt != spellToSkillLine_.end()) {
-            uint32_t skillLineId = slIt->second;
-            auto catIt = skillLineCategories_.find(skillLineId);
-            if (catIt != skillLineCategories_.end() && catIt->second == SKILLLINE_CATEGORY_CLASS) {
-                bySkillLine[skillLineId].push_back(spellId);
-                continue;
-            }
-        }
-        general.push_back(spellId);
-    }
-
-    // Sort spells within each group by name
-    auto byName = [this](uint32_t a, uint32_t b) {
-        return getSpellName(a) < getSpellName(b);
-    };
-
-    // "General" tab first (spells not in a class skill line)
-    if (!general.empty()) {
-        std::sort(general.begin(), general.end(), byName);
-        spellBookTabs_.push_back({"General", "Interface\\Icons\\INV_Misc_Book_09", std::move(general)});
-    }
-
-    // Class skill line tabs, sorted by name
-    std::vector<std::pair<std::string, std::vector<uint32_t>>> named;
-    for (auto& [skillLineId, spells] : bySkillLine) {
-        auto nameIt = skillLineNames_.find(skillLineId);
-        std::string tabName = (nameIt != skillLineNames_.end()) ? nameIt->second : "Unknown";
-        std::sort(spells.begin(), spells.end(), byName);
-        named.emplace_back(std::move(tabName), std::move(spells));
-    }
-    std::sort(named.begin(), named.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-
-    for (auto& [name, spells] : named) {
-        spellBookTabs_.push_back({std::move(name), "Interface\\Icons\\INV_Misc_Book_09", std::move(spells)});
-    }
-
-    return spellBookTabs_;
+    static const std::vector<SpellBookTab> kEmpty;
+    if (spellHandler_) return spellHandler_->getSpellBookTabs();
+    return kEmpty;
 }
 
 void GameHandler::categorizeTrainerSpells() {
-    trainerTabs_.clear();
-
-    static constexpr uint32_t SKILLLINE_CATEGORY_CLASS = 7;
-
-    // Group spells by skill line (category 7 = class spec tabs)
-    std::map<uint32_t, std::vector<const TrainerSpell*>> specialtySpells;
-    std::vector<const TrainerSpell*> generalSpells;
-
-    for (const auto& spell : currentTrainerList_.spells) {
-        auto slIt = spellToSkillLine_.find(spell.spellId);
-        if (slIt != spellToSkillLine_.end()) {
-            uint32_t skillLineId = slIt->second;
-            auto catIt = skillLineCategories_.find(skillLineId);
-            if (catIt != skillLineCategories_.end() && catIt->second == SKILLLINE_CATEGORY_CLASS) {
-                specialtySpells[skillLineId].push_back(&spell);
-                continue;
-            }
-        }
-        generalSpells.push_back(&spell);
-    }
-
-    // Sort by spell name within each group
-    auto byName = [this](const TrainerSpell* a, const TrainerSpell* b) {
-        return getSpellName(a->spellId) < getSpellName(b->spellId);
-    };
-
-    // Build named tabs sorted alphabetically
-    std::vector<std::pair<std::string, std::vector<const TrainerSpell*>>> named;
-    for (auto& [skillLineId, spells] : specialtySpells) {
-        auto nameIt = skillLineNames_.find(skillLineId);
-        std::string tabName = (nameIt != skillLineNames_.end()) ? nameIt->second : "Specialty";
-        std::sort(spells.begin(), spells.end(), byName);
-        named.push_back({std::move(tabName), std::move(spells)});
-    }
-    std::sort(named.begin(), named.end(),
-        [](const auto& a, const auto& b) { return a.first < b.first; });
-
-    for (auto& [name, spells] : named) {
-        trainerTabs_.push_back({std::move(name), std::move(spells)});
-    }
-
-    // General tab last
-    if (!generalSpells.empty()) {
-        std::sort(generalSpells.begin(), generalSpells.end(), byName);
-        trainerTabs_.push_back({"General", std::move(generalSpells)});
-    }
-
-    LOG_INFO("Trainer: Categorized into ", trainerTabs_.size(), " tabs");
+    if (spellHandler_) spellHandler_->categorizeTrainerSpells();
 }
 
 void GameHandler::loadTalentDbc() {
-    if (talentDbcLoaded_) return;
-    talentDbcLoaded_ = true;
-
-    auto* am = core::Application::getInstance().getAssetManager();
-    if (!am || !am->isInitialized()) return;
-
-    // Load Talent.dbc
-    auto talentDbc = am->loadDBC("Talent.dbc");
-    if (talentDbc && talentDbc->isLoaded()) {
-        // Talent.dbc structure (WoW 3.3.5a):
-        // 0: TalentID
-        // 1: TalentTabID
-        // 2: Row (tier)
-        // 3: Column
-        // 4-8: RankID[0-4] (spell IDs for ranks 1-5)
-        // 9-11: PrereqTalent[0-2]
-        // 12-14: PrereqRank[0-2]
-        // (other fields less relevant for basic functionality)
-
-        const auto* talL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("Talent") : nullptr;
-        const uint32_t tID = talL ? (*talL)["ID"] : 0;
-        const uint32_t tTabID = talL ? (*talL)["TabID"] : 1;
-        const uint32_t tRow = talL ? (*talL)["Row"] : 2;
-        const uint32_t tCol = talL ? (*talL)["Column"] : 3;
-        const uint32_t tRank0 = talL ? (*talL)["RankSpell0"] : 4;
-        const uint32_t tPrereq0 = talL ? (*talL)["PrereqTalent0"] : 9;
-        const uint32_t tPrereqR0 = talL ? (*talL)["PrereqRank0"] : 12;
-
-        uint32_t count = talentDbc->getRecordCount();
-        for (uint32_t i = 0; i < count; ++i) {
-            TalentEntry entry;
-            entry.talentId = talentDbc->getUInt32(i, tID);
-            if (entry.talentId == 0) continue;
-
-            entry.tabId = talentDbc->getUInt32(i, tTabID);
-            entry.row = static_cast<uint8_t>(talentDbc->getUInt32(i, tRow));
-            entry.column = static_cast<uint8_t>(talentDbc->getUInt32(i, tCol));
-
-            // Rank spells (1-5 ranks)
-            for (int r = 0; r < 5; ++r) {
-                entry.rankSpells[r] = talentDbc->getUInt32(i, tRank0 + r);
-            }
-
-            // Prerequisites
-            for (int p = 0; p < 3; ++p) {
-                entry.prereqTalent[p] = talentDbc->getUInt32(i, tPrereq0 + p);
-                entry.prereqRank[p] = static_cast<uint8_t>(talentDbc->getUInt32(i, tPrereqR0 + p));
-            }
-
-            // Calculate max rank
-            entry.maxRank = 0;
-            for (int r = 0; r < 5; ++r) {
-                if (entry.rankSpells[r] != 0) {
-                    entry.maxRank = r + 1;
-                }
-            }
-
-            talentCache_[entry.talentId] = entry;
-        }
-        LOG_INFO("Loaded ", talentCache_.size(), " talents from Talent.dbc");
-    } else {
-        LOG_WARNING("Could not load Talent.dbc");
-    }
-
-    // Load TalentTab.dbc
-    auto tabDbc = am->loadDBC("TalentTab.dbc");
-    if (tabDbc && tabDbc->isLoaded()) {
-        // TalentTab.dbc structure (WoW 3.3.5a):
-        // 0: TalentTabID
-        // 1-17: Name (16 localized strings + flags = 17 fields)
-        // 18: SpellIconID
-        // 19: RaceMask
-        // 20: ClassMask
-        // 21: PetTalentMask
-        // 22: OrderIndex
-        // 23-39: BackgroundFile (16 localized strings + flags = 17 fields)
-
-        const auto* ttL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("TalentTab") : nullptr;
-        // Cache field indices before the loop
-        const uint32_t ttIdField    = ttL ? (*ttL)["ID"]             : 0;
-        const uint32_t ttNameField  = ttL ? (*ttL)["Name"]           : 1;
-        const uint32_t ttClassField = ttL ? (*ttL)["ClassMask"]      : 20;
-        const uint32_t ttOrderField = ttL ? (*ttL)["OrderIndex"]     : 22;
-        const uint32_t ttBgField    = ttL ? (*ttL)["BackgroundFile"] : 23;
-
-        uint32_t count = tabDbc->getRecordCount();
-        for (uint32_t i = 0; i < count; ++i) {
-            TalentTabEntry entry;
-            entry.tabId = tabDbc->getUInt32(i, ttIdField);
-            if (entry.tabId == 0) continue;
-
-            entry.name = tabDbc->getString(i, ttNameField);
-            entry.classMask = tabDbc->getUInt32(i, ttClassField);
-            entry.orderIndex = static_cast<uint8_t>(tabDbc->getUInt32(i, ttOrderField));
-            entry.backgroundFile = tabDbc->getString(i, ttBgField);
-
-            talentTabCache_[entry.tabId] = entry;
-
-            // Log first few tabs to debug class mask issue
-            if (talentTabCache_.size() <= 10) {
-                LOG_INFO("  Tab ", entry.tabId, ": ", entry.name, " (classMask=0x", std::hex, entry.classMask, std::dec, ")");
-            }
-        }
-        LOG_INFO("Loaded ", talentTabCache_.size(), " talent tabs from TalentTab.dbc");
-    } else {
-        LOG_WARNING("Could not load TalentTab.dbc");
-    }
+    if (spellHandler_) spellHandler_->loadTalentDbc();
 }
 
 static const std::string EMPTY_STRING;
 
 const int32_t* GameHandler::getSpellEffectBasePoints(uint32_t spellId) const {
-    loadSpellNameCache();
-    auto it = spellNameCache_.find(spellId);
-    return (it != spellNameCache_.end()) ? it->second.effectBasePoints : nullptr;
+    if (spellHandler_) return spellHandler_->getSpellEffectBasePoints(spellId);
+    return nullptr;
 }
 
 float GameHandler::getSpellDuration(uint32_t spellId) const {
-    loadSpellNameCache();
-    auto it = spellNameCache_.find(spellId);
-    return (it != spellNameCache_.end()) ? it->second.durationSec : 0.0f;
+    if (spellHandler_) return spellHandler_->getSpellDuration(spellId);
+    return 0.0f;
 }
 
 const std::string& GameHandler::getSpellName(uint32_t spellId) const {
-    auto it = spellNameCache_.find(spellId);
-    return (it != spellNameCache_.end()) ? it->second.name : EMPTY_STRING;
+    if (spellHandler_) return spellHandler_->getSpellName(spellId);
+    return EMPTY_STRING;
 }
 
 const std::string& GameHandler::getSpellRank(uint32_t spellId) const {
-    auto it = spellNameCache_.find(spellId);
-    return (it != spellNameCache_.end()) ? it->second.rank : EMPTY_STRING;
+    if (spellHandler_) return spellHandler_->getSpellRank(spellId);
+    return EMPTY_STRING;
 }
 
 const std::string& GameHandler::getSpellDescription(uint32_t spellId) const {
-    loadSpellNameCache();
-    auto it = spellNameCache_.find(spellId);
-    return (it != spellNameCache_.end()) ? it->second.description : EMPTY_STRING;
+    if (spellHandler_) return spellHandler_->getSpellDescription(spellId);
+    return EMPTY_STRING;
 }
 
 std::string GameHandler::getEnchantName(uint32_t enchantId) const {
-    if (enchantId == 0) return {};
-    auto* am = core::Application::getInstance().getAssetManager();
-    if (!am || !am->isInitialized()) return {};
-    auto dbc = am->loadDBC("SpellItemEnchantment.dbc");
-    if (!dbc || !dbc->isLoaded()) return {};
-    // Name is at field 14 (consistent across Classic/TBC/WotLK)
-    for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
-        if (dbc->getUInt32(i, 0) == enchantId) {
-            return dbc->getString(i, 14);
-        }
-    }
+    if (spellHandler_) return spellHandler_->getEnchantName(enchantId);
     return {};
 }
 
 uint8_t GameHandler::getSpellDispelType(uint32_t spellId) const {
-    loadSpellNameCache();
-    auto it = spellNameCache_.find(spellId);
-    return (it != spellNameCache_.end()) ? it->second.dispelType : 0;
+    if (spellHandler_) return spellHandler_->getSpellDispelType(spellId);
+    return 0;
 }
 
 bool GameHandler::isSpellInterruptible(uint32_t spellId) const {
-    if (spellId == 0) return true;
-    loadSpellNameCache();
-    auto it = spellNameCache_.find(spellId);
-    if (it == spellNameCache_.end()) return true;  // assume interruptible if unknown
-    // SPELL_ATTR_EX_NOT_INTERRUPTIBLE = bit 4 of AttributesEx (0x00000010)
-    return (it->second.attrEx & 0x00000010u) == 0;
+    if (spellHandler_) return spellHandler_->isSpellInterruptible(spellId);
+    return true;
 }
 
 uint32_t GameHandler::getSpellSchoolMask(uint32_t spellId) const {
-    if (spellId == 0) return 0;
-    loadSpellNameCache();
-    auto it = spellNameCache_.find(spellId);
-    return (it != spellNameCache_.end()) ? it->second.schoolMask : 0;
+    if (spellHandler_) return spellHandler_->getSpellSchoolMask(spellId);
+    return 0;
 }
 
 const std::string& GameHandler::getSkillLineName(uint32_t spellId) const {
-    auto slIt = spellToSkillLine_.find(spellId);
-    if (slIt == spellToSkillLine_.end()) return EMPTY_STRING;
-    auto nameIt = skillLineNames_.find(slIt->second);
-    return (nameIt != skillLineNames_.end()) ? nameIt->second : EMPTY_STRING;
+    if (spellHandler_) return spellHandler_->getSkillLineName(spellId);
+    return EMPTY_STRING;
 }
 
 // ============================================================
 // Single-player local combat
 // ============================================================
-
-
-
-
-
-
-
 
 // ============================================================
 // XP tracking
@@ -22498,1074 +8457,40 @@ uint32_t GameHandler::xpForLevel(uint32_t level) {
 }
 
 uint32_t GameHandler::killXp(uint32_t playerLevel, uint32_t victimLevel) {
-    if (playerLevel == 0 || victimLevel == 0) return 0;
-
-    // Gray level check (too low = 0 XP)
-    int32_t grayLevel;
-    if (playerLevel <= 5)        grayLevel = 0;
-    else if (playerLevel <= 39)  grayLevel = static_cast<int32_t>(playerLevel) - 5 - static_cast<int32_t>(playerLevel) / 10;
-    else if (playerLevel <= 59)  grayLevel = static_cast<int32_t>(playerLevel) - 1 - static_cast<int32_t>(playerLevel) / 5;
-    else                         grayLevel = static_cast<int32_t>(playerLevel) - 9;
-
-    if (static_cast<int32_t>(victimLevel) <= grayLevel) return 0;
-
-    // Base XP = 45 + 5 * victimLevel (WoW-like ZeroDifference formula)
-    uint32_t baseXp = 45 + 5 * victimLevel;
-
-    // Level difference multiplier
-    int32_t diff = static_cast<int32_t>(victimLevel) - static_cast<int32_t>(playerLevel);
-    float multiplier = 1.0f + diff * 0.05f;
-    if (multiplier < 0.1f) multiplier = 0.1f;
-    if (multiplier > 2.0f) multiplier = 2.0f;
-
-    return static_cast<uint32_t>(baseXp * multiplier);
+    return CombatHandler::killXp(playerLevel, victimLevel);
 }
-
-
 
 void GameHandler::handleXpGain(network::Packet& packet) {
-    XpGainData data;
-    if (!XpGainParser::parse(packet, data)) return;
-
-    // Server already updates PLAYER_XP via update fields,
-    // but we can show combat text for XP gains
-    addCombatText(CombatTextEntry::XP_GAIN, static_cast<int32_t>(data.totalXp), 0, true);
-
-    // Build XP message with source creature name when available
-    std::string msg;
-    if (data.victimGuid != 0 && data.type == 0) {
-        // Kill XP — resolve creature name
-        std::string victimName = lookupName(data.victimGuid);
-        if (!victimName.empty())
-            msg = victimName + " dies, you gain " + std::to_string(data.totalXp) + " experience.";
-        else
-            msg = "You gain " + std::to_string(data.totalXp) + " experience.";
-    } else {
-        msg = "You gain " + std::to_string(data.totalXp) + " experience.";
-    }
-    if (data.groupBonus > 0) {
-        msg += " (+" + std::to_string(data.groupBonus) + " group bonus)";
-    }
-    addSystemChatMessage(msg);
-            fireAddonEvent("CHAT_MSG_COMBAT_XP_GAIN", {msg, std::to_string(data.totalXp)});
+    if (combatHandler_) combatHandler_->handleXpGain(packet);
 }
 
-
 void GameHandler::addMoneyCopper(uint32_t amount) {
-    if (amount == 0) return;
-    playerMoneyCopper_ += amount;
-    uint32_t gold = amount / 10000;
-    uint32_t silver = (amount / 100) % 100;
-    uint32_t copper = amount % 100;
-    std::string msg = "You receive ";
-    msg += std::to_string(gold) + "g ";
-    msg += std::to_string(silver) + "s ";
-    msg += std::to_string(copper) + "c.";
-    addSystemChatMessage(msg);
-            fireAddonEvent("CHAT_MSG_MONEY", {msg});
+    if (inventoryHandler_) inventoryHandler_->addMoneyCopper(amount);
 }
 
 void GameHandler::addSystemChatMessage(const std::string& message) {
-    if (message.empty()) return;
-    MessageChatData msg;
-    msg.type = ChatType::SYSTEM;
-    msg.language = ChatLanguage::UNIVERSAL;
-    msg.message = message;
-    addLocalChatMessage(msg);
-}
-
-// ============================================================
-// Teleport Handler
-// ============================================================
-
-void GameHandler::handleTeleportAck(network::Packet& packet) {
-    // MSG_MOVE_TELEPORT_ACK (server→client):
-    // WotLK: packed GUID + u32 counter + u32 time + movement info with new position
-    // TBC/Classic: uint64 + u32 counter + u32 time + movement info
-    const bool taTbc = isPreWotlk();
-    if (!packet.hasRemaining(taTbc ? 8u : 4u) ) {
-        LOG_WARNING("MSG_MOVE_TELEPORT_ACK too short");
-        return;
-    }
-
-    uint64_t guid = taTbc
-        ? packet.readUInt64() : packet.readPackedGuid();
-    if (!packet.hasRemaining(4)) return;
-    uint32_t counter = packet.readUInt32();
-
-    // Read the movement info embedded in the teleport.
-    // WotLK: moveFlags(4) + moveFlags2(2) + time(4) + x(4) + y(4) + z(4) + o(4) = 26 bytes
-    // Classic 1.12 / TBC 2.4.3: moveFlags(4) + time(4) + x(4) + y(4) + z(4) + o(4) = 24 bytes
-    // (Classic and TBC have no moveFlags2 field in movement packets)
-    const bool taNoFlags2 = isPreWotlk();
-    const size_t minMoveSz = taNoFlags2 ? (4 + 4 + 4 * 4) : (4 + 2 + 4 + 4 * 4);
-    if (!packet.hasRemaining(minMoveSz)) {
-        LOG_WARNING("MSG_MOVE_TELEPORT_ACK: not enough data for movement info");
-        return;
-    }
-
-    packet.readUInt32();  // moveFlags
-    if (!taNoFlags2)
-        packet.readUInt16();  // moveFlags2 (WotLK only)
-    uint32_t moveTime = packet.readUInt32();
-    float serverX = packet.readFloat();
-    float serverY = packet.readFloat();
-    float serverZ = packet.readFloat();
-    float orientation = packet.readFloat();
-
-    LOG_INFO("MSG_MOVE_TELEPORT_ACK: guid=0x", std::hex, guid, std::dec,
-             " counter=", counter,
-             " pos=(", serverX, ", ", serverY, ", ", serverZ, ")");
-
-    // Update our position
-    glm::vec3 canonical = core::coords::serverToCanonical(glm::vec3(serverX, serverY, serverZ));
-    movementInfo.x = canonical.x;
-    movementInfo.y = canonical.y;
-    movementInfo.z = canonical.z;
-    movementInfo.orientation = core::coords::serverToCanonicalYaw(orientation);
-    movementInfo.flags = 0;
-
-    // Send the ack back to the server
-    // Client→server MSG_MOVE_TELEPORT_ACK: u64 guid + u32 counter + u32 time
-    // Classic/TBC use full uint64 GUID; WotLK uses packed GUID.
-    if (socket) {
-        network::Packet ack(wireOpcode(Opcode::MSG_MOVE_TELEPORT_ACK));
-        const bool legacyGuidAck =
-            isActiveExpansion("classic") || isActiveExpansion("tbc") || isActiveExpansion("turtle");
-        if (legacyGuidAck) {
-            ack.writeUInt64(playerGuid);  // CMaNGOS/VMaNGOS expects full GUID for Classic/TBC
-        } else {
-            ack.writePackedGuid(playerGuid);
-        }
-        ack.writeUInt32(counter);
-        ack.writeUInt32(moveTime);
-        socket->send(ack);
-        LOG_INFO("Sent MSG_MOVE_TELEPORT_ACK response");
-    }
-
-    // Notify application of teleport — the callback decides whether to do
-    // a full world reload (map change) or just update position (same map).
-    if (worldEntryCallback_) {
-        worldEntryCallback_(currentMapId_, serverX, serverY, serverZ, false);
-    }
-}
-
-void GameHandler::handleNewWorld(network::Packet& packet) {
-    // SMSG_NEW_WORLD: uint32 mapId, float x, y, z, orientation
-    if (!packet.hasRemaining(20)) {
-        LOG_WARNING("SMSG_NEW_WORLD too short");
-        return;
-    }
-
-    uint32_t mapId = packet.readUInt32();
-    float serverX = packet.readFloat();
-    float serverY = packet.readFloat();
-    float serverZ = packet.readFloat();
-    float orientation = packet.readFloat();
-
-    LOG_INFO("SMSG_NEW_WORLD: mapId=", mapId,
-             " pos=(", serverX, ", ", serverY, ", ", serverZ, ")",
-             " orient=", orientation);
-
-    // Detect same-map spirit healer resurrection: the server uses SMSG_NEW_WORLD
-    // to reposition the player at the graveyard on the same map.  A full world
-    // reload is not needed and causes terrain to vanish, making the player fall
-    // forever.  Just reposition and send the ack.
-    const bool isSameMap       = (mapId == currentMapId_);
-    const bool isResurrection  = resurrectPending_;
-    if (isSameMap && isResurrection) {
-        LOG_INFO("SMSG_NEW_WORLD same-map resurrection — skipping world reload");
-
-        glm::vec3 canonical = core::coords::serverToCanonical(glm::vec3(serverX, serverY, serverZ));
-        movementInfo.x = canonical.x;
-        movementInfo.y = canonical.y;
-        movementInfo.z = canonical.z;
-        movementInfo.orientation = core::coords::serverToCanonicalYaw(orientation);
-        movementInfo.flags  = 0;
-        movementInfo.flags2 = 0;
-
-        resurrectPending_       = false;
-        resurrectRequestPending_ = false;
-        releasedSpirit_         = false;
-        playerDead_             = false;
-        repopPending_           = false;
-        pendingSpiritHealerGuid_ = 0;
-        resurrectCasterGuid_    = 0;
-        corpseMapId_            = 0;
-        corpseGuid_             = 0;
-        hostileAttackers_.clear();
-        stopAutoAttack();
-        tabCycleStale = true;
-        casting = false;
-        castIsChannel = false;
-        currentCastSpellId = 0;
-        castTimeRemaining = 0.0f;
-        craftQueueSpellId_ = 0;
-        craftQueueRemaining_ = 0;
-        queuedSpellId_ = 0;
-        queuedSpellTarget_ = 0;
-
-        if (socket) {
-            network::Packet ack(wireOpcode(Opcode::MSG_MOVE_WORLDPORT_ACK));
-            socket->send(ack);
-            LOG_INFO("Sent MSG_MOVE_WORLDPORT_ACK (resurrection)");
-        }
-        return;
-    }
-
-    currentMapId_ = mapId;
-    inInstance_ = false;  // cleared on map change; re-set if SMSG_INSTANCE_DIFFICULTY follows
-    if (socket) {
-        socket->tracePacketsFor(std::chrono::seconds(12), "new_world");
-    }
-
-    // Update player position
-    glm::vec3 canonical = core::coords::serverToCanonical(glm::vec3(serverX, serverY, serverZ));
-    movementInfo.x = canonical.x;
-    movementInfo.y = canonical.y;
-    movementInfo.z = canonical.z;
-    movementInfo.orientation = core::coords::serverToCanonicalYaw(orientation);
-    movementInfo.flags = 0;
-    movementInfo.flags2 = 0;
-    serverMovementAllowed_ = true;
-    resurrectPending_ = false;
-    resurrectRequestPending_ = false;
-    onTaxiFlight_ = false;
-    taxiMountActive_ = false;
-    taxiActivatePending_ = false;
-    taxiClientActive_ = false;
-    taxiClientPath_.clear();
-    taxiRecoverPending_ = false;
-    taxiStartGrace_ = 0.0f;
-    currentMountDisplayId_ = 0;
-    taxiMountDisplayId_ = 0;
-    if (mountCallback_) {
-        mountCallback_(0);
-    }
-
-    // Invoke despawn callbacks for all entities before clearing, so the renderer
-    // can release M2 instances, character models, and associated resources.
-    for (const auto& [guid, entity] : entityManager.getEntities()) {
-        if (guid == playerGuid) continue;  // skip self
-        if (entity->getType() == ObjectType::UNIT && creatureDespawnCallback_) {
-            creatureDespawnCallback_(guid);
-        } else if (entity->getType() == ObjectType::PLAYER && playerDespawnCallback_) {
-            playerDespawnCallback_(guid);
-        } else if (entity->getType() == ObjectType::GAMEOBJECT && gameObjectDespawnCallback_) {
-            gameObjectDespawnCallback_(guid);
-        }
-    }
-    otherPlayerVisibleItemEntries_.clear();
-    otherPlayerVisibleDirty_.clear();
-    otherPlayerMoveTimeMs_.clear();
-    unitCastStates_.clear();
-    unitAurasCache_.clear();
-    combatText.clear();
-    entityManager.clear();
-    hostileAttackers_.clear();
-    worldStates_.clear();
-    // Quest POI markers are map-specific; remove those that don't apply to the new map.
-    // Markers without a questId tag (data==0) are gossip-window POIs — keep them cleared
-    // here since gossipWindowOpen is reset on teleport anyway.
-    gossipPois_.clear();
-    worldStateMapId_ = mapId;
-    worldStateZoneId_ = 0;
-    activeAreaTriggers_.clear();
-    areaTriggerCheckTimer_ = -5.0f;  // 5-second cooldown after map transfer
-    areaTriggerSuppressFirst_ = true;  // first check just marks active triggers, doesn't fire
-    stopAutoAttack();
-    casting = false;
-    castIsChannel = false;
-    currentCastSpellId = 0;
-    pendingGameObjectInteractGuid_ = 0;
-    lastInteractedGoGuid_ = 0;
-    castTimeRemaining = 0.0f;
-    craftQueueSpellId_ = 0;
-    craftQueueRemaining_ = 0;
-    queuedSpellId_ = 0;
-    queuedSpellTarget_ = 0;
-
-    // Send MSG_MOVE_WORLDPORT_ACK to tell the server we're ready
-    if (socket) {
-        network::Packet ack(wireOpcode(Opcode::MSG_MOVE_WORLDPORT_ACK));
-        socket->send(ack);
-        LOG_INFO("Sent MSG_MOVE_WORLDPORT_ACK");
-    }
-
-    timeSinceLastPing = 0.0f;
-    if (socket) {
-        LOG_WARNING("World transfer keepalive: sending immediate ping after MSG_MOVE_WORLDPORT_ACK");
-        sendPing();
-    }
-
-    // Reload terrain at new position.
-    // Pass isSameMap as isInitialEntry so the application despawns and
-    // re-registers renderer instances before the server resends CREATE_OBJECTs.
-    // Without this, same-map SMSG_NEW_WORLD (dungeon wing teleporters, etc.)
-    // leaves zombie renderer instances that block fresh entity spawns.
-    if (worldEntryCallback_) {
-        worldEntryCallback_(mapId, serverX, serverY, serverZ, isSameMap);
-    }
-
-    // Fire PLAYER_ENTERING_WORLD for teleports / zone transitions
-        fireAddonEvent("PLAYER_ENTERING_WORLD", {"0"});
-        fireAddonEvent("ZONE_CHANGED_NEW_AREA", {});
+    if (chatHandler_) chatHandler_->addSystemChatMessage(message);
 }
 
 // ============================================================
 // Taxi / Flight Path Handlers
 // ============================================================
 
-void GameHandler::loadTaxiDbc() {
-    if (taxiDbcLoaded_) return;
-    taxiDbcLoaded_ = true;
-
-    auto* am = core::Application::getInstance().getAssetManager();
-    if (!am || !am->isInitialized()) return;
-
-    auto nodesDbc = am->loadDBC("TaxiNodes.dbc");
-    if (nodesDbc && nodesDbc->isLoaded()) {
-        const auto* tnL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("TaxiNodes") : nullptr;
-        // Cache field indices before the loop
-        const uint32_t tnIdField   = tnL ? (*tnL)["ID"]    : 0;
-        const uint32_t tnMapField  = tnL ? (*tnL)["MapID"] : 1;
-        const uint32_t tnXField    = tnL ? (*tnL)["X"]     : 2;
-        const uint32_t tnYField    = tnL ? (*tnL)["Y"]     : 3;
-        const uint32_t tnZField    = tnL ? (*tnL)["Z"]     : 4;
-        const uint32_t tnNameField = tnL ? (*tnL)["Name"]  : 5;
-        const uint32_t mountAllianceField = tnL ? (*tnL)["MountDisplayIdAlliance"]         : 22;
-        const uint32_t mountHordeField    = tnL ? (*tnL)["MountDisplayIdHorde"]            : 23;
-        const uint32_t mountAllianceFB    = tnL ? (*tnL)["MountDisplayIdAllianceFallback"] : 20;
-        const uint32_t mountHordeFB       = tnL ? (*tnL)["MountDisplayIdHordeFallback"]    : 21;
-        uint32_t fieldCount = nodesDbc->getFieldCount();
-        for (uint32_t i = 0; i < nodesDbc->getRecordCount(); i++) {
-            TaxiNode node;
-            node.id = nodesDbc->getUInt32(i, tnIdField);
-            node.mapId = nodesDbc->getUInt32(i, tnMapField);
-            node.x = nodesDbc->getFloat(i, tnXField);
-            node.y = nodesDbc->getFloat(i, tnYField);
-            node.z = nodesDbc->getFloat(i, tnZField);
-            node.name = nodesDbc->getString(i, tnNameField);
-            if (fieldCount > mountHordeField) {
-                node.mountDisplayIdAlliance = nodesDbc->getUInt32(i, mountAllianceField);
-                node.mountDisplayIdHorde = nodesDbc->getUInt32(i, mountHordeField);
-                if (node.mountDisplayIdAlliance == 0 && node.mountDisplayIdHorde == 0 && fieldCount > mountHordeFB) {
-                    node.mountDisplayIdAlliance = nodesDbc->getUInt32(i, mountAllianceFB);
-                    node.mountDisplayIdHorde = nodesDbc->getUInt32(i, mountHordeFB);
-                }
-            }
-            uint32_t nodeId = node.id;
-            if (nodeId > 0) {
-                taxiNodes_[nodeId] = std::move(node);
-            }
-            if (nodeId == 195) {
-                std::string fields;
-                for (uint32_t f = 0; f < fieldCount; f++) {
-                    fields += std::to_string(f) + ":" + std::to_string(nodesDbc->getUInt32(i, f)) + " ";
-                }
-                LOG_INFO("TaxiNodes[195] fields: ", fields);
-            }
-        }
-        LOG_INFO("Loaded ", taxiNodes_.size(), " taxi nodes from TaxiNodes.dbc");
-    } else {
-        LOG_WARNING("Could not load TaxiNodes.dbc");
-    }
-
-    auto pathDbc = am->loadDBC("TaxiPath.dbc");
-    if (pathDbc && pathDbc->isLoaded()) {
-        const auto* tpL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("TaxiPath") : nullptr;
-        const uint32_t tpIdField   = tpL ? (*tpL)["ID"]       : 0;
-        const uint32_t tpFromField = tpL ? (*tpL)["FromNode"] : 1;
-        const uint32_t tpToField   = tpL ? (*tpL)["ToNode"]   : 2;
-        const uint32_t tpCostField = tpL ? (*tpL)["Cost"]     : 3;
-        for (uint32_t i = 0; i < pathDbc->getRecordCount(); i++) {
-            TaxiPathEdge edge;
-            edge.pathId = pathDbc->getUInt32(i, tpIdField);
-            edge.fromNode = pathDbc->getUInt32(i, tpFromField);
-            edge.toNode = pathDbc->getUInt32(i, tpToField);
-            edge.cost = pathDbc->getUInt32(i, tpCostField);
-            taxiPathEdges_.push_back(edge);
-        }
-        LOG_INFO("Loaded ", taxiPathEdges_.size(), " taxi path edges from TaxiPath.dbc");
-    } else {
-        LOG_WARNING("Could not load TaxiPath.dbc");
-    }
-
-    auto pathNodeDbc = am->loadDBC("TaxiPathNode.dbc");
-    if (pathNodeDbc && pathNodeDbc->isLoaded()) {
-        const auto* tpnL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("TaxiPathNode") : nullptr;
-        const uint32_t tpnIdField    = tpnL ? (*tpnL)["ID"]        : 0;
-        const uint32_t tpnPathField  = tpnL ? (*tpnL)["PathID"]    : 1;
-        const uint32_t tpnIndexField = tpnL ? (*tpnL)["NodeIndex"] : 2;
-        const uint32_t tpnMapField   = tpnL ? (*tpnL)["MapID"]     : 3;
-        const uint32_t tpnXField     = tpnL ? (*tpnL)["X"]         : 4;
-        const uint32_t tpnYField     = tpnL ? (*tpnL)["Y"]         : 5;
-        const uint32_t tpnZField     = tpnL ? (*tpnL)["Z"]         : 6;
-        for (uint32_t i = 0; i < pathNodeDbc->getRecordCount(); i++) {
-            TaxiPathNode node;
-            node.id = pathNodeDbc->getUInt32(i, tpnIdField);
-            node.pathId = pathNodeDbc->getUInt32(i, tpnPathField);
-            node.nodeIndex = pathNodeDbc->getUInt32(i, tpnIndexField);
-            node.mapId = pathNodeDbc->getUInt32(i, tpnMapField);
-            node.x = pathNodeDbc->getFloat(i, tpnXField);
-            node.y = pathNodeDbc->getFloat(i, tpnYField);
-            node.z = pathNodeDbc->getFloat(i, tpnZField);
-            taxiPathNodes_[node.pathId].push_back(node);
-        }
-        // Sort waypoints by nodeIndex for each path
-        for (auto& [pathId, nodes] : taxiPathNodes_) {
-            std::sort(nodes.begin(), nodes.end(),
-                [](const TaxiPathNode& a, const TaxiPathNode& b) {
-                    return a.nodeIndex < b.nodeIndex;
-                });
-        }
-        LOG_INFO("Loaded ", pathNodeDbc->getRecordCount(), " taxi path waypoints from TaxiPathNode.dbc");
-    } else {
-        LOG_WARNING("Could not load TaxiPathNode.dbc");
-    }
-}
-
-void GameHandler::handleShowTaxiNodes(network::Packet& packet) {
-    ShowTaxiNodesData data;
-    if (!ShowTaxiNodesParser::parse(packet, data)) {
-        LOG_WARNING("Failed to parse SMSG_SHOWTAXINODES");
-        return;
-    }
-
-    loadTaxiDbc();
-
-    // Detect newly discovered flight paths by comparing with stored mask
-    if (taxiMaskInitialized_) {
-        for (uint32_t i = 0; i < TLK_TAXI_MASK_SIZE; ++i) {
-            uint32_t newBits = data.nodeMask[i] & ~knownTaxiMask_[i];
-            if (newBits == 0) continue;
-            for (uint32_t bit = 0; bit < 32; ++bit) {
-                if (newBits & (1u << bit)) {
-                    uint32_t nodeId = i * 32 + bit + 1;
-                    auto it = taxiNodes_.find(nodeId);
-                    if (it != taxiNodes_.end()) {
-                        addSystemChatMessage("Discovered flight path: " + it->second.name);
-                    }
-                }
-            }
-        }
-    }
-
-    // Update stored mask
-    for (uint32_t i = 0; i < TLK_TAXI_MASK_SIZE; ++i) {
-        knownTaxiMask_[i] = data.nodeMask[i];
-    }
-    taxiMaskInitialized_ = true;
-
-    currentTaxiData_ = data;
-    taxiNpcGuid_ = data.npcGuid;
-    taxiWindowOpen_ = true;
-    gossipWindowOpen = false;
-    buildTaxiCostMap();
-    auto it = taxiNodes_.find(data.nearestNode);
-    if (it != taxiNodes_.end()) {
-        LOG_INFO("Taxi node ", data.nearestNode, " mounts: A=", it->second.mountDisplayIdAlliance,
-                 " H=", it->second.mountDisplayIdHorde);
-    }
-    LOG_INFO("Taxi window opened, nearest node=", data.nearestNode);
-}
-
-void GameHandler::applyTaxiMountForCurrentNode() {
-    if (taxiMountActive_ || !mountCallback_) return;
-    auto it = taxiNodes_.find(currentTaxiData_.nearestNode);
-    if (it == taxiNodes_.end()) {
-        // Node not in DBC (custom server nodes, missing data) — use hardcoded fallback.
-        bool isAlliance = true;
-        switch (playerRace_) {
-            case Race::ORC: case Race::UNDEAD: case Race::TAUREN: case Race::TROLL:
-            case Race::GOBLIN: case Race::BLOOD_ELF:
-                isAlliance = false; break;
-            default: break;
-        }
-        uint32_t mountId = isAlliance ? 1210u : 1310u;
-        taxiMountDisplayId_ = mountId;
-        taxiMountActive_ = true;
-        LOG_INFO("Taxi mount fallback (node ", currentTaxiData_.nearestNode, " not in DBC): displayId=", mountId);
-        mountCallback_(mountId);
-        return;
-    }
-
-    bool isAlliance = true;
-    switch (playerRace_) {
-        case Race::ORC:
-        case Race::UNDEAD:
-        case Race::TAUREN:
-        case Race::TROLL:
-        case Race::GOBLIN:
-        case Race::BLOOD_ELF:
-            isAlliance = false;
-            break;
-        default:
-            isAlliance = true;
-            break;
-    }
-    uint32_t mountId = isAlliance ? it->second.mountDisplayIdAlliance
-                                  : it->second.mountDisplayIdHorde;
-    if (mountId == 541) mountId = 0;  // Placeholder/invalid in some DBC sets
-    if (mountId == 0) {
-        mountId = isAlliance ? it->second.mountDisplayIdHorde
-                             : it->second.mountDisplayIdAlliance;
-        if (mountId == 541) mountId = 0;
-    }
-    if (mountId == 0) {
-        auto& app = core::Application::getInstance();
-        uint32_t gryphonId = app.getGryphonDisplayId();
-        uint32_t wyvernId = app.getWyvernDisplayId();
-        if (isAlliance && gryphonId != 0) mountId = gryphonId;
-        if (!isAlliance && wyvernId != 0) mountId = wyvernId;
-        if (mountId == 0) {
-            mountId = (isAlliance ? wyvernId : gryphonId);
-        }
-    }
-    if (mountId == 0) {
-        // Fallback: any non-zero mount display from the node.
-        if (it->second.mountDisplayIdAlliance != 0) mountId = it->second.mountDisplayIdAlliance;
-        else if (it->second.mountDisplayIdHorde != 0) mountId = it->second.mountDisplayIdHorde;
-    }
-    if (mountId == 0) {
-        // 3.3.5a fallback display IDs (real CreatureDisplayInfo entries).
-        // Alliance taxi gryphons commonly use 1210-1213.
-        // Horde taxi wyverns commonly use 1310-1312.
-        static const uint32_t kAllianceTaxiDisplays[] = {1210u, 1211u, 1212u, 1213u};
-        static const uint32_t kHordeTaxiDisplays[] = {1310u, 1311u, 1312u};
-        mountId = isAlliance ? kAllianceTaxiDisplays[0] : kHordeTaxiDisplays[0];
-    }
-
-    // Last resort legacy fallback.
-    if (mountId == 0) {
-        mountId = isAlliance ? 30412u : 30413u;
-    }
-    if (mountId != 0) {
-        taxiMountDisplayId_ = mountId;
-        taxiMountActive_ = true;
-        LOG_INFO("Taxi mount apply: displayId=", mountId);
-        mountCallback_(mountId);
-    }
-}
-
-void GameHandler::startClientTaxiPath(const std::vector<uint32_t>& pathNodes) {
-    taxiClientPath_.clear();
-    taxiClientIndex_ = 0;
-    taxiClientActive_ = false;
-    taxiClientSegmentProgress_ = 0.0f;
-
-    // Build full spline path using TaxiPathNode waypoints (not just node positions)
-    for (size_t i = 0; i + 1 < pathNodes.size(); i++) {
-        uint32_t fromNode = pathNodes[i];
-        uint32_t toNode = pathNodes[i + 1];
-        // Find the pathId connecting these nodes
-        uint32_t pathId = 0;
-        for (const auto& edge : taxiPathEdges_) {
-            if (edge.fromNode == fromNode && edge.toNode == toNode) {
-                pathId = edge.pathId;
-                break;
-            }
-        }
-        if (pathId == 0) {
-            LOG_WARNING("No taxi path found from node ", fromNode, " to ", toNode);
-            continue;
-        }
-        // Get spline waypoints for this path segment
-        auto pathIt = taxiPathNodes_.find(pathId);
-        if (pathIt != taxiPathNodes_.end()) {
-            for (const auto& wpNode : pathIt->second) {
-                glm::vec3 serverPos(wpNode.x, wpNode.y, wpNode.z);
-                glm::vec3 canonical = core::coords::serverToCanonical(serverPos);
-                taxiClientPath_.push_back(canonical);
-            }
-        } else {
-            LOG_WARNING("No spline waypoints found for taxi pathId ", pathId);
-        }
-    }
-
-    if (taxiClientPath_.size() < 2) {
-        // Fallback: use TaxiNodes directly when TaxiPathNode spline data is missing.
-        taxiClientPath_.clear();
-        for (uint32_t nodeId : pathNodes) {
-            auto nodeIt = taxiNodes_.find(nodeId);
-            if (nodeIt == taxiNodes_.end()) continue;
-            glm::vec3 serverPos(nodeIt->second.x, nodeIt->second.y, nodeIt->second.z);
-            taxiClientPath_.push_back(core::coords::serverToCanonical(serverPos));
-        }
-    }
-
-    if (taxiClientPath_.size() < 2) {
-        LOG_WARNING("Taxi path too short: ", taxiClientPath_.size(), " waypoints");
-        return;
-    }
-
-    // Set initial orientation to face the first non-degenerate flight segment.
-    glm::vec3 start = taxiClientPath_[0];
-    glm::vec3 dir(0.0f);
-    float dirLenSq = 0.0f;
-    for (size_t i = 1; i < taxiClientPath_.size(); i++) {
-        dir = taxiClientPath_[i] - start;
-        dirLenSq = glm::dot(dir, dir);
-        if (dirLenSq >= 1e-6f) {
-            break;
-        }
-    }
-
-    float initialOrientation = movementInfo.orientation;
-    float initialRenderYaw = movementInfo.orientation;
-    float initialPitch = 0.0f;
-    float initialRoll = 0.0f;
-    if (dirLenSq >= 1e-6f) {
-        initialOrientation = std::atan2(dir.y, dir.x);
-        glm::vec3 renderDir = core::coords::canonicalToRender(dir);
-        initialRenderYaw = std::atan2(renderDir.y, renderDir.x);
-        glm::vec3 dirNorm = dir * glm::inversesqrt(dirLenSq);
-        initialPitch = std::asin(std::clamp(dirNorm.z, -1.0f, 1.0f));
-    }
-
-    movementInfo.x = start.x;
-    movementInfo.y = start.y;
-    movementInfo.z = start.z;
-    movementInfo.orientation = initialOrientation;
-    sanitizeMovementForTaxi();
-
-    auto playerEntity = entityManager.getEntity(playerGuid);
-    if (playerEntity) {
-        playerEntity->setPosition(start.x, start.y, start.z, initialOrientation);
-    }
-
-    if (taxiOrientationCallback_) {
-        taxiOrientationCallback_(initialRenderYaw, initialPitch, initialRoll);
-    }
-
-    LOG_INFO("Taxi flight started with ", taxiClientPath_.size(), " spline waypoints");
-    taxiClientActive_ = true;
-}
-
 void GameHandler::updateClientTaxi(float deltaTime) {
-    if (!taxiClientActive_ || taxiClientPath_.size() < 2) return;
-    auto playerEntity = entityManager.getEntity(playerGuid);
-
-    auto finishTaxiFlight = [&]() {
-            // Snap player to the last waypoint (landing position) before clearing state.
-            // Without this, the player would be left at whatever mid-flight position
-            // they were at when the path completion was detected.
-            if (!taxiClientPath_.empty()) {
-                const auto& landingPos = taxiClientPath_.back();
-                if (playerEntity) {
-                    playerEntity->setPosition(landingPos.x, landingPos.y, landingPos.z,
-                                              movementInfo.orientation);
-                }
-                movementInfo.x = landingPos.x;
-                movementInfo.y = landingPos.y;
-                movementInfo.z = landingPos.z;
-                LOG_INFO("Taxi landing: snapped to final waypoint (",
-                         landingPos.x, ", ", landingPos.y, ", ", landingPos.z, ")");
-            }
-            taxiClientActive_ = false;
-            onTaxiFlight_ = false;
-            taxiLandingCooldown_ = 2.0f;  // 2 second cooldown to prevent re-entering
-            if (taxiMountActive_ && mountCallback_) {
-                mountCallback_(0);
-            }
-            taxiMountActive_ = false;
-            taxiMountDisplayId_ = 0;
-            currentMountDisplayId_ = 0;
-            taxiClientPath_.clear();
-            taxiRecoverPending_ = false;
-            movementInfo.flags = 0;
-            movementInfo.flags2 = 0;
-            if (socket) {
-                sendMovement(Opcode::MSG_MOVE_STOP);
-                sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
-            }
-            LOG_INFO("Taxi flight landed (client path)");
-    };
-
-    if (taxiClientIndex_ + 1 >= taxiClientPath_.size()) {
-        finishTaxiFlight();
-        return;
-    }
-
-    float remainingDistance = taxiClientSegmentProgress_ + (taxiClientSpeed_ * deltaTime);
-    glm::vec3 start(0.0f);
-    glm::vec3 end(0.0f);
-    glm::vec3 dir(0.0f);
-    float segmentLen = 0.0f;
-    float t = 0.0f;
-
-    // Consume as many tiny/finished segments as needed this frame so taxi doesn't stall
-    // on dense/degenerate node clusters near takeoff/landing.
-    while (true) {
-        if (taxiClientIndex_ + 1 >= taxiClientPath_.size()) {
-            finishTaxiFlight();
-            return;
-        }
-
-        start = taxiClientPath_[taxiClientIndex_];
-        end = taxiClientPath_[taxiClientIndex_ + 1];
-        dir = end - start;
-        float segLenSq = glm::dot(dir, dir);
-
-        if (segLenSq < 1e-4f) {
-            taxiClientIndex_++;
-            continue;
-        }
-        segmentLen = std::sqrt(segLenSq);
-
-        if (remainingDistance >= segmentLen) {
-            remainingDistance -= segmentLen;
-            taxiClientIndex_++;
-            taxiClientSegmentProgress_ = 0.0f;
-            continue;
-        }
-
-        taxiClientSegmentProgress_ = remainingDistance;
-        t = taxiClientSegmentProgress_ / segmentLen;
-        break;
-    }
-
-    // Use Catmull-Rom spline for smooth interpolation between waypoints
-    // Get surrounding points for spline curve
-    glm::vec3 p0 = (taxiClientIndex_ > 0) ? taxiClientPath_[taxiClientIndex_ - 1] : start;
-    glm::vec3 p1 = start;
-    glm::vec3 p2 = end;
-    glm::vec3 p3 = (taxiClientIndex_ + 2 < taxiClientPath_.size()) ?
-                   taxiClientPath_[taxiClientIndex_ + 2] : end;
-
-    // Catmull-Rom spline formula for smooth curves
-    float t2 = t * t;
-    float t3 = t2 * t;
-    glm::vec3 nextPos = 0.5f * (
-        (2.0f * p1) +
-        (-p0 + p2) * t +
-        (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
-        (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3
-    );
-
-    // Calculate smooth direction for orientation (tangent to spline)
-    glm::vec3 tangent = 0.5f * (
-        (-p0 + p2) +
-        2.0f * (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t +
-        3.0f * (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t2
-    );
-    float tangentLenSq = glm::dot(tangent, tangent);
-    if (tangentLenSq < 1e-8f) {
-        tangent = dir;
-        tangentLenSq = glm::dot(tangent, tangent);
-        if (tangentLenSq < 1e-8f) {
-            tangent = glm::vec3(std::cos(movementInfo.orientation), std::sin(movementInfo.orientation), 0.0f);
-            tangentLenSq = 1.0f; // unit vector
-        }
-    }
-
-    // Calculate yaw from horizontal direction
-    float targetOrientation = std::atan2(tangent.y, tangent.x);
-
-    // Calculate pitch from vertical component (altitude change)
-    glm::vec3 tangentNorm = tangent * glm::inversesqrt(std::max(tangentLenSq, 1e-8f));
-    float pitch = std::asin(std::clamp(tangentNorm.z, -1.0f, 1.0f));
-
-    // Calculate roll (banking) from rate of yaw change
-    float currentOrientation = movementInfo.orientation;
-    float orientDiff = targetOrientation - currentOrientation;
-    // Normalize angle difference to [-PI, PI]
-    while (orientDiff > 3.14159265f) orientDiff -= 6.28318530f;
-    while (orientDiff < -3.14159265f) orientDiff += 6.28318530f;
-    // Bank proportional to turn rate (scaled for visual effect)
-    float roll = -orientDiff * 2.5f;
-    roll = std::clamp(roll, -0.7f, 0.7f);  // Limit to ~40 degrees
-
-    // Smooth rotation transition (lerp towards target)
-    float smoothOrientation = currentOrientation + orientDiff * std::min(1.0f, deltaTime * 3.0f);
-
-    if (playerEntity) {
-        playerEntity->setPosition(nextPos.x, nextPos.y, nextPos.z, smoothOrientation);
-    }
-    movementInfo.x = nextPos.x;
-    movementInfo.y = nextPos.y;
-    movementInfo.z = nextPos.z;
-    movementInfo.orientation = smoothOrientation;
-
-    // Update mount rotation with yaw/pitch/roll. Use render-space tangent yaw to
-    // avoid canonical<->render convention mismatches.
-    if (taxiOrientationCallback_) {
-        glm::vec3 renderTangent = core::coords::canonicalToRender(tangent);
-        float renderYaw = std::atan2(renderTangent.y, renderTangent.x);
-        taxiOrientationCallback_(renderYaw, pitch, roll);
-    }
-}
-
-void GameHandler::handleActivateTaxiReply(network::Packet& packet) {
-    ActivateTaxiReplyData data;
-    if (!ActivateTaxiReplyParser::parse(packet, data)) {
-        LOG_WARNING("Failed to parse SMSG_ACTIVATETAXIREPLY");
-        return;
-    }
-
-    // Guard against stray/mis-mapped packets being treated as taxi replies.
-    // We only consume a reply while an activation request is pending.
-    if (!taxiActivatePending_) {
-        LOG_DEBUG("Ignoring stray taxi reply: result=", data.result);
-        return;
-    }
-
-    if (data.result == 0) {
-        // Some cores can emit duplicate success replies (e.g. basic + express activate).
-        // Ignore repeats once taxi is already active and no activation is pending.
-        if (onTaxiFlight_ && !taxiActivatePending_) {
-            return;
-        }
-        onTaxiFlight_ = true;
-        taxiStartGrace_ = std::max(taxiStartGrace_, 2.0f);
-        sanitizeMovementForTaxi();
-        taxiWindowOpen_ = false;
-        taxiActivatePending_ = false;
-        taxiActivateTimer_ = 0.0f;
-        applyTaxiMountForCurrentNode();
-        if (socket) {
-            sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
-        }
-        LOG_INFO("Taxi flight started!");
-    } else {
-        // If local taxi motion already started, treat late failure as stale and ignore.
-        if (onTaxiFlight_ || taxiClientActive_) {
-            LOG_WARNING("Ignoring stale taxi failure reply while flight is active: result=", data.result);
-            taxiActivatePending_ = false;
-            taxiActivateTimer_ = 0.0f;
-            return;
-        }
-        LOG_WARNING("Taxi activation failed, result=", data.result);
-        addSystemChatMessage("Cannot take that flight path.");
-        taxiActivatePending_ = false;
-        taxiActivateTimer_ = 0.0f;
-        if (taxiMountActive_ && mountCallback_) {
-            mountCallback_(0);
-        }
-        taxiMountActive_ = false;
-        taxiMountDisplayId_ = 0;
-        onTaxiFlight_ = false;
-    }
+    if (movementHandler_) movementHandler_->updateClientTaxi(deltaTime);
 }
 
 void GameHandler::closeTaxi() {
-    taxiWindowOpen_ = false;
-
-    // Closing the taxi UI must not cancel an active/pending flight.
-    // The window can auto-close due distance checks while takeoff begins.
-    if (taxiActivatePending_ || onTaxiFlight_ || taxiClientActive_) {
-        return;
-    }
-
-    // If we optimistically mounted during node selection, dismount now
-    if (taxiMountActive_ && mountCallback_) {
-        mountCallback_(0);  // Dismount
-    }
-    taxiMountActive_ = false;
-    taxiMountDisplayId_ = 0;
-
-    // Clear any pending activation
-    taxiActivatePending_ = false;
-    onTaxiFlight_ = false;
-
-    // Set cooldown to prevent auto-mount trigger from re-applying taxi mount
-    // (The UNIT_FLAG_TAXI_FLIGHT check in handleUpdateObject won't re-trigger during cooldown)
-    taxiLandingCooldown_ = 2.0f;
-}
-
-void GameHandler::buildTaxiCostMap() {
-    taxiCostMap_.clear();
-    uint32_t startNode = currentTaxiData_.nearestNode;
-    if (startNode == 0) return;
-
-    // Build adjacency list with costs from all edges (path may traverse unknown nodes)
-    struct AdjEntry { uint32_t node; uint32_t cost; };
-    std::unordered_map<uint32_t, std::vector<AdjEntry>> adj;
-    for (const auto& edge : taxiPathEdges_) {
-        adj[edge.fromNode].push_back({edge.toNode, edge.cost});
-    }
-
-    // BFS from startNode, accumulating costs along the path
-    std::deque<uint32_t> queue;
-    queue.push_back(startNode);
-    taxiCostMap_[startNode] = 0;
-
-    while (!queue.empty()) {
-        uint32_t cur = queue.front();
-        queue.pop_front();
-        for (const auto& next : adj[cur]) {
-            if (taxiCostMap_.find(next.node) == taxiCostMap_.end()) {
-                taxiCostMap_[next.node] = taxiCostMap_[cur] + next.cost;
-                queue.push_back(next.node);
-            }
-        }
-    }
+    if (movementHandler_) movementHandler_->closeTaxi();
 }
 
 uint32_t GameHandler::getTaxiCostTo(uint32_t destNodeId) const {
-    auto it = taxiCostMap_.find(destNodeId);
-    return (it != taxiCostMap_.end()) ? it->second : 0;
+    if (movementHandler_) return movementHandler_->getTaxiCostTo(destNodeId);
+    return 0;
 }
 
 void GameHandler::activateTaxi(uint32_t destNodeId) {
-    if (!socket || state != WorldState::IN_WORLD) return;
-
-    // One-shot taxi activation until server replies or timeout.
-    if (taxiActivatePending_ || onTaxiFlight_) {
-        return;
-    }
-
-    uint32_t startNode = currentTaxiData_.nearestNode;
-    if (startNode == 0 || destNodeId == 0 || startNode == destNodeId) return;
-
-    // If already mounted, dismount before starting a taxi flight.
-    if (isMounted()) {
-        LOG_INFO("Taxi activate: dismounting current mount");
-        if (mountCallback_) mountCallback_(0);
-        currentMountDisplayId_ = 0;
-        dismount();
-    }
-
-    {
-        auto destIt = taxiNodes_.find(destNodeId);
-        if (destIt != taxiNodes_.end() && !destIt->second.name.empty()) {
-            taxiDestName_ = destIt->second.name;
-            addSystemChatMessage("Requesting flight to " + destIt->second.name + "...");
-        } else {
-            taxiDestName_.clear();
-            addSystemChatMessage("Taxi: requesting flight...");
-        }
-    }
-
-    // BFS to find path from startNode to destNodeId
-    std::unordered_map<uint32_t, std::vector<uint32_t>> adj;
-    for (const auto& edge : taxiPathEdges_) {
-        adj[edge.fromNode].push_back(edge.toNode);
-    }
-
-    std::unordered_map<uint32_t, uint32_t> parent;
-    std::deque<uint32_t> queue;
-    queue.push_back(startNode);
-    parent[startNode] = startNode;
-
-    bool found = false;
-    while (!queue.empty()) {
-        uint32_t cur = queue.front();
-        queue.pop_front();
-        if (cur == destNodeId) { found = true; break; }
-        for (uint32_t next : adj[cur]) {
-            if (parent.find(next) == parent.end()) {
-                parent[next] = cur;
-                queue.push_back(next);
-            }
-        }
-    }
-
-    if (!found) {
-        LOG_WARNING("No taxi path found from node ", startNode, " to ", destNodeId);
-        addSystemChatMessage("No flight path available to that destination.");
-        return;
-    }
-
-    std::vector<uint32_t> path;
-    for (uint32_t n = destNodeId; n != startNode; n = parent[n]) {
-        path.push_back(n);
-    }
-    path.push_back(startNode);
-    std::reverse(path.begin(), path.end());
-
-    LOG_INFO("Taxi path: ", path.size(), " nodes, from ", startNode, " to ", destNodeId);
-
-    LOG_INFO("Taxi activate: npc=0x", std::hex, taxiNpcGuid_, std::dec,
-             " start=", startNode, " dest=", destNodeId, " pathLen=", path.size());
-    if (!path.empty()) {
-        std::string pathStr;
-        for (size_t i = 0; i < path.size(); i++) {
-            pathStr += std::to_string(path[i]);
-            if (i + 1 < path.size()) pathStr += "->";
-        }
-        LOG_INFO("Taxi path nodes: ", pathStr);
-    }
-
-    uint32_t totalCost = getTaxiCostTo(destNodeId);
-    LOG_INFO("Taxi activate: start=", startNode, " dest=", destNodeId, " cost=", totalCost);
-
-    // Some servers only accept basic CMSG_ACTIVATETAXI.
-    auto basicPkt = ActivateTaxiPacket::build(taxiNpcGuid_, startNode, destNodeId);
-    socket->send(basicPkt);
-
-    // AzerothCore in this setup rejects/misparses CMSG_ACTIVATETAXIEXPRESS (0x312),
-    // so keep taxi activation on the basic packet only.
-
-    // Optimistically start taxi visuals; server will correct if it denies.
-    taxiWindowOpen_ = false;
-    taxiActivatePending_ = true;
-    taxiActivateTimer_ = 0.0f;
-    taxiStartGrace_ = 2.0f;
-    if (!onTaxiFlight_) {
-        onTaxiFlight_ = true;
-        sanitizeMovementForTaxi();
-        applyTaxiMountForCurrentNode();
-    }
-    if (socket) {
-        sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
-    }
-
-    // Trigger terrain precache immediately (non-blocking).
-    if (taxiPrecacheCallback_) {
-        std::vector<glm::vec3> previewPath;
-        // Build full spline path using TaxiPathNode waypoints
-        for (size_t i = 0; i + 1 < path.size(); i++) {
-            uint32_t fromNode = path[i];
-            uint32_t toNode = path[i + 1];
-            // Find the pathId connecting these nodes
-            uint32_t pathId = 0;
-            for (const auto& edge : taxiPathEdges_) {
-                if (edge.fromNode == fromNode && edge.toNode == toNode) {
-                    pathId = edge.pathId;
-                    break;
-                }
-            }
-            if (pathId == 0) continue;
-            // Get spline waypoints for this path segment
-            auto pathIt = taxiPathNodes_.find(pathId);
-            if (pathIt != taxiPathNodes_.end()) {
-                for (const auto& wpNode : pathIt->second) {
-                    glm::vec3 serverPos(wpNode.x, wpNode.y, wpNode.z);
-                    glm::vec3 canonical = core::coords::serverToCanonical(serverPos);
-                    previewPath.push_back(canonical);
-                }
-            }
-        }
-        if (previewPath.size() >= 2) {
-            taxiPrecacheCallback_(previewPath);
-        }
-    }
-
-    // Flight starts immediately; upload callback stays opportunistic/non-blocking.
-    if (taxiFlightStartCallback_) {
-        taxiFlightStartCallback_();
-    }
-    startClientTaxiPath(path);
-    // We run taxi movement locally immediately; don't keep a long-lived pending state.
-    if (taxiClientActive_) {
-        taxiActivatePending_ = false;
-        taxiActivateTimer_ = 0.0f;
-    }
-
-    // Save recovery target in case of disconnect during taxi.
-    auto destIt = taxiNodes_.find(destNodeId);
-    if (destIt != taxiNodes_.end() && !destIt->second.name.empty())
-        addSystemChatMessage("Flight to " + destIt->second.name + " started.");
-    else
-        addSystemChatMessage("Flight started.");
-
-    if (destIt != taxiNodes_.end()) {
-        taxiRecoverMapId_ = destIt->second.mapId;
-        taxiRecoverPos_ = core::coords::serverToCanonical(
-            glm::vec3(destIt->second.x, destIt->second.y, destIt->second.z));
-        taxiRecoverPending_ = false;
-    }
+    if (movementHandler_) movementHandler_->activateTaxi(destNodeId);
 }
 
 // ============================================================
@@ -23588,357 +8513,6 @@ void GameHandler::handleQueryTimeResponse(network::Packet& packet) {
     std::string msg = "Server time: " + std::string(timeStr);
     addSystemChatMessage(msg);
     LOG_INFO("Server time: ", data.serverTime, " (", timeStr, ")");
-}
-
-void GameHandler::handlePlayedTime(network::Packet& packet) {
-    PlayedTimeData data;
-    if (!PlayedTimeParser::parse(packet, data)) {
-        LOG_WARNING("Failed to parse SMSG_PLAYED_TIME");
-        return;
-    }
-
-    totalTimePlayed_ = data.totalTimePlayed;
-    levelTimePlayed_ = data.levelTimePlayed;
-
-    if (data.triggerMessage) {
-        // Format total time played
-        uint32_t totalDays = data.totalTimePlayed / 86400;
-        uint32_t totalHours = (data.totalTimePlayed % 86400) / 3600;
-        uint32_t totalMinutes = (data.totalTimePlayed % 3600) / 60;
-
-        // Format level time played
-        uint32_t levelDays = data.levelTimePlayed / 86400;
-        uint32_t levelHours = (data.levelTimePlayed % 86400) / 3600;
-        uint32_t levelMinutes = (data.levelTimePlayed % 3600) / 60;
-
-        std::string totalMsg = "Total time played: ";
-        if (totalDays > 0) totalMsg += std::to_string(totalDays) + " days, ";
-        if (totalHours > 0 || totalDays > 0) totalMsg += std::to_string(totalHours) + " hours, ";
-        totalMsg += std::to_string(totalMinutes) + " minutes";
-
-        std::string levelMsg = "Time played this level: ";
-        if (levelDays > 0) levelMsg += std::to_string(levelDays) + " days, ";
-        if (levelHours > 0 || levelDays > 0) levelMsg += std::to_string(levelHours) + " hours, ";
-        levelMsg += std::to_string(levelMinutes) + " minutes";
-
-        addSystemChatMessage(totalMsg);
-        addSystemChatMessage(levelMsg);
-    }
-
-    LOG_INFO("Played time: total=", data.totalTimePlayed, "s, level=", data.levelTimePlayed, "s");
-}
-
-void GameHandler::handleWho(network::Packet& packet) {
-    // Classic 1.12 / TBC 2.4.3 per-player: name + guild + level(u32) + class(u32) + race(u32) + zone(u32)
-    // WotLK 3.3.5a added a gender(u8) field between race and zone.
-    const bool hasGender = isActiveExpansion("wotlk");
-
-    uint32_t displayCount = packet.readUInt32();
-    uint32_t onlineCount = packet.readUInt32();
-
-    LOG_INFO("WHO response: ", displayCount, " players displayed, ", onlineCount, " total online");
-
-    // Store structured results for the who-results window
-    whoResults_.clear();
-    whoOnlineCount_ = onlineCount;
-
-    if (displayCount == 0) {
-        addSystemChatMessage("No players found.");
-        return;
-    }
-
-    for (uint32_t i = 0; i < displayCount; ++i) {
-        if (!packet.hasData()) break;
-        std::string playerName = packet.readString();
-        std::string guildName = packet.readString();
-        if (!packet.hasRemaining(12)) break;
-        uint32_t level   = packet.readUInt32();
-        uint32_t classId = packet.readUInt32();
-        uint32_t raceId  = packet.readUInt32();
-        if (hasGender && packet.hasRemaining(1))
-            packet.readUInt8();  // gender (WotLK only, unused)
-        uint32_t zoneId = 0;
-        if (packet.hasRemaining(4))
-            zoneId = packet.readUInt32();
-
-        // Store structured entry
-        WhoEntry entry;
-        entry.name      = playerName;
-        entry.guildName = guildName;
-        entry.level     = level;
-        entry.classId   = classId;
-        entry.raceId    = raceId;
-        entry.zoneId    = zoneId;
-        whoResults_.push_back(std::move(entry));
-
-        LOG_INFO("  ", playerName, " (", guildName, ") Lv", level, " Class:", classId,
-                 " Race:", raceId, " Zone:", zoneId);
-    }
-}
-
-void GameHandler::handleFriendList(network::Packet& packet) {
-    // Classic 1.12 / TBC 2.4.3 SMSG_FRIEND_LIST format:
-    //   uint8  count
-    //   for each entry:
-    //     uint64 guid (full)
-    //     uint8  status (0=offline, 1=online, 2=AFK, 3=DND)
-    //     if status != 0:
-    //       uint32 area
-    //       uint32 level
-    //       uint32 class
-    auto rem = [&]() { return packet.getRemainingSize(); };
-    if (rem() < 1) return;
-    uint8_t count = packet.readUInt8();
-    LOG_INFO("SMSG_FRIEND_LIST: ", static_cast<int>(count), " entries");
-
-    // Rebuild friend contacts (keep ignores from previous contact_ entries)
-    contacts_.erase(std::remove_if(contacts_.begin(), contacts_.end(),
-        [](const ContactEntry& e){ return e.isFriend(); }), contacts_.end());
-
-    for (uint8_t i = 0; i < count && rem() >= 9; ++i) {
-        uint64_t guid   = packet.readUInt64();
-        uint8_t  status = packet.readUInt8();
-        uint32_t area = 0, level = 0, classId = 0;
-        if (status != 0 && rem() >= 12) {
-            area    = packet.readUInt32();
-            level   = packet.readUInt32();
-            classId = packet.readUInt32();
-        }
-        // Track as a friend GUID; resolve name via name query
-        friendGuids_.insert(guid);
-        std::string name = lookupName(guid);
-        if (!name.empty()) {
-            friendsCache[name] = guid;
-            LOG_INFO("  Friend: ", name, " status=", static_cast<int>(status));
-        } else {
-            LOG_INFO("  Friend guid=0x", std::hex, guid, std::dec,
-                     " status=", static_cast<int>(status), " (name pending)");
-            queryPlayerName(guid);
-        }
-        ContactEntry entry;
-        entry.guid    = guid;
-        entry.name    = name;
-        entry.flags   = 0x1;  // friend
-        entry.status  = status;
-        entry.areaId  = area;
-        entry.level   = level;
-        entry.classId = classId;
-        contacts_.push_back(std::move(entry));
-    }
-    fireAddonEvent("FRIENDLIST_UPDATE", {});
-}
-
-void GameHandler::handleContactList(network::Packet& packet) {
-    // WotLK SMSG_CONTACT_LIST format:
-    //   uint32 listMask  (1=friend, 2=ignore, 4=mute)
-    //   uint32 count
-    //   for each entry:
-    //     uint64 guid (full)
-    //     uint32 flags
-    //     string note (null-terminated)
-    //     if flags & 0x1 (friend):
-    //       uint8 status (0=offline, 1=online, 2=AFK, 3=DND)
-    //       if status != 0:
-    //         uint32 area, uint32 level, uint32 class
-    // Short/keepalive variant (1-7 bytes): consume silently.
-    auto rem = [&]() { return packet.getRemainingSize(); };
-    if (rem() < 8) {
-        packet.skipAll();
-        return;
-    }
-    lastContactListMask_  = packet.readUInt32();
-    lastContactListCount_ = packet.readUInt32();
-    contacts_.clear();
-    for (uint32_t i = 0; i < lastContactListCount_ && rem() >= 8; ++i) {
-        uint64_t guid  = packet.readUInt64();
-        if (rem() < 4) break;
-        uint32_t flags = packet.readUInt32();
-        std::string note = packet.readString();  // may be empty
-        uint8_t  status  = 0;
-        uint32_t areaId  = 0;
-        uint32_t level   = 0;
-        uint32_t classId = 0;
-        if (flags & 0x1) {  // SOCIAL_FLAG_FRIEND
-            if (rem() < 1) break;
-            status = packet.readUInt8();
-            if (status != 0 && rem() >= 12) {
-                areaId  = packet.readUInt32();
-                level   = packet.readUInt32();
-                classId = packet.readUInt32();
-            }
-            friendGuids_.insert(guid);
-            const auto& fname = lookupName(guid);
-            if (!fname.empty()) {
-                friendsCache[fname] = guid;
-            } else {
-                queryPlayerName(guid);
-            }
-        }
-        // ignore / mute entries: no additional fields beyond guid+flags+note
-        ContactEntry entry;
-        entry.guid    = guid;
-        entry.flags   = flags;
-        entry.note    = std::move(note);
-        entry.status  = status;
-        entry.areaId  = areaId;
-        entry.level   = level;
-        entry.classId = classId;
-        entry.name = lookupName(guid);
-        contacts_.push_back(std::move(entry));
-    }
-    LOG_INFO("SMSG_CONTACT_LIST: mask=", lastContactListMask_,
-             " count=", lastContactListCount_);
-    if (addonEventCallback_) {
-        fireAddonEvent("FRIENDLIST_UPDATE", {});
-        if (lastContactListMask_ & 0x2) // ignore list
-            fireAddonEvent("IGNORELIST_UPDATE", {});
-    }
-}
-
-void GameHandler::handleFriendStatus(network::Packet& packet) {
-    FriendStatusData data;
-    if (!FriendStatusParser::parse(packet, data)) {
-        LOG_WARNING("Failed to parse SMSG_FRIEND_STATUS");
-        return;
-    }
-
-    // Single lookup — reuse iterator for name resolution and update/erase below
-    auto cit = std::find_if(contacts_.begin(), contacts_.end(),
-        [&](const ContactEntry& e){ return e.guid == data.guid; });
-
-    // Look up player name: contacts_ (populated by SMSG_FRIEND_LIST) > playerNameCache
-    std::string playerName;
-    if (cit != contacts_.end() && !cit->name.empty()) {
-        playerName = cit->name;
-    } else {
-        playerName = lookupName(data.guid);
-    }
-
-    // Update friends cache
-    if (data.status == 1 || data.status == 2) {  // Added or online
-        friendsCache[playerName] = data.guid;
-    } else if (data.status == 0) {  // Removed
-        friendsCache.erase(playerName);
-    }
-
-    // Mirror into contacts_: update existing entry or add/remove as needed
-    if (data.status == 0) {  // Removed from friends list
-        if (cit != contacts_.end())
-            contacts_.erase(cit);
-    } else {
-        if (cit != contacts_.end()) {
-            if (!playerName.empty() && playerName != "Unknown") cit->name = playerName;
-            // status: 2=online→1, 3=offline→0, 1=added→1 (online on add)
-            if (data.status == 2) cit->status = 1;
-            else if (data.status == 3) cit->status = 0;
-        } else {
-            ContactEntry entry;
-            entry.guid   = data.guid;
-            entry.name   = playerName;
-            entry.flags  = 0x1;  // friend
-            entry.status = (data.status == 2) ? 1 : 0;
-            contacts_.push_back(std::move(entry));
-        }
-    }
-
-    // Status messages
-    switch (data.status) {
-        case 0:
-            addSystemChatMessage(playerName + " has been removed from your friends list.");
-            break;
-        case 1:
-            addSystemChatMessage(playerName + " has been added to your friends list.");
-            break;
-        case 2:
-            addSystemChatMessage(playerName + " is now online.");
-            break;
-        case 3:
-            addSystemChatMessage(playerName + " is now offline.");
-            break;
-        case 4:
-            addSystemChatMessage("Player not found.");
-            break;
-        case 5:
-            addSystemChatMessage(playerName + " is already in your friends list.");
-            break;
-        case 6:
-            addSystemChatMessage("Your friends list is full.");
-            break;
-        case 7:
-            addSystemChatMessage(playerName + " is ignoring you.");
-            break;
-        default:
-            LOG_INFO("Friend status: ", static_cast<int>(data.status), " for ", playerName);
-            break;
-    }
-
-    LOG_INFO("Friend status update: ", playerName, " status=", static_cast<int>(data.status));
-    fireAddonEvent("FRIENDLIST_UPDATE", {});
-}
-
-void GameHandler::handleRandomRoll(network::Packet& packet) {
-    RandomRollData data;
-    if (!RandomRollParser::parse(packet, data)) {
-        LOG_WARNING("Failed to parse SMSG_RANDOM_ROLL");
-        return;
-    }
-
-    // Get roller name
-    std::string rollerName;
-    if (data.rollerGuid == playerGuid) {
-        rollerName = "You";
-    } else {
-        rollerName = lookupName(data.rollerGuid);
-        if (rollerName.empty()) rollerName = "Someone";
-    }
-
-    // Build message
-    std::string msg = rollerName;
-    if (data.rollerGuid == playerGuid) {
-        msg += " roll ";
-    } else {
-        msg += " rolls ";
-    }
-    msg += std::to_string(data.result);
-    msg += " (" + std::to_string(data.minRoll) + "-" + std::to_string(data.maxRoll) + ")";
-
-    addSystemChatMessage(msg);
-    LOG_INFO("Random roll: ", rollerName, " rolled ", data.result, " (", data.minRoll, "-", data.maxRoll, ")");
-}
-
-void GameHandler::handleLogoutResponse(network::Packet& packet) {
-    LogoutResponseData data;
-    if (!LogoutResponseParser::parse(packet, data)) {
-        LOG_WARNING("Failed to parse SMSG_LOGOUT_RESPONSE");
-        return;
-    }
-
-    if (data.result == 0) {
-        // Success - logout initiated
-        if (data.instant) {
-            addSystemChatMessage("Logging out...");
-            logoutCountdown_ = 0.0f;
-        } else {
-            addSystemChatMessage("Logging out in 20 seconds...");
-            logoutCountdown_ = 20.0f;
-        }
-        LOG_INFO("Logout response: success, instant=", static_cast<int>(data.instant));
-        fireAddonEvent("PLAYER_LOGOUT", {});
-    } else {
-        // Failure
-        addSystemChatMessage("Cannot logout right now.");
-        loggingOut_ = false;
-        logoutCountdown_ = 0.0f;
-        LOG_WARNING("Logout failed, result=", data.result);
-    }
-}
-
-void GameHandler::handleLogoutComplete(network::Packet& /*packet*/) {
-    addSystemChatMessage("Logout complete.");
-    loggingOut_ = false;
-    logoutCountdown_ = 0.0f;
-    LOG_INFO("Logout complete");
-    // Server will disconnect us
 }
 
 uint32_t GameHandler::generateClientSeed() {
@@ -23964,7 +8538,6 @@ void GameHandler::fail(const std::string& reason) {
         onFailure(reason);
     }
 }
-
 
 // ============================================================
 // Player Skills
@@ -23992,144 +8565,15 @@ bool GameHandler::isProfessionSpell(uint32_t spellId) const {
 }
 
 void GameHandler::loadSkillLineDbc() {
-    if (skillLineDbcLoaded_) return;
-    skillLineDbcLoaded_ = true;
-
-    auto* am = core::Application::getInstance().getAssetManager();
-    if (!am || !am->isInitialized()) return;
-
-    auto dbc = am->loadDBC("SkillLine.dbc");
-    if (!dbc || !dbc->isLoaded()) {
-        LOG_WARNING("GameHandler: Could not load SkillLine.dbc");
-        return;
-    }
-
-    const auto* slL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("SkillLine") : nullptr;
-    const uint32_t slIdField   = slL ? (*slL)["ID"]       : 0;
-    const uint32_t slCatField  = slL ? (*slL)["Category"] : 1;
-    const uint32_t slNameField = slL ? (*slL)["Name"]     : 3;
-    for (uint32_t i = 0; i < dbc->getRecordCount(); i++) {
-        uint32_t id = dbc->getUInt32(i, slIdField);
-        uint32_t category = dbc->getUInt32(i, slCatField);
-        std::string name = dbc->getString(i, slNameField);
-        if (id > 0 && !name.empty()) {
-            skillLineNames_[id] = name;
-            skillLineCategories_[id] = category;
-        }
-    }
-    LOG_INFO("GameHandler: Loaded ", skillLineNames_.size(), " skill line names");
+    if (spellHandler_) spellHandler_->loadSkillLineDbc();
 }
 
 void GameHandler::extractSkillFields(const std::map<uint16_t, uint32_t>& fields) {
-    loadSkillLineDbc();
-
-    const uint16_t PLAYER_SKILL_INFO_START = fieldIndex(UF::PLAYER_SKILL_INFO_START);
-    static constexpr int MAX_SKILL_SLOTS = 128;
-
-    std::unordered_map<uint32_t, PlayerSkill> newSkills;
-
-    for (int slot = 0; slot < MAX_SKILL_SLOTS; slot++) {
-        uint16_t baseField = PLAYER_SKILL_INFO_START + slot * 3;
-
-        auto idIt = fields.find(baseField);
-        if (idIt == fields.end()) continue;
-
-        uint32_t raw0 = idIt->second;
-        uint16_t skillId = raw0 & 0xFFFF;
-        if (skillId == 0) continue;
-
-        auto valIt = fields.find(baseField + 1);
-        if (valIt == fields.end()) continue;
-
-        uint32_t raw1 = valIt->second;
-        uint16_t value = raw1 & 0xFFFF;
-        uint16_t maxValue = (raw1 >> 16) & 0xFFFF;
-
-        uint16_t bonusTemp = 0;
-        uint16_t bonusPerm = 0;
-        auto bonusIt = fields.find(static_cast<uint16_t>(baseField + 2));
-        if (bonusIt != fields.end()) {
-            bonusTemp = bonusIt->second & 0xFFFF;
-            bonusPerm = (bonusIt->second >> 16) & 0xFFFF;
-        }
-
-        PlayerSkill skill;
-        skill.skillId = skillId;
-        skill.value = value;
-        skill.maxValue = maxValue;
-        skill.bonusTemp = bonusTemp;
-        skill.bonusPerm = bonusPerm;
-        newSkills[skillId] = skill;
-    }
-
-    // Detect increases and emit chat messages
-    for (const auto& [skillId, skill] : newSkills) {
-        if (skill.value == 0) continue;
-        auto oldIt = playerSkills_.find(skillId);
-        if (oldIt != playerSkills_.end() && skill.value > oldIt->second.value) {
-            // Filter out racial, generic, and hidden skills from announcements
-            // Category 5 = Attributes (Defense, etc.)
-            // Category 10 = Languages (Orcish, Common, etc.)
-            // Category 12 = Not Displayed (generic/hidden)
-            auto catIt = skillLineCategories_.find(skillId);
-            if (catIt != skillLineCategories_.end()) {
-                uint32_t category = catIt->second;
-                if (category == 5 || category == 10 || category == 12) {
-                    continue; // Skip announcement for racial/generic skills
-                }
-            }
-
-            const std::string& name = getSkillName(skillId);
-            std::string skillName = name.empty() ? ("Skill #" + std::to_string(skillId)) : name;
-            addSystemChatMessage("Your skill in " + skillName + " has increased to " + std::to_string(skill.value) + ".");
-        }
-    }
-
-    bool skillsChanged = (newSkills.size() != playerSkills_.size());
-    if (!skillsChanged) {
-        for (const auto& [id, sk] : newSkills) {
-            auto it = playerSkills_.find(id);
-            if (it == playerSkills_.end() || it->second.value != sk.value) {
-                skillsChanged = true;
-                break;
-            }
-        }
-    }
-    playerSkills_ = std::move(newSkills);
-    if (skillsChanged)
-        fireAddonEvent("SKILL_LINES_CHANGED", {});
+    if (spellHandler_) spellHandler_->extractSkillFields(fields);
 }
 
 void GameHandler::extractExploredZoneFields(const std::map<uint16_t, uint32_t>& fields) {
-    // Number of explored-zone uint32 fields varies by expansion:
-    // Classic/Turtle = 64, TBC/WotLK = 128. Always allocate 128 for world-map
-    // bit lookups, but only read the expansion-specific count to avoid reading
-    // player money or rest-XP fields as zone flags.
-    const size_t zoneCount = packetParsers_
-        ? static_cast<size_t>(packetParsers_->exploredZonesCount())
-        : PLAYER_EXPLORED_ZONES_COUNT;
-
-    if (playerExploredZones_.size() != PLAYER_EXPLORED_ZONES_COUNT) {
-        playerExploredZones_.assign(PLAYER_EXPLORED_ZONES_COUNT, 0u);
-    }
-
-    bool foundAny = false;
-    for (size_t i = 0; i < zoneCount; i++) {
-        const uint16_t fieldIdx = static_cast<uint16_t>(fieldIndex(UF::PLAYER_EXPLORED_ZONES_START) + i);
-        auto it = fields.find(fieldIdx);
-        if (it == fields.end()) continue;
-        playerExploredZones_[i] = it->second;
-        foundAny = true;
-    }
-    // Zero out slots beyond the expansion's zone count to prevent stale data
-    // from polluting the fog-of-war display.
-    for (size_t i = zoneCount; i < PLAYER_EXPLORED_ZONES_COUNT; i++) {
-        playerExploredZones_[i] = 0u;
-    }
-
-    if (foundAny) {
-        hasPlayerExploredZones_ = true;
-    }
+    if (spellHandler_) spellHandler_->extractExploredZoneFields(fields);
 }
 
 std::string GameHandler::getCharacterConfigDir() {
@@ -24347,81 +8791,15 @@ void GameHandler::loadCharacterConfig() {
 void GameHandler::setTransportAttachment(uint64_t childGuid, ObjectType type, uint64_t transportGuid,
                                          const glm::vec3& localOffset, bool hasLocalOrientation,
                                          float localOrientation) {
-    if (childGuid == 0 || transportGuid == 0) {
-        return;
-    }
-
-    TransportAttachment& attachment = transportAttachments_[childGuid];
-    attachment.type = type;
-    attachment.transportGuid = transportGuid;
-    attachment.localOffset = localOffset;
-    attachment.hasLocalOrientation = hasLocalOrientation;
-    attachment.localOrientation = localOrientation;
+    if (movementHandler_) movementHandler_->setTransportAttachment(childGuid, type, transportGuid, localOffset, hasLocalOrientation, localOrientation);
 }
 
 void GameHandler::clearTransportAttachment(uint64_t childGuid) {
-    if (childGuid == 0) {
-        return;
-    }
-    transportAttachments_.erase(childGuid);
+    if (movementHandler_) movementHandler_->clearTransportAttachment(childGuid);
 }
 
-void GameHandler::updateAttachedTransportChildren(float /*deltaTime*/) {
-    if (!transportManager_ || transportAttachments_.empty()) {
-        return;
-    }
-
-    constexpr float kPosEpsilonSq = 0.0001f;
-    constexpr float kOriEpsilon = 0.001f;
-    std::vector<uint64_t> stale;
-    stale.reserve(8);
-
-    for (const auto& [childGuid, attachment] : transportAttachments_) {
-        auto entity = entityManager.getEntity(childGuid);
-        if (!entity) {
-            stale.push_back(childGuid);
-            continue;
-        }
-
-        ActiveTransport* transport = transportManager_->getTransport(attachment.transportGuid);
-        if (!transport) {
-            continue;
-        }
-
-        glm::vec3 composed = transportManager_->getPlayerWorldPosition(
-            attachment.transportGuid, attachment.localOffset);
-
-        float composedOrientation = entity->getOrientation();
-        if (attachment.hasLocalOrientation) {
-            float baseYaw = transport->hasServerYaw ? transport->serverYaw : 0.0f;
-            composedOrientation = baseYaw + attachment.localOrientation;
-        }
-
-        glm::vec3 oldPos(entity->getX(), entity->getY(), entity->getZ());
-        float oldOrientation = entity->getOrientation();
-        glm::vec3 delta = composed - oldPos;
-        const bool positionChanged = glm::dot(delta, delta) > kPosEpsilonSq;
-        const bool orientationChanged = std::abs(composedOrientation - oldOrientation) > kOriEpsilon;
-        if (!positionChanged && !orientationChanged) {
-            continue;
-        }
-
-        entity->setPosition(composed.x, composed.y, composed.z, composedOrientation);
-
-        if (attachment.type == ObjectType::UNIT) {
-            if (creatureMoveCallback_) {
-                creatureMoveCallback_(childGuid, composed.x, composed.y, composed.z, 0);
-            }
-        } else if (attachment.type == ObjectType::GAMEOBJECT) {
-            if (gameObjectMoveCallback_) {
-                gameObjectMoveCallback_(childGuid, composed.x, composed.y, composed.z, composedOrientation);
-            }
-        }
-    }
-
-    for (uint64_t guid : stale) {
-        transportAttachments_.erase(guid);
-    }
+void GameHandler::updateAttachedTransportChildren(float deltaTime) {
+    if (movementHandler_) movementHandler_->updateAttachedTransportChildren(deltaTime);
 }
 
 // ============================================================
@@ -24429,329 +8807,53 @@ void GameHandler::updateAttachedTransportChildren(float /*deltaTime*/) {
 // ============================================================
 
 void GameHandler::closeMailbox() {
-    bool wasOpen = mailboxOpen_;
-    mailboxOpen_ = false;
-    mailboxGuid_ = 0;
-    mailInbox_.clear();
-    selectedMailIndex_ = -1;
-    showMailCompose_ = false;
-    if (wasOpen) fireAddonEvent("MAIL_CLOSED", {});
+    if (inventoryHandler_) inventoryHandler_->closeMailbox();
 }
 
 void GameHandler::refreshMailList() {
-    if (state != WorldState::IN_WORLD || !socket || mailboxGuid_ == 0) return;
-    auto packet = GetMailListPacket::build(mailboxGuid_);
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->refreshMailList();
 }
 
 void GameHandler::sendMail(const std::string& recipient, const std::string& subject,
                            const std::string& body, uint64_t money, uint64_t cod) {
-    if (state != WorldState::IN_WORLD) {
-        LOG_WARNING("sendMail: not in world");
-        return;
-    }
-    if (!socket) {
-        LOG_WARNING("sendMail: no socket");
-        return;
-    }
-    if (mailboxGuid_ == 0) {
-        LOG_WARNING("sendMail: mailboxGuid_ is 0 (mailbox closed?)");
-        return;
-    }
-    // Collect attached item GUIDs
-    std::vector<uint64_t> itemGuids;
-    for (const auto& att : mailAttachments_) {
-        if (att.occupied()) {
-            itemGuids.push_back(att.itemGuid);
-        }
-    }
-    auto packet = packetParsers_->buildSendMail(mailboxGuid_, recipient, subject, body, money, cod, itemGuids);
-    LOG_INFO("sendMail: to='", recipient, "' subject='", subject, "' money=", money,
-             " attachments=", itemGuids.size(), " mailboxGuid=", mailboxGuid_);
-    socket->send(packet);
-    clearMailAttachments();
+    if (inventoryHandler_) inventoryHandler_->sendMail(recipient, subject, body, money, cod);
 }
 
 bool GameHandler::attachItemFromBackpack(int backpackIndex) {
-    if (backpackIndex < 0 || backpackIndex >= inventory.getBackpackSize()) return false;
-    const auto& slot = inventory.getBackpackSlot(backpackIndex);
-    if (slot.empty()) return false;
-
-    uint64_t itemGuid = backpackSlotGuids_[backpackIndex];
-    if (itemGuid == 0) {
-        itemGuid = resolveOnlineItemGuid(slot.item.itemId);
-    }
-    if (itemGuid == 0) {
-        addSystemChatMessage("Cannot attach: item not found.");
-        return false;
-    }
-
-    // Check not already attached
-    for (const auto& att : mailAttachments_) {
-        if (att.occupied() && att.itemGuid == itemGuid) return false;
-    }
-
-    // Find free attachment slot
-    for (int i = 0; i < MAIL_MAX_ATTACHMENTS; ++i) {
-        if (!mailAttachments_[i].occupied()) {
-            mailAttachments_[i].itemGuid = itemGuid;
-            mailAttachments_[i].item = slot.item;
-            mailAttachments_[i].srcBag = 0xFF;
-            mailAttachments_[i].srcSlot = static_cast<uint8_t>(23 + backpackIndex);
-            LOG_INFO("Mail attach: slot=", i, " item='", slot.item.name, "' guid=0x",
-                     std::hex, itemGuid, std::dec, " from backpack[", backpackIndex, "]");
-            return true;
-        }
-    }
-    addSystemChatMessage("Cannot attach: all attachment slots full.");
-    return false;
+    return inventoryHandler_ && inventoryHandler_->attachItemFromBackpack(backpackIndex);
 }
 
 bool GameHandler::attachItemFromBag(int bagIndex, int slotIndex) {
-    if (bagIndex < 0 || bagIndex >= inventory.NUM_BAG_SLOTS) return false;
-    if (slotIndex < 0 || slotIndex >= inventory.getBagSize(bagIndex)) return false;
-    const auto& slot = inventory.getBagSlot(bagIndex, slotIndex);
-    if (slot.empty()) return false;
-
-    uint64_t itemGuid = 0;
-    uint64_t bagGuid = equipSlotGuids_[19 + bagIndex];
-    if (bagGuid != 0) {
-        auto it = containerContents_.find(bagGuid);
-        if (it != containerContents_.end() && slotIndex < static_cast<int>(it->second.numSlots)) {
-            itemGuid = it->second.slotGuids[slotIndex];
-        }
-    }
-    if (itemGuid == 0) {
-        itemGuid = resolveOnlineItemGuid(slot.item.itemId);
-    }
-    if (itemGuid == 0) {
-        addSystemChatMessage("Cannot attach: item not found.");
-        return false;
-    }
-
-    for (const auto& att : mailAttachments_) {
-        if (att.occupied() && att.itemGuid == itemGuid) return false;
-    }
-
-    for (int i = 0; i < MAIL_MAX_ATTACHMENTS; ++i) {
-        if (!mailAttachments_[i].occupied()) {
-            mailAttachments_[i].itemGuid = itemGuid;
-            mailAttachments_[i].item = slot.item;
-            mailAttachments_[i].srcBag = static_cast<uint8_t>(19 + bagIndex);
-            mailAttachments_[i].srcSlot = static_cast<uint8_t>(slotIndex);
-            LOG_INFO("Mail attach: slot=", i, " item='", slot.item.name, "' guid=0x",
-                     std::hex, itemGuid, std::dec, " from bag[", bagIndex, "][", slotIndex, "]");
-            return true;
-        }
-    }
-    addSystemChatMessage("Cannot attach: all attachment slots full.");
-    return false;
+    return inventoryHandler_ && inventoryHandler_->attachItemFromBag(bagIndex, slotIndex);
 }
 
 bool GameHandler::detachMailAttachment(int attachIndex) {
-    if (attachIndex < 0 || attachIndex >= MAIL_MAX_ATTACHMENTS) return false;
-    if (!mailAttachments_[attachIndex].occupied()) return false;
-    LOG_INFO("Mail detach: slot=", attachIndex, " item='", mailAttachments_[attachIndex].item.name, "'");
-    mailAttachments_[attachIndex] = MailAttachSlot{};
-    return true;
+    return inventoryHandler_ && inventoryHandler_->detachMailAttachment(attachIndex);
 }
 
 void GameHandler::clearMailAttachments() {
-    for (auto& att : mailAttachments_) att = MailAttachSlot{};
+    if (inventoryHandler_) inventoryHandler_->clearMailAttachments();
 }
 
 int GameHandler::getMailAttachmentCount() const {
-    int count = 0;
-    for (const auto& att : mailAttachments_) {
-        if (att.occupied()) ++count;
-    }
-    return count;
+    if (inventoryHandler_) return inventoryHandler_->getMailAttachmentCount();
+    return 0;
 }
 
 void GameHandler::mailTakeMoney(uint32_t mailId) {
-    if (state != WorldState::IN_WORLD || !socket || mailboxGuid_ == 0) return;
-    auto packet = MailTakeMoneyPacket::build(mailboxGuid_, mailId);
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->mailTakeMoney(mailId);
 }
 
 void GameHandler::mailTakeItem(uint32_t mailId, uint32_t itemGuidLow) {
-    if (state != WorldState::IN_WORLD || !socket || mailboxGuid_ == 0) return;
-    auto packet = packetParsers_->buildMailTakeItem(mailboxGuid_, mailId, itemGuidLow);
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->mailTakeItem(mailId, itemGuidLow);
 }
 
 void GameHandler::mailDelete(uint32_t mailId) {
-    if (state != WorldState::IN_WORLD || !socket || mailboxGuid_ == 0) return;
-    // Find mail template ID for this mail
-    uint32_t templateId = 0;
-    for (const auto& m : mailInbox_) {
-        if (m.messageId == mailId) {
-            templateId = m.mailTemplateId;
-            break;
-        }
-    }
-    auto packet = packetParsers_->buildMailDelete(mailboxGuid_, mailId, templateId);
-    socket->send(packet);
+    if (inventoryHandler_) inventoryHandler_->mailDelete(mailId);
 }
 
 void GameHandler::mailMarkAsRead(uint32_t mailId) {
-    if (state != WorldState::IN_WORLD || !socket || mailboxGuid_ == 0) return;
-    auto packet = MailMarkAsReadPacket::build(mailboxGuid_, mailId);
-    socket->send(packet);
-}
-
-void GameHandler::handleShowMailbox(network::Packet& packet) {
-    if (!packet.hasRemaining(8)) {
-        LOG_WARNING("SMSG_SHOW_MAILBOX too short");
-        return;
-    }
-    uint64_t guid = packet.readUInt64();
-    LOG_INFO("SMSG_SHOW_MAILBOX: guid=0x", std::hex, guid, std::dec);
-    mailboxGuid_ = guid;
-    mailboxOpen_ = true;
-    hasNewMail_ = false;
-    selectedMailIndex_ = -1;
-    showMailCompose_ = false;
-    fireAddonEvent("MAIL_SHOW", {});
-    // Request inbox contents
-    refreshMailList();
-}
-
-void GameHandler::handleMailListResult(network::Packet& packet) {
-    size_t remaining = packet.getRemainingSize();
-    if (remaining < 1) {
-        LOG_WARNING("SMSG_MAIL_LIST_RESULT too short (", remaining, " bytes)");
-        return;
-    }
-
-    // Delegate parsing to expansion-aware packet parser
-    packetParsers_->parseMailList(packet, mailInbox_);
-
-    // Resolve sender names (needs GameHandler context, so done here)
-    for (auto& msg : mailInbox_) {
-        if (msg.messageType == 0 && msg.senderGuid != 0) {
-            msg.senderName = getCachedPlayerName(msg.senderGuid);
-            if (msg.senderName.empty()) {
-                queryPlayerName(msg.senderGuid);
-                msg.senderName = "Unknown";
-            }
-        } else if (msg.messageType == 2) {
-            msg.senderName = "Auction House";
-        } else if (msg.messageType == 3) {
-            msg.senderName = getCachedCreatureName(msg.senderEntry);
-            if (msg.senderName.empty()) msg.senderName = "NPC";
-        } else {
-            msg.senderName = "System";
-        }
-    }
-
-    // Open the mailbox UI if it isn't already open (Vanilla has no SMSG_SHOW_MAILBOX).
-    if (!mailboxOpen_) {
-        LOG_INFO("Opening mailbox UI (triggered by SMSG_MAIL_LIST_RESULT)");
-        mailboxOpen_ = true;
-        hasNewMail_ = false;
-        selectedMailIndex_ = -1;
-        showMailCompose_ = false;
-    }
-    fireAddonEvent("MAIL_INBOX_UPDATE", {});
-}
-
-void GameHandler::handleSendMailResult(network::Packet& packet) {
-    if (!packet.hasRemaining(12)) {
-        LOG_WARNING("SMSG_SEND_MAIL_RESULT too short");
-        return;
-    }
-
-    uint32_t mailId = packet.readUInt32();
-    uint32_t command = packet.readUInt32();
-    uint32_t error = packet.readUInt32();
-
-    // Commands: 0=send, 1=moneyTaken, 2=itemTaken, 3=returnedToSender, 4=deleted, 5=madePermanent
-    // Vanilla errors: 0=OK, 1=equipError, 2=cannotSendToSelf, 3=notEnoughMoney, 4=recipientNotFound, 5=notYourTeam, 6=internalError
-    static const char* cmdNames[] = {"Send", "TakeMoney", "TakeItem", "Return", "Delete", "MadePermanent"};
-    const char* cmdName = (command < 6) ? cmdNames[command] : "Unknown";
-
-    LOG_INFO("SMSG_SEND_MAIL_RESULT: mailId=", mailId, " cmd=", cmdName, " error=", error);
-
-    if (error == 0) {
-        // Success
-        switch (command) {
-            case 0: // Send
-                addSystemChatMessage("Mail sent successfully.");
-                showMailCompose_ = false;
-                refreshMailList();
-                break;
-            case 1: // Money taken
-                addSystemChatMessage("Money received from mail.");
-                refreshMailList();
-                break;
-            case 2: // Item taken
-                addSystemChatMessage("Item received from mail.");
-                refreshMailList();
-                break;
-            case 4: // Deleted
-                selectedMailIndex_ = -1;
-                refreshMailList();
-                break;
-            default:
-                refreshMailList();
-                break;
-        }
-    } else {
-        // Error
-        std::string errMsg = "Mail error: ";
-        switch (error) {
-            case 1: errMsg += "Equipment error."; break;
-            case 2: errMsg += "You cannot send mail to yourself."; break;
-            case 3: errMsg += "Not enough money."; break;
-            case 4: errMsg += "Recipient not found."; break;
-            case 5: errMsg += "Cannot send to the opposing faction."; break;
-            case 6: errMsg += "Internal mail error."; break;
-            case 14: errMsg += "Disabled for trial accounts."; break;
-            case 15: errMsg += "Recipient's mailbox is full."; break;
-            case 16: errMsg += "Cannot send wrapped items COD."; break;
-            case 17: errMsg += "Mail and chat suspended."; break;
-            case 18: errMsg += "Too many attachments."; break;
-            case 19: errMsg += "Invalid attachment."; break;
-            default: errMsg += "Unknown error (" + std::to_string(error) + ")."; break;
-        }
-        addSystemChatMessage(errMsg);
-    }
-}
-
-void GameHandler::handleReceivedMail(network::Packet& packet) {
-    // Server notifies us that new mail arrived
-    if (packet.hasRemaining(4)) {
-        float nextMailTime = packet.readFloat();
-        (void)nextMailTime;
-    }
-    LOG_INFO("SMSG_RECEIVED_MAIL: New mail arrived!");
-    hasNewMail_ = true;
-    addSystemChatMessage("New mail has arrived.");
-    fireAddonEvent("UPDATE_PENDING_MAIL", {});
-    // If mailbox is open, refresh
-    if (mailboxOpen_) {
-        refreshMailList();
-    }
-}
-
-void GameHandler::handleQueryNextMailTime(network::Packet& packet) {
-    // Server response to MSG_QUERY_NEXT_MAIL_TIME
-    // If there's pending mail, the packet contains a float with time until next mail delivery
-    // A value of 0.0 or the presence of mail entries means there IS mail waiting
-    size_t remaining = packet.getRemainingSize();
-    if (remaining >= 4) {
-        float nextMailTime = packet.readFloat();
-        // In Vanilla: 0x00000000 = has mail, 0xC7A8C000 (big negative) = no mail
-        uint32_t rawValue;
-        std::memcpy(&rawValue, &nextMailTime, sizeof(uint32_t));
-        if (rawValue == 0 || nextMailTime >= 0.0f) {
-            hasNewMail_ = true;
-            LOG_INFO("MSG_QUERY_NEXT_MAIL_TIME: Player has pending mail");
-        } else {
-            LOG_INFO("MSG_QUERY_NEXT_MAIL_TIME: No pending mail (value=", nextMailTime, ")");
-        }
-    }
+    if (inventoryHandler_) inventoryHandler_->mailMarkAsRead(mailId);
 }
 
 glm::vec3 GameHandler::getComposedWorldPosition() {
@@ -24767,78 +8869,23 @@ glm::vec3 GameHandler::getComposedWorldPosition() {
 // ============================================================
 
 void GameHandler::openBank(uint64_t guid) {
-    if (!isConnected()) return;
-    auto pkt = BankerActivatePacket::build(guid);
-    socket->send(pkt);
+    if (inventoryHandler_) inventoryHandler_->openBank(guid);
 }
 
 void GameHandler::closeBank() {
-    bool wasOpen = bankOpen_;
-    bankOpen_ = false;
-    bankerGuid_ = 0;
-    if (wasOpen) fireAddonEvent("BANKFRAME_CLOSED", {});
+    if (inventoryHandler_) inventoryHandler_->closeBank();
 }
 
 void GameHandler::buyBankSlot() {
-    if (!isConnected() || !bankOpen_) {
-        LOG_WARNING("buyBankSlot: not connected or bank not open");
-        return;
-    }
-    LOG_WARNING("buyBankSlot: sending CMSG_BUY_BANK_SLOT banker=0x", std::hex, bankerGuid_, std::dec,
-             " purchased=", static_cast<int>(inventory.getPurchasedBankBagSlots()));
-    auto pkt = BuyBankSlotPacket::build(bankerGuid_);
-    socket->send(pkt);
+    if (inventoryHandler_) inventoryHandler_->buyBankSlot();
 }
 
 void GameHandler::depositItem(uint8_t srcBag, uint8_t srcSlot) {
-    if (!isConnected() || !bankOpen_) return;
-    auto pkt = AutoBankItemPacket::build(srcBag, srcSlot);
-    socket->send(pkt);
+    if (inventoryHandler_) inventoryHandler_->depositItem(srcBag, srcSlot);
 }
 
 void GameHandler::withdrawItem(uint8_t srcBag, uint8_t srcSlot) {
-    if (!isConnected() || !bankOpen_) return;
-    auto pkt = AutoStoreBankItemPacket::build(srcBag, srcSlot);
-    socket->send(pkt);
-}
-
-void GameHandler::handleShowBank(network::Packet& packet) {
-    if (!packet.hasRemaining(8)) return;
-    bankerGuid_ = packet.readUInt64();
-    bankOpen_ = true;
-    gossipWindowOpen = false;  // Close gossip when bank opens
-    fireAddonEvent("BANKFRAME_OPENED", {});
-    // Bank items are already tracked via update fields (bank slot GUIDs)
-    // Trigger rebuild to populate bank slots in inventory
-    rebuildOnlineInventory();
-    // Count bank bags that actually have items/containers
-    int filledBags = 0;
-    for (int i = 0; i < effectiveBankBagSlots_; i++) {
-        if (inventory.getBankBagSize(i) > 0) filledBags++;
-    }
-    LOG_INFO("SMSG_SHOW_BANK: banker=0x", std::hex, bankerGuid_, std::dec,
-             " purchased=", static_cast<int>(inventory.getPurchasedBankBagSlots()),
-             " filledBags=", filledBags,
-             " effectiveBankBagSlots=", effectiveBankBagSlots_);
-}
-
-void GameHandler::handleBuyBankSlotResult(network::Packet& packet) {
-    if (!packet.hasRemaining(4)) return;
-    uint32_t result = packet.readUInt32();
-    LOG_INFO("SMSG_BUY_BANK_SLOT_RESULT: result=", result);
-    // AzerothCore/TrinityCore: 0=TOO_MANY, 1=INSUFFICIENT_FUNDS, 2=NOT_BANKER, 3=OK
-    if (result == 3) {
-        addSystemChatMessage("Bank slot purchased.");
-        inventory.setPurchasedBankBagSlots(inventory.getPurchasedBankBagSlots() + 1);
-    } else if (result == 1) {
-        addSystemChatMessage("Not enough gold to purchase bank slot.");
-    } else if (result == 0) {
-        addSystemChatMessage("No more bank slots available.");
-    } else if (result == 2) {
-        addSystemChatMessage("You must be at a banker to purchase bank slots.");
-    } else {
-        addSystemChatMessage("Cannot purchase bank slot (error " + std::to_string(result) + ").");
-    }
+    if (inventoryHandler_) inventoryHandler_->withdrawItem(srcBag, srcSlot);
 }
 
 // ============================================================
@@ -24846,73 +8893,35 @@ void GameHandler::handleBuyBankSlotResult(network::Packet& packet) {
 // ============================================================
 
 void GameHandler::openGuildBank(uint64_t guid) {
-    if (!isConnected()) return;
-    auto pkt = GuildBankerActivatePacket::build(guid);
-    socket->send(pkt);
+    if (inventoryHandler_) inventoryHandler_->openGuildBank(guid);
 }
 
 void GameHandler::closeGuildBank() {
-    guildBankOpen_ = false;
-    guildBankerGuid_ = 0;
+    if (inventoryHandler_) inventoryHandler_->closeGuildBank();
 }
 
 void GameHandler::queryGuildBankTab(uint8_t tabId) {
-    if (!isConnected() || !guildBankOpen_) return;
-    guildBankActiveTab_ = tabId;
-    auto pkt = GuildBankQueryTabPacket::build(guildBankerGuid_, tabId, true);
-    socket->send(pkt);
+    if (inventoryHandler_) inventoryHandler_->queryGuildBankTab(tabId);
 }
 
 void GameHandler::buyGuildBankTab() {
-    if (!isConnected() || !guildBankOpen_) return;
-    uint8_t nextTab = static_cast<uint8_t>(guildBankData_.tabs.size());
-    auto pkt = GuildBankBuyTabPacket::build(guildBankerGuid_, nextTab);
-    socket->send(pkt);
+    if (inventoryHandler_) inventoryHandler_->buyGuildBankTab();
 }
 
 void GameHandler::depositGuildBankMoney(uint32_t amount) {
-    if (!isConnected() || !guildBankOpen_) return;
-    auto pkt = GuildBankDepositMoneyPacket::build(guildBankerGuid_, amount);
-    socket->send(pkt);
+    if (inventoryHandler_) inventoryHandler_->depositGuildBankMoney(amount);
 }
 
 void GameHandler::withdrawGuildBankMoney(uint32_t amount) {
-    if (!isConnected() || !guildBankOpen_) return;
-    auto pkt = GuildBankWithdrawMoneyPacket::build(guildBankerGuid_, amount);
-    socket->send(pkt);
+    if (inventoryHandler_) inventoryHandler_->withdrawGuildBankMoney(amount);
 }
 
 void GameHandler::guildBankWithdrawItem(uint8_t tabId, uint8_t bankSlot, uint8_t destBag, uint8_t destSlot) {
-    if (!isConnected() || !guildBankOpen_) return;
-    auto pkt = GuildBankSwapItemsPacket::buildBankToInventory(guildBankerGuid_, tabId, bankSlot, destBag, destSlot);
-    socket->send(pkt);
+    if (inventoryHandler_) inventoryHandler_->guildBankWithdrawItem(tabId, bankSlot, destBag, destSlot);
 }
 
 void GameHandler::guildBankDepositItem(uint8_t tabId, uint8_t bankSlot, uint8_t srcBag, uint8_t srcSlot) {
-    if (!isConnected() || !guildBankOpen_) return;
-    auto pkt = GuildBankSwapItemsPacket::buildInventoryToBank(guildBankerGuid_, tabId, bankSlot, srcBag, srcSlot);
-    socket->send(pkt);
-}
-
-void GameHandler::handleGuildBankList(network::Packet& packet) {
-    GuildBankData data;
-    if (!GuildBankListParser::parse(packet, data)) {
-        LOG_WARNING("Failed to parse SMSG_GUILD_BANK_LIST");
-        return;
-    }
-    guildBankData_ = data;
-    guildBankOpen_ = true;
-    guildBankActiveTab_ = data.tabId;
-
-    // Ensure item info for all guild bank items
-    for (const auto& item : data.tabItems) {
-        if (item.itemEntry != 0) ensureItemInfo(item.itemEntry);
-    }
-
-    LOG_INFO("SMSG_GUILD_BANK_LIST: tab=", static_cast<int>(data.tabId),
-             " items=", data.tabItems.size(),
-             " tabs=", data.tabs.size(),
-             " money=", data.money);
+    if (inventoryHandler_) inventoryHandler_->guildBankDepositItem(tabId, bankSlot, srcBag, srcSlot);
 }
 
 // ============================================================
@@ -24920,187 +8929,42 @@ void GameHandler::handleGuildBankList(network::Packet& packet) {
 // ============================================================
 
 void GameHandler::openAuctionHouse(uint64_t guid) {
-    if (!isConnected()) return;
-    auto pkt = AuctionHelloPacket::build(guid);
-    socket->send(pkt);
+    if (inventoryHandler_) inventoryHandler_->openAuctionHouse(guid);
 }
 
 void GameHandler::closeAuctionHouse() {
-    bool wasOpen = auctionOpen_;
-    auctionOpen_ = false;
-    auctioneerGuid_ = 0;
-    if (wasOpen) fireAddonEvent("AUCTION_HOUSE_CLOSED", {});
+    if (inventoryHandler_) inventoryHandler_->closeAuctionHouse();
 }
 
 void GameHandler::auctionSearch(const std::string& name, uint8_t levelMin, uint8_t levelMax,
                                  uint32_t quality, uint32_t itemClass, uint32_t itemSubClass,
-                                 uint32_t invTypeMask, uint8_t usableOnly, uint32_t offset)
-{
-    if (!isConnected() || !auctionOpen_) return;
-    if (auctionSearchDelayTimer_ > 0.0f) {
-        addSystemChatMessage("Please wait before searching again.");
-        return;
-    }
-    // Save search params for pagination and auto-refresh
-    lastAuctionSearch_ = {name, levelMin, levelMax, quality, itemClass, itemSubClass, invTypeMask, usableOnly, offset};
-    pendingAuctionTarget_ = AuctionResultTarget::BROWSE;
-    auto pkt = AuctionListItemsPacket::build(auctioneerGuid_, offset, name,
-                                              levelMin, levelMax, invTypeMask,
-                                              itemClass, itemSubClass, quality, usableOnly, 0);
-    socket->send(pkt);
+                                 uint32_t invTypeMask, uint8_t usableOnly, uint32_t offset) {
+    if (inventoryHandler_) inventoryHandler_->auctionSearch(name, levelMin, levelMax, quality, itemClass, itemSubClass, invTypeMask, usableOnly, offset);
 }
 
 void GameHandler::auctionSellItem(uint64_t itemGuid, uint32_t stackCount,
-                                    uint32_t bid, uint32_t buyout, uint32_t duration)
-{
-    if (!isConnected() || !auctionOpen_) return;
-    auto pkt = AuctionSellItemPacket::build(auctioneerGuid_, itemGuid, stackCount, bid, buyout, duration);
-    socket->send(pkt);
+                                    uint32_t bid, uint32_t buyout, uint32_t duration) {
+    if (inventoryHandler_) inventoryHandler_->auctionSellItem(itemGuid, stackCount, bid, buyout, duration);
 }
 
 void GameHandler::auctionPlaceBid(uint32_t auctionId, uint32_t amount) {
-    if (!isConnected() || !auctionOpen_) return;
-    auto pkt = AuctionPlaceBidPacket::build(auctioneerGuid_, auctionId, amount);
-    socket->send(pkt);
+    if (inventoryHandler_) inventoryHandler_->auctionPlaceBid(auctionId, amount);
 }
 
 void GameHandler::auctionBuyout(uint32_t auctionId, uint32_t buyoutPrice) {
-    auctionPlaceBid(auctionId, buyoutPrice);
+    if (inventoryHandler_) inventoryHandler_->auctionBuyout(auctionId, buyoutPrice);
 }
 
 void GameHandler::auctionCancelItem(uint32_t auctionId) {
-    if (!isConnected() || !auctionOpen_) return;
-    auto pkt = AuctionRemoveItemPacket::build(auctioneerGuid_, auctionId);
-    socket->send(pkt);
+    if (inventoryHandler_) inventoryHandler_->auctionCancelItem(auctionId);
 }
 
 void GameHandler::auctionListOwnerItems(uint32_t offset) {
-    if (!isConnected() || !auctionOpen_) return;
-    pendingAuctionTarget_ = AuctionResultTarget::OWNER;
-    auto pkt = AuctionListOwnerItemsPacket::build(auctioneerGuid_, offset);
-    socket->send(pkt);
+    if (inventoryHandler_) inventoryHandler_->auctionListOwnerItems(offset);
 }
 
 void GameHandler::auctionListBidderItems(uint32_t offset) {
-    if (!isConnected() || !auctionOpen_) return;
-    pendingAuctionTarget_ = AuctionResultTarget::BIDDER;
-    auto pkt = AuctionListBidderItemsPacket::build(auctioneerGuid_, offset);
-    socket->send(pkt);
-}
-
-void GameHandler::handleAuctionHello(network::Packet& packet) {
-    size_t pktSize = packet.getSize();
-    size_t readPos = packet.getReadPos();
-    LOG_INFO("handleAuctionHello: packetSize=", pktSize, " readPos=", readPos);
-    // Hex dump first 20 bytes for debugging
-    const auto& rawData = packet.getData();
-    std::string hex;
-    size_t dumpLen = std::min<size_t>(rawData.size(), 20);
-    for (size_t i = 0; i < dumpLen; ++i) {
-        char b[4]; snprintf(b, sizeof(b), "%02x ", rawData[i]);
-        hex += b;
-    }
-    LOG_INFO("  hex dump: ", hex);
-    AuctionHelloData data;
-    if (!AuctionHelloParser::parse(packet, data)) {
-        LOG_WARNING("Failed to parse MSG_AUCTION_HELLO response, size=", pktSize, " readPos=", readPos);
-        return;
-    }
-    auctioneerGuid_ = data.auctioneerGuid;
-    auctionHouseId_ = data.auctionHouseId;
-    auctionOpen_ = true;
-    gossipWindowOpen = false;  // Close gossip when auction house opens
-    fireAddonEvent("AUCTION_HOUSE_SHOW", {});
-    auctionActiveTab_ = 0;
-    auctionBrowseResults_ = AuctionListResult{};
-    auctionOwnerResults_ = AuctionListResult{};
-    auctionBidderResults_ = AuctionListResult{};
-    LOG_INFO("MSG_AUCTION_HELLO: auctioneer=0x", std::hex, data.auctioneerGuid, std::dec,
-             " house=", data.auctionHouseId, " enabled=", static_cast<int>(data.enabled));
-}
-
-void GameHandler::handleAuctionListResult(network::Packet& packet) {
-    // Classic 1.12 has 1 enchant slot per auction entry; TBC/WotLK have 3.
-    const int enchSlots = isClassicLikeExpansion() ? 1 : 3;
-    AuctionListResult result;
-    if (!AuctionListResultParser::parse(packet, result, enchSlots)) {
-        LOG_WARNING("Failed to parse SMSG_AUCTION_LIST_RESULT");
-        return;
-    }
-
-    auctionBrowseResults_ = result;
-    auctionSearchDelayTimer_ = result.searchDelay / 1000.0f;
-
-    // Ensure item info for all auction items
-    for (const auto& entry : result.auctions) {
-        if (entry.itemEntry != 0) ensureItemInfo(entry.itemEntry);
-    }
-
-    LOG_INFO("SMSG_AUCTION_LIST_RESULT: ", result.auctions.size(), " items, total=", result.totalCount);
-}
-
-void GameHandler::handleAuctionOwnerListResult(network::Packet& packet) {
-    const int enchSlots = isClassicLikeExpansion() ? 1 : 3;
-    AuctionListResult result;
-    if (!AuctionListResultParser::parse(packet, result, enchSlots)) {
-        LOG_WARNING("Failed to parse SMSG_AUCTION_OWNER_LIST_RESULT");
-        return;
-    }
-    auctionOwnerResults_ = result;
-    for (const auto& entry : result.auctions) {
-        if (entry.itemEntry != 0) ensureItemInfo(entry.itemEntry);
-    }
-    LOG_INFO("SMSG_AUCTION_OWNER_LIST_RESULT: ", result.auctions.size(), " items");
-}
-
-void GameHandler::handleAuctionBidderListResult(network::Packet& packet) {
-    const int enchSlots = isClassicLikeExpansion() ? 1 : 3;
-    AuctionListResult result;
-    if (!AuctionListResultParser::parse(packet, result, enchSlots)) {
-        LOG_WARNING("Failed to parse SMSG_AUCTION_BIDDER_LIST_RESULT");
-        return;
-    }
-    auctionBidderResults_ = result;
-    for (const auto& entry : result.auctions) {
-        if (entry.itemEntry != 0) ensureItemInfo(entry.itemEntry);
-    }
-    LOG_INFO("SMSG_AUCTION_BIDDER_LIST_RESULT: ", result.auctions.size(), " items");
-}
-
-void GameHandler::handleAuctionCommandResult(network::Packet& packet) {
-    AuctionCommandResult result;
-    if (!AuctionCommandResultParser::parse(packet, result)) {
-        LOG_WARNING("Failed to parse SMSG_AUCTION_COMMAND_RESULT");
-        return;
-    }
-
-    const char* actions[] = {"Create", "Cancel", "Bid", "Buyout"};
-    const char* actionName = (result.action < 4) ? actions[result.action] : "Unknown";
-
-    if (result.errorCode == 0) {
-        std::string msg = std::string("Auction ") + actionName + " successful.";
-        addSystemChatMessage(msg);
-        // Refresh appropriate lists
-        if (result.action == 0) auctionListOwnerItems();       // create
-        else if (result.action == 1) auctionListOwnerItems();  // cancel
-        else if (result.action == 2 || result.action == 3) {   // bid or buyout
-            auctionListBidderItems();
-            // Re-query browse results with the same filters the user last searched with
-            const auto& s = lastAuctionSearch_;
-            auctionSearch(s.name, s.levelMin, s.levelMax, s.quality,
-                          s.itemClass, s.itemSubClass, s.invTypeMask, s.usableOnly, s.offset);
-        }
-    } else {
-        const char* errors[] = {"OK", "Inventory", "Not enough money", "Item not found",
-                                "Higher bid", "Increment", "Not enough items",
-                                "DB error", "Restricted account"};
-        const char* errName = (result.errorCode < 9) ? errors[result.errorCode] : "Unknown";
-        std::string msg = std::string("Auction ") + actionName + " failed: " + errName;
-        addUIError(msg);
-        addSystemChatMessage(msg);
-    }
-    LOG_INFO("SMSG_AUCTION_COMMAND_RESULT: action=", actionName,
-             " error=", result.errorCode);
+    if (inventoryHandler_) inventoryHandler_->auctionListBidderItems(offset);
 }
 
 // ---------------------------------------------------------------------------
@@ -25108,26 +8972,8 @@ void GameHandler::handleAuctionCommandResult(network::Packet& packet) {
 //   uint64 itemGuid + uint8 isEmpty + string text (when !isEmpty)
 // ---------------------------------------------------------------------------
 
-void GameHandler::handleItemTextQueryResponse(network::Packet& packet) {
-    size_t rem = packet.getRemainingSize();
-    if (rem < 9) return;  // guid(8) + isEmpty(1)
-
-    /*uint64_t guid =*/ packet.readUInt64();
-    uint8_t isEmpty = packet.readUInt8();
-    if (!isEmpty) {
-        itemText_    = packet.readString();
-        itemTextOpen_= !itemText_.empty();
-    }
-    LOG_DEBUG("SMSG_ITEM_TEXT_QUERY_RESPONSE: isEmpty=", static_cast<int>(isEmpty),
-              " len=", itemText_.size());
-}
-
 void GameHandler::queryItemText(uint64_t itemGuid) {
-    if (!isInWorld()) return;
-    network::Packet pkt(wireOpcode(Opcode::CMSG_ITEM_TEXT_QUERY));
-    pkt.writeUInt64(itemGuid);
-    socket->send(pkt);
-    LOG_DEBUG("CMSG_ITEM_TEXT_QUERY: guid=0x", std::hex, itemGuid, std::dec);
+    if (inventoryHandler_) inventoryHandler_->queryItemText(itemGuid);
 }
 
 // ---------------------------------------------------------------------------
@@ -25135,49 +8981,12 @@ void GameHandler::queryItemText(uint64_t itemGuid) {
 //   uint32 questId + string questTitle + uint64 sharerGuid
 // ---------------------------------------------------------------------------
 
-void GameHandler::handleQuestConfirmAccept(network::Packet& packet) {
-    size_t rem = packet.getRemainingSize();
-    if (rem < 4) return;
-
-    sharedQuestId_    = packet.readUInt32();
-    sharedQuestTitle_ = packet.readString();
-    if (packet.hasRemaining(8)) {
-        sharedQuestSharerGuid_ = packet.readUInt64();
-    }
-
-    sharedQuestSharerName_.clear();
-    if (auto* unit = getUnitByGuid(sharedQuestSharerGuid_)) {
-        sharedQuestSharerName_ = unit->getName();
-    }
-    if (sharedQuestSharerName_.empty()) {
-        sharedQuestSharerName_ = lookupName(sharedQuestSharerGuid_);
-    }
-    if (sharedQuestSharerName_.empty()) {
-        char tmp[32];
-        std::snprintf(tmp, sizeof(tmp), "0x%llX",
-                      static_cast<unsigned long long>(sharedQuestSharerGuid_));
-        sharedQuestSharerName_ = tmp;
-    }
-
-    pendingSharedQuest_ = true;
-    addSystemChatMessage(sharedQuestSharerName_ + " has shared the quest \"" +
-                         sharedQuestTitle_ + "\" with you.");
-    LOG_INFO("SMSG_QUEST_CONFIRM_ACCEPT: questId=", sharedQuestId_,
-             " title=", sharedQuestTitle_, " sharer=", sharedQuestSharerName_);
-}
-
 void GameHandler::acceptSharedQuest() {
-    if (!pendingSharedQuest_ || !socket) return;
-    pendingSharedQuest_ = false;
-    network::Packet pkt(wireOpcode(Opcode::CMSG_QUEST_CONFIRM_ACCEPT));
-    pkt.writeUInt32(sharedQuestId_);
-    socket->send(pkt);
-    addSystemChatMessage("Accepted: " + sharedQuestTitle_);
+    if (questHandler_) questHandler_->acceptSharedQuest();
 }
 
 void GameHandler::declineSharedQuest() {
-    pendingSharedQuest_ = false;
-    // No response packet needed — just dismiss the UI
+    if (questHandler_) questHandler_->declineSharedQuest();
 }
 
 // ---------------------------------------------------------------------------
@@ -25186,56 +8995,15 @@ void GameHandler::declineSharedQuest() {
 // ---------------------------------------------------------------------------
 
 void GameHandler::handleSummonRequest(network::Packet& packet) {
-    if (!packet.hasRemaining(16)) return;
-
-    summonerGuid_        = packet.readUInt64();
-    uint32_t zoneId      = packet.readUInt32();
-    uint32_t timeoutMs   = packet.readUInt32();
-    summonTimeoutSec_    = timeoutMs / 1000.0f;
-    pendingSummonRequest_= true;
-
-    summonerName_.clear();
-    if (auto* unit = getUnitByGuid(summonerGuid_)) {
-        summonerName_ = unit->getName();
-    }
-    if (summonerName_.empty()) {
-        summonerName_ = lookupName(summonerGuid_);
-    }
-    if (summonerName_.empty()) {
-        char tmp[32];
-        std::snprintf(tmp, sizeof(tmp), "0x%llX",
-                      static_cast<unsigned long long>(summonerGuid_));
-        summonerName_ = tmp;
-    }
-
-    std::string msg = summonerName_ + " is summoning you";
-    std::string zoneName = getAreaName(zoneId);
-    if (!zoneName.empty())
-        msg += " to " + zoneName;
-    msg += '.';
-    addSystemChatMessage(msg);
-    LOG_INFO("SMSG_SUMMON_REQUEST: summoner=", summonerName_,
-             " zoneId=", zoneId, " timeout=", summonTimeoutSec_, "s");
-            fireAddonEvent("CONFIRM_SUMMON", {});
+    if (socialHandler_) socialHandler_->handleSummonRequest(packet);
 }
 
 void GameHandler::acceptSummon() {
-    if (!pendingSummonRequest_ || !socket) return;
-    pendingSummonRequest_ = false;
-    network::Packet pkt(wireOpcode(Opcode::CMSG_SUMMON_RESPONSE));
-    pkt.writeUInt8(1);  // 1 = accept
-    socket->send(pkt);
-    addSystemChatMessage("Accepting summon...");
-    LOG_INFO("Accepted summon from ", summonerName_);
+    if (socialHandler_) socialHandler_->acceptSummon();
 }
 
 void GameHandler::declineSummon() {
-    if (!socket) return;
-    pendingSummonRequest_ = false;
-    network::Packet pkt(wireOpcode(Opcode::CMSG_SUMMON_RESPONSE));
-    pkt.writeUInt8(0);  // 0 = decline
-    socket->send(pkt);
-    addSystemChatMessage("Summon declined.");
+    if (socialHandler_) socialHandler_->declineSummon();
 }
 
 // ---------------------------------------------------------------------------
@@ -25247,356 +9015,44 @@ void GameHandler::declineSummon() {
 //   14-19=stun/dead/logout, 20=trial, 21=conjured_only
 // ---------------------------------------------------------------------------
 
-void GameHandler::handleTradeStatus(network::Packet& packet) {
-    if (!packet.hasRemaining(4)) return;
-    uint32_t status = packet.readUInt32();
-
-    switch (status) {
-        case 1: { // BEGIN_TRADE — incoming request; read initiator GUID
-            if (packet.hasRemaining(8)) {
-                tradePeerGuid_ = packet.readUInt64();
-            }
-            // Resolve name from entity list
-            tradePeerName_.clear();
-            if (auto* unit = getUnitByGuid(tradePeerGuid_)) {
-                tradePeerName_ = unit->getName();
-            }
-            if (tradePeerName_.empty()) {
-                tradePeerName_ = lookupName(tradePeerGuid_);
-            }
-            if (tradePeerName_.empty()) {
-                char tmp[32];
-                std::snprintf(tmp, sizeof(tmp), "0x%llX",
-                              static_cast<unsigned long long>(tradePeerGuid_));
-                tradePeerName_ = tmp;
-            }
-            tradeStatus_ = TradeStatus::PendingIncoming;
-            addSystemChatMessage(tradePeerName_ + " wants to trade with you.");
-            fireAddonEvent("TRADE_REQUEST", {});
-            break;
-        }
-        case 2: // OPEN_WINDOW
-            myTradeSlots_.fill(TradeSlot{});
-            peerTradeSlots_.fill(TradeSlot{});
-            myTradeGold_   = 0;
-            peerTradeGold_ = 0;
-            tradeStatus_ = TradeStatus::Open;
-            addSystemChatMessage("Trade window opened.");
-            fireAddonEvent("TRADE_SHOW", {});
-            break;
-        case 3:  // CANCELLED
-        case 12: // CLOSE_WINDOW
-            resetTradeState();
-            addSystemChatMessage("Trade cancelled.");
-            fireAddonEvent("TRADE_CLOSED", {});
-            break;
-        case 9: // REJECTED — other player clicked Decline
-            resetTradeState();
-            addSystemChatMessage("Trade declined.");
-            fireAddonEvent("TRADE_CLOSED", {});
-            break;
-        case 4: // ACCEPTED (partner accepted)
-            tradeStatus_ = TradeStatus::Accepted;
-            addSystemChatMessage("Trade accepted. Awaiting other player...");
-            fireAddonEvent("TRADE_ACCEPT_UPDATE", {});
-            break;
-        case 8: // COMPLETE
-            addSystemChatMessage("Trade complete!");
-            fireAddonEvent("TRADE_CLOSED", {});
-            resetTradeState();
-            break;
-        case 7: // BACK_TO_TRADE (unaccepted after a change)
-            tradeStatus_ = TradeStatus::Open;
-            addSystemChatMessage("Trade offer changed.");
-            break;
-        case 10: addSystemChatMessage("Trade target is too far away."); break;
-        case 11: addSystemChatMessage("Trade failed: wrong faction."); break;
-        case 13: addSystemChatMessage("Trade failed: player ignores you."); break;
-        case 14: addSystemChatMessage("Trade failed: you are stunned."); break;
-        case 15: addSystemChatMessage("Trade failed: target is stunned."); break;
-        case 16: addSystemChatMessage("Trade failed: you are dead."); break;
-        case 17: addSystemChatMessage("Trade failed: target is dead."); break;
-        case 20: addSystemChatMessage("Trial accounts cannot trade."); break;
-        default: break;
-    }
-    LOG_DEBUG("SMSG_TRADE_STATUS: status=", status);
-}
-
 void GameHandler::acceptTradeRequest() {
-    if (tradeStatus_ != TradeStatus::PendingIncoming || !socket) return;
-    tradeStatus_ = TradeStatus::Open;
-    socket->send(BeginTradePacket::build());
+    if (inventoryHandler_) inventoryHandler_->acceptTradeRequest();
 }
 
 void GameHandler::declineTradeRequest() {
-    if (!socket) return;
-    tradeStatus_ = TradeStatus::None;
-    socket->send(CancelTradePacket::build());
+    if (inventoryHandler_) inventoryHandler_->declineTradeRequest();
 }
 
 void GameHandler::acceptTrade() {
-    if (!isTradeOpen() || !socket) return;
-    tradeStatus_ = TradeStatus::Accepted;
-    socket->send(AcceptTradePacket::build());
+    if (inventoryHandler_) inventoryHandler_->acceptTrade();
 }
 
 void GameHandler::cancelTrade() {
-    if (!socket) return;
-    resetTradeState();
-    socket->send(CancelTradePacket::build());
+    if (inventoryHandler_) inventoryHandler_->cancelTrade();
 }
 
 void GameHandler::setTradeItem(uint8_t tradeSlot, uint8_t bag, uint8_t bagSlot) {
-    if (!isTradeOpen() || !socket || tradeSlot >= TRADE_SLOT_COUNT) return;
-    socket->send(SetTradeItemPacket::build(tradeSlot, bag, bagSlot));
+    if (inventoryHandler_) inventoryHandler_->setTradeItem(tradeSlot, bag, bagSlot);
 }
 
 void GameHandler::clearTradeItem(uint8_t tradeSlot) {
-    if (!isTradeOpen() || !socket || tradeSlot >= TRADE_SLOT_COUNT) return;
-    myTradeSlots_[tradeSlot] = TradeSlot{};
-    socket->send(ClearTradeItemPacket::build(tradeSlot));
+    if (inventoryHandler_) inventoryHandler_->clearTradeItem(tradeSlot);
 }
 
 void GameHandler::setTradeGold(uint64_t copper) {
-    if (!isTradeOpen() || !socket) return;
-    myTradeGold_ = copper;
-    socket->send(SetTradeGoldPacket::build(copper));
+    if (inventoryHandler_) inventoryHandler_->setTradeGold(copper);
 }
 
 void GameHandler::resetTradeState() {
-    tradeStatus_   = TradeStatus::None;
-    myTradeGold_   = 0;
-    peerTradeGold_ = 0;
-    myTradeSlots_.fill(TradeSlot{});
-    peerTradeSlots_.fill(TradeSlot{});
-}
-
-void GameHandler::handleTradeStatusExtended(network::Packet& packet) {
-    // SMSG_TRADE_STATUS_EXTENDED format differs by expansion:
-    //
-    // Classic/TBC:
-    //   uint8  isSelf + uint32 slotCount + [slots] + uint64 coins
-    //   Per slot tail (after isWrapped): giftCreatorGuid(8) + enchants(24) +
-    //     randomPropertyId(4) + suffixFactor(4) + durability(4) + maxDurability(4) = 48 bytes
-    //
-    // WotLK 3.3.5a adds:
-    //   uint32 tradeId  (after isSelf, before slotCount)
-    //   Per slot: + createPlayedTime(4) at end of trail  → trail = 52 bytes
-    //
-    // Minimum: isSelf(1) + [tradeId(4)] + slotCount(4) = 5 or 9 bytes
-    const bool isWotLK = isActiveExpansion("wotlk");
-    size_t minHdr = isWotLK ? 9u : 5u;
-    if (!packet.hasRemaining(minHdr)) return;
-
-    uint8_t isSelf = packet.readUInt8();
-    if (isWotLK) {
-        /*uint32_t tradeId =*/ packet.readUInt32();  // WotLK-only field
-    }
-    uint32_t slotCount = packet.readUInt32();
-
-    // Per-slot tail bytes after isWrapped:
-    //   Classic/TBC: giftCreatorGuid(8) + enchants(24) + stats(16) = 48
-    //   WotLK: same + createPlayedTime(4) = 52
-    const size_t SLOT_TRAIL = isWotLK ? 52u : 48u;
-
-    auto& slots = isSelf ? myTradeSlots_ : peerTradeSlots_;
-
-    for (uint32_t i = 0; i < slotCount && packet.hasRemaining(14); ++i) {
-        uint8_t  slotIdx    = packet.readUInt8();
-        uint32_t itemId     = packet.readUInt32();
-        uint32_t displayId  = packet.readUInt32();
-        uint32_t stackCount = packet.readUInt32();
-
-        bool isWrapped = false;
-        if (packet.hasRemaining(1)) {
-            isWrapped = (packet.readUInt8() != 0);
-        }
-        if (packet.hasRemaining(SLOT_TRAIL)) {
-            packet.setReadPos(packet.getReadPos() + SLOT_TRAIL);
-        } else {
-            packet.skipAll();
-            return;
-        }
-        (void)isWrapped;
-
-        if (slotIdx < TRADE_SLOT_COUNT) {
-            TradeSlot& s = slots[slotIdx];
-            s.itemId     = itemId;
-            s.displayId  = displayId;
-            s.stackCount = stackCount;
-            s.occupied   = (itemId != 0);
-        }
-    }
-
-    // Gold offered (uint64 copper)
-    if (packet.hasRemaining(8)) {
-        uint64_t coins = packet.readUInt64();
-        if (isSelf) myTradeGold_   = coins;
-        else        peerTradeGold_ = coins;
-    }
-
-    // Prefetch item info for all occupied trade slots so names show immediately
-    for (const auto& s : slots) {
-        if (s.occupied && s.itemId != 0) queryItemInfo(s.itemId, 0);
-    }
-
-    LOG_DEBUG("SMSG_TRADE_STATUS_EXTENDED: isSelf=", static_cast<int>(isSelf),
-              " myGold=", myTradeGold_, " peerGold=", peerTradeGold_);
+    if (inventoryHandler_) inventoryHandler_->resetTradeState();
 }
 
 // ---------------------------------------------------------------------------
 // Group loot roll (SMSG_LOOT_ROLL / SMSG_LOOT_ROLL_WON / CMSG_LOOT_ROLL)
 // ---------------------------------------------------------------------------
 
-void GameHandler::handleLootRoll(network::Packet& packet) {
-    // WotLK 3.3.5a: uint64 objectGuid, uint32 slot, uint64 playerGuid,
-    //              uint32 itemId, uint32 randomSuffix, uint32 randomPropId, uint8 rollNumber, uint8 rollType (34 bytes)
-    // Classic/TBC:  uint64 objectGuid, uint32 slot, uint64 playerGuid,
-    //              uint32 itemId, uint8 rollNumber, uint8 rollType (26 bytes)
-    const bool isWotLK = isActiveExpansion("wotlk");
-    const size_t minSize = isWotLK ? 34u : 26u;
-    size_t rem = packet.getRemainingSize();
-    if (rem < minSize) return;
-
-    uint64_t objectGuid = packet.readUInt64();
-    uint32_t slot       = packet.readUInt32();
-    uint64_t rollerGuid = packet.readUInt64();
-    uint32_t itemId     = packet.readUInt32();
-    if (isWotLK) {
-        /*uint32_t randSuffix =*/ packet.readUInt32();
-        /*uint32_t randProp   =*/ packet.readUInt32();
-    }
-    uint8_t  rollNum    = packet.readUInt8();
-    uint8_t  rollType   = packet.readUInt8();
-
-    // rollType 128 = "waiting for this player to roll"
-    if (rollType == 128 && rollerGuid == playerGuid) {
-        // Server is asking us to roll; present the roll UI.
-        pendingLootRollActive_             = true;
-        pendingLootRoll_.objectGuid        = objectGuid;
-        pendingLootRoll_.slot              = slot;
-        pendingLootRoll_.itemId            = itemId;
-        pendingLootRoll_.playerRolls.clear();
-        // Ensure item info is in cache; query if not
-        queryItemInfo(itemId, 0);
-        // Look up item name from cache
-        auto* info = getItemInfo(itemId);
-        pendingLootRoll_.itemName  = info ? info->name : std::to_string(itemId);
-        pendingLootRoll_.itemQuality = info ? static_cast<uint8_t>(info->quality) : 0;
-        pendingLootRoll_.rollCountdownMs = 60000;
-        pendingLootRoll_.rollStartedAt   = std::chrono::steady_clock::now();
-        LOG_INFO("SMSG_LOOT_ROLL: need/greed prompt for item=", itemId,
-                 " (", pendingLootRoll_.itemName, ") slot=", slot);
-        return;
-    }
-
-    // Otherwise it's reporting another player's roll result
-    const char* rollNames[] = {"Need", "Greed", "Disenchant", "Pass"};
-    const char* rollName = (rollType < 4) ? rollNames[rollType] : "Pass";
-
-    std::string rollerName;
-    if (auto* unit = getUnitByGuid(rollerGuid)) {
-        rollerName = unit->getName();
-    }
-    if (rollerName.empty()) rollerName = "Someone";
-
-    // Track in the live roll list while our popup is open for the same item
-    if (pendingLootRollActive_ &&
-        pendingLootRoll_.objectGuid == objectGuid &&
-        pendingLootRoll_.slot == slot) {
-        bool found = false;
-        for (auto& r : pendingLootRoll_.playerRolls) {
-            if (r.playerName == rollerName) {
-                r.rollNum  = rollNum;
-                r.rollType = rollType;
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            LootRollEntry::PlayerRollResult prr;
-            prr.playerName = rollerName;
-            prr.rollNum    = rollNum;
-            prr.rollType   = rollType;
-            pendingLootRoll_.playerRolls.push_back(std::move(prr));
-        }
-    }
-
-    auto* info = getItemInfo(itemId);
-    std::string iName = info && !info->name.empty() ? info->name : std::to_string(itemId);
-    uint32_t rollItemQuality = info ? info->quality : 1u;
-    std::string rollItemLink = buildItemLink(itemId, rollItemQuality, iName);
-
-    addSystemChatMessage(rollerName + " rolls " + rollName + " (" + std::to_string(rollNum) + ") on " + rollItemLink);
-
-    LOG_DEBUG("SMSG_LOOT_ROLL: ", rollerName, " rolled ", rollName,
-              " (", rollNum, ") on item ", itemId);
-    (void)objectGuid; (void)slot;
-}
-
-void GameHandler::handleLootRollWon(network::Packet& packet) {
-    // WotLK 3.3.5a: uint64 objectGuid, uint32 slot, uint64 winnerGuid,
-    //              uint32 itemId, uint32 randomSuffix, uint32 randomPropId, uint8 rollNumber, uint8 rollType (34 bytes)
-    // Classic/TBC:  uint64 objectGuid, uint32 slot, uint64 winnerGuid,
-    //              uint32 itemId, uint8 rollNumber, uint8 rollType (26 bytes)
-    const bool isWotLK = isActiveExpansion("wotlk");
-    const size_t minSize = isWotLK ? 34u : 26u;
-    size_t rem = packet.getRemainingSize();
-    if (rem < minSize) return;
-
-    /*uint64_t objectGuid =*/ packet.readUInt64();
-    /*uint32_t slot       =*/ packet.readUInt32();
-    uint64_t winnerGuid = packet.readUInt64();
-    uint32_t itemId     = packet.readUInt32();
-    int32_t wonRandProp = 0;
-    if (isWotLK) {
-        /*uint32_t randSuffix =*/ packet.readUInt32();
-        wonRandProp = static_cast<int32_t>(packet.readUInt32());
-    }
-    uint8_t  rollNum    = packet.readUInt8();
-    uint8_t  rollType   = packet.readUInt8();
-
-    const char* rollNames[] = {"Need", "Greed", "Disenchant"};
-    const char* rollName = (rollType < 3) ? rollNames[rollType] : "Roll";
-
-    std::string winnerName;
-    if (auto* unit = getUnitByGuid(winnerGuid)) {
-        winnerName = unit->getName();
-    }
-    if (winnerName.empty()) {
-        winnerName = (winnerGuid == playerGuid) ? "You" : "Someone";
-    }
-
-    auto* info = getItemInfo(itemId);
-    std::string iName = info && !info->name.empty() ? info->name : std::to_string(itemId);
-    if (wonRandProp != 0) {
-        std::string suffix = getRandomPropertyName(wonRandProp);
-        if (!suffix.empty()) iName += " " + suffix;
-    }
-    uint32_t wonItemQuality = info ? info->quality : 1u;
-    std::string wonItemLink = buildItemLink(itemId, wonItemQuality, iName);
-
-    addSystemChatMessage(winnerName + " wins " + wonItemLink + " (" + rollName + " " + std::to_string(rollNum) + ")!");
-
-    // Dismiss roll popup — roll contest is over regardless of who won
-    pendingLootRollActive_ = false;
-    LOG_INFO("SMSG_LOOT_ROLL_WON: winner=", winnerName, " item=", itemId,
-             " roll=", rollName, "(", rollNum, ")");
-}
-
 void GameHandler::sendLootRoll(uint64_t objectGuid, uint32_t slot, uint8_t rollType) {
-    if (!isInWorld()) return;
-    pendingLootRollActive_ = false;
-
-    network::Packet pkt(wireOpcode(Opcode::CMSG_LOOT_ROLL));
-    pkt.writeUInt64(objectGuid);
-    pkt.writeUInt32(slot);
-    pkt.writeUInt8(rollType);
-    socket->send(pkt);
-
-    const char* rollNames[] = {"Need", "Greed", "Disenchant", "Pass"};
-    const char* rName = (rollType < 3) ? rollNames[rollType] : "Pass";
-    LOG_INFO("CMSG_LOOT_ROLL: type=", rName, " item=", pendingLootRoll_.itemName);
+    if (inventoryHandler_) inventoryHandler_->sendLootRoll(objectGuid, slot, rollType);
 }
 
 // ---------------------------------------------------------------------------
@@ -25693,66 +9149,6 @@ void GameHandler::loadAchievementNameCache() {
     LOG_INFO("Achievement: loaded ", achievementNameCache_.size(), " names from Achievement.dbc");
 }
 
-void GameHandler::handleAchievementEarned(network::Packet& packet) {
-    size_t remaining = packet.getRemainingSize();
-    if (remaining < 16) return;  // guid(8) + id(4) + date(4)
-
-    uint64_t guid          = packet.readUInt64();
-    uint32_t achievementId = packet.readUInt32();
-    uint32_t earnDate      = packet.readUInt32();  // WoW PackedTime bitfield
-
-    loadAchievementNameCache();
-    auto nameIt = achievementNameCache_.find(achievementId);
-    const std::string& achName = (nameIt != achievementNameCache_.end())
-        ? nameIt->second : std::string();
-
-    // Show chat notification
-    bool isSelf = (guid == playerGuid);
-    if (isSelf) {
-        char buf[256];
-        if (!achName.empty()) {
-            std::snprintf(buf, sizeof(buf), "Achievement earned: %s", achName.c_str());
-        } else {
-            std::snprintf(buf, sizeof(buf), "Achievement earned! (ID %u)", achievementId);
-        }
-        addSystemChatMessage(buf);
-
-        earnedAchievements_.insert(achievementId);
-        achievementDates_[achievementId] = earnDate;
-        withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playAchievementAlert(); });
-        if (achievementEarnedCallback_) {
-            achievementEarnedCallback_(achievementId, achName);
-        }
-    } else {
-        // Another player in the zone earned an achievement
-        std::string senderName;
-        if (auto* unit = getUnitByGuid(guid)) {
-            senderName = unit->getName();
-        }
-        if (senderName.empty()) senderName = lookupName(guid);
-        if (senderName.empty()) {
-            char tmp[32];
-            std::snprintf(tmp, sizeof(tmp), "0x%llX",
-                          static_cast<unsigned long long>(guid));
-            senderName = tmp;
-        }
-        char buf[256];
-        if (!achName.empty()) {
-            std::snprintf(buf, sizeof(buf), "%s has earned the achievement: %s",
-                          senderName.c_str(), achName.c_str());
-        } else {
-            std::snprintf(buf, sizeof(buf), "%s has earned an achievement! (ID %u)",
-                          senderName.c_str(), achievementId);
-        }
-        addSystemChatMessage(buf);
-    }
-
-    LOG_INFO("SMSG_ACHIEVEMENT_EARNED: guid=0x", std::hex, guid, std::dec,
-             " achievementId=", achievementId, " self=", isSelf,
-             achName.empty() ? "" : " name=", achName);
-            fireAddonEvent("ACHIEVEMENT_EARNED", {std::to_string(achievementId)});
-}
-
 // ---------------------------------------------------------------------------
 // SMSG_ALL_ACHIEVEMENT_DATA (WotLK 3.3.5a)
 //   Achievement records: repeated { uint32 id, uint32 packedDate } until 0xFFFFFFFF sentinel
@@ -25799,46 +9195,6 @@ void GameHandler::handleAllAchievementData(network::Packet& packet) {
 //                          until 0xFFFFFFFF sentinel
 //   We store only the earned achievement IDs (not criteria) per inspected player.
 // ---------------------------------------------------------------------------
-void GameHandler::handleRespondInspectAchievements(network::Packet& packet) {
-    loadAchievementNameCache();
-
-    // Read the inspected player's packed guid
-    if (!packet.hasRemaining(1)) return;
-    uint64_t inspectedGuid = packet.readPackedGuid();
-    if (inspectedGuid == 0) {
-        packet.skipAll();
-        return;
-    }
-
-    std::unordered_set<uint32_t> achievements;
-
-    // Achievement records: { uint32 id, uint32 packedDate } until sentinel 0xFFFFFFFF
-    while (packet.hasRemaining(4)) {
-        uint32_t id = packet.readUInt32();
-        if (id == 0xFFFFFFFF) break;
-        if (!packet.hasRemaining(4)) break;
-        /*uint32_t date =*/ packet.readUInt32();
-        achievements.insert(id);
-    }
-
-    // Criteria records: { uint32 id, uint64 counter, uint32 date, uint32 unk }
-    // until sentinel 0xFFFFFFFF — consume but don't store for inspect use
-    while (packet.hasRemaining(4)) {
-        uint32_t id = packet.readUInt32();
-        if (id == 0xFFFFFFFF) break;
-        // counter(8) + date(4) + unk(4) = 16 bytes
-        if (!packet.hasRemaining(16)) break;
-        packet.readUInt64();  // counter
-        packet.readUInt32();  // date
-        packet.readUInt32();  // unk
-    }
-
-    inspectedPlayerAchievements_[inspectedGuid] = std::move(achievements);
-
-    LOG_INFO("SMSG_RESPOND_INSPECT_ACHIEVEMENTS: guid=0x", std::hex, inspectedGuid, std::dec,
-             " achievements=", inspectedPlayerAchievements_[inspectedGuid].size());
-}
-
 // ---------------------------------------------------------------------------
 // Faction name cache (lazily loaded from Faction.dbc)
 // ---------------------------------------------------------------------------
@@ -26049,111 +9405,27 @@ std::string GameHandler::getLfgDungeonName(uint32_t dungeonId) const {
 // ---------------------------------------------------------------------------
 
 void GameHandler::handleUpdateAuraDuration(uint8_t slot, uint32_t durationMs) {
-    if (slot >= playerAuras.size()) return;
-    if (playerAuras[slot].isEmpty()) return;
-    playerAuras[slot].durationMs = static_cast<int32_t>(durationMs);
-    playerAuras[slot].receivedAtMs = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count());
+    if (spellHandler_) spellHandler_->handleUpdateAuraDuration(slot, durationMs);
 }
 
 // ---------------------------------------------------------------------------
 // Equipment set list
 // ---------------------------------------------------------------------------
 
-void GameHandler::handleEquipmentSetList(network::Packet& packet) {
-    if (!packet.hasRemaining(4)) return;
-    uint32_t count = packet.readUInt32();
-    if (count > 10) {
-        LOG_WARNING("SMSG_EQUIPMENT_SET_LIST: unexpected count ", count, ", ignoring");
-        packet.skipAll();
-        return;
-    }
-    equipmentSets_.clear();
-    equipmentSets_.reserve(count);
-    for (uint32_t i = 0; i < count; ++i) {
-        if (!packet.hasRemaining(16)) break;
-        EquipmentSet es;
-        es.setGuid        = packet.readUInt64();
-        es.setId          = packet.readUInt32();
-        es.name           = packet.readString();
-        es.iconName       = packet.readString();
-        es.ignoreSlotMask = packet.readUInt32();
-        for (int slot = 0; slot < 19; ++slot) {
-            if (!packet.hasRemaining(8)) break;
-            es.itemGuids[slot] = packet.readUInt64();
-        }
-        equipmentSets_.push_back(std::move(es));
-    }
-    // Populate public-facing info
-    equipmentSetInfo_.clear();
-    equipmentSetInfo_.reserve(equipmentSets_.size());
-    for (const auto& es : equipmentSets_) {
-        EquipmentSetInfo info;
-        info.setGuid  = es.setGuid;
-        info.setId    = es.setId;
-        info.name     = es.name;
-        info.iconName = es.iconName;
-        equipmentSetInfo_.push_back(std::move(info));
-    }
-    LOG_INFO("SMSG_EQUIPMENT_SET_LIST: ", equipmentSets_.size(), " equipment sets received");
-}
-
-// ---------------------------------------------------------------------------
-// Forced faction reactions
-// ---------------------------------------------------------------------------
-
-void GameHandler::handleSetForcedReactions(network::Packet& packet) {
-    if (!packet.hasRemaining(4)) return;
-    uint32_t count = packet.readUInt32();
-    if (count > 64) {
-        LOG_WARNING("SMSG_SET_FORCED_REACTIONS: suspicious count ", count, ", ignoring");
-        packet.skipAll();
-        return;
-    }
-    forcedReactions_.clear();
-    for (uint32_t i = 0; i < count; ++i) {
-        if (!packet.hasRemaining(8)) break;
-        uint32_t factionId = packet.readUInt32();
-        uint32_t reaction  = packet.readUInt32();
-        forcedReactions_[factionId] = static_cast<uint8_t>(reaction);
-    }
-    LOG_INFO("SMSG_SET_FORCED_REACTIONS: ", forcedReactions_.size(), " faction overrides");
-}
-
 // ---- Battlefield Manager (WotLK Wintergrasp / outdoor battlefields) ----
 
 void GameHandler::acceptBfMgrInvite() {
-    if (!bfMgrInvitePending_ || state != WorldState::IN_WORLD || !socket) return;
-    // CMSG_BATTLEFIELD_MGR_ENTRY_INVITE_RESPONSE: uint8 accepted = 1
-    network::Packet pkt(wireOpcode(Opcode::CMSG_BATTLEFIELD_MGR_ENTRY_INVITE_RESPONSE));
-    pkt.writeUInt8(1);  // accepted
-    socket->send(pkt);
-    bfMgrInvitePending_ = false;
-    LOG_INFO("acceptBfMgrInvite: sent CMSG_BATTLEFIELD_MGR_ENTRY_INVITE_RESPONSE accepted=1");
+    if (socialHandler_) socialHandler_->acceptBfMgrInvite();
 }
 
 void GameHandler::declineBfMgrInvite() {
-    if (!bfMgrInvitePending_ || state != WorldState::IN_WORLD || !socket) return;
-    // CMSG_BATTLEFIELD_MGR_ENTRY_INVITE_RESPONSE: uint8 accepted = 0
-    network::Packet pkt(wireOpcode(Opcode::CMSG_BATTLEFIELD_MGR_ENTRY_INVITE_RESPONSE));
-    pkt.writeUInt8(0);  // declined
-    socket->send(pkt);
-    bfMgrInvitePending_ = false;
-    LOG_INFO("declineBfMgrInvite: sent CMSG_BATTLEFIELD_MGR_ENTRY_INVITE_RESPONSE accepted=0");
+    if (socialHandler_) socialHandler_->declineBfMgrInvite();
 }
 
 // ---- WotLK Calendar ----
 
 void GameHandler::requestCalendar() {
-    if (!isInWorld()) return;
-    // CMSG_CALENDAR_GET_CALENDAR has no payload
-    network::Packet pkt(wireOpcode(Opcode::CMSG_CALENDAR_GET_CALENDAR));
-    socket->send(pkt);
-    LOG_INFO("requestCalendar: sent CMSG_CALENDAR_GET_CALENDAR");
-    // Also request pending invite count
-    network::Packet numPkt(wireOpcode(Opcode::CMSG_CALENDAR_GET_NUM_PENDING));
-    socket->send(numPkt);
+    if (socialHandler_) socialHandler_->requestCalendar();
 }
 
 } // namespace game
