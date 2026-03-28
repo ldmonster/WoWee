@@ -5,6 +5,7 @@
 #include "auth/crypto.hpp"
 #include "core/logger.hpp"
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstring>
 #include <sstream>
@@ -1478,29 +1479,35 @@ bool MessageChatParser::parse(network::Packet& packet, MessageChatData& data) {
             return false;
         }
 
-        std::string tmp;
-        tmp.resize(len);
+        // Stack buffer for typical messages; heap fallback for oversized ones.
+        static constexpr uint32_t kStackBufSize = 256;
+        std::array<char, kStackBufSize> stackBuf;
+        std::string heapBuf;
+        char* buf;
+        if (len <= kStackBufSize) {
+            buf = stackBuf.data();
+        } else {
+            heapBuf.resize(len);
+            buf = heapBuf.data();
+        }
+
         for (uint32_t i = 0; i < len; ++i) {
-            tmp[i] = static_cast<char>(packet.readUInt8());
+            buf[i] = static_cast<char>(packet.readUInt8());
         }
-        if (tmp.empty() || tmp.back() != '\0') {
+        if (buf[len - 1] != '\0') {
             packet.setReadPos(start);
             return false;
         }
-        tmp.pop_back();
-        if (tmp.empty()) {
-            packet.setReadPos(start);
-            return false;
-        }
-        for (char c : tmp) {
-            unsigned char uc = static_cast<unsigned char>(c);
+        // len >= 2 guaranteed above, so len-1 >= 1 — string body is non-empty.
+        for (uint32_t i = 0; i < len - 1; ++i) {
+            auto uc = static_cast<unsigned char>(buf[i]);
             if (uc < 32 || uc > 126) {
                 packet.setReadPos(start);
                 return false;
             }
         }
 
-        out = std::move(tmp);
+        out.assign(buf, len - 1);
         return true;
     };
 
