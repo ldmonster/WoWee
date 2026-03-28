@@ -1315,6 +1315,23 @@ public:
     static network::Packet build();
 };
 
+/** CMSG_GROUP_RAID_CONVERT packet builder */
+class GroupRaidConvertPacket {
+public:
+    static network::Packet build();
+};
+
+/** CMSG_LOOT_METHOD packet builder */
+class SetLootMethodPacket {
+public:
+    /**
+     * @param method 0=FFA, 1=RoundRobin, 2=MasterLoot, 3=GroupLoot, 4=NeedBeforeGreed
+     * @param threshold item quality threshold (0-6)
+     * @param masterLooterGuid GUID of master looter (only relevant for method=2)
+     */
+    static network::Packet build(uint32_t method, uint32_t threshold, uint64_t masterLooterGuid);
+};
+
 /** MSG_RAID_TARGET_UPDATE packet builder */
 class RaidTargetUpdatePacket {
 public:

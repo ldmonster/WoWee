@@ -2535,12 +2535,13 @@ void GameScreen::renderChatWindow(game::GameHandler& gameHandler) {
                     "/i", "/ignore", "/inspect", "/instance", "/invite",
                     "/j", "/join", "/kick", "/kneel",
                     "/l", "/leave", "/leaveparty", "/loc", "/local", "/logout",
+                    "/lootmethod", "/lootthreshold",
                     "/macrohelp", "/mainassist", "/maintank", "/mark", "/me",
                     "/notready",
                     "/p", "/party", "/petaggressive", "/petattack", "/petdefensive",
                     "/petdismiss", "/petfollow", "/pethalt", "/petpassive", "/petstay",
                     "/played", "/pvp",
-                    "/r", "/raid", "/raidinfo", "/raidwarning", "/random", "/ready",
+                    "/r", "/raid", "/raidconvert", "/raidinfo", "/raidwarning", "/random", "/ready",
                     "/readycheck", "/reload", "/reloadui", "/removefriend",
                     "/reply", "/rl", "/roll", "/run",
                     "/s", "/say", "/score", "/screenshot", "/script", "/setloot",
@@ -6306,7 +6307,8 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
                     "Chat: /s /y /p /g /raid /rw /o /bg /w <name> /r  /join /leave",
                     "Social: /who  /friend add/remove  /ignore  /unignore",
                     "Party: /invite  /uninvite  /leave  /readycheck  /mark  /roll",
-                    "       /maintank  /mainassist  /raidinfo",
+                    "       /maintank  /mainassist  /raidconvert  /raidinfo",
+                    "       /lootmethod  /lootthreshold",
                     "Guild: /ginvite  /gkick  /gquit  /gpromote  /gdemote  /gmotd",
                     "       /gleader  /groster  /ginfo  /gcreate  /gdisband",
                     "Combat: /cast  /castsequence  /use  /startattack  /stopattack",
@@ -7039,6 +7041,102 @@ void GameScreen::sendChatMessage(game::GameHandler& gameHandler) {
 
             if (cmdLower == "raidinfo") {
                 gameHandler.requestRaidInfo();
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+
+            if (cmdLower == "raidconvert") {
+                gameHandler.convertToRaid();
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+
+            // /lootmethod (or /grouploot, /setloot) — set party/raid loot method
+            if (cmdLower == "lootmethod" || cmdLower == "grouploot" || cmdLower == "setloot") {
+                if (!gameHandler.isInGroup()) {
+                    gameHandler.addUIError("You are not in a group.");
+                } else if (spacePos == std::string::npos) {
+                    // No argument — show current method and usage
+                    static constexpr const char* kMethodNames[] = {
+                        "Free for All", "Round Robin", "Master Looter", "Group Loot", "Need Before Greed"
+                    };
+                    const auto& pd = gameHandler.getPartyData();
+                    const char* cur = (pd.lootMethod < 5) ? kMethodNames[pd.lootMethod] : "Unknown";
+                    game::MessageChatData msg;
+                    msg.type = game::ChatType::SYSTEM;
+                    msg.language = game::ChatLanguage::UNIVERSAL;
+                    msg.message = std::string("Current loot method: ") + cur;
+                    gameHandler.addLocalChatMessage(msg);
+                    msg.message = "Usage: /lootmethod ffa|roundrobin|master|group|needbeforegreed";
+                    gameHandler.addLocalChatMessage(msg);
+                } else {
+                    std::string arg = command.substr(spacePos + 1);
+                    // Lowercase the argument
+                    for (auto& c : arg) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    uint32_t method = 0xFFFFFFFF;
+                    if (arg == "ffa" || arg == "freeforall")         method = 0;
+                    else if (arg == "roundrobin" || arg == "rr")     method = 1;
+                    else if (arg == "master" || arg == "masterloot") method = 2;
+                    else if (arg == "group" || arg == "grouploot")   method = 3;
+                    else if (arg == "needbeforegreed" || arg == "nbg" || arg == "need") method = 4;
+
+                    if (method == 0xFFFFFFFF) {
+                        gameHandler.addUIError("Unknown loot method. Use: ffa, roundrobin, master, group, needbeforegreed");
+                    } else {
+                        const auto& pd = gameHandler.getPartyData();
+                        // Master loot uses player guid as master looter; otherwise 0
+                        uint64_t masterGuid = (method == 2) ? gameHandler.getPlayerGuid() : 0;
+                        gameHandler.sendSetLootMethod(method, pd.lootThreshold, masterGuid);
+                    }
+                }
+                chatInputBuffer[0] = '\0';
+                return;
+            }
+
+            // /lootthreshold — set minimum item quality for group loot rolls
+            if (cmdLower == "lootthreshold") {
+                if (!gameHandler.isInGroup()) {
+                    gameHandler.addUIError("You are not in a group.");
+                } else if (spacePos == std::string::npos) {
+                    const auto& pd = gameHandler.getPartyData();
+                    static constexpr const char* kQualityNames[] = {
+                        "Poor (grey)", "Common (white)", "Uncommon (green)",
+                        "Rare (blue)", "Epic (purple)", "Legendary (orange)"
+                    };
+                    const char* cur = (pd.lootThreshold < 6) ? kQualityNames[pd.lootThreshold] : "Unknown";
+                    game::MessageChatData msg;
+                    msg.type = game::ChatType::SYSTEM;
+                    msg.language = game::ChatLanguage::UNIVERSAL;
+                    msg.message = std::string("Current loot threshold: ") + cur;
+                    gameHandler.addLocalChatMessage(msg);
+                    msg.message = "Usage: /lootthreshold <0-5> (0=Poor, 1=Common, 2=Uncommon, 3=Rare, 4=Epic, 5=Legendary)";
+                    gameHandler.addLocalChatMessage(msg);
+                } else {
+                    std::string arg = command.substr(spacePos + 1);
+                    // Trim whitespace
+                    while (!arg.empty() && arg.front() == ' ') arg.erase(arg.begin());
+                    uint32_t threshold = 0xFFFFFFFF;
+                    if (arg.size() == 1 && arg[0] >= '0' && arg[0] <= '5') {
+                        threshold = static_cast<uint32_t>(arg[0] - '0');
+                    } else {
+                        // Accept quality names
+                        for (auto& c : arg) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        if (arg == "poor" || arg == "grey" || arg == "gray") threshold = 0;
+                        else if (arg == "common" || arg == "white")          threshold = 1;
+                        else if (arg == "uncommon" || arg == "green")        threshold = 2;
+                        else if (arg == "rare" || arg == "blue")             threshold = 3;
+                        else if (arg == "epic" || arg == "purple")           threshold = 4;
+                        else if (arg == "legendary" || arg == "orange")      threshold = 5;
+                    }
+
+                    if (threshold == 0xFFFFFFFF) {
+                        gameHandler.addUIError("Invalid threshold. Use 0-5 or: poor, common, uncommon, rare, epic, legendary");
+                    } else {
+                        const auto& pd = gameHandler.getPartyData();
+                        uint64_t masterGuid = (pd.lootMethod == 2) ? gameHandler.getPlayerGuid() : 0;
+                        gameHandler.sendSetLootMethod(pd.lootMethod, threshold, masterGuid);
+                    }
+                }
                 chatInputBuffer[0] = '\0';
                 return;
             }

@@ -283,17 +283,56 @@ void CameraController::update(float deltaTime) {
         autoRunning = !autoRunning;
     }
     tildeWasDown = tildeDown;
+    // Helper: cancel auto-follow and notify game handler
+    auto doCancelAutoFollow = [&]() {
+        if (autoFollowTarget_) {
+            autoFollowTarget_ = nullptr;
+            if (autoFollowCancelCallback_) autoFollowCancelCallback_();
+        }
+    };
+
     if (keyW || keyS) {
         autoRunning = false;
+        doCancelAutoFollow();
     }
 
     bool mouseAutorun = !uiWantsKeyboard && !sitting && leftMouseDown && rightMouseDown;
     if (mouseAutorun) {
         autoRunning = false;
+        doCancelAutoFollow();
     }
+
+    // Auto-follow: face target and walk forward when within range
+    bool autoFollowWalk = false;
+    if (autoFollowTarget_ && followTarget && !movementRooted_) {
+        glm::vec3 myPos = *followTarget;
+        glm::vec3 tgtPos = *autoFollowTarget_;
+        float dx = tgtPos.x - myPos.x;
+        float dy = tgtPos.y - myPos.y;
+        float dist2D = std::sqrt(dx * dx + dy * dy);
+
+        if (dist2D > FOLLOW_MAX_DIST) {
+            doCancelAutoFollow();
+        } else if (dist2D > FOLLOW_STOP_DIST) {
+            // Face target (render-space yaw: atan2(-dx, -dy) -> degrees)
+            float targetYawRad = std::atan2(-dx, -dy);
+            float targetYawDeg = targetYawRad * 180.0f / 3.14159265f;
+            facingYaw = targetYawDeg;
+            yaw = targetYawDeg;
+            autoFollowWalk = true;
+        }
+        // else: within stop distance, stay put
+
+        // Cancel on strafe/turn keys
+        if (keyA || keyD || keyQ || keyE) {
+            doCancelAutoFollow();
+            autoFollowWalk = false;
+        }
+    }
+
     // When the server has rooted the player, suppress all horizontal movement input.
     const bool movBlocked = movementRooted_;
-    bool nowForward = !movBlocked && (keyW || mouseAutorun || autoRunning);
+    bool nowForward = !movBlocked && (keyW || mouseAutorun || autoRunning || autoFollowWalk);
     bool nowBackward = !movBlocked && keyS;
     bool nowStrafeLeft = false;
     bool nowStrafeRight = false;

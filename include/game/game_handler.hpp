@@ -1122,6 +1122,10 @@ public:
     using CameraShakeCallback = std::function<void(float magnitude, float frequency, float duration)>;
     void setCameraShakeCallback(CameraShakeCallback cb) { cameraShakeCallback_ = std::move(cb); }
 
+    // Auto-follow callback: pass render-space position pointer to start, nullptr to cancel.
+    using AutoFollowCallback = std::function<void(const glm::vec3* renderPos)>;
+    void setAutoFollowCallback(AutoFollowCallback cb) { autoFollowCallback_ = std::move(cb); }
+
     // Unstuck callback (resets player Z to floor height)
     using UnstuckCallback = std::function<void()>;
     void setUnstuckCallback(UnstuckCallback cb) { unstuckCallback_ = std::move(cb); }
@@ -1352,6 +1356,8 @@ public:
     void acceptGroupInvite();
     void declineGroupInvite();
     void leaveGroup();
+    void convertToRaid();
+    void sendSetLootMethod(uint32_t method, uint32_t threshold, uint64_t masterLooterGuid);
     bool isInGroup() const { return !partyData.isEmpty(); }
     const GroupListData& getPartyData() const { return partyData; }
     const std::vector<ContactEntry>& getContacts() const { return contacts_; }
@@ -2812,6 +2818,7 @@ private:
 
     // ---- Follow state ----
     uint64_t followTargetGuid_ = 0;
+    glm::vec3 followRenderPos_{0.0f};  // Render-space position of followed entity (updated each frame)
 
     // ---- AFK/DND status ----
     bool afkStatus_ = false;
@@ -2905,6 +2912,7 @@ private:
     WorldEntryCallback worldEntryCallback_;
     KnockBackCallback knockBackCallback_;
     CameraShakeCallback cameraShakeCallback_;
+    AutoFollowCallback autoFollowCallback_;
     UnstuckCallback unstuckCallback_;
     UnstuckCallback unstuckGyCallback_;
     UnstuckCallback unstuckHearthCallback_;

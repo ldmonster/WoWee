@@ -965,6 +965,11 @@ void Application::setState(AppState newState) {
                         gameHandler->setStandState(0); // CMSG_STAND_STATE_CHANGE(STAND)
                     }
                 });
+                cc->setAutoFollowCancelCallback([this]() {
+                    if (gameHandler) {
+                        gameHandler->cancelFollow();
+                    }
+                });
                 cc->setUseWoWSpeed(true);
             }
             if (gameHandler) {
@@ -981,6 +986,15 @@ void Application::setState(AppState newState) {
                 gameHandler->setCameraShakeCallback([this](float magnitude, float frequency, float duration) {
                     if (renderer && renderer->getCameraController()) {
                         renderer->getCameraController()->triggerShake(magnitude, frequency, duration);
+                    }
+                });
+                gameHandler->setAutoFollowCallback([this](const glm::vec3* renderPos) {
+                    if (renderer && renderer->getCameraController()) {
+                        if (renderPos) {
+                            renderer->getCameraController()->setAutoFollow(renderPos);
+                        } else {
+                            renderer->getCameraController()->cancelAutoFollow();
+                        }
                     }
                 });
             }

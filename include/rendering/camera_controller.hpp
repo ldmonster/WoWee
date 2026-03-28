@@ -96,6 +96,11 @@ public:
     // while server-sitting), so the caller can send CMSG_STAND_STATE_CHANGE(0).
     using StandUpCallback = std::function<void()>;
     void setStandUpCallback(StandUpCallback cb) { standUpCallback_ = std::move(cb); }
+
+    // Callback invoked when auto-follow is cancelled by user movement input.
+    using AutoFollowCancelCallback = std::function<void()>;
+    void setAutoFollowCancelCallback(AutoFollowCancelCallback cb) { autoFollowCancelCallback_ = std::move(cb); }
+
     void setUseWoWSpeed(bool use) { useWoWSpeed = use; }
     void setRunSpeedOverride(float speed) { runSpeedOverride_ = speed; }
     void setWalkSpeedOverride(float speed) { walkSpeedOverride_ = speed; }
@@ -120,6 +125,13 @@ public:
     void setFacingYaw(float yaw) { facingYaw = yaw; }  // For taxi/scripted movement
     void clearMovementInputs();
     void suppressMovementFor(float seconds) { movementSuppressTimer_ = seconds; }
+
+    // Auto-follow: walk toward a target position each frame (WoW /follow).
+    // The caller updates *targetPos every frame with the followed entity's render position.
+    // Stops within FOLLOW_STOP_DIST; cancels on manual WASD input.
+    void setAutoFollow(const glm::vec3* targetPos) { autoFollowTarget_ = targetPos; }
+    void cancelAutoFollow() { autoFollowTarget_ = nullptr; }
+    bool isAutoFollowing() const { return autoFollowTarget_ != nullptr; }
 
     // Trigger mount jump (applies vertical velocity for physics hop)
     void triggerMountJump();
@@ -259,6 +271,11 @@ private:
     bool autoRunning = false;
     bool tildeWasDown = false;
 
+    // Auto-follow target position (WoW /follow). Non-null when following.
+    const glm::vec3* autoFollowTarget_ = nullptr;
+    static constexpr float FOLLOW_STOP_DIST = 3.0f;   // Stop within 3 units of target
+    static constexpr float FOLLOW_MAX_DIST  = 40.0f;  // Cancel if > 40 units away
+
     // Movement state tracking (for sending opcodes on state change)
     bool wasMovingForward = false;
     bool wasMovingBackward = false;
@@ -278,6 +295,7 @@ private:
     // Movement callback
     MovementCallback movementCallback;
     StandUpCallback standUpCallback_;
+    AutoFollowCancelCallback autoFollowCancelCallback_;
 
     // Movement speeds
     bool useWoWSpeed = false;

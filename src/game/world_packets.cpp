@@ -1767,16 +1767,15 @@ network::Packet SetActiveMoverPacket::build(uint64_t guid) {
 
 network::Packet InspectPacket::build(uint64_t targetGuid) {
     network::Packet packet(wireOpcode(Opcode::CMSG_INSPECT));
-    packet.writeUInt64(targetGuid);
+    packet.writePackedGuid(targetGuid);
     LOG_DEBUG("Built CMSG_INSPECT: target=0x", std::hex, targetGuid, std::dec);
     return packet;
 }
 
 network::Packet QueryInspectAchievementsPacket::build(uint64_t targetGuid) {
-    // CMSG_QUERY_INSPECT_ACHIEVEMENTS: uint64 targetGuid + uint8 unk (always 0)
+    // CMSG_QUERY_INSPECT_ACHIEVEMENTS: PackedGuid targetGuid
     network::Packet packet(wireOpcode(Opcode::CMSG_QUERY_INSPECT_ACHIEVEMENTS));
-    packet.writeUInt64(targetGuid);
-    packet.writeUInt8(0);  // unk / achievementSlot — always 0 for WotLK
+    packet.writePackedGuid(targetGuid);
     LOG_DEBUG("Built CMSG_QUERY_INSPECT_ACHIEVEMENTS: target=0x", std::hex, targetGuid, std::dec);
     return packet;
 }
@@ -2471,6 +2470,22 @@ network::Packet GroupUninvitePacket::build(const std::string& playerName) {
 network::Packet GroupDisbandPacket::build() {
     network::Packet packet(wireOpcode(Opcode::CMSG_GROUP_DISBAND));
     LOG_DEBUG("Built CMSG_GROUP_DISBAND");
+    return packet;
+}
+
+network::Packet GroupRaidConvertPacket::build() {
+    network::Packet packet(wireOpcode(Opcode::CMSG_GROUP_RAID_CONVERT));
+    LOG_DEBUG("Built CMSG_GROUP_RAID_CONVERT");
+    return packet;
+}
+
+network::Packet SetLootMethodPacket::build(uint32_t method, uint32_t threshold, uint64_t masterLooterGuid) {
+    network::Packet packet(wireOpcode(Opcode::CMSG_LOOT_METHOD));
+    packet.writeUInt32(method);
+    packet.writeUInt32(threshold);
+    packet.writeUInt64(masterLooterGuid);
+    LOG_DEBUG("Built CMSG_LOOT_METHOD: method=", method, " threshold=", threshold,
+              " masterLooter=0x", std::hex, masterLooterGuid, std::dec);
     return packet;
 }
 

@@ -1379,6 +1379,17 @@ void GameHandler::update(float deltaTime) {
         clearTarget();
     }
 
+    // Update auto-follow: refresh render position or cancel if entity disappeared
+    if (followTargetGuid_ != 0) {
+        auto followEnt = entityManager.getEntity(followTargetGuid_);
+        if (followEnt) {
+            followRenderPos_ = core::coords::canonicalToRender(
+                glm::vec3(followEnt->getX(), followEnt->getY(), followEnt->getZ()));
+        } else {
+            cancelFollow();
+        }
+    }
+
     // Detect combat state transitions → fire PLAYER_REGEN_DISABLED / PLAYER_REGEN_ENABLED
     {
         bool combatNow = isInCombat();
@@ -13213,6 +13224,14 @@ void GameHandler::followTarget() {
     // Set follow target
     followTargetGuid_ = targetGuid;
 
+    // Initialize render-space position from entity's canonical coords
+    followRenderPos_ = core::coords::canonicalToRender(glm::vec3(target->getX(), target->getY(), target->getZ()));
+
+    // Tell camera controller to start auto-following
+    if (autoFollowCallback_) {
+        autoFollowCallback_(&followRenderPos_);
+    }
+
     // Get target name
     std::string targetName = "Target";
     if (target->getType() == ObjectType::PLAYER) {
@@ -13232,10 +13251,12 @@ void GameHandler::followTarget() {
 
 void GameHandler::cancelFollow() {
     if (followTargetGuid_ == 0) {
-        addSystemChatMessage("You are not following anyone.");
         return;
     }
     followTargetGuid_ = 0;
+    if (autoFollowCallback_) {
+        autoFollowCallback_(nullptr);
+    }
     addSystemChatMessage("You stop following.");
     fireAddonEvent("AUTOFOLLOW_END", {});
 }
@@ -19144,6 +19165,32 @@ void GameHandler::leaveGroup() {
     LOG_INFO("Left group");
         fireAddonEvent("GROUP_ROSTER_UPDATE", {});
         fireAddonEvent("PARTY_MEMBERS_CHANGED", {});
+}
+
+void GameHandler::convertToRaid() {
+    if (!isInWorld()) return;
+    if (!isInGroup()) {
+        addSystemChatMessage("You are not in a group.");
+        return;
+    }
+    if (partyData.leaderGuid != getPlayerGuid()) {
+        addSystemChatMessage("You must be the party leader to convert to raid.");
+        return;
+    }
+    if (partyData.groupType == 1) {
+        addSystemChatMessage("You are already in a raid group.");
+        return;
+    }
+    auto packet = GroupRaidConvertPacket::build();
+    socket->send(packet);
+    LOG_INFO("Sent CMSG_GROUP_RAID_CONVERT");
+}
+
+void GameHandler::sendSetLootMethod(uint32_t method, uint32_t threshold, uint64_t masterLooterGuid) {
+    if (!isInWorld()) return;
+    auto packet = SetLootMethodPacket::build(method, threshold, masterLooterGuid);
+    socket->send(packet);
+    LOG_INFO("sendSetLootMethod: method=", method, " threshold=", threshold);
 }
 
 void GameHandler::handleGroupInvite(network::Packet& packet) {
