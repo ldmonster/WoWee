@@ -5090,11 +5090,32 @@ const std::string& GameHandler::getTradePeerName() const {
     return tradePeerName_;
 }
 const std::array<GameHandler::TradeSlot, GameHandler::TRADE_SLOT_COUNT>& GameHandler::getMyTradeSlots() const {
-    if (inventoryHandler_) return reinterpret_cast<const std::array<TradeSlot, TRADE_SLOT_COUNT>&>(inventoryHandler_->getMyTradeSlots());
+    if (inventoryHandler_) {
+        // Convert InventoryHandler::TradeSlot → GameHandler::TradeSlot (different struct layouts)
+        static std::array<TradeSlot, TRADE_SLOT_COUNT> converted{};
+        const auto& src = inventoryHandler_->getMyTradeSlots();
+        for (size_t i = 0; i < TRADE_SLOT_COUNT; i++) {
+            converted[i].itemId = src[i].itemId;
+            converted[i].displayId = src[i].displayId;
+            converted[i].stackCount = src[i].stackCount;
+            converted[i].itemGuid = src[i].itemGuid;
+        }
+        return converted;
+    }
     return myTradeSlots_;
 }
 const std::array<GameHandler::TradeSlot, GameHandler::TRADE_SLOT_COUNT>& GameHandler::getPeerTradeSlots() const {
-    if (inventoryHandler_) return reinterpret_cast<const std::array<TradeSlot, TRADE_SLOT_COUNT>&>(inventoryHandler_->getPeerTradeSlots());
+    if (inventoryHandler_) {
+        static std::array<TradeSlot, TRADE_SLOT_COUNT> converted{};
+        const auto& src = inventoryHandler_->getPeerTradeSlots();
+        for (size_t i = 0; i < TRADE_SLOT_COUNT; i++) {
+            converted[i].itemId = src[i].itemId;
+            converted[i].displayId = src[i].displayId;
+            converted[i].stackCount = src[i].stackCount;
+            converted[i].itemGuid = src[i].itemGuid;
+        }
+        return converted;
+    }
     return peerTradeSlots_;
 }
 uint64_t GameHandler::getMyTradeGold() const {
