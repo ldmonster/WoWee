@@ -277,9 +277,12 @@ void Lightning::recreatePipelines() {
     // ---- Rebuild bolt pipeline (LINE_STRIP) ----
     {
         VkShaderModule vertModule;
-        vertModule.loadFromFile(device, "assets/shaders/lightning_bolt.vert.spv");
         VkShaderModule fragModule;
-        fragModule.loadFromFile(device, "assets/shaders/lightning_bolt.frag.spv");
+        if (!vertModule.loadFromFile(device, "assets/shaders/lightning_bolt.vert.spv") ||
+            !fragModule.loadFromFile(device, "assets/shaders/lightning_bolt.frag.spv")) {
+            LOG_ERROR("Lightning::recreatePipelines: failed to load bolt shader modules");
+            return;
+        }
 
         VkPipelineShaderStageCreateInfo vertStage = vertModule.stageInfo(VK_SHADER_STAGE_VERTEX_BIT);
         VkPipelineShaderStageCreateInfo fragStage = fragModule.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -315,9 +318,12 @@ void Lightning::recreatePipelines() {
     // ---- Rebuild flash pipeline (TRIANGLE_STRIP) ----
     {
         VkShaderModule vertModule;
-        vertModule.loadFromFile(device, "assets/shaders/lightning_flash.vert.spv");
         VkShaderModule fragModule;
-        fragModule.loadFromFile(device, "assets/shaders/lightning_flash.frag.spv");
+        if (!vertModule.loadFromFile(device, "assets/shaders/lightning_flash.vert.spv") ||
+            !fragModule.loadFromFile(device, "assets/shaders/lightning_flash.frag.spv")) {
+            LOG_ERROR("Lightning::recreatePipelines: failed to load flash shader modules");
+            return;
+        }
 
         VkPipelineShaderStageCreateInfo vertStage = vertModule.stageInfo(VK_SHADER_STAGE_VERTEX_BIT);
         VkPipelineShaderStageCreateInfo fragStage = fragModule.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT);

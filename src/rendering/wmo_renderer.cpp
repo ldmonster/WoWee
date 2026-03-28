@@ -3129,7 +3129,6 @@ bool WMORenderer::checkWallCollision(const glm::vec3& from, const glm::vec3& to,
     glm::vec3 moveDir = to - from;
     float moveDistSq = glm::dot(moveDir, moveDir);
     if (moveDistSq < 1e-6f) return false;
-    float moveDist = std::sqrt(moveDistSq);
 
     // Player collision parameters — WoW-style horizontal cylinder
     // Tighter radius when inside for more responsive indoor collision

@@ -273,9 +273,12 @@ void ChargeEffect::recreatePipelines() {
     // ---- Rebuild ribbon trail pipeline (TRIANGLE_STRIP) ----
     {
         VkShaderModule vertModule;
-        vertModule.loadFromFile(device, "assets/shaders/charge_ribbon.vert.spv");
         VkShaderModule fragModule;
-        fragModule.loadFromFile(device, "assets/shaders/charge_ribbon.frag.spv");
+        if (!vertModule.loadFromFile(device, "assets/shaders/charge_ribbon.vert.spv") ||
+            !fragModule.loadFromFile(device, "assets/shaders/charge_ribbon.frag.spv")) {
+            LOG_ERROR("ChargeEffect::recreatePipelines: failed to load ribbon shader modules");
+            return;
+        }
 
         VkPipelineShaderStageCreateInfo vertStage = vertModule.stageInfo(VK_SHADER_STAGE_VERTEX_BIT);
         VkPipelineShaderStageCreateInfo fragStage = fragModule.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -323,9 +326,12 @@ void ChargeEffect::recreatePipelines() {
     // ---- Rebuild dust puff pipeline (POINT_LIST) ----
     {
         VkShaderModule vertModule;
-        vertModule.loadFromFile(device, "assets/shaders/charge_dust.vert.spv");
         VkShaderModule fragModule;
-        fragModule.loadFromFile(device, "assets/shaders/charge_dust.frag.spv");
+        if (!vertModule.loadFromFile(device, "assets/shaders/charge_dust.vert.spv") ||
+            !fragModule.loadFromFile(device, "assets/shaders/charge_dust.frag.spv")) {
+            LOG_ERROR("ChargeEffect::recreatePipelines: failed to load dust shader modules");
+            return;
+        }
 
         VkPipelineShaderStageCreateInfo vertStage = vertModule.stageInfo(VK_SHADER_STAGE_VERTEX_BIT);
         VkPipelineShaderStageCreateInfo fragStage = fragModule.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT);

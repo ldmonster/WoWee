@@ -157,9 +157,12 @@ void MountDust::recreatePipelines() {
     }
 
     VkShaderModule vertModule;
-    vertModule.loadFromFile(device, "assets/shaders/mount_dust.vert.spv");
     VkShaderModule fragModule;
-    fragModule.loadFromFile(device, "assets/shaders/mount_dust.frag.spv");
+    if (!vertModule.loadFromFile(device, "assets/shaders/mount_dust.vert.spv") ||
+        !fragModule.loadFromFile(device, "assets/shaders/mount_dust.frag.spv")) {
+        LOG_ERROR("MountDust::recreatePipelines: failed to load shader modules");
+        return;
+    }
 
     VkPipelineShaderStageCreateInfo vertStage = vertModule.stageInfo(VK_SHADER_STAGE_VERTEX_BIT);
     VkPipelineShaderStageCreateInfo fragStage = fragModule.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT);

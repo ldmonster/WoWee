@@ -7,6 +7,10 @@
 #include "game/inventory.hpp"
 #include "game/spell_defines.hpp"
 #include "game/group_defines.hpp"
+#include "game/handler_types.hpp"
+#include "game/combat_handler.hpp"
+#include "game/spell_handler.hpp"
+#include "game/quest_handler.hpp"
 #include "network/packet.hpp"
 #include <glm/glm.hpp>
 #include <memory>
@@ -31,6 +35,11 @@ namespace wowee::game {
     class WardenModule;
     class WardenModuleManager;
     class PacketParsers;
+    class ChatHandler;
+    class MovementHandler;
+    class InventoryHandler;
+    class SocialHandler;
+    class WardenHandler;
 }
 
 namespace wowee {
@@ -115,25 +124,9 @@ using WorldConnectFailureCallback = std::function<void(const std::string& reason
  */
 class GameHandler {
 public:
-    // Talent data structures (must be public for use in templates)
-    struct TalentEntry {
-        uint32_t talentId = 0;
-        uint32_t tabId = 0;           // Which talent tree
-        uint8_t row = 0;              // Tier (0-10)
-        uint8_t column = 0;           // Column (0-3)
-        uint32_t rankSpells[5] = {};  // Spell IDs for ranks 1-5
-        uint32_t prereqTalent[3] = {}; // Required talents
-        uint8_t prereqRank[3] = {};   // Required ranks
-        uint8_t maxRank = 0;          // Number of ranks (1-5)
-    };
-
-    struct TalentTabEntry {
-        uint32_t tabId = 0;
-        std::string name;
-        uint32_t classMask = 0;       // Which classes can use this tab
-        uint8_t orderIndex = 0;       // Display order (0-2)
-        std::string backgroundFile;   // Texture path
-    };
+    // Talent data structures (aliased from handler_types.hpp)
+    using TalentEntry = game::TalentEntry;
+    using TalentTabEntry = game::TalentTabEntry;
 
     GameHandler();
     ~GameHandler();
@@ -262,19 +255,14 @@ public:
     void sendTextEmote(uint32_t textEmoteId, uint64_t targetGuid = 0);
     void joinChannel(const std::string& channelName, const std::string& password = "");
     void leaveChannel(const std::string& channelName);
-    const std::vector<std::string>& getJoinedChannels() const { return joinedChannels_; }
+    const std::vector<std::string>& getJoinedChannels() const;
     std::string getChannelByIndex(int index) const;
     int getChannelIndex(const std::string& channelName) const;
 
-    // Chat auto-join settings (set by UI before autoJoinDefaultChannels)
-    struct ChatAutoJoin {
-        bool general = true;
-        bool trade = true;
-        bool localDefense = true;
-        bool lfg = true;
-        bool local = true;
-    };
+    // Chat auto-join settings (aliased from handler_types.hpp)
+    using ChatAutoJoin = game::ChatAutoJoin;
     ChatAutoJoin chatAutoJoin;
+    void autoJoinDefaultChannels();
 
     // Chat bubble callback: (senderGuid, message, isYell)
     using ChatBubbleCallback = std::function<void(uint64_t, const std::string&, bool)>;
@@ -327,8 +315,8 @@ public:
      * @param maxMessages Maximum number of messages to return (0 = all)
      * @return Vector of chat messages
      */
-    const std::deque<MessageChatData>& getChatHistory() const { return chatHistory; }
-    void clearChatHistory() { chatHistory.clear(); }
+    const std::deque<MessageChatData>& getChatHistory() const;
+    void clearChatHistory();
 
     /**
      * Add a locally-generated chat message (e.g., emote feedback)
@@ -430,27 +418,8 @@ public:
     // Inspection
     void inspectTarget();
 
-    struct InspectArenaTeam {
-        uint32_t    teamId         = 0;
-        uint8_t     type           = 0;   // bracket size: 2, 3, or 5
-        uint32_t    weekGames      = 0;
-        uint32_t    weekWins       = 0;
-        uint32_t    seasonGames    = 0;
-        uint32_t    seasonWins     = 0;
-        std::string name;
-        uint32_t    personalRating = 0;
-    };
-    struct InspectResult {
-        uint64_t    guid           = 0;
-        std::string playerName;
-        uint32_t    totalTalents   = 0;
-        uint32_t    unspentTalents = 0;
-        uint8_t     talentGroups   = 0;
-        uint8_t     activeTalentGroup = 0;
-        std::array<uint32_t, 19> itemEntries{};  // 0=head…18=ranged
-        std::array<uint16_t, 19> enchantIds{};   // permanent enchant per slot (0 = none)
-        std::vector<InspectArenaTeam> arenaTeams; // from MSG_INSPECT_ARENA_TEAMS (WotLK)
-    };
+    using InspectArenaTeam = game::InspectArenaTeam;
+    using InspectResult = game::InspectResult;
     const InspectResult* getInspectResult() const {
         return inspectResult_.guid ? &inspectResult_ : nullptr;
     }
@@ -462,15 +431,7 @@ public:
     uint32_t getTotalTimePlayed() const { return totalTimePlayed_; }
     uint32_t getLevelTimePlayed() const { return levelTimePlayed_; }
 
-    // Who results (structured, from last SMSG_WHO response)
-    struct WhoEntry {
-        std::string name;
-        std::string guildName;
-        uint32_t level    = 0;
-        uint32_t classId  = 0;
-        uint32_t raceId   = 0;
-        uint32_t zoneId   = 0;
-    };
+    using WhoEntry = game::WhoEntry;
     const std::vector<WhoEntry>& getWhoResults() const { return whoResults_; }
     uint32_t getWhoOnlineCount() const { return whoOnlineCount_; }
     std::string getWhoAreaName(uint32_t zoneId) const { return getAreaName(zoneId); }
@@ -486,28 +447,11 @@ public:
     // Random roll
     void randomRoll(uint32_t minRoll = 1, uint32_t maxRoll = 100);
 
-    // Battleground queue slot (public so UI can read invite details)
-    struct BgQueueSlot {
-        uint32_t queueSlot = 0;
-        uint32_t bgTypeId = 0;
-        uint8_t arenaType = 0;
-        uint32_t statusId = 0;  // 0=none, 1=wait_queue, 2=wait_join, 3=in_progress
-        uint32_t inviteTimeout = 80;
-        uint32_t avgWaitTimeSec = 0;   // server-estimated average wait (STATUS_WAIT_QUEUE)
-        uint32_t timeInQueueSec = 0;   // time already spent in queue (STATUS_WAIT_QUEUE)
-        std::chrono::steady_clock::time_point inviteReceivedTime{};
-        std::string bgName;            // human-readable BG/arena name
-    };
+    // Battleground queue slot (aliased from handler_types.hpp)
+    using BgQueueSlot = game::BgQueueSlot;
 
-    // Available BG list (populated by SMSG_BATTLEFIELD_LIST)
-    struct AvailableBgInfo {
-        uint32_t bgTypeId         = 0;
-        bool     isRegistered     = false;
-        bool     isHoliday        = false;
-        uint32_t minLevel         = 0;
-        uint32_t maxLevel         = 0;
-        std::vector<uint32_t> instanceIds;
-    };
+    // Available BG list (aliased from handler_types.hpp)
+    using AvailableBgInfo = game::AvailableBgInfo;
 
     // Battleground
     bool hasPendingBgInvite() const;
@@ -516,42 +460,17 @@ public:
     const std::array<BgQueueSlot, 3>& getBgQueues() const { return bgQueues_; }
     const std::vector<AvailableBgInfo>& getAvailableBgs() const { return availableBgs_; }
 
-    // BG scoreboard (MSG_PVP_LOG_DATA)
-    struct BgPlayerScore {
-        uint64_t    guid            = 0;
-        std::string name;
-        uint8_t     team            = 0;  // 0=Horde, 1=Alliance
-        uint32_t    killingBlows    = 0;
-        uint32_t    deaths          = 0;
-        uint32_t    honorableKills  = 0;
-        uint32_t    bonusHonor      = 0;
-        std::vector<std::pair<std::string, uint32_t>> bgStats;  // BG-specific fields
-    };
-    struct ArenaTeamScore {
-        std::string teamName;
-        uint32_t    ratingChange = 0;  // signed delta packed as uint32
-        uint32_t    newRating    = 0;
-    };
-    struct BgScoreboardData {
-        std::vector<BgPlayerScore> players;
-        bool hasWinner = false;
-        uint8_t winner = 0;      // 0=Horde, 1=Alliance
-        bool isArena   = false;
-        // Arena-only fields (valid when isArena=true)
-        ArenaTeamScore arenaTeams[2];  // team 0 = first, team 1 = second
-    };
+    // BG scoreboard (aliased from handler_types.hpp)
+    using BgPlayerScore = game::BgPlayerScore;
+    using ArenaTeamScore = game::ArenaTeamScore;
+    using BgScoreboardData = game::BgScoreboardData;
     void requestPvpLog();
     const BgScoreboardData* getBgScoreboard() const {
         return bgScoreboard_.players.empty() ? nullptr : &bgScoreboard_;
     }
 
-    // BG flag carrier / important player positions (MSG_BATTLEGROUND_PLAYER_POSITIONS)
-    struct BgPlayerPosition {
-        uint64_t guid  = 0;
-        float    wowX  = 0.0f;  // canonical WoW X (north)
-        float    wowY  = 0.0f;  // canonical WoW Y (west)
-        int      group = 0;     // 0 = first list (usually ally flag carriers), 1 = second list
-    };
+    // BG flag carrier positions (aliased from handler_types.hpp)
+    using BgPlayerPosition = game::BgPlayerPosition;
     const std::vector<BgPlayerPosition>& getBgPlayerPositions() const { return bgPlayerPositions_; }
 
     // Network latency (milliseconds, updated each PONG response)
@@ -656,19 +575,8 @@ public:
     uint64_t getPetitionNpcGuid() const { return petitionNpcGuid_; }
 
     // Petition signatures (guild charter signing flow)
-    struct PetitionSignature {
-        uint64_t playerGuid = 0;
-        std::string playerName; // resolved later or empty
-    };
-    struct PetitionInfo {
-        uint64_t petitionGuid = 0;
-        uint64_t ownerGuid = 0;
-        std::string guildName;
-        uint32_t signatureCount = 0;
-        uint32_t signaturesRequired = 9; // guild default; arena teams differ
-        std::vector<PetitionSignature> signatures;
-        bool showUI = false;
-    };
+    using PetitionSignature = game::PetitionSignature;
+    using PetitionInfo = game::PetitionInfo;
     const PetitionInfo& getPetitionInfo() const { return petitionInfo_; }
     bool hasPetitionSignaturesUI() const { return petitionInfo_.showUI; }
     void clearPetitionSignaturesUI() { petitionInfo_.showUI = false; }
@@ -682,11 +590,7 @@ public:
     // Returns the guildId for a player entity (from PLAYER_GUILDID update field).
     uint32_t getEntityGuildId(uint64_t guid) const;
 
-    // Ready check
-    struct ReadyCheckResult {
-        std::string name;
-        bool ready = false;
-    };
+    using ReadyCheckResult = game::ReadyCheckResult;
     void initiateReadyCheck();
     void respondToReadyCheck(bool ready);
     bool hasPendingReadyCheck() const { return pendingReadyCheck_; }
@@ -720,6 +624,8 @@ public:
     void initiateTrade(uint64_t targetGuid);
     void reportPlayer(uint64_t targetGuid, const std::string& reason);
     void stopCasting();
+    void resetCastState();       // force-clear all cast/craft/queue state without sending packets
+    void clearUnitCaches();      // clear per-unit cast states and aura caches
 
     // ---- Phase 1: Name queries ----
     void queryPlayerName(uint64_t guid);
@@ -753,28 +659,26 @@ public:
         return (it != creatureInfoCache.end()) ? it->second.family : 0;
     }
 
-    // ---- Phase 2: Combat ----
+    // ---- Phase 2: Combat (delegated to CombatHandler) ----
     void startAutoAttack(uint64_t targetGuid);
     void stopAutoAttack();
-    bool isAutoAttacking() const { return autoAttacking; }
-    bool hasAutoAttackIntent() const { return autoAttackRequested_; }
-    bool isInCombat() const { return autoAttacking || !hostileAttackers_.empty(); }
-    bool isInCombatWith(uint64_t guid) const {
-        return guid != 0 &&
-               ((autoAttacking && autoAttackTarget == guid) ||
-                (hostileAttackers_.count(guid) > 0));
-    }
-    uint64_t getAutoAttackTargetGuid() const { return autoAttackTarget; }
-    bool isAggressiveTowardPlayer(uint64_t guid) const { return hostileAttackers_.count(guid) > 0; }
+    bool isAutoAttacking() const;
+    bool hasAutoAttackIntent() const;
+    bool isInCombat() const;
+    bool isInCombatWith(uint64_t guid) const;
+    uint64_t getAutoAttackTargetGuid() const;
+    bool isAggressiveTowardPlayer(uint64_t guid) const;
     // Timestamp (ms since epoch) of the most recent player melee auto-attack.
     // Zero if no swing has occurred this session.
-    uint64_t getLastMeleeSwingMs() const { return lastMeleeSwingMs_; }
-    const std::vector<CombatTextEntry>& getCombatText() const { return combatText; }
+    uint64_t getLastMeleeSwingMs() const;
+    const std::vector<CombatTextEntry>& getCombatText() const;
+    void clearCombatText();
     void updateCombatText(float deltaTime);
+    void clearHostileAttackers();
 
     // Combat log (persistent rolling history, max MAX_COMBAT_LOG entries)
-    const std::deque<CombatLogEntry>& getCombatLog() const { return combatLog_; }
-    void clearCombatLog() { combatLog_.clear(); }
+    const std::deque<CombatLogEntry>& getCombatLog() const;
+    void clearCombatLog();
 
     // Area trigger messages (SMSG_AREA_TRIGGER_MESSAGE) — drained by UI each frame
     bool hasAreaTriggerMsg() const { return !areaTriggerMsgs_.empty(); }
@@ -786,19 +690,9 @@ public:
     }
 
     // Threat
-    struct ThreatEntry {
-        uint64_t victimGuid = 0;
-        uint32_t threat     = 0;
-    };
-    // Returns the current threat list for a given unit GUID (from last SMSG_THREAT_UPDATE)
-    const std::vector<ThreatEntry>* getThreatList(uint64_t unitGuid) const {
-        auto it = threatLists_.find(unitGuid);
-        return (it != threatLists_.end()) ? &it->second : nullptr;
-    }
-    // Returns the threat list for the player's current target, or nullptr
-    const std::vector<ThreatEntry>* getTargetThreatList() const {
-        return targetGuid ? getThreatList(targetGuid) : nullptr;
-    }
+    using ThreatEntry = CombatHandler::ThreatEntry;
+    const std::vector<ThreatEntry>* getThreatList(uint64_t unitGuid) const;
+    const std::vector<ThreatEntry>* getTargetThreatList() const;
 
     // ---- Phase 3: Spells ----
     void castSpell(uint32_t spellId, uint64_t targetGuid = 0);
@@ -833,14 +727,13 @@ public:
     void sendPetAction(uint32_t action, uint64_t targetGuid = 0);
     // Toggle autocast for a pet spell via CMSG_PET_SPELL_AUTOCAST
     void togglePetSpellAutocast(uint32_t spellId);
-    const std::unordered_set<uint32_t>& getKnownSpells() const { return knownSpells; }
+    const std::unordered_set<uint32_t>& getKnownSpells() const {
+        static const std::unordered_set<uint32_t> empty;
+        return spellHandler_ ? spellHandler_->getKnownSpells() : empty;
+    }
 
     // Spell book tabs — groups known spells by class skill line for Lua API
-    struct SpellBookTab {
-        std::string name;
-        std::string texture; // icon path
-        std::vector<uint32_t> spellIds; // spells in this tab
-    };
+    using SpellBookTab = SpellHandler::SpellBookTab;
     const std::vector<SpellBookTab>& getSpellBookTabs();
 
     // ---- Pet Stable ----
@@ -887,15 +780,15 @@ public:
             minimapPings_.end());
     }
 
-    bool isCasting() const { return casting; }
-    bool isChanneling() const { return casting && castIsChannel; }
+    bool isCasting() const { return spellHandler_ ? spellHandler_->isCasting() : false; }
+    bool isChanneling() const { return spellHandler_ ? spellHandler_->isChanneling() : false; }
     bool isGameObjectInteractionCasting() const {
-        return casting && currentCastSpellId == 0 && pendingGameObjectInteractGuid_ != 0;
+        return spellHandler_ ? spellHandler_->isGameObjectInteractionCasting() : false;
     }
-    uint32_t getCurrentCastSpellId() const { return currentCastSpellId; }
-    float getCastProgress() const { return castTimeTotal > 0 ? (castTimeTotal - castTimeRemaining) / castTimeTotal : 0.0f; }
-    float getCastTimeRemaining() const { return castTimeRemaining; }
-    float getCastTimeTotal() const { return castTimeTotal; }
+    uint32_t getCurrentCastSpellId() const { return spellHandler_ ? spellHandler_->getCurrentCastSpellId() : 0; }
+    float getCastProgress() const { return spellHandler_ ? spellHandler_->getCastProgress() : 0.0f; }
+    float getCastTimeRemaining() const { return spellHandler_ ? spellHandler_->getCastTimeRemaining() : 0.0f; }
+    float getCastTimeTotal() const { return spellHandler_ ? spellHandler_->getCastTimeTotal() : 0.0f; }
 
     // Repeat-craft queue
     void startCraftQueue(uint32_t spellId, int count);
@@ -907,60 +800,49 @@ public:
     uint32_t getQueuedSpellId() const { return queuedSpellId_; }
     void cancelQueuedSpell() { queuedSpellId_ = 0; queuedSpellTarget_ = 0; }
 
-    // Unit cast state (tracked per GUID for target frame + boss frames)
-    struct UnitCastState {
-        bool     casting         = false;
-        bool     isChannel       = false; ///< true for channels (MSG_CHANNEL_START), false for casts (SMSG_SPELL_START)
-        uint32_t spellId         = 0;
-        float    timeRemaining   = 0.0f;
-        float    timeTotal       = 0.0f;
-        bool     interruptible   = true;  ///< false when SPELL_ATTR_EX_NOT_INTERRUPTIBLE is set
-    };
-    // Returns cast state for any unit by GUID (empty/non-casting if not found)
+    // Unit cast state (aliased from handler_types.hpp)
+    using UnitCastState = game::UnitCastState;
+    // Returns cast state for any unit by GUID (delegates to SpellHandler)
     const UnitCastState* getUnitCastState(uint64_t guid) const {
-        auto it = unitCastStates_.find(guid);
-        return (it != unitCastStates_.end() && it->second.casting) ? &it->second : nullptr;
+        if (spellHandler_) return spellHandler_->getUnitCastState(guid);
+        return nullptr;
     }
     // Convenience helpers for the current target
-    bool isTargetCasting() const { return getUnitCastState(targetGuid) != nullptr; }
-    uint32_t getTargetCastSpellId() const {
-        auto* s = getUnitCastState(targetGuid);
-        return s ? s->spellId : 0;
-    }
-    float getTargetCastProgress() const {
-        auto* s = getUnitCastState(targetGuid);
-        return (s && s->timeTotal > 0.0f)
-            ? (s->timeTotal - s->timeRemaining) / s->timeTotal : 0.0f;
-    }
-    float getTargetCastTimeRemaining() const {
-        auto* s = getUnitCastState(targetGuid);
-        return s ? s->timeRemaining : 0.0f;
-    }
-    bool isTargetCastInterruptible() const {
-        auto* s = getUnitCastState(targetGuid);
-        return s ? s->interruptible : true;
-    }
+    bool isTargetCasting() const { return spellHandler_ ? spellHandler_->isTargetCasting() : false; }
+    uint32_t getTargetCastSpellId() const { return spellHandler_ ? spellHandler_->getTargetCastSpellId() : 0; }
+    float getTargetCastProgress() const { return spellHandler_ ? spellHandler_->getTargetCastProgress() : 0.0f; }
+    float getTargetCastTimeRemaining() const { return spellHandler_ ? spellHandler_->getTargetCastTimeRemaining() : 0.0f; }
+    bool isTargetCastInterruptible() const { return spellHandler_ ? spellHandler_->isTargetCastInterruptible() : true; }
 
-    // Talents
-    uint8_t getActiveTalentSpec() const { return activeTalentSpec_; }
-    uint8_t getUnspentTalentPoints() const { return unspentTalentPoints_[activeTalentSpec_]; }
-    uint8_t getUnspentTalentPoints(uint8_t spec) const { return spec < 2 ? unspentTalentPoints_[spec] : 0; }
-    const std::unordered_map<uint32_t, uint8_t>& getLearnedTalents() const { return learnedTalents_[activeTalentSpec_]; }
+    // Talents — delegate to SpellHandler as canonical authority
+    uint8_t getActiveTalentSpec() const { return spellHandler_ ? spellHandler_->getActiveTalentSpec() : 0; }
+    uint8_t getUnspentTalentPoints() const { return spellHandler_ ? spellHandler_->getUnspentTalentPoints() : 0; }
+    uint8_t getUnspentTalentPoints(uint8_t spec) const { return spellHandler_ ? spellHandler_->getUnspentTalentPoints(spec) : 0; }
+    const std::unordered_map<uint32_t, uint8_t>& getLearnedTalents() const {
+        if (spellHandler_) return spellHandler_->getLearnedTalents();
+        static const std::unordered_map<uint32_t, uint8_t> empty;
+        return empty;
+    }
     const std::unordered_map<uint32_t, uint8_t>& getLearnedTalents(uint8_t spec) const {
-        static std::unordered_map<uint32_t, uint8_t> empty;
-        return spec < 2 ? learnedTalents_[spec] : empty;
+        if (spellHandler_) return spellHandler_->getLearnedTalents(spec);
+        static const std::unordered_map<uint32_t, uint8_t> empty;
+        return empty;
     }
 
     // Glyphs (WotLK): up to 6 glyph slots per spec (3 major + 3 minor)
     static constexpr uint8_t MAX_GLYPH_SLOTS = 6;
-    const std::array<uint16_t, MAX_GLYPH_SLOTS>& getGlyphs() const { return learnedGlyphs_[activeTalentSpec_]; }
+    const std::array<uint16_t, MAX_GLYPH_SLOTS>& getGlyphs() const {
+        if (spellHandler_) return spellHandler_->getGlyphs();
+        static const std::array<uint16_t, MAX_GLYPH_SLOTS> empty{};
+        return empty;
+    }
     const std::array<uint16_t, MAX_GLYPH_SLOTS>& getGlyphs(uint8_t spec) const {
-        static std::array<uint16_t, MAX_GLYPH_SLOTS> empty{};
-        return spec < 2 ? learnedGlyphs_[spec] : empty;
+        if (spellHandler_) return spellHandler_->getGlyphs(spec);
+        static const std::array<uint16_t, MAX_GLYPH_SLOTS> empty{};
+        return empty;
     }
     uint8_t getTalentRank(uint32_t talentId) const {
-        auto it = learnedTalents_[activeTalentSpec_].find(talentId);
-        return (it != learnedTalents_[activeTalentSpec_].end()) ? it->second : 0;
+        return spellHandler_ ? spellHandler_->getTalentRank(talentId) : 0;
     }
     void learnTalent(uint32_t talentId, uint32_t requestedRank);
     void switchTalentSpec(uint8_t newSpec);
@@ -998,13 +880,21 @@ public:
     void loadCharacterConfig();
     static std::string getCharacterConfigDir();
 
-    // Auras
-    const std::vector<AuraSlot>& getPlayerAuras() const { return playerAuras; }
-    const std::vector<AuraSlot>& getTargetAuras() const { return targetAuras; }
+    // Auras — delegate to SpellHandler as canonical authority
+    const std::vector<AuraSlot>& getPlayerAuras() const {
+        if (spellHandler_) return spellHandler_->getPlayerAuras();
+        static const std::vector<AuraSlot> empty;
+        return empty;
+    }
+    const std::vector<AuraSlot>& getTargetAuras() const {
+        if (spellHandler_) return spellHandler_->getTargetAuras();
+        static const std::vector<AuraSlot> empty;
+        return empty;
+    }
     // Per-unit aura cache (populated for party members and any unit we receive updates for)
     const std::vector<AuraSlot>* getUnitAuras(uint64_t guid) const {
-        auto it = unitAurasCache_.find(guid);
-        return (it != unitAurasCache_.end()) ? &it->second : nullptr;
+        if (spellHandler_) return spellHandler_->getUnitAuras(guid);
+        return nullptr;
     }
 
     // Completed quests (populated from SMSG_QUERY_QUESTS_COMPLETED_RESPONSE)
@@ -1257,7 +1147,10 @@ public:
 
     // Cooldowns
     float getSpellCooldown(uint32_t spellId) const;
-    const std::unordered_map<uint32_t, float>& getSpellCooldowns() const { return spellCooldowns; }
+    const std::unordered_map<uint32_t, float>& getSpellCooldowns() const {
+        static const std::unordered_map<uint32_t, float> empty;
+        return spellHandler_ ? spellHandler_->getSpellCooldowns() : empty;
+    }
 
     // Player GUID
     uint64_t getPlayerGuid() const { return playerGuid; }
@@ -1448,14 +1341,8 @@ public:
         return rem > 0.0f ? rem : 0.0f;
     }
 
-    // ---- Instance lockouts ----
-    struct InstanceLockout {
-        uint32_t mapId       = 0;
-        uint32_t difficulty  = 0;  // 0=normal,1=heroic/10man,2=25man,3=25man heroic
-        uint64_t resetTime   = 0;  // Unix timestamp of instance reset
-        bool     locked      = false;
-        bool     extended    = false;
-    };
+    // Instance lockouts (aliased from handler_types.hpp)
+    using InstanceLockout = game::InstanceLockout;
     const std::vector<InstanceLockout>& getInstanceLockouts() const { return instanceLockouts_; }
 
     // Boss encounter unit tracking (SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT)
@@ -1483,16 +1370,8 @@ public:
     void setRaidMark(uint64_t guid, uint8_t icon);
 
     // ---- LFG / Dungeon Finder ----
-    enum class LfgState : uint8_t {
-        None           = 0,
-        RoleCheck      = 1,
-        Queued         = 2,
-        Proposal       = 3,
-        Boot           = 4,
-        InDungeon      = 5,
-        FinishedDungeon= 6,
-        RaidBrowser    = 7,
-    };
+    // LFG state (aliased from handler_types.hpp)
+    using LfgState = game::LfgState;
 
     // roles bitmask: 0x02=tank, 0x04=healer, 0x08=dps; pass LFGDungeonEntry ID
     void lfgJoin(uint32_t dungeonId, uint8_t roles);
@@ -1517,36 +1396,14 @@ public:
     const std::string& getLfgBootTargetName() const { return lfgBootTargetName_; }
     const std::string& getLfgBootReason()     const { return lfgBootReason_; }
 
-    // ---- Arena Team Stats ----
-    struct ArenaTeamStats {
-        uint32_t teamId       = 0;
-        uint32_t rating       = 0;
-        uint32_t weekGames    = 0;
-        uint32_t weekWins     = 0;
-        uint32_t seasonGames  = 0;
-        uint32_t seasonWins   = 0;
-        uint32_t rank         = 0;
-        std::string teamName;
-        uint32_t teamType     = 0; // 2, 3, or 5
-    };
+    // Arena team stats (aliased from handler_types.hpp)
+    using ArenaTeamStats = game::ArenaTeamStats;
     const std::vector<ArenaTeamStats>& getArenaTeamStats() const { return arenaTeamStats_; }
     void requestArenaTeamRoster(uint32_t teamId);
 
-    // ---- Arena Team Roster ----
-    struct ArenaTeamMember {
-        uint64_t    guid            = 0;
-        std::string name;
-        bool        online          = false;
-        uint32_t    weekGames       = 0;
-        uint32_t    weekWins        = 0;
-        uint32_t    seasonGames     = 0;
-        uint32_t    seasonWins      = 0;
-        uint32_t    personalRating  = 0;
-    };
-    struct ArenaTeamRoster {
-        uint32_t teamId = 0;
-        std::vector<ArenaTeamMember> members;
-    };
+    // Arena team roster (aliased from handler_types.hpp)
+    using ArenaTeamMember = game::ArenaTeamMember;
+    using ArenaTeamRoster = game::ArenaTeamRoster;
     // Returns roster for the given teamId, or nullptr if not yet received
     const ArenaTeamRoster* getArenaTeamRoster(uint32_t teamId) const {
         for (const auto& r : arenaTeamRosters_) {
@@ -1574,37 +1431,16 @@ public:
     bool hasMasterLootCandidates() const { return !masterLootCandidates_.empty(); }
     void lootMasterGive(uint8_t lootSlot, uint64_t targetGuid);
 
-    // Group loot roll
-    struct LootRollEntry {
-        uint64_t objectGuid    = 0;
-        uint32_t slot          = 0;
-        uint32_t itemId        = 0;
-        std::string itemName;
-        uint8_t  itemQuality   = 0;
-        uint32_t rollCountdownMs = 60000; // Duration of roll window in ms
-        uint8_t  voteMask      = 0xFF;    // Bitmask: 0x01=pass, 0x02=need, 0x04=greed, 0x08=disenchant
-        std::chrono::steady_clock::time_point rollStartedAt{};
-
-        struct PlayerRollResult {
-            std::string playerName;
-            uint8_t rollNum  = 0;
-            uint8_t rollType = 0; // 0=need,1=greed,2=disenchant,96=pass
-        };
-        std::vector<PlayerRollResult> playerRolls; // live roll results from group members
-    };
+    // Group loot roll (aliased from handler_types.hpp)
+    using LootRollEntry = game::LootRollEntry;
     bool hasPendingLootRoll() const { return pendingLootRollActive_; }
     const LootRollEntry& getPendingLootRoll() const { return pendingLootRoll_; }
     void sendLootRoll(uint64_t objectGuid, uint32_t slot, uint8_t rollType);
     // rollType: 0=need, 1=greed, 2=disenchant, 96=pass
 
-    // Equipment Sets (WotLK): saved gear loadouts
-    struct EquipmentSetInfo {
-        uint64_t setGuid = 0;
-        uint32_t setId = 0;
-        std::string name;
-        std::string iconName;
-    };
-    const std::vector<EquipmentSetInfo>& getEquipmentSets() const { return equipmentSetInfo_; }
+    // Equipment Sets (aliased from handler_types.hpp)
+    using EquipmentSetInfo = game::EquipmentSetInfo;
+    const std::vector<EquipmentSetInfo>& getEquipmentSets() const;
     bool supportsEquipmentSets() const;
     void useEquipmentSet(uint32_t setId);
     void saveEquipmentSet(const std::string& name, const std::string& iconName = "INV_Misc_QuestionMark",
@@ -1638,14 +1474,8 @@ public:
     }
     const QuestDetailsData& getQuestDetails() const { return currentQuestDetails; }
 
-    // Gossip / quest map POI markers (SMSG_GOSSIP_POI)
-    struct GossipPoi {
-        float    x     = 0.0f;   // WoW canonical X (north)
-        float    y     = 0.0f;   // WoW canonical Y (west)
-        uint32_t icon  = 0;      // POI icon type
-        uint32_t data  = 0;
-        std::string name;
-    };
+    // Gossip POI (aliased from handler_types.hpp)
+    using GossipPoi = game::GossipPoi;
     const std::vector<GossipPoi>& getGossipPois() const { return gossipPois_; }
     void clearGossipPois() { gossipPois_.clear(); }
 
@@ -1661,37 +1491,7 @@ public:
     void closeQuestOfferReward();
 
     // Quest log
-    struct QuestLogEntry {
-        uint32_t questId = 0;
-        std::string title;
-        std::string objectives;
-        bool complete = false;
-        // Objective kill counts: npcOrGoEntry -> (current, required)
-        std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> killCounts;
-        // Quest item progress: itemId -> current count
-        std::unordered_map<uint32_t, uint32_t> itemCounts;
-        // Server-authoritative quest item requirements from REQUEST_ITEMS
-        std::unordered_map<uint32_t, uint32_t> requiredItemCounts;
-        // Structured kill objectives parsed from SMSG_QUEST_QUERY_RESPONSE.
-        // Index 0-3 map to the server's objective slot order (packed into update fields).
-        // npcOrGoId != 0 => entity objective (kill NPC or interact with GO).
-        struct KillObjective {
-            int32_t npcOrGoId = 0;  // negative = game-object entry
-            uint32_t required = 0;
-        };
-        std::array<KillObjective, 4> killObjectives{};  // zeroed by default
-        // Required item objectives parsed from SMSG_QUEST_QUERY_RESPONSE.
-        // itemId != 0 => collect items of that type.
-        struct ItemObjective {
-            uint32_t itemId = 0;
-            uint32_t required = 0;
-        };
-        std::array<ItemObjective, 6> itemObjectives{};  // zeroed by default
-        // Reward data parsed from SMSG_QUEST_QUERY_RESPONSE
-        int32_t  rewardMoney = 0;                          // copper; positive=reward, negative=cost
-        std::array<QuestRewardItem, 4> rewardItems{};       // guaranteed reward items
-        std::array<QuestRewardItem, 6> rewardChoiceItems{}; // player picks one of these
-    };
+    using QuestLogEntry = QuestHandler::QuestLogEntry;
     const std::vector<QuestLogEntry>& getQuestLog() const { return questLog_; }
     int getSelectedQuestLogIndex() const { return selectedQuestLogIndex_; }
     void setSelectedQuestLogIndex(int idx) { selectedQuestLogIndex_ = idx; }
@@ -1879,7 +1679,7 @@ public:
     void setWatchedFactionId(uint32_t factionId);
     uint32_t getLastContactListMask() const { return lastContactListMask_; }
     uint32_t getLastContactListCount() const { return lastContactListCount_; }
-    bool isServerMovementAllowed() const { return serverMovementAllowed_; }
+    bool isServerMovementAllowed() const;
 
     // Quest giver status (! and ? markers)
     QuestGiverStatus getQuestGiverStatus(uint64_t guid) const {
@@ -2052,7 +1852,7 @@ public:
     void setOpenLfgCallback(OpenLfgCallback cb) { openLfgCallback_ = std::move(cb); }
 
     bool isMounted() const { return currentMountDisplayId_ != 0; }
-    bool isHostileAttacker(uint64_t guid) const { return hostileAttackers_.count(guid) > 0; }
+    bool isHostileAttacker(uint64_t guid) const;
     bool isHostileFactionPublic(uint32_t factionTemplateId) const { return isHostileFaction(factionTemplateId); }
     float getServerRunSpeed() const { return serverRunSpeed_; }
     float getServerWalkSpeed() const { return serverWalkSpeed_; }
@@ -2337,7 +2137,16 @@ public:
     void resetDbcCaches();
 
 private:
-    void autoTargetAttacker(uint64_t attackerGuid);
+    friend class ChatHandler;
+    friend class MovementHandler;
+    friend class CombatHandler;
+    friend class SpellHandler;
+    friend class InventoryHandler;
+    friend class SocialHandler;
+    friend class QuestHandler;
+    friend class WardenHandler;
+
+    // Dead: autoTargetAttacker moved to CombatHandler
 
     /**
      * Handle incoming packet from world server
@@ -2397,7 +2206,6 @@ private:
      * Handle SMSG_WARDEN_DATA gate packet from server.
      * We do not implement anti-cheat exchange for third-party realms.
      */
-    void handleWardenData(network::Packet& packet);
 
     /**
      * Handle SMSG_ACCOUNT_DATA_TIMES from server
@@ -2432,14 +2240,6 @@ private:
      */
     void handleDestroyObject(network::Packet& packet);
 
-    /**
-     * Handle SMSG_MESSAGECHAT from server
-     */
-    void handleMessageChat(network::Packet& packet);
-    void handleTextEmote(network::Packet& packet);
-    void handleChannelNotify(network::Packet& packet);
-    void autoJoinDefaultChannels();
-
     // ---- Phase 1 handlers ----
     void handleNameQueryResponse(network::Packet& packet);
     void handleCreatureQueryResponse(network::Packet& packet);
@@ -2447,7 +2247,6 @@ private:
     void handleGameObjectPageText(network::Packet& packet);
     void handlePageTextQueryResponse(network::Packet& packet);
     void handleItemQueryResponse(network::Packet& packet);
-    void handleInspectResults(network::Packet& packet);
     void queryItemInfo(uint32_t entry, uint64_t guid);
     void rebuildOnlineInventory();
     void maybeDetectVisibleItemLayout();
@@ -2459,56 +2258,22 @@ private:
     void extractContainerFields(uint64_t containerGuid, const std::map<uint16_t, uint32_t>& fields);
     uint64_t resolveOnlineItemGuid(uint32_t itemId) const;
 
-    // ---- Phase 2 handlers ----
-    void handleAttackStart(network::Packet& packet);
-    void handleAttackStop(network::Packet& packet);
-    void handleAttackerStateUpdate(network::Packet& packet);
-    void handleSpellDamageLog(network::Packet& packet);
-    void handleSpellHealLog(network::Packet& packet);
+    // ---- Phase 2 handlers (dead — dispatched via CombatHandler) ----
+    // handleAttackStart, handleAttackStop, handleAttackerStateUpdate,
+    // handleSpellDamageLog, handleSpellHealLog removed
 
     // ---- Equipment set handler ----
-    void handleEquipmentSetList(network::Packet& packet);
     void handleUpdateAuraDuration(uint8_t slot, uint32_t durationMs);
-    void handleSetForcedReactions(network::Packet& packet);
+    // handleSetForcedReactions — dispatched via CombatHandler
 
     // ---- Phase 3 handlers ----
-    void handleInitialSpells(network::Packet& packet);
-    void handleCastFailed(network::Packet& packet);
-    void handleSpellStart(network::Packet& packet);
-    void handleSpellGo(network::Packet& packet);
-    void handleSpellCooldown(network::Packet& packet);
-    void handleCooldownEvent(network::Packet& packet);
-    void handleAchievementEarned(network::Packet& packet);
-    void handleAuraUpdate(network::Packet& packet, bool isAll);
-    void handleLearnedSpell(network::Packet& packet);
-    void handleSupercededSpell(network::Packet& packet);
-    void handleRemovedSpell(network::Packet& packet);
-    void handleUnlearnSpells(network::Packet& packet);
 
     // ---- Talent handlers ----
-    void handleTalentsInfo(network::Packet& packet);
 
     // ---- Phase 4 handlers ----
-    void handleGroupInvite(network::Packet& packet);
-    void handleGroupDecline(network::Packet& packet);
-    void handleGroupList(network::Packet& packet);
-    void handleGroupUninvite(network::Packet& packet);
-    void handlePartyCommandResult(network::Packet& packet);
-    void handlePartyMemberStats(network::Packet& packet, bool isFull);
 
     // ---- Guild handlers ----
-    void handleGuildInfo(network::Packet& packet);
-    void handleGuildRoster(network::Packet& packet);
-    void handleGuildQueryResponse(network::Packet& packet);
-    void handleGuildEvent(network::Packet& packet);
-    void handleGuildInvite(network::Packet& packet);
-    void handleGuildCommandResult(network::Packet& packet);
-    void handlePetitionShowlist(network::Packet& packet);
-    void handlePetitionQueryResponse(network::Packet& packet);
-    void handlePetitionShowSignatures(network::Packet& packet);
-    void handlePetitionSignResults(network::Packet& packet);
     void handlePetSpells(network::Packet& packet);
-    void handleTurnInPetitionResults(network::Packet& packet);
 
     // ---- Character creation handler ----
     void handleCharCreateResponse(network::Packet& packet);
@@ -2517,25 +2282,10 @@ private:
     void handleXpGain(network::Packet& packet);
 
     // ---- Creature movement handler ----
-    void handleMonsterMove(network::Packet& packet);
-    void handleCompressedMoves(network::Packet& packet);
-    void handleMonsterMoveTransport(network::Packet& packet);
 
     // ---- Other player movement (MSG_MOVE_* from server) ----
-    void handleOtherPlayerMovement(network::Packet& packet);
-    void handleMoveSetSpeed(network::Packet& packet);
 
     // ---- Phase 5 handlers ----
-    void handleLootResponse(network::Packet& packet);
-    void handleLootReleaseResponse(network::Packet& packet);
-    void handleLootRemoved(network::Packet& packet);
-    void handleGossipMessage(network::Packet& packet);
-    void handleQuestgiverQuestList(network::Packet& packet);
-    void handleGossipComplete(network::Packet& packet);
-    void handleQuestPoiQueryResponse(network::Packet& packet);
-    void handleQuestDetails(network::Packet& packet);
-    void handleQuestRequestItems(network::Packet& packet);
-    void handleQuestOfferReward(network::Packet& packet);
     void clearPendingQuestAccept(uint32_t questId);
     void triggerQuestAcceptResync(uint32_t questId, uint64_t npcGuid, const char* reason);
     bool hasQuestInLog(uint32_t questId) const;
@@ -2546,101 +2296,43 @@ private:
     int findQuestLogSlotIndexFromServer(uint32_t questId) const;
     void addQuestToLocalLogIfMissing(uint32_t questId, const std::string& title, const std::string& objectives);
     bool resyncQuestLogFromServerSlots(bool forceQueryMetadata);
-    void handleListInventory(network::Packet& packet);
     void addMoneyCopper(uint32_t amount);
 
     // ---- Teleport handler ----
-    void handleTeleportAck(network::Packet& packet);
-    void handleNewWorld(network::Packet& packet);
 
     // ---- Movement ACK handlers ----
-    void handleForceRunSpeedChange(network::Packet& packet);
-    void handleForceSpeedChange(network::Packet& packet, const char* name, Opcode ackOpcode, float* speedStorage);
-    void handleForceMoveRootState(network::Packet& packet, bool rooted);
-    void handleForceMoveFlagChange(network::Packet& packet, const char* name, Opcode ackOpcode, uint32_t flag, bool set);
-    void handleMoveSetCollisionHeight(network::Packet& packet);
-    void handleMoveKnockBack(network::Packet& packet);
 
     // ---- Area trigger detection ----
     void loadAreaTriggerDbc();
     void checkAreaTriggers();
 
     // ---- Instance lockout handler ----
-    void handleRaidInstanceInfo(network::Packet& packet);
-    void handleItemTextQueryResponse(network::Packet& packet);
-    void handleQuestConfirmAccept(network::Packet& packet);
     void handleSummonRequest(network::Packet& packet);
-    void handleTradeStatus(network::Packet& packet);
-    void handleTradeStatusExtended(network::Packet& packet);
     void resetTradeState();
     void handleDuelRequested(network::Packet& packet);
     void handleDuelComplete(network::Packet& packet);
     void handleDuelWinner(network::Packet& packet);
-    void handleLootRoll(network::Packet& packet);
-    void handleLootRollWon(network::Packet& packet);
 
     // ---- LFG / Dungeon Finder handlers ----
-    void handleLfgJoinResult(network::Packet& packet);
-    void handleLfgQueueStatus(network::Packet& packet);
-    void handleLfgProposalUpdate(network::Packet& packet);
-    void handleLfgRoleCheckUpdate(network::Packet& packet);
-    void handleLfgUpdatePlayer(network::Packet& packet);
-    void handleLfgPlayerReward(network::Packet& packet);
-    void handleLfgBootProposalUpdate(network::Packet& packet);
-    void handleLfgTeleportDenied(network::Packet& packet);
 
     // ---- Arena / Battleground handlers ----
-    void handleBattlefieldStatus(network::Packet& packet);
-    void handleInstanceDifficulty(network::Packet& packet);
-    void handleArenaTeamCommandResult(network::Packet& packet);
-    void handleArenaTeamQueryResponse(network::Packet& packet);
-    void handleArenaTeamRoster(network::Packet& packet);
-    void handleArenaTeamInvite(network::Packet& packet);
-    void handleArenaTeamEvent(network::Packet& packet);
-    void handleArenaTeamStats(network::Packet& packet);
-    void handleArenaError(network::Packet& packet);
-    void handlePvpLogData(network::Packet& packet);
 
     // ---- Bank handlers ----
-    void handleShowBank(network::Packet& packet);
-    void handleBuyBankSlotResult(network::Packet& packet);
 
     // ---- Guild Bank handlers ----
-    void handleGuildBankList(network::Packet& packet);
 
     // ---- Auction House handlers ----
-    void handleAuctionHello(network::Packet& packet);
-    void handleAuctionListResult(network::Packet& packet);
-    void handleAuctionOwnerListResult(network::Packet& packet);
-    void handleAuctionBidderListResult(network::Packet& packet);
-    void handleAuctionCommandResult(network::Packet& packet);
 
     // ---- Mail handlers ----
-    void handleShowMailbox(network::Packet& packet);
-    void handleMailListResult(network::Packet& packet);
-    void handleSendMailResult(network::Packet& packet);
-    void handleReceivedMail(network::Packet& packet);
-    void handleQueryNextMailTime(network::Packet& packet);
 
     // ---- Taxi handlers ----
-    void handleShowTaxiNodes(network::Packet& packet);
-    void handleActivateTaxiReply(network::Packet& packet);
-    void loadTaxiDbc();
 
     // ---- Server info handlers ----
     void handleQueryTimeResponse(network::Packet& packet);
-    void handlePlayedTime(network::Packet& packet);
-    void handleWho(network::Packet& packet);
 
     // ---- Social handlers ----
-    void handleFriendList(network::Packet& packet);   // Classic SMSG_FRIEND_LIST
-    void handleContactList(network::Packet& packet);  // WotLK SMSG_CONTACT_LIST (full parse)
-    void handleFriendStatus(network::Packet& packet);
-    void handleRandomRoll(network::Packet& packet);
 
     // ---- Logout handlers ----
-    void handleLogoutResponse(network::Packet& packet);
-    void handleLogoutComplete(network::Packet& packet);
 
     void addCombatText(CombatTextEntry::Type type, int32_t amount, uint32_t spellId, bool isPlayerSource, uint8_t powerType = 0,
                        uint64_t srcGuid = 0, uint64_t dstGuid = 0);
@@ -2676,6 +2368,16 @@ private:
                                 const glm::vec3& localOffset, bool hasLocalOrientation,
                                 float localOrientation);
     void clearTransportAttachment(uint64_t childGuid);
+
+    // Domain handlers — each manages a specific concern extracted from GameHandler
+    std::unique_ptr<ChatHandler>      chatHandler_;
+    std::unique_ptr<MovementHandler>  movementHandler_;
+    std::unique_ptr<CombatHandler>    combatHandler_;
+    std::unique_ptr<SpellHandler>     spellHandler_;
+    std::unique_ptr<InventoryHandler> inventoryHandler_;
+    std::unique_ptr<SocialHandler>    socialHandler_;
+    std::unique_ptr<QuestHandler>     questHandler_;
+    std::unique_ptr<WardenHandler>    wardenHandler_;
 
     // Opcode dispatch table — built once in registerOpcodeHandlers(), called by handlePacket()
     using PacketHandler = std::function<void(network::Packet&)>;
@@ -2736,10 +2438,7 @@ private:
     // Entity tracking
     EntityManager entityManager;             // Manages all entities in view
 
-    // Chat
-    std::deque<MessageChatData> chatHistory;    // Recent chat messages
-    size_t maxChatHistory = 100;             // Maximum chat messages to keep
-    std::vector<std::string> joinedChannels_;   // Active channel memberships
+    // Chat (state lives in ChatHandler; callbacks remain here for cross-domain access)
     ChatBubbleCallback chatBubbleCallback_;
     AddonChatCallback addonChatCallback_;
     AddonEventCallback addonEventCallback_;
@@ -2885,32 +2584,9 @@ private:
     std::unordered_set<uint64_t> pendingAutoInspect_;
     float inspectRateLimit_ = 0.0f;
 
-    // ---- Phase 2: Combat ----
-    bool autoAttacking = false;
-    bool autoAttackRequested_ = false;   // local intent (CMSG_ATTACKSWING sent)
-    bool autoAttackRetryPending_ = false; // one-shot retry after local start or server stop
-    uint64_t autoAttackTarget = 0;
-    bool autoAttackOutOfRange_ = false;
-    float autoAttackOutOfRangeTime_ = 0.0f;
-    float autoAttackRangeWarnCooldown_ = 0.0f;
-    float autoAttackResendTimer_ = 0.0f;  // Re-send CMSG_ATTACKSWING every ~1s while attacking
-    float autoAttackFacingSyncTimer_ = 0.0f; // Periodic facing sync while meleeing
-    std::unordered_set<uint64_t> hostileAttackers_;
+    // ---- Phase 2: Combat (state moved to CombatHandler) ----
     bool wasCombat_ = false;  // Previous frame combat state for PLAYER_REGEN edge detection
-    std::vector<CombatTextEntry> combatText;
-    static constexpr size_t MAX_COMBAT_LOG = 500;
-    struct RecentSpellstealLogEntry {
-        uint64_t casterGuid = 0;
-        uint64_t victimGuid = 0;
-        uint32_t spellId = 0;
-        std::chrono::steady_clock::time_point timestamp{};
-    };
-    static constexpr size_t MAX_RECENT_SPELLSTEAL_LOGS = 32;
-    std::deque<CombatLogEntry> combatLog_;
-    std::deque<RecentSpellstealLogEntry> recentSpellstealLogs_;
     std::deque<std::string>    areaTriggerMsgs_;
-    // unitGuid → sorted threat list (descending by threat value)
-    std::unordered_map<uint64_t, std::vector<ThreatEntry>> threatLists_;
 
     // ---- Phase 3: Spells ----
     WorldEntryCallback worldEntryCallback_;
@@ -3022,7 +2698,6 @@ private:
 
     // ---- Available battleground list (SMSG_BATTLEFIELD_LIST) ----
     std::vector<AvailableBgInfo> availableBgs_;
-    void handleBattlefieldList(network::Packet& packet);
 
     // Instance difficulty
     uint32_t instanceDifficulty_ = 0;
@@ -3293,11 +2968,8 @@ private:
     uint32_t knownTaxiMask_[12] = {};  // Track previously known nodes for discovery alerts
     bool taxiMaskInitialized_ = false; // First SMSG_SHOWTAXINODES seeds mask without alerts
     std::unordered_map<uint32_t, uint32_t> taxiCostMap_; // destNodeId -> total cost in copper
-    void buildTaxiCostMap();
-    void applyTaxiMountForCurrentNode();
     uint32_t nextMovementTimestampMs();
     void sanitizeMovementForTaxi();
-    void startClientTaxiPath(const std::vector<uint32_t>& pathNodes);
     void updateClientTaxi(float deltaTime);
 
     // Mail
@@ -3397,7 +3069,6 @@ private:
     // Per-player achievement data from SMSG_RESPOND_INSPECT_ACHIEVEMENTS
     // Key: inspected player's GUID; value: set of earned achievement IDs
     std::unordered_map<uint64_t, std::unordered_set<uint32_t>> inspectedPlayerAchievements_;
-    void handleRespondInspectAchievements(network::Packet& packet);
 
     // Area name cache (lazy-loaded from WorldMapArea.dbc; maps AreaTable ID → display name)
     mutable std::unordered_map<uint32_t, std::string> areaNameCache_;
@@ -3416,7 +3087,6 @@ private:
     void loadLfgDungeonDbc() const;
     std::string getLfgDungeonName(uint32_t dungeonId) const;
     std::vector<TrainerTab> trainerTabs_;
-    void handleTrainerList(network::Packet& packet);
     void loadSpellNameCache() const;
     void preloadDBCCaches() const;
     void categorizeTrainerSpells();
@@ -3466,7 +3136,6 @@ private:
     std::vector<WardenCREntry> wardenCREntries_;
     // Module-specific check type opcodes [9]: MEM, PAGE_A, PAGE_B, MPQ, LUA, DRIVER, TIMING, PROC, MODULE
     uint8_t wardenCheckOpcodes_[9] = {};
-    bool loadWardenCRFile(const std::string& moduleHashHex);
 
     // Async Warden response: avoids 5-second main-loop stalls from PAGE_A/PAGE_B code pattern searches
     std::future<std::vector<uint8_t>> wardenPendingEncrypted_;  // encrypted response bytes
@@ -3530,7 +3199,7 @@ private:
     AppearanceChangedCallback appearanceChangedCallback_;
     GhostStateCallback ghostStateCallback_;
     MeleeSwingCallback meleeSwingCallback_;
-    uint64_t lastMeleeSwingMs_ = 0;   // system_clock ms at last player auto-attack swing
+    // lastMeleeSwingMs_ moved to CombatHandler
     SpellCastAnimCallback spellCastAnimCallback_;
     SpellCastFailedCallback spellCastFailedCallback_;
     UnitAnimHintCallback unitAnimHintCallback_;
@@ -3615,8 +3284,7 @@ private:
     std::string pendingSaveSetIcon_;
     std::vector<EquipmentSetInfo> equipmentSetInfo_;  // public-facing copy
 
-    // ---- Forced faction reactions (SMSG_SET_FORCED_REACTIONS) ----
-    std::unordered_map<uint32_t, uint8_t> forcedReactions_;  // factionId -> reaction tier
+    // forcedReactions_ moved to CombatHandler
 
     // ---- Server-triggered audio ----
     PlayMusicCallback playMusicCallback_;

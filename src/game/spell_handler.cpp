@@ -1,0 +1,3211 @@
+#include "game/spell_handler.hpp"
+#include "game/game_handler.hpp"
+#include "game/game_utils.hpp"
+#include "game/packet_parsers.hpp"
+#include "game/entity.hpp"
+#include "rendering/renderer.hpp"
+#include "audio/spell_sound_manager.hpp"
+#include "audio/combat_sound_manager.hpp"
+#include "core/application.hpp"
+#include "core/coordinates.hpp"
+#include "core/logger.hpp"
+#include "network/world_socket.hpp"
+#include "pipeline/asset_manager.hpp"
+#include "pipeline/dbc_layout.hpp"
+#include "audio/ui_sound_manager.hpp"
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <sstream>
+
+namespace wowee {
+namespace game {
+
+// Merge incoming cooldown with local remaining time — keeps local timer when
+// a stale/duplicate packet arrives after local countdown has progressed.
+static float mergeCooldownSeconds(float current, float incoming) {
+    constexpr float kEpsilon = 0.05f;
+    if (incoming <= 0.0f) return 0.0f;
+    if (current <= 0.0f) return incoming;
+    if (incoming > current + kEpsilon) return current;
+    return incoming;
+}
+
+static CombatTextEntry::Type combatTextTypeFromSpellMissInfo(uint8_t missInfo) {
+    switch (missInfo) {
+        case 0: return CombatTextEntry::MISS;
+        case 1: return CombatTextEntry::DODGE;
+        case 2: return CombatTextEntry::PARRY;
+        case 3: return CombatTextEntry::BLOCK;
+        case 4: return CombatTextEntry::EVADE;
+        case 5: return CombatTextEntry::IMMUNE;
+        case 6: return CombatTextEntry::DEFLECT;
+        case 7: return CombatTextEntry::ABSORB;
+        case 8: return CombatTextEntry::RESIST;
+        case 9:
+        case 10:
+            return CombatTextEntry::IMMUNE;
+        case 11: return CombatTextEntry::REFLECT;
+        default: return CombatTextEntry::MISS;
+    }
+}
+
+static audio::SpellSoundManager::MagicSchool schoolMaskToMagicSchool(uint32_t mask) {
+    if (mask & 0x04) return audio::SpellSoundManager::MagicSchool::FIRE;
+    if (mask & 0x10) return audio::SpellSoundManager::MagicSchool::FROST;
+    if (mask & 0x02) return audio::SpellSoundManager::MagicSchool::HOLY;
+    if (mask & 0x08) return audio::SpellSoundManager::MagicSchool::NATURE;
+    if (mask & 0x20) return audio::SpellSoundManager::MagicSchool::SHADOW;
+    if (mask & 0x40) return audio::SpellSoundManager::MagicSchool::ARCANE;
+    return audio::SpellSoundManager::MagicSchool::ARCANE;
+}
+
+static std::string buildItemLink(uint32_t itemId, uint32_t quality, const std::string& name) {
+    static const char* kQualHex[] = {
+        "9d9d9d",  // 0 Poor
+        "ffffff",  // 1 Common
+        "1eff00",  // 2 Uncommon
+        "0070dd",  // 3 Rare
+        "a335ee",  // 4 Epic
+        "ff8000",  // 5 Legendary
+        "e6cc80",  // 6 Artifact
+        "e6cc80",  // 7 Heirloom
+    };
+    uint32_t qi = quality < 8 ? quality : 1u;
+    char buf[512];
+    snprintf(buf, sizeof(buf), "|cff%s|Hitem:%u:0:0:0:0:0:0:0:0|h[%s]|h|r",
+             kQualHex[qi], itemId, name.c_str());
+    return buf;
+}
+
+static std::string displaySpellName(GameHandler& handler, uint32_t spellId) {
+    if (spellId == 0) return {};
+    const std::string& name = handler.getSpellName(spellId);
+    if (!name.empty()) return name;
+    return "spell " + std::to_string(spellId);
+}
+
+static std::string formatSpellNameList(GameHandler& handler,
+                                       const std::vector<uint32_t>& spellIds,
+                                       size_t maxShown = 3) {
+    if (spellIds.empty()) return {};
+
+    const size_t shownCount = std::min(spellIds.size(), maxShown);
+    std::ostringstream oss;
+    for (size_t i = 0; i < shownCount; ++i) {
+        if (i > 0) {
+            if (shownCount == 2) {
+                oss << " and ";
+            } else if (i == shownCount - 1) {
+                oss << ", and ";
+            } else {
+                oss << ", ";
+            }
+        }
+        oss << displaySpellName(handler, spellIds[i]);
+    }
+
+    if (spellIds.size() > shownCount) {
+        oss << ", and " << (spellIds.size() - shownCount) << " more";
+    }
+
+    return oss.str();
+}
+
+SpellHandler::SpellHandler(GameHandler& owner)
+    : owner_(owner) {}
+
+void SpellHandler::registerOpcodes(DispatchTable& table) {
+    table[Opcode::SMSG_INITIAL_SPELLS] = [this](network::Packet& packet) { handleInitialSpells(packet); };
+    table[Opcode::SMSG_CAST_FAILED] = [this](network::Packet& packet) { handleCastFailed(packet); };
+    table[Opcode::SMSG_SPELL_START] = [this](network::Packet& packet) { handleSpellStart(packet); };
+    table[Opcode::SMSG_SPELL_GO] = [this](network::Packet& packet) { handleSpellGo(packet); };
+    table[Opcode::SMSG_SPELL_COOLDOWN] = [this](network::Packet& packet) { handleSpellCooldown(packet); };
+    table[Opcode::SMSG_COOLDOWN_EVENT] = [this](network::Packet& packet) { handleCooldownEvent(packet); };
+    table[Opcode::SMSG_AURA_UPDATE] = [this](network::Packet& packet) {
+        handleAuraUpdate(packet, false);
+    };
+    table[Opcode::SMSG_AURA_UPDATE_ALL] = [this](network::Packet& packet) {
+        handleAuraUpdate(packet, true);
+    };
+    table[Opcode::SMSG_LEARNED_SPELL] = [this](network::Packet& packet) { handleLearnedSpell(packet); };
+    table[Opcode::SMSG_SUPERCEDED_SPELL] = [this](network::Packet& packet) { handleSupercededSpell(packet); };
+    table[Opcode::SMSG_REMOVED_SPELL] = [this](network::Packet& packet) { handleRemovedSpell(packet); };
+    table[Opcode::SMSG_SEND_UNLEARN_SPELLS] = [this](network::Packet& packet) { handleUnlearnSpells(packet); };
+    table[Opcode::SMSG_TALENTS_INFO] = [this](network::Packet& packet) { handleTalentsInfo(packet); };
+    table[Opcode::SMSG_ACHIEVEMENT_EARNED] = [this](network::Packet& packet) {
+        handleAchievementEarned(packet);
+    };
+    // SMSG_EQUIPMENT_SET_LIST — owned by InventoryHandler::registerOpcodes
+
+    // ---- Cast result / spell visuals / cooldowns / modifiers ----
+    table[Opcode::SMSG_CAST_RESULT] = [this](network::Packet& p) { handleCastResult(p); };
+    table[Opcode::SMSG_SPELL_FAILED_OTHER] = [this](network::Packet& p) { handleSpellFailedOther(p); };
+    table[Opcode::SMSG_CLEAR_COOLDOWN] = [this](network::Packet& p) { handleClearCooldown(p); };
+    table[Opcode::SMSG_MODIFY_COOLDOWN] = [this](network::Packet& p) { handleModifyCooldown(p); };
+    table[Opcode::SMSG_PLAY_SPELL_VISUAL] = [this](network::Packet& p) { handlePlaySpellVisual(p); };
+    table[Opcode::SMSG_SET_FLAT_SPELL_MODIFIER] = [this](network::Packet& p) { handleSpellModifier(p, true); };
+    table[Opcode::SMSG_SET_PCT_SPELL_MODIFIER]  = [this](network::Packet& p) { handleSpellModifier(p, false); };
+    table[Opcode::SMSG_SPELL_DELAYED] = [this](network::Packet& p) { handleSpellDelayed(p); };
+
+    // ---- Spell log / aura / dispel / totem / channel handlers ----
+    table[Opcode::SMSG_SPELLLOGMISS] = [this](network::Packet& p) { handleSpellLogMiss(p); };
+    table[Opcode::SMSG_SPELL_FAILURE] = [this](network::Packet& p) { handleSpellFailure(p); };
+    table[Opcode::SMSG_ITEM_COOLDOWN] = [this](network::Packet& p) { handleItemCooldown(p); };
+    table[Opcode::SMSG_DISPEL_FAILED] = [this](network::Packet& p) { handleDispelFailed(p); };
+    table[Opcode::SMSG_TOTEM_CREATED] = [this](network::Packet& p) { handleTotemCreated(p); };
+    table[Opcode::SMSG_PERIODICAURALOG] = [this](network::Packet& p) { handlePeriodicAuraLog(p); };
+    table[Opcode::SMSG_SPELLENERGIZELOG] = [this](network::Packet& p) { handleSpellEnergizeLog(p); };
+    table[Opcode::SMSG_INIT_EXTRA_AURA_INFO_OBSOLETE] = [this](network::Packet& p) { handleExtraAuraInfo(p, true); };
+    table[Opcode::SMSG_SET_EXTRA_AURA_INFO_OBSOLETE] = [this](network::Packet& p) { handleExtraAuraInfo(p, false); };
+    table[Opcode::SMSG_SPELLDISPELLOG] = [this](network::Packet& p) { handleSpellDispelLog(p); };
+    table[Opcode::SMSG_SPELLSTEALLOG] = [this](network::Packet& p) { handleSpellStealLog(p); };
+    table[Opcode::SMSG_SPELL_CHANCE_PROC_LOG] = [this](network::Packet& p) { handleSpellChanceProcLog(p); };
+    table[Opcode::SMSG_SPELLINSTAKILLLOG] = [this](network::Packet& p) { handleSpellInstaKillLog(p); };
+    table[Opcode::SMSG_SPELLLOGEXECUTE] = [this](network::Packet& p) { handleSpellLogExecute(p); };
+    table[Opcode::SMSG_CLEAR_EXTRA_AURA_INFO] = [this](network::Packet& p) { handleClearExtraAuraInfo(p); };
+    table[Opcode::SMSG_ITEM_ENCHANT_TIME_UPDATE] = [this](network::Packet& p) { handleItemEnchantTimeUpdate(p); };
+    table[Opcode::SMSG_RESUME_CAST_BAR] = [this](network::Packet& p) { handleResumeCastBar(p); };
+    table[Opcode::MSG_CHANNEL_START] = [this](network::Packet& p) { handleChannelStart(p); };
+    table[Opcode::MSG_CHANNEL_UPDATE] = [this](network::Packet& p) { handleChannelUpdate(p); };
+}
+
+// ============================================================
+// Public API
+// ============================================================
+
+bool SpellHandler::isGameObjectInteractionCasting() const {
+    return casting_ && currentCastSpellId_ == 0 && owner_.pendingGameObjectInteractGuid_ != 0;
+}
+
+bool SpellHandler::isTargetCasting() const {
+    return getUnitCastState(owner_.targetGuid) != nullptr;
+}
+
+uint32_t SpellHandler::getTargetCastSpellId() const {
+    auto* s = getUnitCastState(owner_.targetGuid);
+    return s ? s->spellId : 0;
+}
+
+float SpellHandler::getTargetCastProgress() const {
+    auto* s = getUnitCastState(owner_.targetGuid);
+    return (s && s->timeTotal > 0.0f)
+        ? (s->timeTotal - s->timeRemaining) / s->timeTotal : 0.0f;
+}
+
+float SpellHandler::getTargetCastTimeRemaining() const {
+    auto* s = getUnitCastState(owner_.targetGuid);
+    return s ? s->timeRemaining : 0.0f;
+}
+
+bool SpellHandler::isTargetCastInterruptible() const {
+    auto* s = getUnitCastState(owner_.targetGuid);
+    return s ? s->interruptible : true;
+}
+
+void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
+    // Attack (6603) routes to auto-attack instead of cast
+    if (spellId == 6603) {
+        uint64_t target = targetGuid != 0 ? targetGuid : owner_.targetGuid;
+        if (target != 0) {
+            if (owner_.isAutoAttacking()) {
+                owner_.stopAutoAttack();
+            } else {
+                owner_.startAutoAttack(target);
+            }
+        }
+        return;
+    }
+
+    if (owner_.state != WorldState::IN_WORLD || !owner_.socket) return;
+
+    // Casting any spell while mounted → dismount instead
+    if (owner_.isMounted()) {
+        owner_.dismount();
+        return;
+    }
+
+    if (casting_) {
+        // Spell queue: if we're within 400ms of the cast completing (and not channeling),
+        // store the spell so it fires automatically when the cast finishes.
+        if (!castIsChannel_ && castTimeRemaining_ > 0.0f && castTimeRemaining_ <= 0.4f) {
+            queuedSpellId_     = spellId;
+            queuedSpellTarget_ = targetGuid != 0 ? targetGuid : owner_.targetGuid;
+            LOG_INFO("Spell queue: queued spellId=", spellId, " (", castTimeRemaining_ * 1000.0f,
+                     "ms remaining)");
+        }
+        return;
+    }
+
+    uint64_t target = targetGuid != 0 ? targetGuid : owner_.targetGuid;
+    // Self-targeted spells like hearthstone should not send a target
+    if (spellId == 8690) target = 0;
+
+    // Warrior Charge (ranks 1-3): client-side range check + charge callback
+    if (spellId == 100 || spellId == 6178 || spellId == 11578) {
+        if (target == 0) {
+            owner_.addSystemChatMessage("You have no target.");
+            return;
+        }
+        auto entity = owner_.entityManager.getEntity(target);
+        if (!entity) {
+            owner_.addSystemChatMessage("You have no target.");
+            return;
+        }
+        float tx = entity->getX(), ty = entity->getY(), tz = entity->getZ();
+        float dx = tx - owner_.movementInfo.x;
+        float dy = ty - owner_.movementInfo.y;
+        float dz = tz - owner_.movementInfo.z;
+        float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist < 8.0f) {
+            owner_.addSystemChatMessage("Target is too close.");
+            return;
+        }
+        if (dist > 25.0f) {
+            owner_.addSystemChatMessage("Out of range.");
+            return;
+        }
+        // Face the target before sending the cast packet
+        float yaw = std::atan2(dy, dx);
+        owner_.movementInfo.orientation = yaw;
+        owner_.sendMovement(Opcode::MSG_MOVE_SET_FACING);
+        if (owner_.chargeCallback_) {
+            owner_.chargeCallback_(target, tx, ty, tz);
+        }
+    }
+
+    // Instant melee abilities: client-side range + facing check
+    {
+        owner_.loadSpellNameCache();
+        bool isMeleeAbility = false;
+        auto cacheIt = owner_.spellNameCache_.find(spellId);
+        if (cacheIt != owner_.spellNameCache_.end() && cacheIt->second.schoolMask == 1) {
+            isMeleeAbility = true;
+        }
+        if (isMeleeAbility && target != 0) {
+            auto entity = owner_.entityManager.getEntity(target);
+            if (entity) {
+                float dx = entity->getX() - owner_.movementInfo.x;
+                float dy = entity->getY() - owner_.movementInfo.y;
+                float dz = entity->getZ() - owner_.movementInfo.z;
+                float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (dist > 8.0f) {
+                    owner_.addSystemChatMessage("Out of range.");
+                    return;
+                }
+                float yaw = std::atan2(dy, dx);
+                owner_.movementInfo.orientation = yaw;
+                owner_.sendMovement(Opcode::MSG_MOVE_SET_FACING);
+            }
+        }
+    }
+
+    auto packet = owner_.packetParsers_
+        ? owner_.packetParsers_->buildCastSpell(spellId, target, ++castCount_)
+        : CastSpellPacket::build(spellId, target, ++castCount_);
+    owner_.socket->send(packet);
+    LOG_INFO("Casting spell: ", spellId, " on 0x", std::hex, target, std::dec);
+
+    // Fire UNIT_SPELLCAST_SENT for cast bar addons
+    if (owner_.addonEventCallback_) {
+        std::string targetName;
+        if (target != 0) targetName = owner_.lookupName(target);
+        owner_.addonEventCallback_("UNIT_SPELLCAST_SENT", {"player", targetName, std::to_string(spellId)});
+    }
+
+    // Optimistically start GCD immediately on cast
+    if (!isGCDActive()) {
+        gcdTotal_ = 1.5f;
+        gcdStartedAt_ = std::chrono::steady_clock::now();
+    }
+}
+
+void SpellHandler::cancelCast() {
+    if (!casting_) return;
+    // GameObject interaction cast is client-side timing only.
+    if (owner_.pendingGameObjectInteractGuid_ == 0 &&
+        owner_.state == WorldState::IN_WORLD && owner_.socket &&
+        currentCastSpellId_ != 0) {
+        auto packet = CancelCastPacket::build(currentCastSpellId_);
+        owner_.socket->send(packet);
+    }
+    owner_.pendingGameObjectInteractGuid_ = 0;
+    owner_.lastInteractedGoGuid_ = 0;
+    casting_ = false;
+    castIsChannel_ = false;
+    currentCastSpellId_ = 0;
+    castTimeRemaining_ = 0.0f;
+    craftQueueSpellId_ = 0;
+    craftQueueRemaining_ = 0;
+    queuedSpellId_ = 0;
+    queuedSpellTarget_ = 0;
+    if (owner_.addonEventCallback_)
+        owner_.addonEventCallback_("UNIT_SPELLCAST_STOP", {"player"});
+}
+
+void SpellHandler::startCraftQueue(uint32_t spellId, int count) {
+    craftQueueSpellId_ = spellId;
+    craftQueueRemaining_ = count;
+    castSpell(spellId, 0);
+}
+
+void SpellHandler::cancelCraftQueue() {
+    craftQueueSpellId_ = 0;
+    craftQueueRemaining_ = 0;
+}
+
+void SpellHandler::cancelAura(uint32_t spellId) {
+    if (owner_.state != WorldState::IN_WORLD || !owner_.socket) return;
+    auto packet = CancelAuraPacket::build(spellId);
+    owner_.socket->send(packet);
+}
+
+float SpellHandler::getSpellCooldown(uint32_t spellId) const {
+    auto it = spellCooldowns_.find(spellId);
+    return (it != spellCooldowns_.end()) ? it->second : 0.0f;
+}
+
+void SpellHandler::learnTalent(uint32_t talentId, uint32_t requestedRank) {
+    if (owner_.state != WorldState::IN_WORLD || !owner_.socket) {
+        LOG_WARNING("learnTalent: Not in world or no socket connection");
+        return;
+    }
+
+    LOG_INFO("Requesting to learn talent: id=", talentId, " rank=", requestedRank);
+
+    auto packet = LearnTalentPacket::build(talentId, requestedRank);
+    owner_.socket->send(packet);
+}
+
+void SpellHandler::switchTalentSpec(uint8_t newSpec) {
+    if (newSpec > 1) {
+        LOG_WARNING("Invalid talent spec: ", (int)newSpec);
+        return;
+    }
+
+    if (newSpec == activeTalentSpec_) {
+        LOG_INFO("Already on spec ", (int)newSpec);
+        return;
+    }
+
+    if (owner_.state == WorldState::IN_WORLD && owner_.socket) {
+        auto pkt = ActivateTalentGroupPacket::build(static_cast<uint32_t>(newSpec));
+        owner_.socket->send(pkt);
+        LOG_INFO("Sent CMSG_SET_ACTIVE_TALENT_GROUP_OBSOLETE: group=", (int)newSpec);
+    }
+    activeTalentSpec_ = newSpec;
+
+    LOG_INFO("Switched to talent spec ", (int)newSpec,
+             " (unspent=", (int)unspentTalentPoints_[newSpec],
+             ", learned=", learnedTalents_[newSpec].size(), ")");
+
+    std::string msg = "Switched to spec " + std::to_string(newSpec + 1);
+    if (unspentTalentPoints_[newSpec] > 0) {
+        msg += " (" + std::to_string(unspentTalentPoints_[newSpec]) + " unspent point";
+        if (unspentTalentPoints_[newSpec] > 1) msg += "s";
+        msg += ")";
+    }
+    owner_.addSystemChatMessage(msg);
+}
+
+void SpellHandler::confirmTalentWipe() {
+    if (!talentWipePending_) return;
+    talentWipePending_ = false;
+
+    if (owner_.state != WorldState::IN_WORLD || !owner_.socket) return;
+
+    network::Packet pkt(wireOpcode(Opcode::MSG_TALENT_WIPE_CONFIRM));
+    pkt.writeUInt64(talentWipeNpcGuid_);
+    owner_.socket->send(pkt);
+
+    LOG_INFO("confirmTalentWipe: sent confirm for npc=0x", std::hex, talentWipeNpcGuid_, std::dec);
+    owner_.addSystemChatMessage("Talent reset confirmed. The server will update your talents.");
+    talentWipeNpcGuid_ = 0;
+    talentWipeCost_ = 0;
+}
+
+void SpellHandler::confirmPetUnlearn() {
+    if (!petUnlearnPending_) return;
+    petUnlearnPending_ = false;
+    if (owner_.state != WorldState::IN_WORLD || !owner_.socket) return;
+
+    network::Packet pkt(wireOpcode(Opcode::CMSG_PET_UNLEARN_TALENTS));
+    owner_.socket->send(pkt);
+    LOG_INFO("confirmPetUnlearn: sent CMSG_PET_UNLEARN_TALENTS");
+    owner_.addSystemChatMessage("Pet talent reset confirmed.");
+    petUnlearnGuid_ = 0;
+    petUnlearnCost_ = 0;
+}
+
+void SpellHandler::useItemBySlot(int backpackIndex) {
+    if (backpackIndex < 0 || backpackIndex >= owner_.inventory.getBackpackSize()) return;
+    const auto& slot = owner_.inventory.getBackpackSlot(backpackIndex);
+    if (slot.empty()) return;
+
+    uint64_t itemGuid = owner_.backpackSlotGuids_[backpackIndex];
+    if (itemGuid == 0) {
+        itemGuid = owner_.resolveOnlineItemGuid(slot.item.itemId);
+    }
+
+    if (itemGuid != 0 && owner_.state == WorldState::IN_WORLD && owner_.socket) {
+        uint32_t useSpellId = 0;
+        if (auto* info = owner_.getItemInfo(slot.item.itemId)) {
+            for (const auto& sp : info->spells) {
+                if (sp.spellId != 0 && (sp.spellTrigger == 0 || sp.spellTrigger == 5)) {
+                    useSpellId = sp.spellId;
+                    break;
+                }
+            }
+        }
+
+        auto packet = owner_.packetParsers_
+            ? owner_.packetParsers_->buildUseItem(0xFF, static_cast<uint8_t>(23 + backpackIndex), itemGuid, useSpellId)
+            : UseItemPacket::build(0xFF, static_cast<uint8_t>(23 + backpackIndex), itemGuid, useSpellId);
+        owner_.socket->send(packet);
+    } else if (itemGuid == 0) {
+        owner_.addSystemChatMessage("Cannot use that item right now.");
+    }
+}
+
+void SpellHandler::useItemInBag(int bagIndex, int slotIndex) {
+    if (bagIndex < 0 || bagIndex >= owner_.inventory.NUM_BAG_SLOTS) return;
+    if (slotIndex < 0 || slotIndex >= owner_.inventory.getBagSize(bagIndex)) return;
+    const auto& slot = owner_.inventory.getBagSlot(bagIndex, slotIndex);
+    if (slot.empty()) return;
+
+    uint64_t itemGuid = 0;
+    uint64_t bagGuid = owner_.equipSlotGuids_[19 + bagIndex];
+    if (bagGuid != 0) {
+        auto it = owner_.containerContents_.find(bagGuid);
+        if (it != owner_.containerContents_.end() && slotIndex < static_cast<int>(it->second.numSlots)) {
+            itemGuid = it->second.slotGuids[slotIndex];
+        }
+    }
+    if (itemGuid == 0) {
+        itemGuid = owner_.resolveOnlineItemGuid(slot.item.itemId);
+    }
+
+    LOG_INFO("useItemInBag: bag=", bagIndex, " slot=", slotIndex, " itemId=", slot.item.itemId,
+             " itemGuid=0x", std::hex, itemGuid, std::dec);
+
+    if (itemGuid != 0 && owner_.state == WorldState::IN_WORLD && owner_.socket) {
+        uint32_t useSpellId = 0;
+        if (auto* info = owner_.getItemInfo(slot.item.itemId)) {
+            for (const auto& sp : info->spells) {
+                if (sp.spellId != 0 && (sp.spellTrigger == 0 || sp.spellTrigger == 5)) {
+                    useSpellId = sp.spellId;
+                    break;
+                }
+            }
+        }
+
+        uint8_t wowBag = static_cast<uint8_t>(19 + bagIndex);
+        auto packet = owner_.packetParsers_
+            ? owner_.packetParsers_->buildUseItem(wowBag, static_cast<uint8_t>(slotIndex), itemGuid, useSpellId)
+            : UseItemPacket::build(wowBag, static_cast<uint8_t>(slotIndex), itemGuid, useSpellId);
+        LOG_INFO("useItemInBag: sending CMSG_USE_ITEM, bag=", (int)wowBag, " slot=", slotIndex,
+                 " packetSize=", packet.getSize());
+        owner_.socket->send(packet);
+    } else if (itemGuid == 0) {
+        LOG_WARNING("Use item in bag failed: missing item GUID for bag ", bagIndex, " slot ", slotIndex);
+        owner_.addSystemChatMessage("Cannot use that item right now.");
+    }
+}
+
+void SpellHandler::useItemById(uint32_t itemId) {
+    if (itemId == 0) return;
+    LOG_DEBUG("useItemById: searching for itemId=", itemId);
+    for (int i = 0; i < owner_.inventory.getBackpackSize(); i++) {
+        const auto& slot = owner_.inventory.getBackpackSlot(i);
+        if (!slot.empty() && slot.item.itemId == itemId) {
+            LOG_DEBUG("useItemById: found itemId=", itemId, " at backpack slot ", i);
+            useItemBySlot(i);
+            return;
+        }
+    }
+    for (int bag = 0; bag < owner_.inventory.NUM_BAG_SLOTS; bag++) {
+        int bagSize = owner_.inventory.getBagSize(bag);
+        for (int slot = 0; slot < bagSize; slot++) {
+            const auto& bagSlot = owner_.inventory.getBagSlot(bag, slot);
+            if (!bagSlot.empty() && bagSlot.item.itemId == itemId) {
+                LOG_DEBUG("useItemById: found itemId=", itemId, " in bag ", bag, " slot ", slot);
+                useItemInBag(bag, slot);
+                return;
+            }
+        }
+    }
+    LOG_WARNING("useItemById: itemId=", itemId, " not found in inventory");
+}
+
+const std::vector<SpellHandler::SpellBookTab>& SpellHandler::getSpellBookTabs() {
+    static size_t lastSpellCount = 0;
+    if (lastSpellCount == knownSpells_.size() && !spellBookTabsDirty_)
+        return spellBookTabs_;
+    lastSpellCount = knownSpells_.size();
+    spellBookTabsDirty_ = false;
+    spellBookTabs_.clear();
+
+    static constexpr uint32_t SKILLLINE_CATEGORY_CLASS = 7;
+
+    std::map<uint32_t, std::vector<uint32_t>> bySkillLine;
+    std::vector<uint32_t> general;
+
+    for (uint32_t spellId : knownSpells_) {
+        auto slIt = owner_.spellToSkillLine_.find(spellId);
+        if (slIt != owner_.spellToSkillLine_.end()) {
+            uint32_t skillLineId = slIt->second;
+            auto catIt = owner_.skillLineCategories_.find(skillLineId);
+            if (catIt != owner_.skillLineCategories_.end() && catIt->second == SKILLLINE_CATEGORY_CLASS) {
+                bySkillLine[skillLineId].push_back(spellId);
+                continue;
+            }
+        }
+        general.push_back(spellId);
+    }
+
+    auto byName = [this](uint32_t a, uint32_t b) {
+        return owner_.getSpellName(a) < owner_.getSpellName(b);
+    };
+
+    if (!general.empty()) {
+        std::sort(general.begin(), general.end(), byName);
+        spellBookTabs_.push_back({"General", "Interface\\Icons\\INV_Misc_Book_09", std::move(general)});
+    }
+
+    std::vector<std::pair<std::string, std::vector<uint32_t>>> named;
+    for (auto& [skillLineId, spells] : bySkillLine) {
+        auto nameIt = owner_.skillLineNames_.find(skillLineId);
+        std::string tabName = (nameIt != owner_.skillLineNames_.end()) ? nameIt->second : "Unknown";
+        std::sort(spells.begin(), spells.end(), byName);
+        named.emplace_back(std::move(tabName), std::move(spells));
+    }
+    std::sort(named.begin(), named.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    for (auto& [name, spells] : named) {
+        spellBookTabs_.push_back({std::move(name), "Interface\\Icons\\INV_Misc_Book_09", std::move(spells)});
+    }
+
+    return spellBookTabs_;
+}
+
+void SpellHandler::loadTalentDbc() {
+    if (talentDbcLoaded_) return;
+    talentDbcLoaded_ = true;
+
+    auto* am = core::Application::getInstance().getAssetManager();
+    if (!am || !am->isInitialized()) return;
+
+    // Load Talent.dbc
+    auto talentDbc = am->loadDBC("Talent.dbc");
+    if (talentDbc && talentDbc->isLoaded()) {
+        const auto* talL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("Talent") : nullptr;
+        const uint32_t tID = talL ? (*talL)["ID"] : 0;
+        const uint32_t tTabID = talL ? (*talL)["TabID"] : 1;
+        const uint32_t tRow = talL ? (*talL)["Row"] : 2;
+        const uint32_t tCol = talL ? (*talL)["Column"] : 3;
+        const uint32_t tRank0 = talL ? (*talL)["RankSpell0"] : 4;
+        const uint32_t tPrereq0 = talL ? (*talL)["PrereqTalent0"] : 9;
+        const uint32_t tPrereqR0 = talL ? (*talL)["PrereqRank0"] : 12;
+
+        uint32_t count = talentDbc->getRecordCount();
+        for (uint32_t i = 0; i < count; ++i) {
+            TalentEntry entry;
+            entry.talentId = talentDbc->getUInt32(i, tID);
+            if (entry.talentId == 0) continue;
+
+            entry.tabId = talentDbc->getUInt32(i, tTabID);
+            entry.row = static_cast<uint8_t>(talentDbc->getUInt32(i, tRow));
+            entry.column = static_cast<uint8_t>(talentDbc->getUInt32(i, tCol));
+
+            for (int r = 0; r < 5; ++r) {
+                entry.rankSpells[r] = talentDbc->getUInt32(i, tRank0 + r);
+            }
+
+            for (int p = 0; p < 3; ++p) {
+                entry.prereqTalent[p] = talentDbc->getUInt32(i, tPrereq0 + p);
+                entry.prereqRank[p] = static_cast<uint8_t>(talentDbc->getUInt32(i, tPrereqR0 + p));
+            }
+
+            entry.maxRank = 0;
+            for (int r = 0; r < 5; ++r) {
+                if (entry.rankSpells[r] != 0) {
+                    entry.maxRank = r + 1;
+                }
+            }
+
+            talentCache_[entry.talentId] = entry;
+        }
+        LOG_INFO("Loaded ", talentCache_.size(), " talents from Talent.dbc");
+    } else {
+        LOG_WARNING("Could not load Talent.dbc");
+    }
+
+    // Load TalentTab.dbc
+    auto tabDbc = am->loadDBC("TalentTab.dbc");
+    if (tabDbc && tabDbc->isLoaded()) {
+        const auto* ttL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("TalentTab") : nullptr;
+        // Cache field indices before the loop
+        const uint32_t ttIdField    = ttL ? (*ttL)["ID"]             : 0;
+        const uint32_t ttNameField  = ttL ? (*ttL)["Name"]           : 1;
+        const uint32_t ttClassField = ttL ? (*ttL)["ClassMask"]      : 20;
+        const uint32_t ttOrderField = ttL ? (*ttL)["OrderIndex"]     : 22;
+        const uint32_t ttBgField    = ttL ? (*ttL)["BackgroundFile"] : 23;
+
+        uint32_t count = tabDbc->getRecordCount();
+        for (uint32_t i = 0; i < count; ++i) {
+            TalentTabEntry entry;
+            entry.tabId = tabDbc->getUInt32(i, ttIdField);
+            if (entry.tabId == 0) continue;
+
+            entry.name = tabDbc->getString(i, ttNameField);
+            entry.classMask = tabDbc->getUInt32(i, ttClassField);
+            entry.orderIndex = static_cast<uint8_t>(tabDbc->getUInt32(i, ttOrderField));
+            entry.backgroundFile = tabDbc->getString(i, ttBgField);
+
+            talentTabCache_[entry.tabId] = entry;
+
+            if (talentTabCache_.size() <= 10) {
+                LOG_INFO("  Tab ", entry.tabId, ": ", entry.name, " (classMask=0x", std::hex, entry.classMask, std::dec, ")");
+            }
+        }
+        LOG_INFO("Loaded ", talentTabCache_.size(), " talent tabs from TalentTab.dbc");
+    } else {
+        LOG_WARNING("Could not load TalentTab.dbc");
+    }
+}
+
+void SpellHandler::updateTimers(float dt) {
+    // Tick down cast bar
+    if (casting_ && castTimeRemaining_ > 0.0f) {
+        castTimeRemaining_ -= dt;
+        if (castTimeRemaining_ < 0.0f) castTimeRemaining_ = 0.0f;
+    }
+    // Tick down spell cooldowns
+    for (auto it = spellCooldowns_.begin(); it != spellCooldowns_.end(); ) {
+        it->second -= dt;
+        if (it->second <= 0.0f) {
+            it = spellCooldowns_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    // Tick down unit cast states
+    for (auto it = unitCastStates_.begin(); it != unitCastStates_.end(); ) {
+        if (it->second.casting && it->second.timeRemaining > 0.0f) {
+            it->second.timeRemaining -= dt;
+            if (it->second.timeRemaining <= 0.0f) {
+                it->second.timeRemaining = 0.0f;
+                it->second.casting = false;
+                it = unitCastStates_.erase(it);
+                continue;
+            }
+        }
+        ++it;
+    }
+}
+
+// ============================================================
+// Packet handlers
+// ============================================================
+
+void SpellHandler::handleInitialSpells(network::Packet& packet) {
+    InitialSpellsData data;
+    if (!owner_.packetParsers_->parseInitialSpells(packet, data)) return;
+
+    knownSpells_ = {data.spellIds.begin(), data.spellIds.end()};
+
+    LOG_DEBUG("Initial spells include: 527=", knownSpells_.count(527u),
+              " 988=", knownSpells_.count(988u), " 1180=", knownSpells_.count(1180u));
+
+    // Ensure Attack (6603) and Hearthstone (8690) are always present
+    knownSpells_.insert(6603u);
+    knownSpells_.insert(8690u);
+
+    // Set initial cooldowns
+    for (const auto& cd : data.cooldowns) {
+        uint32_t effectiveMs = std::max(cd.cooldownMs, cd.categoryCooldownMs);
+        if (effectiveMs > 0) {
+            spellCooldowns_[cd.spellId] = effectiveMs / 1000.0f;
+        }
+    }
+
+    // Load saved action bar or use defaults
+    owner_.actionBar[0].type = ActionBarSlot::SPELL;
+    owner_.actionBar[0].id = 6603;  // Attack
+    owner_.actionBar[11].type = ActionBarSlot::SPELL;
+    owner_.actionBar[11].id = 8690;  // Hearthstone
+    owner_.loadCharacterConfig();
+
+    // Sync login-time cooldowns into action bar slot overlays
+    for (auto& slot : owner_.actionBar) {
+        if (slot.type == ActionBarSlot::SPELL && slot.id != 0) {
+            auto it = spellCooldowns_.find(slot.id);
+            if (it != spellCooldowns_.end() && it->second > 0.0f) {
+                slot.cooldownTotal     = it->second;
+                slot.cooldownRemaining = it->second;
+            }
+        } else if (slot.type == ActionBarSlot::ITEM && slot.id != 0) {
+            const auto* qi = owner_.getItemInfo(slot.id);
+            if (qi && qi->valid) {
+                for (const auto& sp : qi->spells) {
+                    if (sp.spellId == 0) continue;
+                    auto it = spellCooldowns_.find(sp.spellId);
+                    if (it != spellCooldowns_.end() && it->second > 0.0f) {
+                        slot.cooldownTotal     = it->second;
+                        slot.cooldownRemaining = it->second;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Pre-load skill line DBCs
+    owner_.loadSkillLineDbc();
+    owner_.loadSkillLineAbilityDbc();
+
+    LOG_INFO("Learned ", knownSpells_.size(), " spells");
+
+    if (owner_.addonEventCallback_) {
+        owner_.addonEventCallback_("SPELLS_CHANGED", {});
+        owner_.addonEventCallback_("LEARNED_SPELL_IN_TAB", {});
+    }
+}
+
+void SpellHandler::handleCastFailed(network::Packet& packet) {
+    CastFailedData data;
+    bool ok = owner_.packetParsers_ ? owner_.packetParsers_->parseCastFailed(packet, data)
+                                    : CastFailedParser::parse(packet, data);
+    if (!ok) return;
+
+    casting_ = false;
+    castIsChannel_ = false;
+    currentCastSpellId_ = 0;
+    castTimeRemaining_ = 0.0f;
+    owner_.lastInteractedGoGuid_ = 0;
+    craftQueueSpellId_ = 0;
+    craftQueueRemaining_ = 0;
+    queuedSpellId_ = 0;
+    queuedSpellTarget_ = 0;
+
+    // Stop precast sound
+    if (auto* renderer = core::Application::getInstance().getRenderer()) {
+        if (auto* ssm = renderer->getSpellSoundManager()) {
+            ssm->stopPrecast();
+        }
+    }
+
+    // Show failure reason
+    int powerType = -1;
+    auto playerEntity = owner_.entityManager.getEntity(owner_.playerGuid);
+    if (auto playerUnit = std::dynamic_pointer_cast<Unit>(playerEntity)) {
+        powerType = playerUnit->getPowerType();
+    }
+    const char* reason = getSpellCastResultString(data.result, powerType);
+    std::string errMsg = reason ? reason
+                                : ("Spell cast failed (error " + std::to_string(data.result) + ")");
+    owner_.addUIError(errMsg);
+    MessageChatData msg;
+    msg.type = ChatType::SYSTEM;
+    msg.language = ChatLanguage::UNIVERSAL;
+    msg.message = errMsg;
+    owner_.addLocalChatMessage(msg);
+
+    if (auto* renderer = core::Application::getInstance().getRenderer()) {
+        if (auto* sfx = renderer->getUiSoundManager())
+            sfx->playError();
+    }
+
+    if (owner_.addonEventCallback_) {
+        owner_.addonEventCallback_("UNIT_SPELLCAST_FAILED", {"player", std::to_string(data.spellId)});
+        owner_.addonEventCallback_("UNIT_SPELLCAST_STOP", {"player", std::to_string(data.spellId)});
+    }
+    if (owner_.spellCastFailedCallback_) owner_.spellCastFailedCallback_(data.spellId);
+}
+
+void SpellHandler::handleSpellStart(network::Packet& packet) {
+    SpellStartData data;
+    if (!owner_.packetParsers_->parseSpellStart(packet, data)) return;
+
+    // Track cast bar for any non-player caster
+    if (data.casterUnit != owner_.playerGuid && data.castTime > 0) {
+        auto& s = unitCastStates_[data.casterUnit];
+        s.casting        = true;
+        s.isChannel      = false;
+        s.spellId        = data.spellId;
+        s.timeTotal      = data.castTime / 1000.0f;
+        s.timeRemaining  = s.timeTotal;
+        s.interruptible  = owner_.isSpellInterruptible(data.spellId);
+        if (owner_.spellCastAnimCallback_) {
+            owner_.spellCastAnimCallback_(data.casterUnit, true, false);
+        }
+    }
+
+    // Player's own cast
+    if (data.casterUnit == owner_.playerGuid && data.castTime > 0) {
+        // Cancel pending GO retries
+        owner_.pendingGameObjectLootRetries_.erase(
+            std::remove_if(owner_.pendingGameObjectLootRetries_.begin(), owner_.pendingGameObjectLootRetries_.end(),
+                [](const GameHandler::PendingLootRetry&) { return true; }),
+            owner_.pendingGameObjectLootRetries_.end());
+
+        casting_ = true;
+        castIsChannel_ = false;
+        currentCastSpellId_ = data.spellId;
+        castTimeTotal_ = data.castTime / 1000.0f;
+        castTimeRemaining_ = castTimeTotal_;
+        if (owner_.addonEventCallback_) owner_.addonEventCallback_("CURRENT_SPELL_CAST_CHANGED", {});
+
+        // Play precast sound — skip profession/tradeskill spells
+        if (!owner_.isProfessionSpell(data.spellId)) {
+            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* ssm = renderer->getSpellSoundManager()) {
+                    owner_.loadSpellNameCache();
+                    auto it = owner_.spellNameCache_.find(data.spellId);
+                    auto school = (it != owner_.spellNameCache_.end() && it->second.schoolMask)
+                        ? schoolMaskToMagicSchool(it->second.schoolMask)
+                        : audio::SpellSoundManager::MagicSchool::ARCANE;
+                    ssm->playPrecast(school, audio::SpellSoundManager::SpellPower::MEDIUM);
+                }
+            }
+        }
+
+        if (owner_.spellCastAnimCallback_) {
+            owner_.spellCastAnimCallback_(owner_.playerGuid, true, false);
+        }
+
+        // Hearthstone: pre-load terrain at bind point
+        const bool isHearthstone = (data.spellId == 6948 || data.spellId == 8690);
+        if (isHearthstone && owner_.hasHomeBind_ && owner_.hearthstonePreloadCallback_) {
+            owner_.hearthstonePreloadCallback_(owner_.homeBindMapId_, owner_.homeBindPos_.x, owner_.homeBindPos_.y, owner_.homeBindPos_.z);
+        }
+    }
+
+    // Fire UNIT_SPELLCAST_START
+    if (owner_.addonEventCallback_) {
+        std::string unitId;
+        if (data.casterUnit == owner_.playerGuid) unitId = "player";
+        else if (data.casterUnit == owner_.targetGuid) unitId = "target";
+        else if (data.casterUnit == owner_.focusGuid) unitId = "focus";
+        else if (data.casterUnit == owner_.petGuid_) unitId = "pet";
+        if (!unitId.empty())
+            owner_.addonEventCallback_("UNIT_SPELLCAST_START", {unitId, std::to_string(data.spellId)});
+    }
+}
+
+void SpellHandler::handleSpellGo(network::Packet& packet) {
+    SpellGoData data;
+    if (!owner_.packetParsers_->parseSpellGo(packet, data)) return;
+
+    if (data.casterUnit == owner_.playerGuid) {
+        // Play cast-complete sound
+        if (!owner_.isProfessionSpell(data.spellId)) {
+            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* ssm = renderer->getSpellSoundManager()) {
+                    owner_.loadSpellNameCache();
+                    auto it = owner_.spellNameCache_.find(data.spellId);
+                    auto school = (it != owner_.spellNameCache_.end() && it->second.schoolMask)
+                        ? schoolMaskToMagicSchool(it->second.schoolMask)
+                        : audio::SpellSoundManager::MagicSchool::ARCANE;
+                    ssm->playCast(school);
+                }
+            }
+        }
+
+        // Instant melee abilities → trigger attack animation
+        uint32_t sid = data.spellId;
+        bool isMeleeAbility = false;
+        if (!owner_.isProfessionSpell(sid)) {
+            owner_.loadSpellNameCache();
+            auto cacheIt = owner_.spellNameCache_.find(sid);
+            if (cacheIt != owner_.spellNameCache_.end() && cacheIt->second.schoolMask == 1) {
+                isMeleeAbility = (currentCastSpellId_ != sid);
+            }
+        }
+        if (isMeleeAbility) {
+            if (owner_.meleeSwingCallback_) owner_.meleeSwingCallback_();
+            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* csm = renderer->getCombatSoundManager()) {
+                    csm->playWeaponSwing(audio::CombatSoundManager::WeaponSize::MEDIUM, false);
+                    csm->playImpact(audio::CombatSoundManager::WeaponSize::MEDIUM,
+                                    audio::CombatSoundManager::ImpactType::FLESH, false);
+                }
+            }
+        }
+
+        const bool wasInTimedCast = casting_ && (data.spellId == currentCastSpellId_);
+
+        casting_ = false;
+        castIsChannel_ = false;
+        currentCastSpellId_ = 0;
+        castTimeRemaining_ = 0.0f;
+
+        // Gather node looting
+        if (wasInTimedCast && owner_.lastInteractedGoGuid_ != 0) {
+            owner_.lootTarget(owner_.lastInteractedGoGuid_);
+            owner_.lastInteractedGoGuid_ = 0;
+        }
+
+        if (owner_.spellCastAnimCallback_) {
+            owner_.spellCastAnimCallback_(owner_.playerGuid, false, false);
+        }
+
+        if (owner_.addonEventCallback_)
+            owner_.addonEventCallback_("UNIT_SPELLCAST_STOP", {"player", std::to_string(data.spellId)});
+
+        // Spell queue: fire the next queued spell
+        if (queuedSpellId_ != 0) {
+            uint32_t nextSpell  = queuedSpellId_;
+            uint64_t nextTarget = queuedSpellTarget_;
+            queuedSpellId_     = 0;
+            queuedSpellTarget_ = 0;
+            LOG_INFO("Spell queue: firing queued spellId=", nextSpell);
+            castSpell(nextSpell, nextTarget);
+        }
+    } else {
+        if (owner_.spellCastAnimCallback_) {
+            owner_.spellCastAnimCallback_(data.casterUnit, false, false);
+        }
+        bool targetsPlayer = false;
+        for (const auto& tgt : data.hitTargets) {
+            if (tgt == owner_.playerGuid) { targetsPlayer = true; break; }
+        }
+        if (targetsPlayer) {
+            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* ssm = renderer->getSpellSoundManager()) {
+                    owner_.loadSpellNameCache();
+                    auto it = owner_.spellNameCache_.find(data.spellId);
+                    auto school = (it != owner_.spellNameCache_.end() && it->second.schoolMask)
+                        ? schoolMaskToMagicSchool(it->second.schoolMask)
+                        : audio::SpellSoundManager::MagicSchool::ARCANE;
+                    ssm->playCast(school);
+                }
+            }
+        }
+    }
+
+    // Clear unit cast bar
+    unitCastStates_.erase(data.casterUnit);
+
+    // Miss combat text
+    if (!data.missTargets.empty()) {
+        const uint64_t spellCasterGuid = data.casterUnit != 0 ? data.casterUnit : data.casterGuid;
+        const bool playerIsCaster = (spellCasterGuid == owner_.playerGuid);
+
+        for (const auto& m : data.missTargets) {
+            if (!playerIsCaster && m.targetGuid != owner_.playerGuid) {
+                continue;
+            }
+            CombatTextEntry::Type ct = combatTextTypeFromSpellMissInfo(m.missType);
+            owner_.addCombatText(ct, 0, data.spellId, playerIsCaster, 0, spellCasterGuid, m.targetGuid);
+        }
+    }
+
+    // Impact sound
+    bool playerIsHit = false;
+    bool playerHitEnemy = false;
+    for (const auto& tgt : data.hitTargets) {
+        if (tgt == owner_.playerGuid) { playerIsHit = true; }
+        if (data.casterUnit == owner_.playerGuid && tgt != owner_.playerGuid && tgt != 0) { playerHitEnemy = true; }
+    }
+
+    // Fire UNIT_SPELLCAST_SUCCEEDED
+    if (owner_.addonEventCallback_) {
+        std::string unitId;
+        if (data.casterUnit == owner_.playerGuid) unitId = "player";
+        else if (data.casterUnit == owner_.targetGuid) unitId = "target";
+        else if (data.casterUnit == owner_.focusGuid) unitId = "focus";
+        else if (data.casterUnit == owner_.petGuid_) unitId = "pet";
+        if (!unitId.empty())
+            owner_.addonEventCallback_("UNIT_SPELLCAST_SUCCEEDED", {unitId, std::to_string(data.spellId)});
+    }
+
+    if (playerIsHit || playerHitEnemy) {
+        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* ssm = renderer->getSpellSoundManager()) {
+                owner_.loadSpellNameCache();
+                auto it = owner_.spellNameCache_.find(data.spellId);
+                auto school = (it != owner_.spellNameCache_.end() && it->second.schoolMask)
+                    ? schoolMaskToMagicSchool(it->second.schoolMask)
+                    : audio::SpellSoundManager::MagicSchool::ARCANE;
+                ssm->playImpact(school, audio::SpellSoundManager::SpellPower::MEDIUM);
+            }
+        }
+    }
+}
+
+void SpellHandler::handleSpellCooldown(network::Packet& packet) {
+    const bool isClassicFormat = isClassicLikeExpansion();
+
+    if (packet.getSize() - packet.getReadPos() < 8) return;
+    /*guid*/ packet.readUInt64();
+
+    if (!isClassicFormat) {
+        if (packet.getSize() - packet.getReadPos() < 1) return;
+        /*flags*/ packet.readUInt8();
+    }
+
+    const size_t entrySize = isClassicFormat ? 12u : 8u;
+    while (packet.getSize() - packet.getReadPos() >= entrySize) {
+        uint32_t spellId    = packet.readUInt32();
+        uint32_t cdItemId   = 0;
+        if (isClassicFormat) cdItemId = packet.readUInt32();
+        uint32_t cooldownMs = packet.readUInt32();
+
+        float seconds = cooldownMs / 1000.0f;
+
+        // spellId=0 is the Global Cooldown marker
+        if (spellId == 0 && cooldownMs > 0 && cooldownMs <= 2000) {
+            gcdTotal_ = seconds;
+            gcdStartedAt_ = std::chrono::steady_clock::now();
+            continue;
+        }
+
+        auto it = spellCooldowns_.find(spellId);
+        if (it == spellCooldowns_.end()) {
+            spellCooldowns_[spellId] = seconds;
+        } else {
+            it->second = mergeCooldownSeconds(it->second, seconds);
+        }
+        for (auto& slot : owner_.actionBar) {
+            bool match = (slot.type == ActionBarSlot::SPELL && slot.id == spellId)
+                      || (cdItemId != 0 && slot.type == ActionBarSlot::ITEM && slot.id == cdItemId);
+            if (match) {
+                float prevRemaining = slot.cooldownRemaining;
+                float merged = mergeCooldownSeconds(slot.cooldownRemaining, seconds);
+                slot.cooldownRemaining = merged;
+                if (slot.cooldownTotal <= 0.0f || prevRemaining <= 0.0f) {
+                    slot.cooldownTotal = seconds;
+                } else {
+                    slot.cooldownTotal = std::max(slot.cooldownTotal, merged);
+                }
+            }
+        }
+    }
+    LOG_DEBUG("handleSpellCooldown: parsed for ",
+              isClassicFormat ? "Classic" : "TBC/WotLK", " format");
+    if (owner_.addonEventCallback_) {
+        owner_.addonEventCallback_("SPELL_UPDATE_COOLDOWN", {});
+        owner_.addonEventCallback_("ACTIONBAR_UPDATE_COOLDOWN", {});
+    }
+}
+
+void SpellHandler::handleCooldownEvent(network::Packet& packet) {
+    if (packet.getSize() - packet.getReadPos() < 4) return;
+    uint32_t spellId = packet.readUInt32();
+    if (packet.getSize() - packet.getReadPos() >= 8)
+        packet.readUInt64();
+    spellCooldowns_.erase(spellId);
+    for (auto& slot : owner_.actionBar) {
+        if (slot.type == ActionBarSlot::SPELL && slot.id == spellId) {
+            slot.cooldownRemaining = 0.0f;
+        }
+    }
+    if (owner_.addonEventCallback_) {
+        owner_.addonEventCallback_("SPELL_UPDATE_COOLDOWN", {});
+        owner_.addonEventCallback_("ACTIONBAR_UPDATE_COOLDOWN", {});
+    }
+}
+
+void SpellHandler::handleAuraUpdate(network::Packet& packet, bool isAll) {
+    AuraUpdateData data;
+    if (!owner_.packetParsers_->parseAuraUpdate(packet, data, isAll)) return;
+
+    std::vector<AuraSlot>* auraList = nullptr;
+    if (data.guid == owner_.playerGuid) {
+        auraList = &playerAuras_;
+    } else if (data.guid == owner_.targetGuid) {
+        auraList = &targetAuras_;
+    }
+    if (data.guid != 0 && data.guid != owner_.playerGuid && data.guid != owner_.targetGuid) {
+        auraList = &unitAurasCache_[data.guid];
+    }
+
+    if (auraList) {
+        if (isAll) {
+            auraList->clear();
+        }
+        uint64_t nowMs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+        for (auto [slot, aura] : data.updates) {
+            if (aura.durationMs >= 0) {
+                aura.receivedAtMs = nowMs;
+            }
+            while (auraList->size() <= slot) {
+                auraList->push_back(AuraSlot{});
+            }
+            (*auraList)[slot] = aura;
+        }
+
+        if (owner_.addonEventCallback_) {
+            std::string unitId;
+            if (data.guid == owner_.playerGuid) unitId = "player";
+            else if (data.guid == owner_.targetGuid) unitId = "target";
+            else if (data.guid == owner_.focusGuid) unitId = "focus";
+            else if (data.guid == owner_.petGuid_) unitId = "pet";
+            if (!unitId.empty())
+                owner_.addonEventCallback_("UNIT_AURA", {unitId});
+        }
+
+        // Mount aura detection
+        if (data.guid == owner_.playerGuid && owner_.currentMountDisplayId_ != 0 && owner_.mountAuraSpellId_ == 0) {
+            for (const auto& [slot, aura] : data.updates) {
+                if (!aura.isEmpty() && aura.maxDurationMs < 0 && aura.casterGuid == owner_.playerGuid) {
+                    owner_.mountAuraSpellId_ = aura.spellId;
+                    LOG_INFO("Mount aura detected from aura update: spellId=", aura.spellId);
+                }
+            }
+        }
+    }
+}
+
+void SpellHandler::handleLearnedSpell(network::Packet& packet) {
+    const bool classicSpellId = isClassicLikeExpansion();
+    const size_t minSz = classicSpellId ? 2u : 4u;
+    if (packet.getSize() - packet.getReadPos() < minSz) return;
+    uint32_t spellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
+
+    const bool alreadyKnown = knownSpells_.count(spellId) > 0;
+    knownSpells_.insert(spellId);
+    LOG_INFO("Learned spell: ", spellId, alreadyKnown ? " (already known, skipping chat)" : "");
+
+    // Check if this spell corresponds to a talent rank
+    bool isTalentSpell = false;
+    for (const auto& [talentId, talent] : talentCache_) {
+        for (int rank = 0; rank < 5; ++rank) {
+            if (talent.rankSpells[rank] == spellId) {
+                uint8_t newRank = rank + 1;
+                learnedTalents_[activeTalentSpec_][talentId] = newRank;
+                LOG_INFO("Talent learned: id=", talentId, " rank=", (int)newRank,
+                         " (spell ", spellId, ") in spec ", (int)activeTalentSpec_);
+                isTalentSpell = true;
+                if (owner_.addonEventCallback_) {
+                    owner_.addonEventCallback_("CHARACTER_POINTS_CHANGED", {});
+                    owner_.addonEventCallback_("PLAYER_TALENT_UPDATE", {});
+                }
+                break;
+            }
+        }
+        if (isTalentSpell) break;
+    }
+
+    if (!alreadyKnown && owner_.addonEventCallback_) {
+        owner_.addonEventCallback_("LEARNED_SPELL_IN_TAB", {std::to_string(spellId)});
+        owner_.addonEventCallback_("SPELLS_CHANGED", {});
+    }
+
+    if (isTalentSpell) return;
+
+    if (!alreadyKnown) {
+        const std::string& name = owner_.getSpellName(spellId);
+        if (!name.empty()) {
+            owner_.addSystemChatMessage("You have learned a new spell: " + name + ".");
+        } else {
+            owner_.addSystemChatMessage("You have learned a new spell.");
+        }
+    }
+}
+
+void SpellHandler::handleRemovedSpell(network::Packet& packet) {
+    const bool classicSpellId = isClassicLikeExpansion();
+    const size_t minSz = classicSpellId ? 2u : 4u;
+    if (packet.getSize() - packet.getReadPos() < minSz) return;
+    uint32_t spellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
+    knownSpells_.erase(spellId);
+    LOG_INFO("Removed spell: ", spellId);
+    if (owner_.addonEventCallback_) owner_.addonEventCallback_("SPELLS_CHANGED", {});
+
+    const std::string& name = owner_.getSpellName(spellId);
+    if (!name.empty())
+        owner_.addSystemChatMessage("You have unlearned: " + name + ".");
+    else
+        owner_.addSystemChatMessage("A spell has been removed.");
+
+    bool barChanged = false;
+    for (auto& slot : owner_.actionBar) {
+        if (slot.type == ActionBarSlot::SPELL && slot.id == spellId) {
+            slot = ActionBarSlot{};
+            barChanged = true;
+        }
+    }
+    if (barChanged) owner_.saveCharacterConfig();
+}
+
+void SpellHandler::handleSupercededSpell(network::Packet& packet) {
+    const bool classicSpellId = isClassicLikeExpansion();
+    const size_t minSz = classicSpellId ? 4u : 8u;
+    if (packet.getSize() - packet.getReadPos() < minSz) return;
+    uint32_t oldSpellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
+    uint32_t newSpellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
+
+    knownSpells_.erase(oldSpellId);
+
+    const bool newSpellAlreadyAnnounced = knownSpells_.count(newSpellId) > 0;
+
+    knownSpells_.insert(newSpellId);
+
+    LOG_INFO("Spell superceded: ", oldSpellId, " -> ", newSpellId);
+
+    bool barChanged = false;
+    for (auto& slot : owner_.actionBar) {
+        if (slot.type == ActionBarSlot::SPELL && slot.id == oldSpellId) {
+            slot.id = newSpellId;
+            slot.cooldownRemaining = 0.0f;
+            slot.cooldownTotal = 0.0f;
+            barChanged = true;
+            LOG_DEBUG("Action bar slot upgraded: spell ", oldSpellId, " -> ", newSpellId);
+        }
+    }
+    if (barChanged) {
+        owner_.saveCharacterConfig();
+        if (owner_.addonEventCallback_) owner_.addonEventCallback_("ACTIONBAR_SLOT_CHANGED", {});
+    }
+
+    if (!newSpellAlreadyAnnounced) {
+        const std::string& newName = owner_.getSpellName(newSpellId);
+        if (!newName.empty()) {
+            owner_.addSystemChatMessage("Upgraded to " + newName);
+        }
+    }
+}
+
+void SpellHandler::handleUnlearnSpells(network::Packet& packet) {
+    if (packet.getSize() - packet.getReadPos() < 4) return;
+    uint32_t spellCount = packet.readUInt32();
+    LOG_INFO("Unlearning ", spellCount, " spells");
+
+    bool barChanged = false;
+    for (uint32_t i = 0; i < spellCount && packet.getSize() - packet.getReadPos() >= 4; ++i) {
+        uint32_t spellId = packet.readUInt32();
+        knownSpells_.erase(spellId);
+        LOG_INFO("  Unlearned spell: ", spellId);
+        for (auto& slot : owner_.actionBar) {
+            if (slot.type == ActionBarSlot::SPELL && slot.id == spellId) {
+                slot = ActionBarSlot{};
+                barChanged = true;
+            }
+        }
+    }
+    if (barChanged) owner_.saveCharacterConfig();
+
+    if (spellCount > 0) {
+        owner_.addSystemChatMessage("Unlearned " + std::to_string(spellCount) + " spells");
+    }
+}
+
+void SpellHandler::handleTalentsInfo(network::Packet& packet) {
+    if (packet.getSize() - packet.getReadPos() < 1) return;
+    uint8_t talentType = packet.readUInt8();
+    if (talentType != 0) {
+        return;
+    }
+    if (packet.getSize() - packet.getReadPos() < 6) {
+        LOG_WARNING("handleTalentsInfo: packet too short for header");
+        return;
+    }
+
+    uint32_t unspentTalents    = packet.readUInt32();
+    uint8_t  talentGroupCount  = packet.readUInt8();
+    uint8_t  activeTalentGroup = packet.readUInt8();
+    if (activeTalentGroup > 1) activeTalentGroup = 0;
+
+    loadTalentDbc();
+
+    activeTalentSpec_ = activeTalentGroup;
+
+    for (uint8_t g = 0; g < talentGroupCount && g < 2; ++g) {
+        if (packet.getSize() - packet.getReadPos() < 1) break;
+        uint8_t talentCount = packet.readUInt8();
+        learnedTalents_[g].clear();
+        for (uint8_t t = 0; t < talentCount; ++t) {
+            if (packet.getSize() - packet.getReadPos() < 5) break;
+            uint32_t talentId = packet.readUInt32();
+            uint8_t  rank     = packet.readUInt8();
+            learnedTalents_[g][talentId] = rank + 1u;
+        }
+        learnedGlyphs_[g].fill(0);
+        if (packet.getSize() - packet.getReadPos() < 1) break;
+        uint8_t glyphCount = packet.readUInt8();
+        for (uint8_t gl = 0; gl < glyphCount; ++gl) {
+            if (packet.getSize() - packet.getReadPos() < 2) break;
+            uint16_t glyphId = packet.readUInt16();
+            if (gl < MAX_GLYPH_SLOTS) learnedGlyphs_[g][gl] = glyphId;
+        }
+    }
+
+    unspentTalentPoints_[activeTalentGroup] =
+        static_cast<uint8_t>(unspentTalents > 255 ? 255 : unspentTalents);
+
+    LOG_INFO("handleTalentsInfo: unspent=", unspentTalents,
+             " groups=", (int)talentGroupCount, " active=", (int)activeTalentGroup,
+             " learned=", learnedTalents_[activeTalentGroup].size());
+
+    if (owner_.addonEventCallback_) {
+        owner_.addonEventCallback_("CHARACTER_POINTS_CHANGED", {});
+        owner_.addonEventCallback_("ACTIVE_TALENT_GROUP_CHANGED", {});
+        owner_.addonEventCallback_("PLAYER_TALENT_UPDATE", {});
+    }
+
+    if (!talentsInitialized_) {
+        talentsInitialized_ = true;
+        if (unspentTalents > 0) {
+            owner_.addSystemChatMessage("You have " + std::to_string(unspentTalents)
+                + " unspent talent point" + (unspentTalents != 1 ? "s" : "") + ".");
+        }
+    }
+}
+
+void SpellHandler::handleAchievementEarned(network::Packet& packet) {
+    size_t remaining = packet.getSize() - packet.getReadPos();
+    if (remaining < 16) return;
+
+    uint64_t guid          = packet.readUInt64();
+    uint32_t achievementId = packet.readUInt32();
+    uint32_t earnDate      = packet.readUInt32();
+
+    owner_.loadAchievementNameCache();
+    auto nameIt = owner_.achievementNameCache_.find(achievementId);
+    const std::string& achName = (nameIt != owner_.achievementNameCache_.end())
+        ? nameIt->second : std::string();
+
+    bool isSelf = (guid == owner_.playerGuid);
+    if (isSelf) {
+        char buf[256];
+        if (!achName.empty()) {
+            std::snprintf(buf, sizeof(buf), "Achievement earned: %s", achName.c_str());
+        } else {
+            std::snprintf(buf, sizeof(buf), "Achievement earned! (ID %u)", achievementId);
+        }
+        owner_.addSystemChatMessage(buf);
+
+        owner_.earnedAchievements_.insert(achievementId);
+        owner_.achievementDates_[achievementId] = earnDate;
+        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* sfx = renderer->getUiSoundManager())
+                sfx->playAchievementAlert();
+        }
+        if (owner_.achievementEarnedCallback_) {
+            owner_.achievementEarnedCallback_(achievementId, achName);
+        }
+    } else {
+        std::string senderName;
+        auto entity = owner_.entityManager.getEntity(guid);
+        if (auto* unit = dynamic_cast<Unit*>(entity.get())) {
+            senderName = unit->getName();
+        }
+        if (senderName.empty()) {
+            auto nit = owner_.playerNameCache.find(guid);
+            if (nit != owner_.playerNameCache.end())
+                senderName = nit->second;
+        }
+        if (senderName.empty()) {
+            char tmp[32];
+            std::snprintf(tmp, sizeof(tmp), "0x%llX",
+                          static_cast<unsigned long long>(guid));
+            senderName = tmp;
+        }
+        char buf[256];
+        if (!achName.empty()) {
+            std::snprintf(buf, sizeof(buf), "%s has earned the achievement: %s",
+                          senderName.c_str(), achName.c_str());
+        } else {
+            std::snprintf(buf, sizeof(buf), "%s has earned an achievement! (ID %u)",
+                          senderName.c_str(), achievementId);
+        }
+        owner_.addSystemChatMessage(buf);
+    }
+
+    LOG_INFO("SMSG_ACHIEVEMENT_EARNED: guid=0x", std::hex, guid, std::dec,
+             " achievementId=", achievementId, " self=", isSelf,
+             achName.empty() ? "" : " name=", achName);
+    if (owner_.addonEventCallback_)
+        owner_.addonEventCallback_("ACHIEVEMENT_EARNED", {std::to_string(achievementId)});
+}
+
+// SMSG_EQUIPMENT_SET_LIST — moved to InventoryHandler
+
+// ============================================================
+// Pet spell methods (moved from GameHandler)
+// ============================================================
+
+void SpellHandler::handlePetSpells(network::Packet& packet) {
+    const size_t remaining = packet.getRemainingSize();
+    if (remaining < 8) {
+        owner_.petGuid_ = 0;
+        owner_.petSpellList_.clear();
+        owner_.petAutocastSpells_.clear();
+        memset(owner_.petActionSlots_, 0, sizeof(owner_.petActionSlots_));
+        LOG_INFO("SMSG_PET_SPELLS: pet cleared");
+        owner_.fireAddonEvent("UNIT_PET", {"player"});
+        return;
+    }
+
+    owner_.petGuid_ = packet.readUInt64();
+    if (owner_.petGuid_ == 0) {
+        owner_.petSpellList_.clear();
+        owner_.petAutocastSpells_.clear();
+        memset(owner_.petActionSlots_, 0, sizeof(owner_.petActionSlots_));
+        LOG_INFO("SMSG_PET_SPELLS: pet cleared (guid=0)");
+        owner_.fireAddonEvent("UNIT_PET", {"player"});
+        return;
+    }
+
+    if (!packet.hasRemaining(4)) goto done;
+    /*uint16_t dur =*/ packet.readUInt16();
+    /*uint16_t timer =*/ packet.readUInt16();
+
+    if (!packet.hasRemaining(2)) goto done;
+    owner_.petReact_   = packet.readUInt8();
+    owner_.petCommand_ = packet.readUInt8();
+
+    if (!packet.hasRemaining(GameHandler::PET_ACTION_BAR_SLOTS * 4u)) goto done;
+    for (int i = 0; i < GameHandler::PET_ACTION_BAR_SLOTS; ++i) {
+        owner_.petActionSlots_[i] = packet.readUInt32();
+    }
+
+    if (!packet.hasRemaining(1)) goto done;
+    {
+        uint8_t spellCount = packet.readUInt8();
+        owner_.petSpellList_.clear();
+        owner_.petAutocastSpells_.clear();
+        for (uint8_t i = 0; i < spellCount; ++i) {
+            if (!packet.hasRemaining(6)) break;
+            uint32_t spellId = packet.readUInt32();
+            uint16_t activeFlags = packet.readUInt16();
+            owner_.petSpellList_.push_back(spellId);
+            if (activeFlags & 0x0001) {
+                owner_.petAutocastSpells_.insert(spellId);
+            }
+        }
+    }
+
+done:
+    LOG_INFO("SMSG_PET_SPELLS: petGuid=0x", std::hex, owner_.petGuid_, std::dec,
+             " react=", static_cast<int>(owner_.petReact_), " command=", static_cast<int>(owner_.petCommand_),
+             " spells=", owner_.petSpellList_.size());
+        owner_.fireAddonEvent("UNIT_PET", {"player"});
+        owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+}
+
+void SpellHandler::sendPetAction(uint32_t action, uint64_t targetGuid) {
+    if (!owner_.hasPet() || owner_.state != WorldState::IN_WORLD || !owner_.socket) return;
+    auto pkt = PetActionPacket::build(owner_.petGuid_, action, targetGuid);
+    owner_.socket->send(pkt);
+    LOG_DEBUG("sendPetAction: petGuid=0x", std::hex, owner_.petGuid_,
+              " action=0x", action, " target=0x", targetGuid, std::dec);
+}
+
+void SpellHandler::dismissPet() {
+    if (owner_.petGuid_ == 0 || owner_.state != WorldState::IN_WORLD || !owner_.socket) return;
+    auto packet = PetActionPacket::build(owner_.petGuid_, 0x07000000);
+    owner_.socket->send(packet);
+}
+
+void SpellHandler::togglePetSpellAutocast(uint32_t spellId) {
+    if (owner_.petGuid_ == 0 || spellId == 0 || owner_.state != WorldState::IN_WORLD || !owner_.socket) return;
+    bool currentlyOn = owner_.petAutocastSpells_.count(spellId) != 0;
+    uint8_t newState = currentlyOn ? 0 : 1;
+    network::Packet pkt(wireOpcode(Opcode::CMSG_PET_SPELL_AUTOCAST));
+    pkt.writeUInt64(owner_.petGuid_);
+    pkt.writeUInt32(spellId);
+    pkt.writeUInt8(newState);
+    owner_.socket->send(pkt);
+    if (newState)
+        owner_.petAutocastSpells_.insert(spellId);
+    else
+        owner_.petAutocastSpells_.erase(spellId);
+    LOG_DEBUG("togglePetSpellAutocast: spellId=", spellId, " autocast=", static_cast<int>(newState));
+}
+
+void SpellHandler::renamePet(const std::string& newName) {
+    if (owner_.petGuid_ == 0 || owner_.state != WorldState::IN_WORLD || !owner_.socket) return;
+    if (newName.empty() || newName.size() > 12) return;
+    auto packet = PetRenamePacket::build(owner_.petGuid_, newName, 0);
+    owner_.socket->send(packet);
+    LOG_INFO("Sent CMSG_PET_RENAME: petGuid=0x", std::hex, owner_.petGuid_, std::dec, " name='", newName, "'");
+}
+
+void SpellHandler::handleListStabledPets(network::Packet& packet) {
+    constexpr size_t kMinHeader = 8 + 1 + 1;
+    if (!packet.hasRemaining(kMinHeader)) {
+        LOG_WARNING("MSG_LIST_STABLED_PETS: packet too short (", packet.getSize(), ")");
+        return;
+    }
+    owner_.stableMasterGuid_ = packet.readUInt64();
+    uint8_t petCount  = packet.readUInt8();
+    owner_.stableNumSlots_   = packet.readUInt8();
+
+    owner_.stabledPets_.clear();
+    owner_.stabledPets_.reserve(petCount);
+
+    for (uint8_t i = 0; i < petCount; ++i) {
+        if (!packet.hasRemaining(4) + 4 + 4) break;
+        GameHandler::StabledPet pet;
+        pet.petNumber = packet.readUInt32();
+        pet.entry     = packet.readUInt32();
+        pet.level     = packet.readUInt32();
+        pet.name      = packet.readString();
+        if (!packet.hasRemaining(4) + 1) break;
+        pet.displayId = packet.readUInt32();
+        pet.isActive  = (packet.readUInt8() != 0);
+        owner_.stabledPets_.push_back(std::move(pet));
+    }
+
+    owner_.stableWindowOpen_ = true;
+    LOG_INFO("MSG_LIST_STABLED_PETS: stableMasterGuid=0x", std::hex, owner_.stableMasterGuid_, std::dec,
+             " petCount=", static_cast<int>(petCount), " numSlots=", static_cast<int>(owner_.stableNumSlots_));
+    for (const auto& p : owner_.stabledPets_) {
+        LOG_DEBUG("  Pet: number=", p.petNumber, " entry=", p.entry,
+                  " level=", p.level, " name='", p.name, "' displayId=", p.displayId,
+                  " active=", p.isActive);
+    }
+}
+
+// ============================================================
+// Cast state methods (moved from GameHandler)
+// ============================================================
+
+void SpellHandler::stopCasting() {
+    if (!owner_.isInWorld()) {
+        LOG_WARNING("Cannot stop casting: not in world or not connected");
+        return;
+    }
+
+    if (!casting_) {
+        return;
+    }
+
+    if (owner_.pendingGameObjectInteractGuid_ == 0 && currentCastSpellId_ != 0) {
+        auto packet = CancelCastPacket::build(currentCastSpellId_);
+        owner_.socket->send(packet);
+    }
+
+    casting_ = false;
+    castIsChannel_ = false;
+    currentCastSpellId_ = 0;
+    castTimeRemaining_ = 0.0f;
+    castTimeTotal_ = 0.0f;
+    owner_.pendingGameObjectInteractGuid_ = 0;
+    owner_.lastInteractedGoGuid_ = 0;
+    craftQueueSpellId_ = 0;
+    craftQueueRemaining_ = 0;
+    queuedSpellId_ = 0;
+    queuedSpellTarget_ = 0;
+
+    LOG_INFO("Cancelled spell cast");
+}
+
+void SpellHandler::resetCastState() {
+    casting_ = false;
+    castIsChannel_ = false;
+    currentCastSpellId_ = 0;
+    castTimeRemaining_ = 0.0f;
+    craftQueueSpellId_ = 0;
+    craftQueueRemaining_ = 0;
+    queuedSpellId_ = 0;
+    queuedSpellTarget_ = 0;
+    owner_.pendingGameObjectInteractGuid_ = 0;
+    owner_.lastInteractedGoGuid_ = 0;
+}
+
+void SpellHandler::resetTalentState() {
+    talentsInitialized_ = false;
+    learnedTalents_[0].clear();
+    learnedTalents_[1].clear();
+    learnedGlyphs_[0].fill(0);
+    learnedGlyphs_[1].fill(0);
+    unspentTalentPoints_[0] = 0;
+    unspentTalentPoints_[1] = 0;
+    activeTalentSpec_ = 0;
+}
+
+void SpellHandler::clearUnitCaches() {
+    unitCastStates_.clear();
+    unitAurasCache_.clear();
+}
+
+// ============================================================
+// Aura duration update (moved from GameHandler)
+// ============================================================
+
+void SpellHandler::handleUpdateAuraDuration(uint8_t slot, uint32_t durationMs) {
+    if (slot >= playerAuras_.size()) return;
+    if (playerAuras_[slot].isEmpty()) return;
+    playerAuras_[slot].durationMs = static_cast<int32_t>(durationMs);
+    playerAuras_[slot].receivedAtMs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+// ============================================================
+// Spell DBC / Cache methods (moved from GameHandler)
+// ============================================================
+
+static const std::string SPELL_EMPTY_STRING;
+
+void SpellHandler::loadSpellNameCache() const {
+    if (owner_.spellNameCacheLoaded_) return;
+    owner_.spellNameCacheLoaded_ = true;
+
+    auto* am = core::Application::getInstance().getAssetManager();
+    if (!am || !am->isInitialized()) return;
+
+    auto dbc = am->loadDBC("Spell.dbc");
+    if (!dbc || !dbc->isLoaded()) {
+        LOG_WARNING("Trainer: Could not load Spell.dbc for spell names");
+        return;
+    }
+
+    if (dbc->getFieldCount() < 148) {
+        LOG_WARNING("Trainer: Spell.dbc has too few fields (", dbc->getFieldCount(), ")");
+        return;
+    }
+
+    const auto* spellL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("Spell") : nullptr;
+
+    uint32_t schoolMaskField = 0, schoolEnumField = 0;
+    bool hasSchoolMask = false, hasSchoolEnum = false;
+    if (spellL) {
+        uint32_t f = spellL->field("SchoolMask");
+        if (f != 0xFFFFFFFF && f < dbc->getFieldCount()) { schoolMaskField = f; hasSchoolMask = true; }
+        f = spellL->field("SchoolEnum");
+        if (f != 0xFFFFFFFF && f < dbc->getFieldCount()) { schoolEnumField = f; hasSchoolEnum = true; }
+    }
+
+    uint32_t dispelField = 0xFFFFFFFF;
+    bool hasDispelField = false;
+    if (spellL) {
+        uint32_t f = spellL->field("DispelType");
+        if (f != 0xFFFFFFFF && f < dbc->getFieldCount()) { dispelField = f; hasDispelField = true; }
+    }
+
+    uint32_t attrExField = 0xFFFFFFFF;
+    bool hasAttrExField = false;
+    if (spellL) {
+        uint32_t f = spellL->field("AttributesEx");
+        if (f != 0xFFFFFFFF && f < dbc->getFieldCount()) { attrExField = f; hasAttrExField = true; }
+    }
+
+    uint32_t tooltipField = 0xFFFFFFFF;
+    if (spellL) {
+        uint32_t f = spellL->field("Tooltip");
+        if (f != 0xFFFFFFFF && f < dbc->getFieldCount()) tooltipField = f;
+    }
+
+    // Cache field indices before the loop to avoid repeated layout lookups
+    const uint32_t idField   = spellL ? (*spellL)["ID"]   : 0;
+    const uint32_t nameField = spellL ? (*spellL)["Name"] : 136;
+    const uint32_t rankField = spellL ? (*spellL)["Rank"] : 153;
+    const uint32_t ebp0Field = spellL ? spellL->field("EffectBasePoints0") : 0xFFFFFFFF;
+    const uint32_t ebp1Field = spellL ? spellL->field("EffectBasePoints1") : 0xFFFFFFFF;
+    const uint32_t ebp2Field = spellL ? spellL->field("EffectBasePoints2") : 0xFFFFFFFF;
+    const uint32_t durIdxField = spellL ? spellL->field("DurationIndex") : 0xFFFFFFFF;
+
+    uint32_t count = dbc->getRecordCount();
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t id = dbc->getUInt32(i, idField);
+        if (id == 0) continue;
+        std::string name = dbc->getString(i, nameField);
+        std::string rank = dbc->getString(i, rankField);
+        if (!name.empty()) {
+            GameHandler::SpellNameEntry entry{std::move(name), std::move(rank), {}, 0, 0, 0};
+            if (tooltipField != 0xFFFFFFFF) {
+                entry.description = dbc->getString(i, tooltipField);
+            }
+            if (hasSchoolMask) {
+                entry.schoolMask = dbc->getUInt32(i, schoolMaskField);
+            } else if (hasSchoolEnum) {
+                static const uint32_t enumToBitmask[] = {0x01,0x02,0x04,0x08,0x10,0x20,0x40};
+                uint32_t e = dbc->getUInt32(i, schoolEnumField);
+                entry.schoolMask = (e < 7) ? enumToBitmask[e] : 0;
+            }
+            if (hasDispelField) {
+                entry.dispelType = static_cast<uint8_t>(dbc->getUInt32(i, dispelField));
+            }
+            if (hasAttrExField) {
+                entry.attrEx = dbc->getUInt32(i, attrExField);
+            }
+            // Load effect base points for $s1/$s2/$s3 tooltip substitution
+            if (ebp0Field != 0xFFFFFFFF) entry.effectBasePoints[0] = static_cast<int32_t>(dbc->getUInt32(i, ebp0Field));
+            if (ebp1Field != 0xFFFFFFFF) entry.effectBasePoints[1] = static_cast<int32_t>(dbc->getUInt32(i, ebp1Field));
+            if (ebp2Field != 0xFFFFFFFF) entry.effectBasePoints[2] = static_cast<int32_t>(dbc->getUInt32(i, ebp2Field));
+            // Duration: read DurationIndex and resolve via SpellDuration.dbc later
+            if (durIdxField != 0xFFFFFFFF)
+                entry.durationSec = static_cast<float>(dbc->getUInt32(i, durIdxField)); // store index temporarily
+            owner_.spellNameCache_[id] = std::move(entry);
+        }
+    }
+    auto durDbc = am->loadDBC("SpellDuration.dbc");
+    if (durDbc && durDbc->isLoaded()) {
+        std::unordered_map<uint32_t, float> durMap;
+        for (uint32_t di = 0; di < durDbc->getRecordCount(); ++di) {
+            uint32_t durId = durDbc->getUInt32(di, 0);
+            int32_t baseMs = static_cast<int32_t>(durDbc->getUInt32(di, 1));
+            if (baseMs > 0 && baseMs < 100000000)
+                durMap[durId] = baseMs / 1000.0f;
+        }
+        for (auto& [sid, entry] : owner_.spellNameCache_) {
+            uint32_t durIdx = static_cast<uint32_t>(entry.durationSec);
+            if (durIdx > 0) {
+                auto it = durMap.find(durIdx);
+                entry.durationSec = (it != durMap.end()) ? it->second : 0.0f;
+            }
+        }
+    }
+    LOG_INFO("Trainer: Loaded ", owner_.spellNameCache_.size(), " spell names from Spell.dbc");
+}
+
+void SpellHandler::loadSkillLineAbilityDbc() {
+    if (owner_.skillLineAbilityLoaded_) return;
+    owner_.skillLineAbilityLoaded_ = true;
+
+    auto* am = core::Application::getInstance().getAssetManager();
+    if (!am || !am->isInitialized()) return;
+
+    auto slaDbc = am->loadDBC("SkillLineAbility.dbc");
+    if (slaDbc && slaDbc->isLoaded()) {
+        const auto* slaL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("SkillLineAbility") : nullptr;
+        const uint32_t slaSkillField = slaL ? (*slaL)["SkillLineID"] : 1;
+        const uint32_t slaSpellField = slaL ? (*slaL)["SpellID"]     : 2;
+        for (uint32_t i = 0; i < slaDbc->getRecordCount(); i++) {
+            uint32_t skillLineId = slaDbc->getUInt32(i, slaSkillField);
+            uint32_t spellId = slaDbc->getUInt32(i, slaSpellField);
+            if (spellId > 0 && skillLineId > 0) {
+                owner_.spellToSkillLine_[spellId] = skillLineId;
+            }
+        }
+        LOG_INFO("Trainer: Loaded ", owner_.spellToSkillLine_.size(), " skill line abilities");
+    }
+}
+
+void SpellHandler::categorizeTrainerSpells() {
+    owner_.trainerTabs_.clear();
+
+    static constexpr uint32_t SKILLLINE_CATEGORY_CLASS = 7;
+
+    std::map<uint32_t, std::vector<const TrainerSpell*>> specialtySpells;
+    std::vector<const TrainerSpell*> generalSpells;
+
+    for (const auto& spell : owner_.currentTrainerList_.spells) {
+        auto slIt = owner_.spellToSkillLine_.find(spell.spellId);
+        if (slIt != owner_.spellToSkillLine_.end()) {
+            uint32_t skillLineId = slIt->second;
+            auto catIt = owner_.skillLineCategories_.find(skillLineId);
+            if (catIt != owner_.skillLineCategories_.end() && catIt->second == SKILLLINE_CATEGORY_CLASS) {
+                specialtySpells[skillLineId].push_back(&spell);
+                continue;
+            }
+        }
+        generalSpells.push_back(&spell);
+    }
+
+    auto byName = [this](const TrainerSpell* a, const TrainerSpell* b) {
+        return getSpellName(a->spellId) < getSpellName(b->spellId);
+    };
+
+    std::vector<std::pair<std::string, std::vector<const TrainerSpell*>>> named;
+    for (auto& [skillLineId, spells] : specialtySpells) {
+        auto nameIt = owner_.skillLineNames_.find(skillLineId);
+        std::string tabName = (nameIt != owner_.skillLineNames_.end()) ? nameIt->second : "Specialty";
+        std::sort(spells.begin(), spells.end(), byName);
+        named.push_back({std::move(tabName), std::move(spells)});
+    }
+    std::sort(named.begin(), named.end(),
+        [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    for (auto& [name, spells] : named) {
+        owner_.trainerTabs_.push_back({std::move(name), std::move(spells)});
+    }
+
+    if (!generalSpells.empty()) {
+        std::sort(generalSpells.begin(), generalSpells.end(), byName);
+        owner_.trainerTabs_.push_back({"General", std::move(generalSpells)});
+    }
+
+    LOG_INFO("Trainer: Categorized into ", owner_.trainerTabs_.size(), " tabs");
+}
+
+const int32_t* SpellHandler::getSpellEffectBasePoints(uint32_t spellId) const {
+    loadSpellNameCache();
+    auto it = owner_.spellNameCache_.find(spellId);
+    return (it != owner_.spellNameCache_.end()) ? it->second.effectBasePoints : nullptr;
+}
+
+float SpellHandler::getSpellDuration(uint32_t spellId) const {
+    loadSpellNameCache();
+    auto it = owner_.spellNameCache_.find(spellId);
+    return (it != owner_.spellNameCache_.end()) ? it->second.durationSec : 0.0f;
+}
+
+const std::string& SpellHandler::getSpellName(uint32_t spellId) const {
+    auto it = owner_.spellNameCache_.find(spellId);
+    return (it != owner_.spellNameCache_.end()) ? it->second.name : SPELL_EMPTY_STRING;
+}
+
+const std::string& SpellHandler::getSpellRank(uint32_t spellId) const {
+    auto it = owner_.spellNameCache_.find(spellId);
+    return (it != owner_.spellNameCache_.end()) ? it->second.rank : SPELL_EMPTY_STRING;
+}
+
+const std::string& SpellHandler::getSpellDescription(uint32_t spellId) const {
+    loadSpellNameCache();
+    auto it = owner_.spellNameCache_.find(spellId);
+    return (it != owner_.spellNameCache_.end()) ? it->second.description : SPELL_EMPTY_STRING;
+}
+
+std::string SpellHandler::getEnchantName(uint32_t enchantId) const {
+    if (enchantId == 0) return {};
+    auto* am = core::Application::getInstance().getAssetManager();
+    if (!am || !am->isInitialized()) return {};
+    auto dbc = am->loadDBC("SpellItemEnchantment.dbc");
+    if (!dbc || !dbc->isLoaded()) return {};
+    for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+        if (dbc->getUInt32(i, 0) == enchantId) {
+            return dbc->getString(i, 14);
+        }
+    }
+    return {};
+}
+
+uint8_t SpellHandler::getSpellDispelType(uint32_t spellId) const {
+    loadSpellNameCache();
+    auto it = owner_.spellNameCache_.find(spellId);
+    return (it != owner_.spellNameCache_.end()) ? it->second.dispelType : 0;
+}
+
+bool SpellHandler::isSpellInterruptible(uint32_t spellId) const {
+    if (spellId == 0) return true;
+    loadSpellNameCache();
+    auto it = owner_.spellNameCache_.find(spellId);
+    if (it == owner_.spellNameCache_.end()) return true;
+    return (it->second.attrEx & 0x00000010u) == 0;
+}
+
+uint32_t SpellHandler::getSpellSchoolMask(uint32_t spellId) const {
+    if (spellId == 0) return 0;
+    loadSpellNameCache();
+    auto it = owner_.spellNameCache_.find(spellId);
+    return (it != owner_.spellNameCache_.end()) ? it->second.schoolMask : 0;
+}
+
+const std::string& SpellHandler::getSkillLineName(uint32_t spellId) const {
+    auto slIt = owner_.spellToSkillLine_.find(spellId);
+    if (slIt == owner_.spellToSkillLine_.end()) return SPELL_EMPTY_STRING;
+    auto nameIt = owner_.skillLineNames_.find(slIt->second);
+    return (nameIt != owner_.skillLineNames_.end()) ? nameIt->second : SPELL_EMPTY_STRING;
+}
+
+// ============================================================
+// Skill DBC methods (moved from GameHandler)
+// ============================================================
+
+void SpellHandler::loadSkillLineDbc() {
+    if (owner_.skillLineDbcLoaded_) return;
+    owner_.skillLineDbcLoaded_ = true;
+
+    auto* am = core::Application::getInstance().getAssetManager();
+    if (!am || !am->isInitialized()) return;
+
+    auto dbc = am->loadDBC("SkillLine.dbc");
+    if (!dbc || !dbc->isLoaded()) {
+        LOG_WARNING("GameHandler: Could not load SkillLine.dbc");
+        return;
+    }
+
+    const auto* slL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("SkillLine") : nullptr;
+    const uint32_t slIdField   = slL ? (*slL)["ID"]       : 0;
+    const uint32_t slCatField  = slL ? (*slL)["Category"] : 1;
+    const uint32_t slNameField = slL ? (*slL)["Name"]     : 3;
+    for (uint32_t i = 0; i < dbc->getRecordCount(); i++) {
+        uint32_t id = dbc->getUInt32(i, slIdField);
+        uint32_t category = dbc->getUInt32(i, slCatField);
+        std::string name = dbc->getString(i, slNameField);
+        if (id > 0 && !name.empty()) {
+            owner_.skillLineNames_[id] = name;
+            owner_.skillLineCategories_[id] = category;
+        }
+    }
+    LOG_INFO("GameHandler: Loaded ", owner_.skillLineNames_.size(), " skill line names");
+}
+
+void SpellHandler::extractSkillFields(const std::map<uint16_t, uint32_t>& fields) {
+    loadSkillLineDbc();
+
+    const uint16_t PLAYER_SKILL_INFO_START = fieldIndex(UF::PLAYER_SKILL_INFO_START);
+    static constexpr int MAX_SKILL_SLOTS = 128;
+
+    std::unordered_map<uint32_t, PlayerSkill> newSkills;
+
+    for (int slot = 0; slot < MAX_SKILL_SLOTS; slot++) {
+        uint16_t baseField = PLAYER_SKILL_INFO_START + slot * 3;
+
+        auto idIt = fields.find(baseField);
+        if (idIt == fields.end()) continue;
+
+        uint32_t raw0 = idIt->second;
+        uint16_t skillId = raw0 & 0xFFFF;
+        if (skillId == 0) continue;
+
+        auto valIt = fields.find(baseField + 1);
+        if (valIt == fields.end()) continue;
+
+        uint32_t raw1 = valIt->second;
+        uint16_t value = raw1 & 0xFFFF;
+        uint16_t maxValue = (raw1 >> 16) & 0xFFFF;
+
+        uint16_t bonusTemp = 0;
+        uint16_t bonusPerm = 0;
+        auto bonusIt = fields.find(static_cast<uint16_t>(baseField + 2));
+        if (bonusIt != fields.end()) {
+            bonusTemp = bonusIt->second & 0xFFFF;
+            bonusPerm = (bonusIt->second >> 16) & 0xFFFF;
+        }
+
+        PlayerSkill skill;
+        skill.skillId = skillId;
+        skill.value = value;
+        skill.maxValue = maxValue;
+        skill.bonusTemp = bonusTemp;
+        skill.bonusPerm = bonusPerm;
+        newSkills[skillId] = skill;
+    }
+
+    for (const auto& [skillId, skill] : newSkills) {
+        if (skill.value == 0) continue;
+        auto oldIt = owner_.playerSkills_.find(skillId);
+        if (oldIt != owner_.playerSkills_.end() && skill.value > oldIt->second.value) {
+            auto catIt = owner_.skillLineCategories_.find(skillId);
+            if (catIt != owner_.skillLineCategories_.end()) {
+                uint32_t category = catIt->second;
+                if (category == 5 || category == 10 || category == 12) {
+                    continue;
+                }
+            }
+
+            const std::string& name = owner_.getSkillName(skillId);
+            std::string skillName = name.empty() ? ("Skill #" + std::to_string(skillId)) : name;
+            owner_.addSystemChatMessage("Your skill in " + skillName + " has increased to " + std::to_string(skill.value) + ".");
+        }
+    }
+
+    bool skillsChanged = (newSkills.size() != owner_.playerSkills_.size());
+    if (!skillsChanged) {
+        for (const auto& [id, sk] : newSkills) {
+            auto it = owner_.playerSkills_.find(id);
+            if (it == owner_.playerSkills_.end() || it->second.value != sk.value) {
+                skillsChanged = true;
+                break;
+            }
+        }
+    }
+    owner_.playerSkills_ = std::move(newSkills);
+    if (skillsChanged)
+        owner_.fireAddonEvent("SKILL_LINES_CHANGED", {});
+}
+
+void SpellHandler::extractExploredZoneFields(const std::map<uint16_t, uint32_t>& fields) {
+    const size_t zoneCount = owner_.packetParsers_
+        ? static_cast<size_t>(owner_.packetParsers_->exploredZonesCount())
+        : GameHandler::PLAYER_EXPLORED_ZONES_COUNT;
+
+    if (owner_.playerExploredZones_.size() != GameHandler::PLAYER_EXPLORED_ZONES_COUNT) {
+        owner_.playerExploredZones_.assign(GameHandler::PLAYER_EXPLORED_ZONES_COUNT, 0u);
+    }
+
+    bool foundAny = false;
+    for (size_t i = 0; i < zoneCount; i++) {
+        const uint16_t fieldIdx = static_cast<uint16_t>(fieldIndex(UF::PLAYER_EXPLORED_ZONES_START) + i);
+        auto it = fields.find(fieldIdx);
+        if (it == fields.end()) continue;
+        owner_.playerExploredZones_[i] = it->second;
+        foundAny = true;
+    }
+    for (size_t i = zoneCount; i < GameHandler::PLAYER_EXPLORED_ZONES_COUNT; i++) {
+        owner_.playerExploredZones_[i] = 0u;
+    }
+
+    if (foundAny) {
+        owner_.hasPlayerExploredZones_ = true;
+    }
+}
+
+// ============================================================
+// Moved opcode handlers (from GameHandler::registerOpcodeHandlers)
+// ============================================================
+
+void SpellHandler::handleCastResult(network::Packet& packet) {
+    uint32_t castResultSpellId = 0;
+    uint8_t  castResult        = 0;
+    if (owner_.packetParsers_->parseCastResult(packet, castResultSpellId, castResult)) {
+        if (castResult != 0) {
+            casting_ = false; castIsChannel_ = false; currentCastSpellId_ = 0; castTimeRemaining_ = 0.0f;
+            owner_.lastInteractedGoGuid_ = 0;
+            owner_.craftQueueSpellId_ = 0; owner_.craftQueueRemaining_ = 0;
+            owner_.queuedSpellId_ = 0; owner_.queuedSpellTarget_ = 0;
+            int playerPowerType = -1;
+            if (auto pe = owner_.entityManager.getEntity(owner_.playerGuid)) {
+                if (auto pu = std::dynamic_pointer_cast<Unit>(pe))
+                    playerPowerType = static_cast<int>(pu->getPowerType());
+            }
+            const char* reason = getSpellCastResultString(castResult, playerPowerType);
+            std::string errMsg = reason ? reason
+                                        : ("Spell cast failed (error " + std::to_string(castResult) + ")");
+            owner_.addUIError(errMsg);
+            if (owner_.spellCastFailedCallback_) owner_.spellCastFailedCallback_(castResultSpellId);
+                owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", {"player", std::to_string(castResultSpellId)});
+                owner_.fireAddonEvent("UNIT_SPELLCAST_STOP",   {"player", std::to_string(castResultSpellId)});
+            MessageChatData msg;
+            msg.type     = ChatType::SYSTEM;
+            msg.language = ChatLanguage::UNIVERSAL;
+            msg.message  = errMsg;
+            owner_.addLocalChatMessage(msg);
+        }
+    }
+}
+
+void SpellHandler::handleSpellFailedOther(network::Packet& packet) {
+    const bool tbcLike2 = isPreWotlk();
+    uint64_t failOtherGuid = tbcLike2
+        ? (packet.hasRemaining(8) ? packet.readUInt64() : 0)
+        : packet.readPackedGuid();
+    if (failOtherGuid != 0 && failOtherGuid != owner_.playerGuid) {
+        unitCastStates_.erase(failOtherGuid);
+        if (owner_.addonEventCallback_) {
+            std::string unitId;
+            if (failOtherGuid == owner_.targetGuid)     unitId = "target";
+            else if (failOtherGuid == owner_.focusGuid) unitId = "focus";
+            if (!unitId.empty()) {
+                owner_.fireAddonEvent("UNIT_SPELLCAST_FAILED", {unitId});
+                owner_.fireAddonEvent("UNIT_SPELLCAST_STOP",   {unitId});
+            }
+        }
+    }
+    packet.skipAll();
+}
+
+void SpellHandler::handleClearCooldown(network::Packet& packet) {
+    if (packet.hasRemaining(4)) {
+        uint32_t spellId = packet.readUInt32();
+        spellCooldowns_.erase(spellId);
+        for (auto& slot : owner_.actionBar) {
+            if (slot.type == ActionBarSlot::SPELL && slot.id == spellId)
+                slot.cooldownRemaining = 0.0f;
+        }
+    }
+}
+
+void SpellHandler::handleModifyCooldown(network::Packet& packet) {
+    if (packet.hasRemaining(8)) {
+        uint32_t spellId = packet.readUInt32();
+        int32_t  diffMs  = static_cast<int32_t>(packet.readUInt32());
+        float diffSec = diffMs / 1000.0f;
+        auto it = spellCooldowns_.find(spellId);
+        if (it != spellCooldowns_.end()) {
+            it->second = std::max(0.0f, it->second + diffSec);
+            for (auto& slot : owner_.actionBar) {
+                if (slot.type == ActionBarSlot::SPELL && slot.id == spellId)
+                    slot.cooldownRemaining = std::max(0.0f, slot.cooldownRemaining + diffSec);
+            }
+        }
+    }
+}
+
+void SpellHandler::handlePlaySpellVisual(network::Packet& packet) {
+    if (!packet.hasRemaining(12)) return;
+    uint64_t casterGuid = packet.readUInt64();
+    uint32_t visualId   = packet.readUInt32();
+    if (visualId == 0) return;
+    auto* renderer = core::Application::getInstance().getRenderer();
+    if (!renderer) return;
+    glm::vec3 spawnPos;
+    if (casterGuid == owner_.playerGuid) {
+        spawnPos = renderer->getCharacterPosition();
+    } else {
+        auto entity = owner_.entityManager.getEntity(casterGuid);
+        if (!entity) return;
+        glm::vec3 canonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());
+        spawnPos = core::coords::canonicalToRender(canonical);
+    }
+    renderer->playSpellVisual(visualId, spawnPos);
+}
+
+void SpellHandler::handleSpellModifier(network::Packet& packet, bool isFlat) {
+    auto& modMap = isFlat ? owner_.spellFlatMods_ : owner_.spellPctMods_;
+    while (packet.hasRemaining(6)) {
+        uint8_t groupIndex = packet.readUInt8();
+        uint8_t modOpRaw   = packet.readUInt8();
+        int32_t value      = static_cast<int32_t>(packet.readUInt32());
+        if (groupIndex > 5 || modOpRaw >= GameHandler::SPELL_MOD_OP_COUNT) continue;
+        GameHandler::SpellModKey key{ static_cast<GameHandler::SpellModOp>(modOpRaw), groupIndex };
+        modMap[key] = value;
+    }
+    packet.skipAll();
+}
+
+void SpellHandler::handleSpellDelayed(network::Packet& packet) {
+    const bool spellDelayTbcLike = isPreWotlk();
+    if (!packet.hasRemaining(spellDelayTbcLike ? 8u : 1u) ) return;
+    uint64_t caster = spellDelayTbcLike
+        ? packet.readUInt64() : packet.readPackedGuid();
+    if (!packet.hasRemaining(4)) return;
+    uint32_t delayMs = packet.readUInt32();
+    if (delayMs == 0) return;
+    float delaySec = delayMs / 1000.0f;
+    if (caster == owner_.playerGuid) {
+        if (casting_) {
+            castTimeRemaining_ += delaySec;
+            castTimeTotal_     += delaySec;
+        }
+    } else {
+        auto it = unitCastStates_.find(caster);
+        if (it != unitCastStates_.end() && it->second.casting) {
+            it->second.timeRemaining += delaySec;
+            it->second.timeTotal     += delaySec;
+        }
+    }
+}
+
+// ============================================================
+// Extracted opcode handlers (from registerOpcodeHandlers)
+// ============================================================
+
+void SpellHandler::handleSpellLogMiss(network::Packet& packet) {
+    // All expansions: uint32 spellId first.
+    // WotLK/Classic: spellId(4) + packed_guid caster + uint8 unk + uint32 count
+    //                 + count × (packed_guid victim + uint8 missInfo)
+    // TBC:            spellId(4) + uint64 caster + uint8 unk + uint32 count
+    //                 + count × (uint64 victim + uint8 missInfo)
+    // All expansions append uint32 reflectSpellId + uint8 reflectResult when
+    // missInfo==11 (REFLECT).
+    const bool spellMissUsesFullGuid = isActiveExpansion("tbc");
+    auto readSpellMissGuid = [&]() -> uint64_t {
+        if (spellMissUsesFullGuid)
+            return (packet.hasRemaining(8)) ? packet.readUInt64() : 0;
+        return packet.readPackedGuid();
+    };
+    // spellId prefix present in all expansions
+    if (!packet.hasRemaining(4)) return;
+    uint32_t spellId = packet.readUInt32();
+    if (!packet.hasRemaining(spellMissUsesFullGuid ? 8u : 1u)
+        || (!spellMissUsesFullGuid && !packet.hasFullPackedGuid())) {
+        packet.skipAll(); return;
+    }
+    uint64_t casterGuid = readSpellMissGuid();
+    if (!packet.hasRemaining(5)) return;
+    /*uint8_t unk =*/ packet.readUInt8();
+    const uint32_t rawCount = packet.readUInt32();
+    if (rawCount > 128) {
+        LOG_WARNING("SMSG_SPELLLOGMISS: miss count capped (requested=", rawCount, ")");
+    }
+    const uint32_t storedLimit = std::min<uint32_t>(rawCount, 128u);
+
+    struct SpellMissLogEntry {
+        uint64_t victimGuid = 0;
+        uint8_t missInfo = 0;
+        uint32_t reflectSpellId = 0;  // Only valid when missInfo==11 (REFLECT)
+    };
+    std::vector<SpellMissLogEntry> parsedMisses;
+    parsedMisses.reserve(storedLimit);
+
+    bool truncated = false;
+    for (uint32_t i = 0; i < rawCount; ++i) {
+        if (!packet.hasRemaining(spellMissUsesFullGuid ? 9u : 2u)
+            || (!spellMissUsesFullGuid && !packet.hasFullPackedGuid())) {
+            truncated = true;
+            return;
+        }
+        const uint64_t victimGuid = readSpellMissGuid();
+        if (!packet.hasRemaining(1)) {
+            truncated = true;
+            return;
+        }
+        const uint8_t missInfo = packet.readUInt8();
+        // REFLECT (11): extra uint32 reflectSpellId + uint8 reflectResult
+        uint32_t reflectSpellId = 0;
+        if (missInfo == 11) {
+            if (packet.hasRemaining(5)) {
+                reflectSpellId = packet.readUInt32();
+                /*uint8_t reflectResult =*/ packet.readUInt8();
+            } else {
+                truncated = true;
+                return;
+            }
+        }
+        if (i < storedLimit) {
+            parsedMisses.push_back({victimGuid, missInfo, reflectSpellId});
+        }
+    }
+
+    if (truncated) {
+        packet.skipAll();
+        return;
+    }
+
+    for (const auto& miss : parsedMisses) {
+        const uint64_t victimGuid = miss.victimGuid;
+        const uint8_t missInfo = miss.missInfo;
+        CombatTextEntry::Type ct = combatTextTypeFromSpellMissInfo(missInfo);
+        // For REFLECT, use the reflected spell ID so combat text shows the spell name
+        uint32_t combatSpellId = (ct == CombatTextEntry::REFLECT && miss.reflectSpellId != 0)
+                                 ? miss.reflectSpellId : spellId;
+        if (casterGuid == owner_.playerGuid) {
+            // We cast a spell and it missed the target
+            owner_.addCombatText(ct, 0, combatSpellId, true, 0, casterGuid, victimGuid);
+        } else if (victimGuid == owner_.playerGuid) {
+            // Enemy spell missed us (we dodged/parried/blocked/resisted/etc.)
+            owner_.addCombatText(ct, 0, combatSpellId, false, 0, casterGuid, victimGuid);
+        }
+    }
+}
+
+void SpellHandler::handleSpellFailure(network::Packet& packet) {
+    // WotLK: packed_guid + uint8 castCount + uint32 spellId + uint8 failReason
+    // TBC:   full uint64 + uint8 castCount + uint32 spellId + uint8 failReason
+    // Classic: full uint64 + uint32 spellId + uint8 failReason  (NO castCount)
+    const bool isClassic = isClassicLikeExpansion();
+    const bool isTbc     = isActiveExpansion("tbc");
+    uint64_t failGuid = (isClassic || isTbc)
+        ? (packet.hasRemaining(8) ? packet.readUInt64() : 0)
+        : packet.readPackedGuid();
+    // Classic omits the castCount byte; TBC and WotLK include it
+    const size_t remainingFields = isClassic ? 5u : 6u;  // spellId(4)+reason(1) [+castCount(1)]
+    if (packet.hasRemaining(remainingFields)) {
+        if (!isClassic) /*uint8_t castCount =*/ packet.readUInt8();
+        uint32_t failSpellId = packet.readUInt32();
+        uint8_t rawFailReason = packet.readUInt8();
+        // Classic result enum starts at 0=AFFECTING_COMBAT; shift +1 for WotLK table
+        uint8_t failReason = isClassic ? static_cast<uint8_t>(rawFailReason + 1) : rawFailReason;
+        if (failGuid == owner_.playerGuid && failReason != 0) {
+            // Show interruption/failure reason in chat and error overlay for player
+            int pt = -1;
+            if (auto pe = owner_.entityManager.getEntity(owner_.playerGuid))
+                if (auto pu = std::dynamic_pointer_cast<Unit>(pe))
+                    pt = static_cast<int>(pu->getPowerType());
+            const char* reason = getSpellCastResultString(failReason, pt);
+            if (reason) {
+                // Prefix with spell name for context, e.g. "Fireball: Not in range"
+                const std::string& sName = owner_.getSpellName(failSpellId);
+                std::string fullMsg = sName.empty() ? reason
+                                                    : sName + ": " + reason;
+                owner_.addUIError(fullMsg);
+                MessageChatData emsg;
+                emsg.type = ChatType::SYSTEM;
+                emsg.language = ChatLanguage::UNIVERSAL;
+                emsg.message = std::move(fullMsg);
+                owner_.addLocalChatMessage(emsg);
+            }
+        }
+    }
+    // Fire UNIT_SPELLCAST_INTERRUPTED for Lua addons
+    if (owner_.addonEventCallback_) {
+        auto unitId = (failGuid == 0) ? std::string("player") : owner_.guidToUnitId(failGuid);
+        if (!unitId.empty()) {
+            owner_.fireAddonEvent("UNIT_SPELLCAST_INTERRUPTED", {unitId});
+            owner_.fireAddonEvent("UNIT_SPELLCAST_STOP", {unitId});
+        }
+    }
+    if (failGuid == owner_.playerGuid || failGuid == 0) {
+        // Player's own cast failed — clear gather-node loot target so the
+        // next timed cast doesn't try to loot a stale interrupted gather node.
+        casting_ = false; castIsChannel_ = false; currentCastSpellId_ = 0;
+        owner_.lastInteractedGoGuid_ = 0;
+        craftQueueSpellId_ = 0;
+        craftQueueRemaining_ = 0;
+        queuedSpellId_ = 0;
+        queuedSpellTarget_ = 0;
+        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* ssm = renderer->getSpellSoundManager()) {
+                ssm->stopPrecast();
+            }
+        }
+        if (owner_.spellCastAnimCallback_) {
+            owner_.spellCastAnimCallback_(owner_.playerGuid, false, false);
+        }
+    } else {
+        // Another unit's cast failed — clear their tracked cast bar
+        unitCastStates_.erase(failGuid);
+        if (owner_.spellCastAnimCallback_) {
+            owner_.spellCastAnimCallback_(failGuid, false, false);
+        }
+    }
+}
+
+void SpellHandler::handleItemCooldown(network::Packet& packet) {
+    // uint64 itemGuid + uint32 spellId + uint32 cooldownMs
+    size_t rem = packet.getRemainingSize();
+    if (rem >= 16) {
+        uint64_t itemGuid = packet.readUInt64();
+        uint32_t spellId  = packet.readUInt32();
+        uint32_t cdMs     = packet.readUInt32();
+        float cdSec = cdMs / 1000.0f;
+        if (cdSec > 0.0f) {
+            if (spellId != 0) {
+                auto it = spellCooldowns_.find(spellId);
+                if (it == spellCooldowns_.end()) {
+                    spellCooldowns_[spellId] = cdSec;
+                } else {
+                    it->second = mergeCooldownSeconds(it->second, cdSec);
+                }
+            }
+            // Resolve itemId from the GUID so item-type slots are also updated
+            uint32_t itemId = 0;
+            auto iit = owner_.onlineItems_.find(itemGuid);
+            if (iit != owner_.onlineItems_.end()) itemId = iit->second.entry;
+            for (auto& slot : owner_.actionBar) {
+                bool match = (spellId != 0 && slot.type == ActionBarSlot::SPELL && slot.id == spellId)
+                          || (itemId  != 0 && slot.type == ActionBarSlot::ITEM  && slot.id == itemId);
+                if (match) {
+                    float prevRemaining = slot.cooldownRemaining;
+                    float merged = mergeCooldownSeconds(slot.cooldownRemaining, cdSec);
+                    slot.cooldownRemaining = merged;
+                    if (slot.cooldownTotal <= 0.0f || prevRemaining <= 0.0f) {
+                        slot.cooldownTotal = cdSec;
+                    } else {
+                        slot.cooldownTotal = std::max(slot.cooldownTotal, merged);
+                    }
+                }
+            }
+            LOG_DEBUG("SMSG_ITEM_COOLDOWN: itemGuid=0x", std::hex, itemGuid, std::dec,
+                      " spellId=", spellId, " itemId=", itemId, " cd=", cdSec, "s");
+        }
+    }
+}
+
+void SpellHandler::handleDispelFailed(network::Packet& packet) {
+    // WotLK:       uint32 dispelSpellId + packed_guid caster + packed_guid victim
+    //              [+ count × uint32 failedSpellId]
+    // Classic:     uint32 dispelSpellId + packed_guid caster + packed_guid victim
+    //              [+ count × uint32 failedSpellId]
+    // TBC:         uint64 caster + uint64 victim + uint32 spellId
+    //              [+ count × uint32 failedSpellId]
+    const bool dispelUsesFullGuid = isActiveExpansion("tbc");
+    uint32_t dispelSpellId = 0;
+    uint64_t dispelCasterGuid = 0;
+    if (dispelUsesFullGuid) {
+        if (!packet.hasRemaining(20)) return;
+        dispelCasterGuid = packet.readUInt64();
+        /*uint64_t victim =*/ packet.readUInt64();
+        dispelSpellId = packet.readUInt32();
+    } else {
+        if (!packet.hasRemaining(4)) return;
+        dispelSpellId = packet.readUInt32();
+        if (!packet.hasFullPackedGuid()) {
+            packet.skipAll(); return;
+        }
+        dispelCasterGuid = packet.readPackedGuid();
+        if (!packet.hasFullPackedGuid()) {
+            packet.skipAll(); return;
+        }
+        /*uint64_t victim =*/ packet.readPackedGuid();
+    }
+    // Only show failure to the player who attempted the dispel
+    if (dispelCasterGuid == owner_.playerGuid) {
+        const auto& name = owner_.getSpellName(dispelSpellId);
+        char buf[128];
+        if (!name.empty())
+            std::snprintf(buf, sizeof(buf), "%s failed to dispel.", name.c_str());
+        else
+            std::snprintf(buf, sizeof(buf), "Dispel failed! (spell %u)", dispelSpellId);
+        owner_.addSystemChatMessage(buf);
+    }
+}
+
+void SpellHandler::handleTotemCreated(network::Packet& packet) {
+    // WotLK:       uint8 slot + packed_guid + uint32 duration + uint32 spellId
+    // TBC/Classic: uint8 slot + uint64 guid  + uint32 duration + uint32 spellId
+    const bool totemTbcLike = isPreWotlk();
+    if (!packet.hasRemaining(totemTbcLike ? 17u : 9u) ) return;
+    uint8_t slot = packet.readUInt8();
+    if (totemTbcLike)
+        /*uint64_t guid =*/ packet.readUInt64();
+    else
+        /*uint64_t guid =*/ packet.readPackedGuid();
+    if (!packet.hasRemaining(8)) return;
+    uint32_t duration = packet.readUInt32();
+    uint32_t spellId  = packet.readUInt32();
+    LOG_DEBUG("SMSG_TOTEM_CREATED: slot=", static_cast<int>(slot),
+              " spellId=", spellId, " duration=", duration, "ms");
+    if (slot < GameHandler::NUM_TOTEM_SLOTS) {
+        owner_.activeTotemSlots_[slot].spellId    = spellId;
+        owner_.activeTotemSlots_[slot].durationMs = duration;
+        owner_.activeTotemSlots_[slot].placedAt   = std::chrono::steady_clock::now();
+    }
+}
+
+void SpellHandler::handlePeriodicAuraLog(network::Packet& packet) {
+    // WotLK: packed_guid victim + packed_guid caster + uint32 spellId + uint32 count + effects
+    // TBC: full uint64 victim + uint64 caster + uint32 spellId + uint32 count + effects
+    // Classic/Vanilla: packed_guid (same as WotLK)
+    const bool periodicTbc = isActiveExpansion("tbc");
+    const size_t guidMinSz = periodicTbc ? 8u : 2u;
+    if (!packet.hasRemaining(guidMinSz)) return;
+    uint64_t victimGuid = periodicTbc
+        ? packet.readUInt64() : packet.readPackedGuid();
+    if (!packet.hasRemaining(guidMinSz)) return;
+    uint64_t casterGuid = periodicTbc
+        ? packet.readUInt64() : packet.readPackedGuid();
+    if (!packet.hasRemaining(8)) return;
+    uint32_t spellId = packet.readUInt32();
+    uint32_t count   = packet.readUInt32();
+    bool isPlayerVictim = (victimGuid == owner_.playerGuid);
+    bool isPlayerCaster = (casterGuid == owner_.playerGuid);
+    if (!isPlayerVictim && !isPlayerCaster) {
+        packet.skipAll();
+        return;
+    }
+    for (uint32_t i = 0; i < count && packet.hasRemaining(1); ++i) {
+        uint8_t auraType = packet.readUInt8();
+        if (auraType == 3 || auraType == 89) {
+            // Classic/TBC: damage(4)+school(4)+absorbed(4)+resisted(4)  = 16 bytes
+            // WotLK 3.3.5a: damage(4)+overkill(4)+school(4)+absorbed(4)+resisted(4)+isCrit(1) = 21 bytes
+            const bool periodicWotlk = isActiveExpansion("wotlk");
+            const size_t dotSz = periodicWotlk ? 21u : 16u;
+            if (!packet.hasRemaining(dotSz)) break;
+            uint32_t dmg      = packet.readUInt32();
+            if (periodicWotlk) /*uint32_t overkill=*/ packet.readUInt32();
+            /*uint32_t school=*/ packet.readUInt32();
+            uint32_t abs      = packet.readUInt32();
+            uint32_t res      = packet.readUInt32();
+            bool dotCrit = false;
+            if (periodicWotlk) dotCrit = (packet.readUInt8() != 0);
+            if (dmg > 0)
+                owner_.addCombatText(dotCrit ? CombatTextEntry::CRIT_DAMAGE : CombatTextEntry::PERIODIC_DAMAGE,
+                              static_cast<int32_t>(dmg),
+                              spellId, isPlayerCaster, 0, casterGuid, victimGuid);
+            if (abs > 0)
+                owner_.addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(abs),
+                              spellId, isPlayerCaster, 0, casterGuid, victimGuid);
+            if (res > 0)
+                owner_.addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(res),
+                              spellId, isPlayerCaster, 0, casterGuid, victimGuid);
+        } else if (auraType == 8 || auraType == 124 || auraType == 45) {
+            // Classic/TBC: heal(4)+maxHeal(4)+overHeal(4)                  = 12 bytes
+            // WotLK 3.3.5a: heal(4)+maxHeal(4)+overHeal(4)+absorbed(4)+isCrit(1) = 17 bytes
+            const bool healWotlk = isActiveExpansion("wotlk");
+            const size_t hotSz = healWotlk ? 17u : 12u;
+            if (!packet.hasRemaining(hotSz)) break;
+            uint32_t heal    = packet.readUInt32();
+            /*uint32_t max=*/  packet.readUInt32();
+            /*uint32_t over=*/ packet.readUInt32();
+            uint32_t hotAbs  = 0;
+            bool hotCrit = false;
+            if (healWotlk) {
+                hotAbs = packet.readUInt32();
+                hotCrit = (packet.readUInt8() != 0);
+            }
+            owner_.addCombatText(hotCrit ? CombatTextEntry::CRIT_HEAL : CombatTextEntry::PERIODIC_HEAL,
+                          static_cast<int32_t>(heal),
+                          spellId, isPlayerCaster, 0, casterGuid, victimGuid);
+            if (hotAbs > 0)
+                owner_.addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(hotAbs),
+                              spellId, isPlayerCaster, 0, casterGuid, victimGuid);
+        } else if (auraType == 46 || auraType == 91) {
+            // OBS_MOD_POWER / PERIODIC_ENERGIZE: miscValue(powerType) + amount
+            // Common in WotLK: Replenishment, Mana Spring Totem, Divine Plea, etc.
+            if (!packet.hasRemaining(8)) break;
+            uint8_t periodicPowerType = static_cast<uint8_t>(packet.readUInt32());
+            uint32_t amount = packet.readUInt32();
+            if ((isPlayerVictim || isPlayerCaster) && amount > 0)
+                owner_.addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(amount),
+                              spellId, isPlayerCaster, periodicPowerType, casterGuid, victimGuid);
+        } else if (auraType == 98) {
+            // PERIODIC_MANA_LEECH: miscValue(powerType) + amount + float multiplier
+            if (!packet.hasRemaining(12)) break;
+            uint8_t powerType = static_cast<uint8_t>(packet.readUInt32());
+            uint32_t amount = packet.readUInt32();
+            float multiplier = packet.readFloat();
+            if (isPlayerVictim && amount > 0)
+                owner_.addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(amount),
+                              spellId, false, powerType, casterGuid, victimGuid);
+            if (isPlayerCaster && amount > 0 && multiplier > 0.0f && std::isfinite(multiplier)) {
+                const uint32_t gainedAmount = static_cast<uint32_t>(
+                    std::lround(static_cast<double>(amount) * static_cast<double>(multiplier)));
+                if (gainedAmount > 0) {
+                    owner_.addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(gainedAmount),
+                                  spellId, true, powerType, casterGuid, casterGuid);
+                }
+            }
+        } else {
+            // Unknown/untracked aura type — stop parsing this event safely
+            packet.skipAll();
+            break;
+        }
+    }
+    packet.skipAll();
+}
+
+void SpellHandler::handleSpellEnergizeLog(network::Packet& packet) {
+    // WotLK: packed_guid victim + packed_guid caster + uint32 spellId + uint8 powerType + int32 amount
+    // TBC: full uint64 victim + uint64 caster + uint32 spellId + uint8 powerType + int32 amount
+    // Classic/Vanilla: packed_guid (same as WotLK)
+    const bool energizeTbc = isActiveExpansion("tbc");
+    auto readEnergizeGuid = [&]() -> uint64_t {
+        if (energizeTbc)
+            return (packet.hasRemaining(8)) ? packet.readUInt64() : 0;
+        return packet.readPackedGuid();
+    };
+    if (!packet.hasRemaining(energizeTbc ? 8u : 1u)
+        || (!energizeTbc && !packet.hasFullPackedGuid())) {
+        packet.skipAll(); return;
+    }
+    uint64_t victimGuid = readEnergizeGuid();
+    if (!packet.hasRemaining(energizeTbc ? 8u : 1u)
+        || (!energizeTbc && !packet.hasFullPackedGuid())) {
+        packet.skipAll(); return;
+    }
+    uint64_t casterGuid = readEnergizeGuid();
+    if (!packet.hasRemaining(9)) {
+        packet.skipAll(); return;
+    }
+    uint32_t spellId       = packet.readUInt32();
+    uint8_t  energizePowerType = packet.readUInt8();
+    int32_t  amount        = static_cast<int32_t>(packet.readUInt32());
+    bool isPlayerVictim = (victimGuid == owner_.playerGuid);
+    bool isPlayerCaster = (casterGuid == owner_.playerGuid);
+    if ((isPlayerVictim || isPlayerCaster) && amount > 0)
+        owner_.addCombatText(CombatTextEntry::ENERGIZE, amount, spellId, isPlayerCaster, energizePowerType, casterGuid, victimGuid);
+    packet.skipAll();
+}
+
+void SpellHandler::handleExtraAuraInfo(network::Packet& packet, bool isInit) {
+    // TBC 2.4.3 aura tracking: replaces SMSG_AURA_UPDATE which doesn't exist in TBC.
+    // Format: uint64 targetGuid + uint8 count + N×{uint8 slot, uint32 spellId,
+    //         uint8 effectIndex, uint8 flags, uint32 durationMs, uint32 maxDurationMs}
+    auto remaining = [&]() { return packet.getRemainingSize(); };
+    if (remaining() < 9) { packet.skipAll(); return; }
+    uint64_t auraTargetGuid = packet.readUInt64();
+    uint8_t count = packet.readUInt8();
+
+    std::vector<AuraSlot>* auraList = nullptr;
+    if (auraTargetGuid == owner_.playerGuid)       auraList = &playerAuras_;
+    else if (auraTargetGuid == owner_.targetGuid)   auraList = &targetAuras_;
+    else if (auraTargetGuid != 0)                   auraList = &unitAurasCache_[auraTargetGuid];
+
+    if (auraList && isInit) auraList->clear();
+
+    uint64_t nowMs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+
+    for (uint8_t i = 0; i < count && remaining() >= 15; i++) {
+        uint8_t  slot        = packet.readUInt8();   // 1 byte
+        uint32_t spellId     = packet.readUInt32();  // 4 bytes
+        (void)               packet.readUInt8();     // effectIndex: 1 byte (unused for slot display)
+        uint8_t  flags       = packet.readUInt8();   // 1 byte
+        uint32_t durationMs  = packet.readUInt32();  // 4 bytes
+        uint32_t maxDurMs    = packet.readUInt32();  // 4 bytes — total 15 bytes per entry
+
+        if (auraList) {
+            while (auraList->size() <= slot) auraList->push_back(AuraSlot{});
+            AuraSlot& a = (*auraList)[slot];
+            a.spellId      = spellId;
+            // TBC uses same flag convention as Classic: 0x02=harmful, 0x04=beneficial.
+            // Normalize to WotLK SMSG_AURA_UPDATE convention: 0x80=debuff, 0=buff.
+            a.flags        = (flags & 0x02) ? 0x80u : 0u;
+            a.durationMs   = (durationMs == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(durationMs);
+            a.maxDurationMs= (maxDurMs   == 0xFFFFFFFF) ? -1 : static_cast<int32_t>(maxDurMs);
+            a.receivedAtMs = nowMs;
+        }
+    }
+    packet.skipAll();
+}
+
+void SpellHandler::handleSpellDispelLog(network::Packet& packet) {
+    // WotLK/Classic/Turtle: packed casterGuid + packed victimGuid + uint32 dispelSpell + uint8 isStolen
+    // TBC:                  full uint64 casterGuid + full uint64 victimGuid + ...
+    // + uint32 count + count × (uint32 dispelled_spellId + uint32 unk)
+    const bool dispelUsesFullGuid = isActiveExpansion("tbc");
+    if (!packet.hasRemaining(dispelUsesFullGuid ? 8u : 1u)
+        || (!dispelUsesFullGuid && !packet.hasFullPackedGuid())) {
+        packet.skipAll(); return;
+    }
+    uint64_t casterGuid = dispelUsesFullGuid
+        ? packet.readUInt64() : packet.readPackedGuid();
+    if (!packet.hasRemaining(dispelUsesFullGuid ? 8u : 1u)
+        || (!dispelUsesFullGuid && !packet.hasFullPackedGuid())) {
+        packet.skipAll(); return;
+    }
+    uint64_t victimGuid = dispelUsesFullGuid
+        ? packet.readUInt64() : packet.readPackedGuid();
+    if (!packet.hasRemaining(9)) return;
+    /*uint32_t dispelSpell =*/ packet.readUInt32();
+    uint8_t isStolen = packet.readUInt8();
+    uint32_t count   = packet.readUInt32();
+    // Preserve every dispelled aura in the combat log instead of collapsing
+    // multi-aura packets down to the first entry only.
+    const size_t dispelEntrySize = dispelUsesFullGuid ? 8u : 5u;
+    std::vector<uint32_t> dispelledIds;
+    dispelledIds.reserve(count);
+    for (uint32_t i = 0; i < count && packet.hasRemaining(dispelEntrySize); ++i) {
+        uint32_t dispelledId = packet.readUInt32();
+        if (dispelUsesFullGuid) {
+            /*uint32_t unk =*/ packet.readUInt32();
+        } else {
+            /*uint8_t isPositive =*/ packet.readUInt8();
+        }
+        if (dispelledId != 0) {
+            dispelledIds.push_back(dispelledId);
+        }
+    }
+    // Show system message if player was victim or caster
+    if (victimGuid == owner_.playerGuid || casterGuid == owner_.playerGuid) {
+        std::vector<uint32_t> loggedIds;
+        if (isStolen) {
+            loggedIds.reserve(dispelledIds.size());
+            for (uint32_t dispelledId : dispelledIds) {
+                if (owner_.shouldLogSpellstealAura(casterGuid, victimGuid, dispelledId))
+                    loggedIds.push_back(dispelledId);
+            }
+        } else {
+            loggedIds = dispelledIds;
+        }
+
+        const std::string displaySpellNames = formatSpellNameList(owner_, loggedIds);
+        if (!displaySpellNames.empty()) {
+            char buf[256];
+            const char* passiveVerb = loggedIds.size() == 1 ? "was" : "were";
+            if (isStolen) {
+                if (victimGuid == owner_.playerGuid && casterGuid != owner_.playerGuid)
+                    std::snprintf(buf, sizeof(buf), "%s %s stolen.",
+                                  displaySpellNames.c_str(), passiveVerb);
+                else if (casterGuid == owner_.playerGuid)
+                    std::snprintf(buf, sizeof(buf), "You steal %s.", displaySpellNames.c_str());
+                else
+                    std::snprintf(buf, sizeof(buf), "%s %s stolen.",
+                                  displaySpellNames.c_str(), passiveVerb);
+            } else {
+                if (victimGuid == owner_.playerGuid && casterGuid != owner_.playerGuid)
+                    std::snprintf(buf, sizeof(buf), "%s %s dispelled.",
+                                  displaySpellNames.c_str(), passiveVerb);
+                else if (casterGuid == owner_.playerGuid)
+                    std::snprintf(buf, sizeof(buf), "You dispel %s.", displaySpellNames.c_str());
+                else
+                    std::snprintf(buf, sizeof(buf), "%s %s dispelled.",
+                                  displaySpellNames.c_str(), passiveVerb);
+            }
+            owner_.addSystemChatMessage(buf);
+        }
+        // Preserve stolen auras as spellsteal events so the log wording stays accurate.
+        if (!loggedIds.empty()) {
+            bool isPlayerCaster = (casterGuid == owner_.playerGuid);
+            for (uint32_t dispelledId : loggedIds) {
+                owner_.addCombatText(isStolen ? CombatTextEntry::STEAL : CombatTextEntry::DISPEL,
+                              0, dispelledId, isPlayerCaster, 0,
+                              casterGuid, victimGuid);
+            }
+        }
+    }
+    packet.skipAll();
+}
+
+void SpellHandler::handleSpellStealLog(network::Packet& packet) {
+    // Sent to the CASTER (Mage) when Spellsteal succeeds.
+    // Wire format mirrors SPELLDISPELLOG:
+    // WotLK/Classic/Turtle: packed victim + packed caster + uint32 spellId + uint8 isStolen + uint32 count
+    //                        + count × (uint32 stolenSpellId + uint8 isPositive)
+    // TBC:                   full uint64 victim + full uint64 caster + same tail
+    const bool stealUsesFullGuid = isActiveExpansion("tbc");
+    if (!packet.hasRemaining(stealUsesFullGuid ? 8u : 1u)
+        || (!stealUsesFullGuid && !packet.hasFullPackedGuid())) {
+        packet.skipAll(); return;
+    }
+    uint64_t stealVictim = stealUsesFullGuid
+        ? packet.readUInt64() : packet.readPackedGuid();
+    if (!packet.hasRemaining(stealUsesFullGuid ? 8u : 1u)
+        || (!stealUsesFullGuid && !packet.hasFullPackedGuid())) {
+        packet.skipAll(); return;
+    }
+    uint64_t stealCaster = stealUsesFullGuid
+        ? packet.readUInt64() : packet.readPackedGuid();
+    if (!packet.hasRemaining(9)) {
+        packet.skipAll(); return;
+    }
+    /*uint32_t stealSpellId =*/ packet.readUInt32();
+    /*uint8_t  isStolen    =*/ packet.readUInt8();
+    uint32_t stealCount   = packet.readUInt32();
+    // Preserve every stolen aura in the combat log instead of only the first.
+    const size_t stealEntrySize = stealUsesFullGuid ? 8u : 5u;
+    std::vector<uint32_t> stolenIds;
+    stolenIds.reserve(stealCount);
+    for (uint32_t i = 0; i < stealCount && packet.hasRemaining(stealEntrySize); ++i) {
+        uint32_t stolenId = packet.readUInt32();
+        if (stealUsesFullGuid) {
+            /*uint32_t unk =*/ packet.readUInt32();
+        } else {
+            /*uint8_t isPos  =*/ packet.readUInt8();
+        }
+        if (stolenId != 0) {
+            stolenIds.push_back(stolenId);
+        }
+    }
+    if (stealCaster == owner_.playerGuid || stealVictim == owner_.playerGuid) {
+        std::vector<uint32_t> loggedIds;
+        loggedIds.reserve(stolenIds.size());
+        for (uint32_t stolenId : stolenIds) {
+            if (owner_.shouldLogSpellstealAura(stealCaster, stealVictim, stolenId))
+                loggedIds.push_back(stolenId);
+        }
+
+        const std::string stealDisplayNames = formatSpellNameList(owner_, loggedIds);
+        if (!stealDisplayNames.empty()) {
+            char buf[256];
+            if (stealCaster == owner_.playerGuid)
+                std::snprintf(buf, sizeof(buf), "You stole %s.", stealDisplayNames.c_str());
+            else
+                std::snprintf(buf, sizeof(buf), "%s %s stolen.", stealDisplayNames.c_str(),
+                              loggedIds.size() == 1 ? "was" : "were");
+            owner_.addSystemChatMessage(buf);
+        }
+        // Some servers emit both SPELLDISPELLOG(isStolen=1) and SPELLSTEALLOG
+        // for the same aura. Keep the first event and suppress the duplicate.
+        if (!loggedIds.empty()) {
+            bool isPlayerCaster = (stealCaster == owner_.playerGuid);
+            for (uint32_t stolenId : loggedIds) {
+                owner_.addCombatText(CombatTextEntry::STEAL, 0, stolenId, isPlayerCaster, 0,
+                              stealCaster, stealVictim);
+            }
+        }
+    }
+    packet.skipAll();
+}
+
+void SpellHandler::handleSpellChanceProcLog(network::Packet& packet) {
+    // WotLK/Classic/Turtle: packed_guid target + packed_guid caster + uint32 spellId + ...
+    // TBC:                  uint64 target + uint64 caster + uint32 spellId + ...
+    const bool procChanceUsesFullGuid = isActiveExpansion("tbc");
+    auto readProcChanceGuid = [&]() -> uint64_t {
+        if (procChanceUsesFullGuid)
+            return (packet.hasRemaining(8)) ? packet.readUInt64() : 0;
+        return packet.readPackedGuid();
+    };
+    if (!packet.hasRemaining(procChanceUsesFullGuid ? 8u : 1u)
+        || (!procChanceUsesFullGuid && !packet.hasFullPackedGuid())) {
+        packet.skipAll(); return;
+    }
+    uint64_t procTargetGuid = readProcChanceGuid();
+    if (!packet.hasRemaining(procChanceUsesFullGuid ? 8u : 1u)
+        || (!procChanceUsesFullGuid && !packet.hasFullPackedGuid())) {
+        packet.skipAll(); return;
+    }
+    uint64_t procCasterGuid = readProcChanceGuid();
+    if (!packet.hasRemaining(4)) {
+        packet.skipAll(); return;
+    }
+    uint32_t procSpellId = packet.readUInt32();
+    // Show a "PROC!" floating text when the player triggers the proc
+    if (procCasterGuid == owner_.playerGuid && procSpellId > 0)
+        owner_.addCombatText(CombatTextEntry::PROC_TRIGGER, 0, procSpellId, true, 0,
+                      procCasterGuid, procTargetGuid);
+    packet.skipAll();
+}
+
+void SpellHandler::handleSpellInstaKillLog(network::Packet& packet) {
+    // Sent when a unit is killed by a spell with SPELL_ATTR_EX2_INSTAKILL (e.g. Execute, Obliterate, etc.)
+    // WotLK/Classic/Turtle: packed_guid caster + packed_guid victim + uint32 spellId
+    // TBC:                  full uint64 caster + full uint64 victim + uint32 spellId
+    const bool ikUsesFullGuid = isActiveExpansion("tbc");
+    auto ik_rem = [&]() { return packet.getRemainingSize(); };
+    if (ik_rem() < (ikUsesFullGuid ? 8u : 1u)
+        || (!ikUsesFullGuid && !packet.hasFullPackedGuid())) {
+        packet.skipAll(); return;
+    }
+    uint64_t ikCaster = ikUsesFullGuid
+        ? packet.readUInt64() : packet.readPackedGuid();
+    if (ik_rem() < (ikUsesFullGuid ? 8u : 1u)
+        || (!ikUsesFullGuid && !packet.hasFullPackedGuid())) {
+        packet.skipAll(); return;
+    }
+    uint64_t ikVictim = ikUsesFullGuid
+        ? packet.readUInt64() : packet.readPackedGuid();
+    if (ik_rem() < 4) {
+        packet.skipAll(); return;
+    }
+    uint32_t ikSpell = packet.readUInt32();
+    // Show kill/death feedback for the local player
+    if (ikCaster == owner_.playerGuid) {
+        owner_.addCombatText(CombatTextEntry::INSTAKILL, 0, ikSpell, true, 0, ikCaster, ikVictim);
+    } else if (ikVictim == owner_.playerGuid) {
+        owner_.addCombatText(CombatTextEntry::INSTAKILL, 0, ikSpell, false, 0, ikCaster, ikVictim);
+        owner_.addUIError("You were killed by an instant-kill effect.");
+        owner_.addSystemChatMessage("You were killed by an instant-kill effect.");
+    }
+    LOG_DEBUG("SMSG_SPELLINSTAKILLLOG: caster=0x", std::hex, ikCaster,
+              " victim=0x", ikVictim, std::dec, " spell=", ikSpell);
+    packet.skipAll();
+}
+
+void SpellHandler::handleSpellLogExecute(network::Packet& packet) {
+    // WotLK/Classic/Turtle: packed_guid caster + uint32 spellId + uint32 effectCount
+    // TBC:                  uint64 caster + uint32 spellId + uint32 effectCount
+    // Per-effect: uint8 effectType + uint32 effectLogCount + effect-specific data
+    // Effect 10 = POWER_DRAIN:   packed_guid target + uint32 amount + uint32 powerType + float multiplier
+    // Effect 11 = HEALTH_LEECH:  packed_guid target + uint32 amount + float multiplier
+    // Effect 24 = CREATE_ITEM:   uint32 itemEntry
+    // Effect 26 = INTERRUPT_CAST: packed_guid target + uint32 interrupted_spell_id
+    // Effect 49 = FEED_PET:      uint32 itemEntry
+    // Effect 114= CREATE_ITEM2:  uint32 itemEntry (same layout as CREATE_ITEM)
+    const bool exeUsesFullGuid = isActiveExpansion("tbc");
+    if (!packet.hasRemaining(exeUsesFullGuid ? 8u : 1u) ) {
+        packet.skipAll(); return;
+    }
+    if (!exeUsesFullGuid && !packet.hasFullPackedGuid()) {
+        packet.skipAll(); return;
+    }
+    uint64_t exeCaster = exeUsesFullGuid
+        ? packet.readUInt64() : packet.readPackedGuid();
+    if (!packet.hasRemaining(8)) {
+        packet.skipAll(); return;
+    }
+    uint32_t exeSpellId = packet.readUInt32();
+    uint32_t exeEffectCount = packet.readUInt32();
+    exeEffectCount = std::min(exeEffectCount, 32u); // sanity
+
+    const bool isPlayerCaster = (exeCaster == owner_.playerGuid);
+    for (uint32_t ei = 0; ei < exeEffectCount; ++ei) {
+        if (!packet.hasRemaining(5)) break;
+        uint8_t  effectType     = packet.readUInt8();
+        uint32_t effectLogCount = packet.readUInt32();
+        effectLogCount = std::min(effectLogCount, 64u); // sanity
+        if (effectType == 10) {
+            // SPELL_EFFECT_POWER_DRAIN: packed_guid target + uint32 amount + uint32 powerType + float multiplier
+            for (uint32_t li = 0; li < effectLogCount; ++li) {
+                if (!packet.hasRemaining(exeUsesFullGuid ? 8u : 1u)
+                    || (!exeUsesFullGuid && !packet.hasFullPackedGuid())) {
+                    packet.skipAll(); break;
+                }
+                uint64_t drainTarget = exeUsesFullGuid
+                    ? packet.readUInt64()
+                    : packet.readPackedGuid();
+                if (!packet.hasRemaining(12)) { packet.skipAll(); break; }
+                uint32_t drainAmount = packet.readUInt32();
+                uint32_t drainPower  = packet.readUInt32(); // 0=mana,1=rage,3=energy,6=runic
+                float drainMult = packet.readFloat();
+                if (drainAmount > 0) {
+                    if (drainTarget == owner_.playerGuid)
+                        owner_.addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(drainAmount), exeSpellId, false,
+                                      static_cast<uint8_t>(drainPower),
+                                      exeCaster, drainTarget);
+                    if (isPlayerCaster) {
+                        if (drainTarget != owner_.playerGuid) {
+                            owner_.addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(drainAmount), exeSpellId, true,
+                                          static_cast<uint8_t>(drainPower), exeCaster, drainTarget);
+                        }
+                        if (drainMult > 0.0f && std::isfinite(drainMult)) {
+                            const uint32_t gainedAmount = static_cast<uint32_t>(
+                                std::lround(static_cast<double>(drainAmount) * static_cast<double>(drainMult)));
+                            if (gainedAmount > 0) {
+                                owner_.addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(gainedAmount), exeSpellId, true,
+                                              static_cast<uint8_t>(drainPower), exeCaster, exeCaster);
+                            }
+                        }
+                    }
+                }
+                LOG_DEBUG("SMSG_SPELLLOGEXECUTE POWER_DRAIN: spell=", exeSpellId,
+                          " power=", drainPower, " amount=", drainAmount,
+                          " multiplier=", drainMult);
+            }
+        } else if (effectType == 11) {
+            // SPELL_EFFECT_HEALTH_LEECH: packed_guid target + uint32 amount + float multiplier
+            for (uint32_t li = 0; li < effectLogCount; ++li) {
+                if (!packet.hasRemaining(exeUsesFullGuid ? 8u : 1u)
+                    || (!exeUsesFullGuid && !packet.hasFullPackedGuid())) {
+                    packet.skipAll(); break;
+                }
+                uint64_t leechTarget = exeUsesFullGuid
+                    ? packet.readUInt64()
+                    : packet.readPackedGuid();
+                if (!packet.hasRemaining(8)) { packet.skipAll(); break; }
+                uint32_t leechAmount = packet.readUInt32();
+                float leechMult = packet.readFloat();
+                if (leechAmount > 0) {
+                    if (leechTarget == owner_.playerGuid) {
+                        owner_.addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(leechAmount), exeSpellId, false, 0,
+                                      exeCaster, leechTarget);
+                    } else if (isPlayerCaster) {
+                        owner_.addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(leechAmount), exeSpellId, true, 0,
+                                      exeCaster, leechTarget);
+                    }
+                    if (isPlayerCaster && leechMult > 0.0f && std::isfinite(leechMult)) {
+                        const uint32_t gainedAmount = static_cast<uint32_t>(
+                            std::lround(static_cast<double>(leechAmount) * static_cast<double>(leechMult)));
+                        if (gainedAmount > 0) {
+                            owner_.addCombatText(CombatTextEntry::HEAL, static_cast<int32_t>(gainedAmount), exeSpellId, true, 0,
+                                          exeCaster, exeCaster);
+                        }
+                    }
+                }
+                LOG_DEBUG("SMSG_SPELLLOGEXECUTE HEALTH_LEECH: spell=", exeSpellId,
+                          " amount=", leechAmount, " multiplier=", leechMult);
+            }
+        } else if (effectType == 24 || effectType == 114) {
+            // SPELL_EFFECT_CREATE_ITEM / CREATE_ITEM2: uint32 itemEntry per log entry
+            for (uint32_t li = 0; li < effectLogCount; ++li) {
+                if (!packet.hasRemaining(4)) break;
+                uint32_t itemEntry = packet.readUInt32();
+                if (isPlayerCaster && itemEntry != 0) {
+                    owner_.ensureItemInfo(itemEntry);
+                    const ItemQueryResponseData* info = owner_.getItemInfo(itemEntry);
+                    std::string itemName = info && !info->name.empty()
+                        ? info->name : ("item #" + std::to_string(itemEntry));
+                    const auto& spellName = owner_.getSpellName(exeSpellId);
+                    std::string msg = spellName.empty()
+                        ? ("You create: " + itemName + ".")
+                        : ("You create " + itemName + " using " + spellName + ".");
+                    owner_.addSystemChatMessage(msg);
+                    LOG_DEBUG("SMSG_SPELLLOGEXECUTE CREATE_ITEM: spell=", exeSpellId,
+                              " item=", itemEntry, " name=", itemName);
+
+                    // Repeat-craft queue: re-cast if more crafts remaining
+                    if (craftQueueRemaining_ > 0 && craftQueueSpellId_ == exeSpellId) {
+                        --craftQueueRemaining_;
+                        if (craftQueueRemaining_ > 0) {
+                            castSpell(craftQueueSpellId_, 0);
+                        } else {
+                            craftQueueSpellId_ = 0;
+                        }
+                    }
+                }
+            }
+        } else if (effectType == 26) {
+            // SPELL_EFFECT_INTERRUPT_CAST: packed_guid target + uint32 interrupted_spell_id
+            for (uint32_t li = 0; li < effectLogCount; ++li) {
+                if (!packet.hasRemaining(exeUsesFullGuid ? 8u : 1u)
+                    || (!exeUsesFullGuid && !packet.hasFullPackedGuid())) {
+                    packet.skipAll(); break;
+                }
+                uint64_t icTarget = exeUsesFullGuid
+                    ? packet.readUInt64()
+                    : packet.readPackedGuid();
+                if (!packet.hasRemaining(4)) { packet.skipAll(); break; }
+                uint32_t icSpellId = packet.readUInt32();
+                // Clear the interrupted unit's cast bar immediately
+                unitCastStates_.erase(icTarget);
+                // Record interrupt in combat log when player is involved
+                if (isPlayerCaster || icTarget == owner_.playerGuid)
+                    owner_.addCombatText(CombatTextEntry::INTERRUPT, 0, icSpellId, isPlayerCaster, 0,
+                                  exeCaster, icTarget);
+                LOG_DEBUG("SMSG_SPELLLOGEXECUTE INTERRUPT_CAST: spell=", exeSpellId,
+                          " interrupted=", icSpellId, " target=0x", std::hex, icTarget, std::dec);
+            }
+        } else if (effectType == 49) {
+            // SPELL_EFFECT_FEED_PET: uint32 itemEntry per log entry
+            for (uint32_t li = 0; li < effectLogCount; ++li) {
+                if (!packet.hasRemaining(4)) break;
+                uint32_t feedItem = packet.readUInt32();
+                if (isPlayerCaster && feedItem != 0) {
+                    owner_.ensureItemInfo(feedItem);
+                    const ItemQueryResponseData* info = owner_.getItemInfo(feedItem);
+                    std::string itemName = info && !info->name.empty()
+                        ? info->name : ("item #" + std::to_string(feedItem));
+                    uint32_t feedQuality = info ? info->quality : 1u;
+                    owner_.addSystemChatMessage("You feed your pet " + buildItemLink(feedItem, feedQuality, itemName) + ".");
+                    LOG_DEBUG("SMSG_SPELLLOGEXECUTE FEED_PET: item=", feedItem, " name=", itemName);
+                }
+            }
+        } else {
+            // Unknown effect type — stop parsing to avoid misalignment
+            packet.skipAll();
+            break;
+        }
+    }
+    packet.skipAll();
+}
+
+void SpellHandler::handleClearExtraAuraInfo(network::Packet& packet) {
+    // TBC 2.4.3: clear a single aura slot for a unit
+    // Format: uint64 targetGuid + uint8 slot
+    if (packet.hasRemaining(9)) {
+        uint64_t clearGuid  = packet.readUInt64();
+        uint8_t  slot       = packet.readUInt8();
+        std::vector<AuraSlot>* auraList = nullptr;
+        if (clearGuid == owner_.playerGuid)       auraList = &playerAuras_;
+        else if (clearGuid == owner_.targetGuid)   auraList = &targetAuras_;
+        if (auraList && slot < auraList->size()) {
+            (*auraList)[slot] = AuraSlot{};
+        }
+    }
+    packet.skipAll();
+}
+
+void SpellHandler::handleItemEnchantTimeUpdate(network::Packet& packet) {
+    // Format: uint64 itemGuid + uint32 slot + uint32 durationSec + uint64 playerGuid
+    // slot: 0=main-hand, 1=off-hand, 2=ranged
+    if (!packet.hasRemaining(24)) {
+        packet.skipAll(); return;
+    }
+    /*uint64_t itemGuid =*/ packet.readUInt64();
+    uint32_t enchSlot    = packet.readUInt32();
+    uint32_t durationSec = packet.readUInt32();
+    /*uint64_t playerGuid =*/ packet.readUInt64();
+
+    // Clamp to known slots (0-2)
+    if (enchSlot > 2) { return; }
+
+    uint64_t nowMs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+
+    if (durationSec == 0) {
+        // Enchant expired / removed — erase the slot entry
+        owner_.tempEnchantTimers_.erase(
+            std::remove_if(owner_.tempEnchantTimers_.begin(), owner_.tempEnchantTimers_.end(),
+                           [enchSlot](const GameHandler::TempEnchantTimer& t) { return t.slot == enchSlot; }),
+            owner_.tempEnchantTimers_.end());
+    } else {
+        uint64_t expireMs = nowMs + static_cast<uint64_t>(durationSec) * 1000u;
+        bool found = false;
+        for (auto& t : owner_.tempEnchantTimers_) {
+            if (t.slot == enchSlot) { t.expireMs = expireMs; found = true; break; }
+        }
+        if (!found) owner_.tempEnchantTimers_.push_back({enchSlot, expireMs});
+
+        // Warn at important thresholds
+        if (durationSec <= 60 && durationSec > 55) {
+            const char* slotName = (enchSlot < 3) ? owner_.kTempEnchantSlotNames[enchSlot] : "weapon";
+            char buf[80];
+            std::snprintf(buf, sizeof(buf), "Weapon enchant (%s) expires in 1 minute!", slotName);
+            owner_.addSystemChatMessage(buf);
+        } else if (durationSec <= 300 && durationSec > 295) {
+            const char* slotName = (enchSlot < 3) ? owner_.kTempEnchantSlotNames[enchSlot] : "weapon";
+            char buf[80];
+            std::snprintf(buf, sizeof(buf), "Weapon enchant (%s) expires in 5 minutes.", slotName);
+            owner_.addSystemChatMessage(buf);
+        }
+    }
+    LOG_DEBUG("SMSG_ITEM_ENCHANT_TIME_UPDATE: slot=", enchSlot, " dur=", durationSec, "s");
+}
+
+void SpellHandler::handleResumeCastBar(network::Packet& packet) {
+    // WotLK: packed_guid caster + packed_guid target + uint32 spellId + uint32 remainingMs + uint32 totalMs + uint8 schoolMask
+    // TBC/Classic: uint64 caster + uint64 target + ...
+    const bool rcbTbc = isPreWotlk();
+    auto remaining = [&]() { return packet.getRemainingSize(); };
+    if (remaining() < (rcbTbc ? 8u : 1u)) return;
+    uint64_t caster = rcbTbc
+        ? packet.readUInt64() : packet.readPackedGuid();
+    if (remaining() < (rcbTbc ? 8u : 1u)) return;
+    if (rcbTbc) packet.readUInt64(); // target (discard)
+    else (void)packet.readPackedGuid(); // target
+    if (remaining() < 12) return;
+    uint32_t spellId   = packet.readUInt32();
+    uint32_t remainMs  = packet.readUInt32();
+    uint32_t totalMs   = packet.readUInt32();
+    if (totalMs > 0) {
+        if (caster == owner_.playerGuid) {
+            casting_            = true;
+            castIsChannel_      = false;
+            currentCastSpellId_ = spellId;
+            castTimeTotal_      = totalMs  / 1000.0f;
+            castTimeRemaining_  = remainMs / 1000.0f;
+        } else {
+            auto& s = unitCastStates_[caster];
+            s.casting       = true;
+            s.spellId       = spellId;
+            s.timeTotal     = totalMs  / 1000.0f;
+            s.timeRemaining = remainMs / 1000.0f;
+        }
+        LOG_DEBUG("SMSG_RESUME_CAST_BAR: caster=0x", std::hex, caster, std::dec,
+                  " spell=", spellId, " remaining=", remainMs, "ms total=", totalMs, "ms");
+    }
+}
+
+void SpellHandler::handleChannelStart(network::Packet& packet) {
+    // casterGuid + uint32 spellId + uint32 totalDurationMs
+    const bool tbcOrClassic = isPreWotlk();
+    uint64_t chanCaster = tbcOrClassic
+        ? (packet.hasRemaining(8) ? packet.readUInt64() : 0)
+        : packet.readPackedGuid();
+    if (!packet.hasRemaining(8)) return;
+    uint32_t chanSpellId = packet.readUInt32();
+    uint32_t chanTotalMs = packet.readUInt32();
+    if (chanTotalMs > 0 && chanCaster != 0) {
+        if (chanCaster == owner_.playerGuid) {
+            casting_            = true;
+            castIsChannel_      = true;
+            currentCastSpellId_ = chanSpellId;
+            castTimeTotal_      = chanTotalMs / 1000.0f;
+            castTimeRemaining_  = castTimeTotal_;
+        } else {
+            auto& s = unitCastStates_[chanCaster];
+            s.casting        = true;
+            s.isChannel      = true;
+            s.spellId        = chanSpellId;
+            s.timeTotal      = chanTotalMs / 1000.0f;
+            s.timeRemaining  = s.timeTotal;
+            s.interruptible  = owner_.isSpellInterruptible(chanSpellId);
+        }
+        LOG_DEBUG("MSG_CHANNEL_START: caster=0x", std::hex, chanCaster, std::dec,
+                  " spell=", chanSpellId, " total=", chanTotalMs, "ms");
+        // Fire UNIT_SPELLCAST_CHANNEL_START for Lua addons
+        if (owner_.addonEventCallback_) {
+            auto unitId = owner_.guidToUnitId(chanCaster);
+            if (!unitId.empty())
+                owner_.fireAddonEvent("UNIT_SPELLCAST_CHANNEL_START", {unitId, std::to_string(chanSpellId)});
+        }
+    }
+}
+
+void SpellHandler::handleChannelUpdate(network::Packet& packet) {
+    // casterGuid + uint32 remainingMs
+    const bool tbcOrClassic2 = isPreWotlk();
+    uint64_t chanCaster2 = tbcOrClassic2
+        ? (packet.hasRemaining(8) ? packet.readUInt64() : 0)
+        : packet.readPackedGuid();
+    if (!packet.hasRemaining(4)) return;
+    uint32_t chanRemainMs = packet.readUInt32();
+    if (chanCaster2 == owner_.playerGuid) {
+        castTimeRemaining_ = chanRemainMs / 1000.0f;
+        if (chanRemainMs == 0) {
+            casting_ = false;
+            castIsChannel_ = false;
+            currentCastSpellId_ = 0;
+        }
+    } else if (chanCaster2 != 0) {
+        auto it = unitCastStates_.find(chanCaster2);
+        if (it != unitCastStates_.end()) {
+            it->second.timeRemaining = chanRemainMs / 1000.0f;
+            if (chanRemainMs == 0) unitCastStates_.erase(it);
+        }
+    }
+    LOG_DEBUG("MSG_CHANNEL_UPDATE: caster=0x", std::hex, chanCaster2, std::dec,
+              " remaining=", chanRemainMs, "ms");
+    // Fire UNIT_SPELLCAST_CHANNEL_STOP when channel ends
+    if (chanRemainMs == 0) {
+        auto unitId = owner_.guidToUnitId(chanCaster2);
+        if (!unitId.empty())
+            owner_.fireAddonEvent("UNIT_SPELLCAST_CHANNEL_STOP", {unitId});
+    }
+}
+
+// ============================================================
+// Pet Stable
+// ============================================================
+
+void SpellHandler::requestStabledPetList() {
+    if (owner_.state != WorldState::IN_WORLD || !owner_.socket || owner_.stableMasterGuid_ == 0) return;
+    auto pkt = ListStabledPetsPacket::build(owner_.stableMasterGuid_);
+    owner_.socket->send(pkt);
+    LOG_INFO("Sent MSG_LIST_STABLED_PETS to npc=0x", std::hex, owner_.stableMasterGuid_, std::dec);
+}
+
+void SpellHandler::stablePet(uint8_t slot) {
+    if (owner_.state != WorldState::IN_WORLD || !owner_.socket || owner_.stableMasterGuid_ == 0) return;
+    if (owner_.petGuid_ == 0) {
+        owner_.addSystemChatMessage("You do not have an active pet to stable.");
+        return;
+    }
+    auto pkt = StablePetPacket::build(owner_.stableMasterGuid_, slot);
+    owner_.socket->send(pkt);
+    LOG_INFO("Sent CMSG_STABLE_PET: slot=", static_cast<int>(slot));
+}
+
+void SpellHandler::unstablePet(uint32_t petNumber) {
+    if (owner_.state != WorldState::IN_WORLD || !owner_.socket || owner_.stableMasterGuid_ == 0 || petNumber == 0) return;
+    auto pkt = UnstablePetPacket::build(owner_.stableMasterGuid_, petNumber);
+    owner_.socket->send(pkt);
+    LOG_INFO("Sent CMSG_UNSTABLE_PET: petNumber=", petNumber);
+}
+
+} // namespace game
+} // namespace wowee

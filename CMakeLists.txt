@@ -450,6 +450,14 @@ set(WOWEE_SOURCES
     src/game/opcode_table.cpp
     src/game/update_field_table.cpp
     src/game/game_handler.cpp
+    src/game/chat_handler.cpp
+    src/game/movement_handler.cpp
+    src/game/combat_handler.cpp
+    src/game/spell_handler.cpp
+    src/game/inventory_handler.cpp
+    src/game/social_handler.cpp
+    src/game/quest_handler.cpp
+    src/game/warden_handler.cpp
     src/game/warden_crypto.cpp
     src/game/warden_module.cpp
     src/game/warden_emulator.cpp
@@ -883,6 +891,17 @@ add_custom_command(TARGET wowee POST_BUILD
         $<TARGET_FILE_DIR:wowee>/assets
     COMMENT "Syncing assets to $<TARGET_FILE_DIR:wowee>/assets"
 )
+
+# Symlink Data/ next to the executable so expansion profiles, opcode tables,
+# and other runtime data files are found when running from the build directory.
+if(NOT WIN32)
+    add_custom_command(TARGET wowee POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E create_symlink
+            ${CMAKE_CURRENT_SOURCE_DIR}/Data
+            $<TARGET_FILE_DIR:wowee>/Data
+        COMMENT "Symlinking Data to $<TARGET_FILE_DIR:wowee>/Data"
+    )
+endif()
 
 # On Windows, SDL 2.28+ uses LoadLibraryExW with LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
 # which does NOT include System32. Copy vulkan-1.dll into the output directory so

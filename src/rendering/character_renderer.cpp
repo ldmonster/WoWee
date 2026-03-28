@@ -226,10 +226,8 @@ bool CharacterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFram
 
     // --- Load shaders ---
     rendering::VkShaderModule charVert, charFrag;
-    charVert.loadFromFile(device, "assets/shaders/character.vert.spv");
-    charFrag.loadFromFile(device, "assets/shaders/character.frag.spv");
-
-    if (!charVert.isValid() || !charFrag.isValid()) {
+    if (!charVert.loadFromFile(device, "assets/shaders/character.vert.spv") ||
+        !charFrag.loadFromFile(device, "assets/shaders/character.frag.spv")) {
         LOG_ERROR("Character: Missing required shaders, cannot initialize");
         return false;
     }
@@ -3287,10 +3285,8 @@ void CharacterRenderer::recreatePipelines() {
 
     // --- Load shaders ---
     rendering::VkShaderModule charVert, charFrag;
-    charVert.loadFromFile(device, "assets/shaders/character.vert.spv");
-    charFrag.loadFromFile(device, "assets/shaders/character.frag.spv");
-
-    if (!charVert.isValid() || !charFrag.isValid()) {
+    if (!charVert.loadFromFile(device, "assets/shaders/character.vert.spv") ||
+        !charFrag.loadFromFile(device, "assets/shaders/character.frag.spv")) {
         LOG_ERROR("CharacterRenderer::recreatePipelines: missing required shaders");
         return;
     }
