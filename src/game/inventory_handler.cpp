@@ -2121,6 +2121,10 @@ void InventoryHandler::handleTradeStatus(network::Packet& packet) {
             owner_.addSystemChatMessage("Trade failed.");
             if (owner_.addonEventCallback_) owner_.addonEventCallback_("TRADE_CLOSED", {});
             break;
+        case 8: // TRADE_STATUS_UNACCEPT
+            tradeStatus_ = TradeStatus::Open;
+            if (owner_.addonEventCallback_) owner_.addonEventCallback_("TRADE_ACCEPT_UPDATE", {});
+            break;
         case 17: // TRADE_STATUS_PETITION
             owner_.addSystemChatMessage("You cannot trade while petition is active.");
             break;
