@@ -4074,8 +4074,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
                 pendingBuybackWireSlot_ = 0;
 
                 // Refresh vendor list so UI state stays in sync after buyback result.
-                if (currentVendorItems.vendorGuid != 0 && socket && state == WorldState::IN_WORLD) {
-                    auto pkt = ListInventoryPacket::build(currentVendorItems.vendorGuid);
+                if (getVendorItems().vendorGuid != 0 && socket && state == WorldState::IN_WORLD) {
+                    auto pkt = ListInventoryPacket::build(getVendorItems().vendorGuid);
                     socket->send(pkt);
                 }
             } else if (pendingBuyItemId_ != 0) {
