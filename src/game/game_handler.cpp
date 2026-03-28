@@ -4104,7 +4104,8 @@ void GameHandler::handlePacket(network::Packet& packet) {
         ++wardenPacketsAfterGate_;
     }
     if (preLogicalOp && isAuthCharPipelineOpcode(*preLogicalOp)) {
-        LOG_DEBUG("AUTH/CHAR RX opcode=0x", std::hex, opcode, std::dec,
+        LOG_WARNING("AUTH/CHAR RX opcode=0x", std::hex, opcode, std::dec,
+                 " logical=", static_cast<uint32_t>(*preLogicalOp),
                  " state=", worldStateName(state),
                  " size=", packet.getSize());
     }
@@ -4385,7 +4386,7 @@ void GameHandler::sendAuthSession() {
 }
 
 void GameHandler::handleAuthResponse(network::Packet& packet) {
-    LOG_INFO("Handling SMSG_AUTH_RESPONSE");
+    LOG_WARNING("Handling SMSG_AUTH_RESPONSE, size=", packet.getSize());
 
     AuthResponseData response;
     if (!AuthResponseParser::parse(packet, response)) {

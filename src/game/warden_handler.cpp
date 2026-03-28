@@ -380,7 +380,7 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
             std::vector<uint8_t> resp = { 0x00 }; // WARDEN_CMSG_MODULE_MISSING
             sendWardenResponse(resp);
             wardenState_ = WardenState::WAIT_MODULE_CACHE;
-            LOG_DEBUG("Warden: Sent MODULE_MISSING, waiting for module data chunks");
+            LOG_WARNING("Warden: Sent MODULE_MISSING for module size=", wardenModuleSize_, ", waiting for data chunks");
             break;
         }
 
@@ -404,7 +404,7 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
                                      decrypted.begin() + 3,
                                      decrypted.begin() + 3 + chunkSize);
 
-            LOG_DEBUG("Warden: MODULE_CACHE chunk ", chunkSize, " bytes, total ",
+            LOG_WARNING("Warden: MODULE_CACHE chunk ", chunkSize, " bytes, total ",
                      wardenModuleData_.size(), "/", wardenModuleSize_);
 
             // Check if module download is complete

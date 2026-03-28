@@ -15,10 +15,10 @@
 
 namespace {
 constexpr size_t kMaxReceiveBufferBytes = 8 * 1024 * 1024;
-constexpr int kDefaultMaxParsedPacketsPerUpdate = 16;
+constexpr int kDefaultMaxParsedPacketsPerUpdate = 64;
 constexpr int kAbsoluteMaxParsedPacketsPerUpdate = 220;
 constexpr int kMinParsedPacketsPerUpdate = 8;
-constexpr int kDefaultMaxPacketCallbacksPerUpdate = 6;
+constexpr int kDefaultMaxPacketCallbacksPerUpdate = 48;
 constexpr int kAbsoluteMaxPacketCallbacksPerUpdate = 64;
 constexpr int kMinPacketCallbacksPerUpdate = 1;
 constexpr int kMaxRecvCallsPerUpdate = 64;
