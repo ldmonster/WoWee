@@ -2446,11 +2446,19 @@ void Application::setupUICallbacks() {
             bool farTeleport = (teleportDistSq > 500.0f * 500.0f);
 
             if (farTeleport) {
-                // Far same-map teleport (hearthstone, etc.): do a full world reload
-                // with loading screen to prevent falling through unloaded terrain.
+                // Far same-map teleport (hearthstone, etc.): defer full world reload
+                // to next frame to avoid blocking the packet handler for 20+ seconds.
                 LOG_WARNING("Far same-map teleport (dist=", std::sqrt(teleportDistSq),
-                            "), triggering full world reload with loading screen");
-                loadOnlineWorldTerrain(mapId, x, y, z);
+                            "), deferring world reload to next frame");
+                // Update position immediately so the player doesn't keep moving at old location
+                renderer->getCharacterPosition() = renderPos;
+                if (renderer->getCameraController()) {
+                    auto* ft = renderer->getCameraController()->getFollowTargetMutable();
+                    if (ft) *ft = renderPos;
+                    renderer->getCameraController()->clearMovementInputs();
+                    renderer->getCameraController()->suppressMovementFor(1.0f);
+                }
+                pendingWorldEntry_ = PendingWorldEntry{mapId, x, y, z};
                 return;
             }
             LOG_INFO("Same-map teleport (map ", mapId, "), skipping full world reload");
