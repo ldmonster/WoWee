@@ -1446,21 +1446,10 @@ public:
     // Quest-starting items: right-click triggers quest offer dialog via questgiver protocol
     void offerQuestFromItem(uint64_t itemGuid, uint32_t questId);
     uint64_t getBagItemGuid(int bagIndex, int slotIndex) const;
-    bool isGossipWindowOpen() const { return gossipWindowOpen; }
-    const GossipMessageData& getCurrentGossip() const { return currentGossip; }
-    bool isQuestDetailsOpen() {
-        // Check if delayed opening timer has expired
-        if (questDetailsOpen) return true;
-        if (questDetailsOpenTime != std::chrono::steady_clock::time_point{}) {
-            if (std::chrono::steady_clock::now() >= questDetailsOpenTime) {
-                questDetailsOpen = true;
-                questDetailsOpenTime = std::chrono::steady_clock::time_point{};
-                return true;
-            }
-        }
-        return false;
-    }
-    const QuestDetailsData& getQuestDetails() const { return currentQuestDetails; }
+    bool isGossipWindowOpen() const;
+    const GossipMessageData& getCurrentGossip() const;
+    bool isQuestDetailsOpen();
+    const QuestDetailsData& getQuestDetails() const;
 
     // Gossip POI (aliased from handler_types.hpp)
     using GossipPoi = game::GossipPoi;

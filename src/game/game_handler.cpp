@@ -1467,10 +1467,10 @@ void GameHandler::update(float deltaTime) {
                 LOG_INFO(label, " closed: walked too far from NPC");
             }
         };
-        closeIfTooFar(vendorWindowOpen, currentVendorItems.vendorGuid, [this]{ closeVendor(); }, "Vendor");
-        closeIfTooFar(gossipWindowOpen, currentGossip.npcGuid, [this]{ closeGossip(); }, "Gossip");
-        closeIfTooFar(taxiWindowOpen_, taxiNpcGuid_, [this]{ closeTaxi(); }, "Taxi window");
-        closeIfTooFar(trainerWindowOpen_, currentTrainerList_.trainerGuid, [this]{ closeTrainer(); }, "Trainer");
+        closeIfTooFar(isVendorWindowOpen(), getVendorItems().vendorGuid, [this]{ closeVendor(); }, "Vendor");
+        closeIfTooFar(isGossipWindowOpen(), getCurrentGossip().npcGuid, [this]{ closeGossip(); }, "Gossip");
+        closeIfTooFar(isTaxiWindowOpen(), taxiNpcGuid_, [this]{ closeTaxi(); }, "Taxi window");
+        closeIfTooFar(isTrainerWindowOpen(), getTrainerSpells().trainerGuid, [this]{ closeTrainer(); }, "Trainer");
 
         updateEntityInterpolation(deltaTime);
 
@@ -9972,6 +9972,22 @@ void GameHandler::cancelPetUnlearn() {
 }
 
 // ---- QuestHandler delegating getters ----
+
+bool GameHandler::isGossipWindowOpen() const {
+    return questHandler_ ? questHandler_->isGossipWindowOpen() : gossipWindowOpen;
+}
+const GossipMessageData& GameHandler::getCurrentGossip() const {
+    if (questHandler_) return questHandler_->getCurrentGossip();
+    return currentGossip;
+}
+bool GameHandler::isQuestDetailsOpen() {
+    if (questHandler_) return questHandler_->isQuestDetailsOpen();
+    return questDetailsOpen;
+}
+const QuestDetailsData& GameHandler::getQuestDetails() const {
+    if (questHandler_) return questHandler_->getQuestDetails();
+    return currentQuestDetails;
+}
 
 const std::vector<GossipPoi>& GameHandler::getGossipPois() const {
     if (questHandler_) return questHandler_->getGossipPois();
