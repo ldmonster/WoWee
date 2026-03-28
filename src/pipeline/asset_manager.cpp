@@ -285,6 +285,28 @@ std::shared_ptr<DBCFile> AssetManager::loadDBC(const std::string& name) {
         dbcData = readFile(dbcPath);
     }
 
+    // Try Data/db/ directory (pre-extracted binary DBCs shared across expansions)
+    if (dbcData.empty()) {
+        // dataPath is expansion-specific (e.g. Data/expansions/wotlk/); go up to Data/
+        for (const std::string& base : {dataPath + "/db/" + name,
+                                         dataPath + "/../../db/" + name,
+                                         "Data/db/" + name}) {
+            if (std::filesystem::exists(base)) {
+                std::ifstream f(base, std::ios::binary | std::ios::ate);
+                if (f) {
+                    auto size = f.tellg();
+                    if (size > 0) {
+                        f.seekg(0);
+                        dbcData.resize(static_cast<size_t>(size));
+                        f.read(reinterpret_cast<char*>(dbcData.data()), size);
+                        LOG_INFO("Loaded binary DBC from: ", base, " (", size, " bytes)");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     // Fall back to expansion-specific CSV (e.g. Data/expansions/wotlk/db/Spell.csv)
     if (dbcData.empty() && !expansionDataPath_.empty()) {
         std::string baseName = name;
