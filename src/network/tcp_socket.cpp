@@ -86,6 +86,11 @@ bool TCPSocket::connect(const std::string& host, uint16_t port) {
         }
     }
 
+    // Disable Nagle's algorithm — send small packets immediately.
+    int one = 1;
+    setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY,
+               reinterpret_cast<const char*>(&one), sizeof(one));
+
     connected = true;
     LOG_INFO("Connected to ", host, ":", port);
     return true;

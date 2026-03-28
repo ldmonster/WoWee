@@ -5230,7 +5230,7 @@ network::Packet GetMailListPacket::build(uint64_t mailboxGuid) {
 
 network::Packet SendMailPacket::build(uint64_t mailboxGuid, const std::string& recipient,
                                       const std::string& subject, const std::string& body,
-                                      uint32_t money, uint32_t cod,
+                                      uint64_t money, uint64_t cod,
                                       const std::vector<uint64_t>& itemGuids) {
     // WotLK 3.3.5a format
     network::Packet packet(wireOpcode(Opcode::CMSG_SEND_MAIL));
@@ -5246,8 +5246,8 @@ network::Packet SendMailPacket::build(uint64_t mailboxGuid, const std::string& r
         packet.writeUInt8(i);            // attachment slot index
         packet.writeUInt64(itemGuids[i]);
     }
-    packet.writeUInt32(money);
-    packet.writeUInt32(cod);
+    packet.writeUInt64(money);
+    packet.writeUInt64(cod);
     return packet;
 }
 
@@ -5321,11 +5321,11 @@ bool PacketParsers::parseMailList(network::Packet& packet, std::vector<MailMessa
             default: msg.senderEntry = packet.readUInt32(); break;
         }
 
-        msg.cod = packet.readUInt32();
+        msg.cod = packet.readUInt64();
         packet.readUInt32(); // item text id
         packet.readUInt32(); // unknown
         msg.stationeryId = packet.readUInt32();
-        msg.money = packet.readUInt32();
+        msg.money = packet.readUInt64();
         msg.flags = packet.readUInt32();
         msg.expirationTime = packet.readFloat();
         msg.mailTemplateId = packet.readUInt32();

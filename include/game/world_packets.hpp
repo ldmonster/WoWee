@@ -2497,8 +2497,8 @@ struct MailMessage {
     std::string subject;
     std::string body;
     uint32_t stationeryId = 0;
-    uint32_t money = 0;
-    uint32_t cod = 0;           // Cash on delivery
+    uint64_t money = 0;
+    uint64_t cod = 0;           // Cash on delivery
     uint32_t flags = 0;
     float expirationTime = 0.0f;
     uint32_t mailTemplateId = 0;
@@ -2517,7 +2517,7 @@ class SendMailPacket {
 public:
     static network::Packet build(uint64_t mailboxGuid, const std::string& recipient,
                                  const std::string& subject, const std::string& body,
-                                 uint32_t money, uint32_t cod,
+                                 uint64_t money, uint64_t cod,
                                  const std::vector<uint64_t>& itemGuids = {});
 };
 

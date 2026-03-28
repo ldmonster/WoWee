@@ -13081,6 +13081,15 @@ void GameScreen::renderZoneToasts(float deltaTime) {
             [](const ZoneToastEntry& e) { return e.age >= kZoneToastLifetime; }),
         zoneToasts_.end());
 
+    // Suppress toasts while the zone text overlay is showing the same zone —
+    // avoids duplicate "Entering: Stormwind City" messages.
+    if (zoneTextTimer_ > 0.0f) {
+        zoneToasts_.erase(
+            std::remove_if(zoneToasts_.begin(), zoneToasts_.end(),
+                [this](const ZoneToastEntry& e) { return e.zoneName == zoneTextName_; }),
+            zoneToasts_.end());
+    }
+
     if (zoneToasts_.empty()) return;
 
     auto* window = core::Application::getInstance().getWindow();
@@ -21462,11 +21471,14 @@ void GameScreen::renderMailWindow(game::GameHandler& gameHandler) {
 
                 // COD warning
                 if (mail.cod > 0) {
-                    uint32_t g = mail.cod / 10000;
-                    uint32_t s = (mail.cod / 100) % 100;
-                    uint32_t c = mail.cod % 100;
+                    uint64_t g = mail.cod / 10000;
+                    uint64_t s = (mail.cod / 100) % 100;
+                    uint64_t c = mail.cod % 100;
                     ImGui::TextColored(kColorRed,
-                        "COD: %ug %us %uc (you pay this to take items)", g, s, c);
+                        "COD: %llug %llus %lluc (you pay this to take items)",
+                        static_cast<unsigned long long>(g),
+                        static_cast<unsigned long long>(s),
+                        static_cast<unsigned long long>(c));
                 }
 
                 // Attachments
@@ -21693,9 +21705,9 @@ void GameScreen::renderMailComposeWindow(game::GameHandler& gameHandler) {
         ImGui::SameLine();
         ImGui::Text("c");
 
-        uint32_t totalMoney = static_cast<uint32_t>(mailComposeMoney_[0]) * 10000 +
-                              static_cast<uint32_t>(mailComposeMoney_[1]) * 100 +
-                              static_cast<uint32_t>(mailComposeMoney_[2]);
+        uint64_t totalMoney = static_cast<uint64_t>(mailComposeMoney_[0]) * 10000 +
+                              static_cast<uint64_t>(mailComposeMoney_[1]) * 100 +
+                              static_cast<uint64_t>(mailComposeMoney_[2]);
 
         uint32_t sendCost = attachCount > 0 ? static_cast<uint32_t>(30 * attachCount) : 30u;
         ImGui::TextColored(kColorGray, "Sending cost: %uc", sendCost);

@@ -7447,6 +7447,84 @@ void Application::setOnlinePlayerEquipment(uint64_t guid,
 
     charRenderer->setActiveGeosets(st.instanceId, geosets);
 
+    // --- Cape texture (group 15 / texture type 2) ---
+    // The geoset above enables the cape mesh, but without a texture it renders blank.
+    if (hasInvType({16})) {
+        // Back/cloak is WoW equipment slot 14 (BACK) in the 19-element array.
+        uint32_t capeDid = displayInfoIds[14];
+        if (capeDid != 0) {
+            int32_t capeRecIdx = displayInfoDbc->findRecordById(capeDid);
+            if (capeRecIdx >= 0) {
+                const uint32_t leftTexField = idiL ? (*idiL)["LeftModelTexture"] : 3u;
+                std::string capeName = displayInfoDbc->getString(
+                    static_cast<uint32_t>(capeRecIdx), leftTexField);
+
+                if (!capeName.empty()) {
+                    std::replace(capeName.begin(), capeName.end(), '/', '\\');
+
+                    auto hasBlpExt = [](const std::string& p) {
+                        if (p.size() < 4) return false;
+                        std::string ext = p.substr(p.size() - 4);
+                        std::transform(ext.begin(), ext.end(), ext.begin(),
+                                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                        return ext == ".blp";
+                    };
+
+                    const bool hasDir = (capeName.find('\\') != std::string::npos);
+                    const bool hasExt = hasBlpExt(capeName);
+
+                    std::vector<std::string> capeCandidates;
+                    auto addCapeCandidate = [&](const std::string& p) {
+                        if (p.empty()) return;
+                        if (std::find(capeCandidates.begin(), capeCandidates.end(), p) == capeCandidates.end()) {
+                            capeCandidates.push_back(p);
+                        }
+                    };
+
+                    if (hasDir) {
+                        addCapeCandidate(capeName);
+                        if (!hasExt) addCapeCandidate(capeName + ".blp");
+                    } else {
+                        std::string baseObj = "Item\\ObjectComponents\\Cape\\" + capeName;
+                        std::string baseTex = "Item\\TextureComponents\\Cape\\" + capeName;
+                        addCapeCandidate(baseObj);
+                        addCapeCandidate(baseTex);
+                        if (!hasExt) {
+                            addCapeCandidate(baseObj + ".blp");
+                            addCapeCandidate(baseTex + ".blp");
+                        }
+                        addCapeCandidate(baseObj + (st.genderId == 1 ? "_F.blp" : "_M.blp"));
+                        addCapeCandidate(baseObj + "_U.blp");
+                        addCapeCandidate(baseTex + (st.genderId == 1 ? "_F.blp" : "_M.blp"));
+                        addCapeCandidate(baseTex + "_U.blp");
+                    }
+
+                    const rendering::VkTexture* whiteTex = charRenderer->loadTexture("");
+                    rendering::VkTexture* capeTexture = nullptr;
+                    for (const auto& candidate : capeCandidates) {
+                        rendering::VkTexture* tex = charRenderer->loadTexture(candidate);
+                        if (tex && tex != whiteTex) {
+                            capeTexture = tex;
+                            break;
+                        }
+                    }
+
+                    if (capeTexture) {
+                        charRenderer->setGroupTextureOverride(st.instanceId, 15, capeTexture);
+                        if (const auto* md = charRenderer->getModelData(st.modelId)) {
+                            for (size_t ti = 0; ti < md->textures.size(); ti++) {
+                                if (md->textures[ti].type == 2) {
+                                    charRenderer->setTextureSlotOverride(
+                                        st.instanceId, static_cast<uint16_t>(ti), capeTexture);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // --- Textures (skin atlas compositing) ---
     static constexpr const char* componentDirs[] = {
         "ArmUpperTexture",

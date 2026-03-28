@@ -2172,7 +2172,7 @@ public:
     bool hasNewMail() const { return hasNewMail_; }
     void closeMailbox();
     void sendMail(const std::string& recipient, const std::string& subject,
-                  const std::string& body, uint32_t money, uint32_t cod = 0);
+                  const std::string& body, uint64_t money, uint64_t cod = 0);
 
     // Mail attachments (max 12 per WotLK)
     static constexpr int MAIL_MAX_ATTACHMENTS = 12;

@@ -261,7 +261,7 @@ public:
     /** Build CMSG_SEND_MAIL */
     virtual network::Packet buildSendMail(uint64_t mailboxGuid, const std::string& recipient,
                                            const std::string& subject, const std::string& body,
-                                           uint32_t money, uint32_t cod,
+                                           uint64_t money, uint64_t cod,
                                            const std::vector<uint64_t>& itemGuids = {}) {
         return SendMailPacket::build(mailboxGuid, recipient, subject, body, money, cod, itemGuids);
     }
@@ -420,7 +420,7 @@ public:
     network::Packet buildLeaveChannel(const std::string& channelName) override;
     network::Packet buildSendMail(uint64_t mailboxGuid, const std::string& recipient,
                                    const std::string& subject, const std::string& body,
-                                   uint32_t money, uint32_t cod,
+                                   uint64_t money, uint64_t cod,
                                    const std::vector<uint64_t>& itemGuids = {}) override;
     bool parseMailList(network::Packet& packet, std::vector<MailMessage>& inbox) override;
     network::Packet buildMailTakeItem(uint64_t mailboxGuid, uint32_t mailId, uint32_t itemGuidLow) override;

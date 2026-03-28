@@ -1512,7 +1512,7 @@ network::Packet ClassicPacketParsers::buildSendMail(uint64_t mailboxGuid,
                                                      const std::string& recipient,
                                                      const std::string& subject,
                                                      const std::string& body,
-                                                     uint32_t money, uint32_t cod,
+                                                     uint64_t money, uint64_t cod,
                                                      const std::vector<uint64_t>& itemGuids) {
     network::Packet packet(wireOpcode(Opcode::CMSG_SEND_MAIL));
     packet.writeUInt64(mailboxGuid);

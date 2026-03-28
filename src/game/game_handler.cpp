@@ -24348,7 +24348,7 @@ void GameHandler::refreshMailList() {
 }
 
 void GameHandler::sendMail(const std::string& recipient, const std::string& subject,
-                           const std::string& body, uint32_t money, uint32_t cod) {
+                           const std::string& body, uint64_t money, uint64_t cod) {
     if (state != WorldState::IN_WORLD) {
         LOG_WARNING("sendMail: not in world");
         return;

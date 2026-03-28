@@ -2290,6 +2290,8 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
     // State tracking
     VkPipeline currentPipeline = VK_NULL_HANDLE;
+    VkDescriptorSet currentMaterialSet = VK_NULL_HANDLE;
+    VkDescriptorSet currentBoneSet = VK_NULL_HANDLE;
     uint32_t frameIndex = vkCtx_->getCurrentFrame();
 
     // Push constants struct matching m2.vert.glsl push_constant block
@@ -2397,10 +2399,11 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 instance.bonesDirty[frameIndex] = false;
             }
 
-            // Bind bone descriptor set (set 2)
-            if (instance.boneSet[frameIndex]) {
+            // Bind bone descriptor set (set 2) — skip if already bound
+            if (instance.boneSet[frameIndex] && instance.boneSet[frameIndex] != currentBoneSet) {
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         pipelineLayout_, 2, 1, &instance.boneSet[frameIndex], 0, nullptr);
+                currentBoneSet = instance.boneSet[frameIndex];
             }
         }
 
@@ -2568,8 +2571,11 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             // Bind material descriptor set (set 1) — skip batch if missing
             // to avoid inheriting a stale descriptor set from a prior renderer
             if (!batch.materialSet) continue;
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    pipelineLayout_, 1, 1, &batch.materialSet, 0, nullptr);
+            if (batch.materialSet != currentMaterialSet) {
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        pipelineLayout_, 1, 1, &batch.materialSet, 0, nullptr);
+                currentMaterialSet = batch.materialSet;
+            }
 
             // Push constants
             M2PushConstants pc;
@@ -2598,8 +2604,10 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     currentModelId = UINT32_MAX;
     currentModel = nullptr;
     currentModelValid = false;
-    // Reset pipeline to opaque so the first transparent bind always sets explicitly
+    // Reset state so the first transparent bind always sets explicitly
     currentPipeline = opaquePipeline_;
+    currentMaterialSet = VK_NULL_HANDLE;
+    currentBoneSet = VK_NULL_HANDLE;
 
     for (const auto& entry : sortedVisible_) {
         if (entry.index >= instances.size()) continue;
@@ -2647,9 +2655,10 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         bool needsBones = modelNeedsAnimation && !instance.boneMatrices.empty();
         if (needsBones && (!instance.boneBuffer[frameIndex] || !instance.boneSet[frameIndex])) continue;
         bool useBones = needsBones;
-        if (useBones && instance.boneSet[frameIndex]) {
+        if (useBones && instance.boneSet[frameIndex] && instance.boneSet[frameIndex] != currentBoneSet) {
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     pipelineLayout_, 2, 1, &instance.boneSet[frameIndex], 0, nullptr);
+            currentBoneSet = instance.boneSet[frameIndex];
         }
 
         uint16_t desiredLOD = 0;
@@ -2740,8 +2749,11 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             }
 
             if (!batch.materialSet) continue;
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    pipelineLayout_, 1, 1, &batch.materialSet, 0, nullptr);
+            if (batch.materialSet != currentMaterialSet) {
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        pipelineLayout_, 1, 1, &batch.materialSet, 0, nullptr);
+                currentMaterialSet = batch.materialSet;
+            }
 
             M2PushConstants pc;
             pc.model = instance.modelMatrix;
