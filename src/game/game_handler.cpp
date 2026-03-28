@@ -2195,11 +2195,17 @@ void GameHandler::registerOpcodeHandlers() {
             auto goEnt = entityManager.getEntity(guid);
             if (goEnt && goEnt->getType() == ObjectType::GAMEOBJECT) {
                 auto go = std::static_pointer_cast<GameObject>(goEnt);
-                auto* info = getCachedGameObjectInfo(go->getEntry());
-                if (info && info->type == 17) {
-                    addUIError("A fish is on your line!");
-                    addSystemChatMessage("A fish is on your line!");
-                    withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playQuestUpdate(); });
+                // Only show fishing message if the bobber belongs to us
+                // OBJECT_FIELD_CREATED_BY is a uint64 at field indices 6-7
+                uint64_t createdBy = static_cast<uint64_t>(go->getField(6))
+                                   | (static_cast<uint64_t>(go->getField(7)) << 32);
+                if (createdBy == playerGuid) {
+                    auto* info = getCachedGameObjectInfo(go->getEntry());
+                    if (info && info->type == 17) {
+                        addUIError("A fish is on your line!");
+                        addSystemChatMessage("A fish is on your line!");
+                        withSoundManager(&rendering::Renderer::getUiSoundManager, [](auto* sfx) { sfx->playQuestUpdate(); });
+                    }
                 }
             }
         }
