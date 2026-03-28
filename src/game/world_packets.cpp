@@ -1044,16 +1044,26 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
                 }
             }
 
-            // Try 2: Classic/fallback format (uncompressed points immediately after splineId)
             if (!splineParsed) {
+                // WotLK compressed+uncompressed both failed. Try without the parabolic
+                // fields (some cores don't send vertAccel+effectStart unconditionally).
                 packet.setReadPos(beforeSplineHeader);
-                splineParsed = tryParseSplinePoints(false, "classic-fallback");
+                if (bytesAvailable(8)) {
+                    packet.readFloat(); // durationMod
+                    packet.readFloat(); // durationModNext
+                    // Skip parabolic fields — try points directly
+                    splineParsed = tryParseSplinePoints(false, "wotlk-no-parabolic");
+                    if (!splineParsed) {
+                        bool useComp = (splineFlags & (0x00080000 | 0x00002000)) == 0;
+                        splineParsed = tryParseSplinePoints(useComp, "wotlk-no-parabolic-compressed");
+                    }
+                }
             }
 
             if (!splineParsed) {
-                LOG_WARNING("Spline parse failed for guid=0x", std::hex, block.guid, std::dec,
+                LOG_WARNING("WotLK spline parse failed for guid=0x", std::hex, block.guid, std::dec,
                             " splineFlags=0x", std::hex, splineFlags, std::dec,
-                            " — aborting movement block");
+                            " remaining=", packet.getRemainingSize());
                 return false;
             }
         }
