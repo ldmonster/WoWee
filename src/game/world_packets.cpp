@@ -1015,27 +1015,41 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
                 return true;
             };
 
-            // WotLK format: durationMod+durationModNext+[ANIMATION]+vertAccel+effectStart+points
-            if (!bytesAvailable(8)) return false; // durationMod + durationModNext
-            /*float durationMod =*/ packet.readFloat();
-            /*float durationModNext =*/ packet.readFloat();
-            if (splineFlags & 0x00400000) { // SPLINEFLAG_ANIMATION
-                if (!bytesAvailable(5)) return false;
-                packet.readUInt8(); packet.readUInt32();
-            }
-            // AzerothCore/ChromieCraft always writes verticalAcceleration(float)
-            // + effectStartTime(uint32) unconditionally -- NOT gated by PARABOLIC flag.
-            if (!bytesAvailable(8)) return false;
-            /*float vertAccel =*/ packet.readFloat();
-            /*uint32_t effectStart =*/ packet.readUInt32();
+            // Save position before WotLK spline header for fallback
+            size_t beforeSplineHeader = packet.getReadPos();
 
-            // WotLK: compressed unless CYCLIC(0x80000) or ENTER_CYCLE(0x2000) set
-            bool useCompressed = (splineFlags & (0x00080000 | 0x00002000)) == 0;
-            bool splineParsed = tryParseSplinePoints(useCompressed, "wotlk-compressed");
-            // Fallback: try uncompressed WotLK if compressed didn't work
-            if (!splineParsed) {
-                splineParsed = tryParseSplinePoints(false, "wotlk-uncompressed");
+            // Try 1: WotLK format (durationMod+durationModNext+[ANIMATION]+vertAccel+effectStart+points)
+            bool splineParsed = false;
+            if (bytesAvailable(8)) {
+                /*float durationMod =*/ packet.readFloat();
+                /*float durationModNext =*/ packet.readFloat();
+                bool wotlkOk = true;
+                if (splineFlags & 0x00400000) { // SPLINEFLAG_ANIMATION
+                    if (!bytesAvailable(5)) { wotlkOk = false; }
+                    else { packet.readUInt8(); packet.readUInt32(); }
+                }
+                // AzerothCore/ChromieCraft always writes verticalAcceleration(float)
+                // + effectStartTime(uint32) unconditionally -- NOT gated by PARABOLIC flag.
+                if (wotlkOk) {
+                    if (!bytesAvailable(8)) { wotlkOk = false; }
+                    else { /*float vertAccel =*/ packet.readFloat(); /*uint32_t effectStart =*/ packet.readUInt32(); }
+                }
+                if (wotlkOk) {
+                    // WotLK: compressed unless CYCLIC(0x80000) or ENTER_CYCLE(0x2000) set
+                    bool useCompressed = (splineFlags & (0x00080000 | 0x00002000)) == 0;
+                    splineParsed = tryParseSplinePoints(useCompressed, "wotlk-compressed");
+                    if (!splineParsed) {
+                        splineParsed = tryParseSplinePoints(false, "wotlk-uncompressed");
+                    }
+                }
             }
+
+            // Try 2: Classic/fallback format (uncompressed points immediately after splineId)
+            if (!splineParsed) {
+                packet.setReadPos(beforeSplineHeader);
+                splineParsed = tryParseSplinePoints(false, "classic-fallback");
+            }
+
             if (!splineParsed) {
                 LOG_WARNING("Spline parse failed for guid=0x", std::hex, block.guid, std::dec,
                             " splineFlags=0x", std::hex, splineFlags, std::dec,
