@@ -3128,9 +3128,9 @@ void InventoryHandler::updateOtherPlayerVisibleItems(uint64_t guid, const std::m
     for (uint32_t e : newEntries) { if (e != 0) nonZero++; }
 
     // Dump raw fields around visible item range to find the correct offset
-    static bool dumpedOnce = false;
-    if (!dumpedOnce && fields.size() > 50) {
-        dumpedOnce = true;
+    static int dumpCount = 0;
+    if (dumpCount < 3 && fields.size() > 20) {
+        dumpCount++;
         std::string dump;
         for (const auto& [idx, val] : fields) {
             if (idx >= 270 && idx <= 340 && val != 0) {
