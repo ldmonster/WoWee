@@ -2530,10 +2530,13 @@ private:
     // Visible equipment for other players: detect the update-field layout (base + stride)
     // using the local player's own equipped items, then decode other players by index.
     // WotLK 3.3.5a (AzerothCore/ChromieCraft): visible item entries appear at field
-    // indices 284, 288, 292, 296, ... with stride 4. Confirmed by RAW FIELDS dump:
-    //   [284]=3817(Buckler) [288]=3808(Boots) [292]=3252 [296]=3823 [300]=3845 etc.
-    // Each visible item occupies 4 fields: entry(1) + enchant(1) + padding(2).
-    int visibleItemEntryBase_ = 284;
+    // WotLK 3.3.5a: PLAYER_VISIBLE_ITEM_1_ENTRYID = field 283, stride 2.
+    // Confirmed by RAW FIELDS dump: base=283 gives 17/19 valid item IDs,
+    // base=284 reads enchant values instead.
+    // Slots: HEAD=0, NECK=1, SHOULDERS=2, BODY=3, CHEST=4, WAIST=5, LEGS=6,
+    //        FEET=7, WRISTS=8, HANDS=9, FINGER1=10, FINGER2=11, TRINKET1=12,
+    //        TRINKET2=13, BACK=14, MAINHAND=15, OFFHAND=16, RANGED=17, TABARD=18
+    int visibleItemEntryBase_ = 283;
     int visibleItemStride_ = 2;
     bool visibleItemLayoutVerified_ = false;  // true once heuristic confirms/overrides default
     std::unordered_map<uint64_t, std::array<uint32_t, 19>> otherPlayerVisibleItemEntries_;
