@@ -3105,6 +3105,22 @@ void InventoryHandler::updateOtherPlayerVisibleItems(uint64_t guid, const std::m
 
     int nonZero = 0;
     for (uint32_t e : newEntries) { if (e != 0) nonZero++; }
+
+    // Dump raw fields around visible item range to find the correct offset
+    static bool dumpedOnce = false;
+    if (!dumpedOnce && fields.size() > 50) {
+        dumpedOnce = true;
+        std::string dump;
+        for (const auto& [idx, val] : fields) {
+            if (idx >= 270 && idx <= 340 && val != 0) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), " [%u]=%u", idx, val);
+                dump += buf;
+            }
+        }
+        LOG_WARNING("RAW FIELDS 270-340:", dump);
+    }
+
     if (nonZero > 0) {
         LOG_WARNING("updateOtherPlayerVisibleItems: guid=0x", std::hex, guid, std::dec,
                  " nonZero=", nonZero, " base=", base, " stride=", stride,
