@@ -11,6 +11,7 @@
 #include "game/combat_handler.hpp"
 #include "game/spell_handler.hpp"
 #include "game/quest_handler.hpp"
+#include "game/movement_handler.hpp"
 #include "network/packet.hpp"
 #include <glm/glm.hpp>
 #include <memory>
@@ -428,12 +429,12 @@ public:
     void queryServerTime();
     void requestPlayedTime();
     void queryWho(const std::string& playerName = "");
-    uint32_t getTotalTimePlayed() const { return totalTimePlayed_; }
-    uint32_t getLevelTimePlayed() const { return levelTimePlayed_; }
+    uint32_t getTotalTimePlayed() const;
+    uint32_t getLevelTimePlayed() const;
 
     using WhoEntry = game::WhoEntry;
-    const std::vector<WhoEntry>& getWhoResults() const { return whoResults_; }
-    uint32_t getWhoOnlineCount() const { return whoOnlineCount_; }
+    const std::vector<WhoEntry>& getWhoResults() const;
+    uint32_t getWhoOnlineCount() const;
     std::string getWhoAreaName(uint32_t zoneId) const { return getAreaName(zoneId); }
 
     // Social commands
@@ -457,21 +458,19 @@ public:
     bool hasPendingBgInvite() const;
     void acceptBattlefield(uint32_t queueSlot = 0xFFFFFFFF);
     void declineBattlefield(uint32_t queueSlot = 0xFFFFFFFF);
-    const std::array<BgQueueSlot, 3>& getBgQueues() const { return bgQueues_; }
-    const std::vector<AvailableBgInfo>& getAvailableBgs() const { return availableBgs_; }
+    const std::array<BgQueueSlot, 3>& getBgQueues() const;
+    const std::vector<AvailableBgInfo>& getAvailableBgs() const;
 
     // BG scoreboard (aliased from handler_types.hpp)
     using BgPlayerScore = game::BgPlayerScore;
     using ArenaTeamScore = game::ArenaTeamScore;
     using BgScoreboardData = game::BgScoreboardData;
     void requestPvpLog();
-    const BgScoreboardData* getBgScoreboard() const {
-        return bgScoreboard_.players.empty() ? nullptr : &bgScoreboard_;
-    }
+    const BgScoreboardData* getBgScoreboard() const;
 
     // BG flag carrier positions (aliased from handler_types.hpp)
     using BgPlayerPosition = game::BgPlayerPosition;
-    const std::vector<BgPlayerPosition>& getBgPlayerPositions() const { return bgPlayerPositions_; }
+    const std::vector<BgPlayerPosition>& getBgPlayerPositions() const;
 
     // Network latency (milliseconds, updated each PONG response)
     uint32_t getLatencyMs() const { return lastLatency; }
@@ -482,8 +481,8 @@ public:
 
     // Instance difficulty
     void sendSetDifficulty(uint32_t difficulty);
-    bool  isLoggingOut()        const { return loggingOut_; }
-    float getLogoutCountdown()  const { return logoutCountdown_; }
+    bool  isLoggingOut() const;
+    float getLogoutCountdown() const;
 
     // Stand state
     void setStandState(uint8_t state);  // 0=stand, 1=sit, 2=sit_chair, 3=sleep, 4=sit_low_chair, 5=sit_medium_chair, 6=sit_high_chair, 7=dead, 8=kneel, 9=submerged
@@ -554,31 +553,27 @@ public:
     void buyPetition(uint64_t npcGuid, const std::string& guildName);
 
     // Guild state accessors
-    bool isInGuild() const {
-        if (!guildName_.empty()) return true;
-        const Character* ch = getActiveCharacter();
-        return ch && ch->hasGuild();
-    }
-    const std::string& getGuildName() const { return guildName_; }
-    const GuildRosterData& getGuildRoster() const { return guildRoster_; }
-    bool hasGuildRoster() const { return hasGuildRoster_; }
-    const std::vector<std::string>& getGuildRankNames() const { return guildRankNames_; }
-    bool hasPendingGuildInvite() const { return pendingGuildInvite_; }
-    const std::string& getPendingGuildInviterName() const { return pendingGuildInviterName_; }
-    const std::string& getPendingGuildInviteGuildName() const { return pendingGuildInviteGuildName_; }
-    const GuildInfoData& getGuildInfoData() const { return guildInfoData_; }
-    const GuildQueryResponseData& getGuildQueryData() const { return guildQueryData_; }
-    bool hasGuildInfoData() const { return guildInfoData_.isValid(); }
-    bool hasPetitionShowlist() const { return showPetitionDialog_; }
+    bool isInGuild() const;
+    const std::string& getGuildName() const;
+    const GuildRosterData& getGuildRoster() const;
+    bool hasGuildRoster() const;
+    const std::vector<std::string>& getGuildRankNames() const;
+    bool hasPendingGuildInvite() const;
+    const std::string& getPendingGuildInviterName() const;
+    const std::string& getPendingGuildInviteGuildName() const;
+    const GuildInfoData& getGuildInfoData() const;
+    const GuildQueryResponseData& getGuildQueryData() const;
+    bool hasGuildInfoData() const;
+    bool hasPetitionShowlist() const;
     void clearPetitionDialog() { showPetitionDialog_ = false; }
-    uint32_t getPetitionCost() const { return petitionCost_; }
-    uint64_t getPetitionNpcGuid() const { return petitionNpcGuid_; }
+    uint32_t getPetitionCost() const;
+    uint64_t getPetitionNpcGuid() const;
 
     // Petition signatures (guild charter signing flow)
     using PetitionSignature = game::PetitionSignature;
     using PetitionInfo = game::PetitionInfo;
-    const PetitionInfo& getPetitionInfo() const { return petitionInfo_; }
-    bool hasPetitionSignaturesUI() const { return petitionInfo_.showUI; }
+    const PetitionInfo& getPetitionInfo() const;
+    bool hasPetitionSignaturesUI() const;
     void clearPetitionSignaturesUI() { petitionInfo_.showUI = false; }
     void signPetition(uint64_t petitionGuid);
     void turnInPetition(uint64_t petitionGuid);
@@ -593,10 +588,10 @@ public:
     using ReadyCheckResult = game::ReadyCheckResult;
     void initiateReadyCheck();
     void respondToReadyCheck(bool ready);
-    bool hasPendingReadyCheck() const { return pendingReadyCheck_; }
+    bool hasPendingReadyCheck() const;
     void dismissReadyCheck() { pendingReadyCheck_ = false; }
-    const std::string& getReadyCheckInitiator() const { return readyCheckInitiator_; }
-    const std::vector<ReadyCheckResult>& getReadyCheckResults() const { return readyCheckResults_; }
+    const std::string& getReadyCheckInitiator() const;
+    const std::vector<ReadyCheckResult>& getReadyCheckResults() const;
 
     // Duel
     void forfeitDuel();
@@ -793,11 +788,11 @@ public:
     // Repeat-craft queue
     void startCraftQueue(uint32_t spellId, int count);
     void cancelCraftQueue();
-    int getCraftQueueRemaining() const { return craftQueueRemaining_; }
-    uint32_t getCraftQueueSpellId() const { return craftQueueSpellId_; }
+    int getCraftQueueRemaining() const;
+    uint32_t getCraftQueueSpellId() const;
 
     // 400ms spell-queue window: next spell to cast when current finishes
-    uint32_t getQueuedSpellId() const { return queuedSpellId_; }
+    uint32_t getQueuedSpellId() const;
     void cancelQueuedSpell() { queuedSpellId_ = 0; queuedSpellTarget_ = 0; }
 
     // Unit cast state (aliased from handler_types.hpp)
@@ -856,8 +851,8 @@ public:
         auto it = talentTabCache_.find(tabId);
         return (it != talentTabCache_.end()) ? &it->second : nullptr;
     }
-    const std::unordered_map<uint32_t, TalentEntry>& getAllTalents() const { return talentCache_; }
-    const std::unordered_map<uint32_t, TalentTabEntry>& getAllTalentTabs() const { return talentTabCache_; }
+    const std::unordered_map<uint32_t, TalentEntry>& getAllTalents() const;
+    const std::unordered_map<uint32_t, TalentTabEntry>& getAllTalentTabs() const;
     void loadTalentDbc();
 
     // Action bar — 4 bars × 12 slots = 48 total
@@ -983,7 +978,7 @@ public:
         float rem = gcdTotal_ - elapsed;
         return rem > 0.0f ? rem : 0.0f;
     }
-    float getGCDTotal() const { return gcdTotal_; }
+    float getGCDTotal() const;
     bool isGCDActive() const { return getGCDRemaining() > 0.0f; }
 
     // Weather state (updated by SMSG_WEATHER)
@@ -1200,15 +1195,15 @@ public:
     /** Send CMSG_SELF_RES to use Reincarnation / Twisting Nether. */
     void useSelfRes();
     const std::string& getResurrectCasterName() const { return resurrectCasterName_; }
-    bool showTalentWipeConfirmDialog() const { return talentWipePending_; }
-    uint32_t getTalentWipeCost() const { return talentWipeCost_; }
+    bool showTalentWipeConfirmDialog() const;
+    uint32_t getTalentWipeCost() const;
     void confirmTalentWipe();
-    void cancelTalentWipe() { talentWipePending_ = false; }
+    void cancelTalentWipe();
     // Pet talent respec confirm
-    bool showPetUnlearnDialog() const { return petUnlearnPending_; }
-    uint32_t getPetUnlearnCost() const { return petUnlearnCost_; }
+    bool showPetUnlearnDialog() const;
+    uint32_t getPetUnlearnCost() const;
     void confirmPetUnlearn();
-    void cancelPetUnlearn() { petUnlearnPending_ = false; }
+    void cancelPetUnlearn();
 
     // Barber shop
     bool isBarberShopOpen() const { return barberShopOpen_; }
@@ -1216,9 +1211,9 @@ public:
     void sendAlterAppearance(uint32_t hairStyle, uint32_t hairColor, uint32_t facialHair);
 
     // Instance difficulty (0=5N, 1=5H, 2=25N, 3=25H for WotLK)
-    uint32_t getInstanceDifficulty() const { return instanceDifficulty_; }
-    bool isInstanceHeroic() const { return instanceIsHeroic_; }
-    bool isInInstance() const { return inInstance_; }
+    uint32_t getInstanceDifficulty() const;
+    bool isInstanceHeroic() const;
+    bool isInInstance() const;
 
     /** True when ghost is within 40 yards of corpse position (same map). */
     bool canReclaimCorpse() const;
@@ -1262,16 +1257,16 @@ public:
     const std::string& getPendingInviterName() const { return pendingInviterName; }
 
     // ---- Item text (books / readable items) ----
-    bool isItemTextOpen() const { return itemTextOpen_; }
-    const std::string& getItemText() const { return itemText_; }
-    void closeItemText() { itemTextOpen_ = false; }
+    bool isItemTextOpen() const;
+    const std::string& getItemText() const;
+    void closeItemText();
     void queryItemText(uint64_t itemGuid);
 
     // ---- Shared Quest ----
-    bool hasPendingSharedQuest() const { return pendingSharedQuest_; }
-    uint32_t getSharedQuestId() const { return sharedQuestId_; }
-    const std::string& getSharedQuestTitle() const { return sharedQuestTitle_; }
-    const std::string& getSharedQuestSharerName() const { return sharedQuestSharerName_; }
+    bool hasPendingSharedQuest() const;
+    uint32_t getSharedQuestId() const;
+    const std::string& getSharedQuestTitle() const;
+    const std::string& getSharedQuestSharerName() const;
     void acceptSharedQuest();
     void declineSharedQuest();
 
@@ -1327,22 +1322,16 @@ public:
     void setTradeGold(uint64_t copper);
 
     // ---- Duel ----
-    bool hasPendingDuelRequest() const { return pendingDuelRequest_; }
-    const std::string& getDuelChallengerName() const { return duelChallengerName_; }
+    bool hasPendingDuelRequest() const;
+    const std::string& getDuelChallengerName() const;
     void acceptDuel();
     // forfeitDuel() already declared at line ~399
     // Returns remaining duel countdown seconds, or 0 if no active countdown
-    float getDuelCountdownRemaining() const {
-        if (duelCountdownMs_ == 0) return 0.0f;
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - duelCountdownStartedAt_).count();
-        float rem = (static_cast<float>(duelCountdownMs_) - static_cast<float>(elapsed)) / 1000.0f;
-        return rem > 0.0f ? rem : 0.0f;
-    }
+    float getDuelCountdownRemaining() const;
 
     // Instance lockouts (aliased from handler_types.hpp)
     using InstanceLockout = game::InstanceLockout;
-    const std::vector<InstanceLockout>& getInstanceLockouts() const { return instanceLockouts_; }
+    const std::vector<InstanceLockout>& getInstanceLockouts() const;
 
     // Boss encounter unit tracking (SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT)
     static constexpr uint32_t kMaxEncounterSlots = 5;
@@ -1379,25 +1368,25 @@ public:
     void lfgAcceptProposal(uint32_t proposalId, bool accept);
     void lfgSetBootVote(bool vote);
     void lfgTeleport(bool toLfgDungeon = true);
-    LfgState getLfgState() const { return lfgState_; }
-    bool isLfgQueued()    const { return lfgState_ == LfgState::Queued; }
-    bool isLfgInDungeon() const { return lfgState_ == LfgState::InDungeon; }
-    uint32_t getLfgDungeonId()   const { return lfgDungeonId_; }
-    std::string getCurrentLfgDungeonName() const { return getLfgDungeonName(lfgDungeonId_); }
+    LfgState getLfgState() const;
+    bool isLfgQueued() const;
+    bool isLfgInDungeon() const;
+    uint32_t getLfgDungeonId() const;
+    std::string getCurrentLfgDungeonName() const;
     std::string getMapName(uint32_t mapId) const;
-    uint32_t getLfgProposalId()  const { return lfgProposalId_; }
-    int32_t  getLfgAvgWaitSec()  const { return lfgAvgWaitSec_; }
-    uint32_t getLfgTimeInQueueMs() const { return lfgTimeInQueueMs_; }
-    uint32_t getLfgBootVotes()      const { return lfgBootVotes_; }
-    uint32_t getLfgBootTotal()      const { return lfgBootTotal_; }
-    uint32_t getLfgBootTimeLeft()   const { return lfgBootTimeLeft_; }
-    uint32_t getLfgBootNeeded()     const { return lfgBootNeeded_; }
-    const std::string& getLfgBootTargetName() const { return lfgBootTargetName_; }
-    const std::string& getLfgBootReason()     const { return lfgBootReason_; }
+    uint32_t getLfgProposalId() const;
+    int32_t  getLfgAvgWaitSec() const;
+    uint32_t getLfgTimeInQueueMs() const;
+    uint32_t getLfgBootVotes() const;
+    uint32_t getLfgBootTotal() const;
+    uint32_t getLfgBootTimeLeft() const;
+    uint32_t getLfgBootNeeded() const;
+    const std::string& getLfgBootTargetName() const;
+    const std::string& getLfgBootReason() const;
 
     // Arena team stats (aliased from handler_types.hpp)
     using ArenaTeamStats = game::ArenaTeamStats;
-    const std::vector<ArenaTeamStats>& getArenaTeamStats() const { return arenaTeamStats_; }
+    const std::vector<ArenaTeamStats>& getArenaTeamStats() const;
     void requestArenaTeamRoster(uint32_t teamId);
 
     // Arena team roster (aliased from handler_types.hpp)
@@ -1416,24 +1405,24 @@ public:
     void lootItem(uint8_t slotIndex);
     void closeLoot();
     void activateSpiritHealer(uint64_t npcGuid);
-    bool isLootWindowOpen() const { return lootWindowOpen; }
-    const LootResponseData& getCurrentLoot() const { return currentLoot; }
-    void setAutoLoot(bool enabled) { autoLoot_ = enabled; }
-    bool isAutoLoot() const { return autoLoot_; }
-    void setAutoSellGrey(bool enabled) { autoSellGrey_ = enabled; }
-    bool isAutoSellGrey() const { return autoSellGrey_; }
-    void setAutoRepair(bool enabled) { autoRepair_ = enabled; }
-    bool isAutoRepair() const { return autoRepair_; }
+    bool isLootWindowOpen() const;
+    const LootResponseData& getCurrentLoot() const;
+    void setAutoLoot(bool enabled);
+    bool isAutoLoot() const;
+    void setAutoSellGrey(bool enabled);
+    bool isAutoSellGrey() const;
+    void setAutoRepair(bool enabled);
+    bool isAutoRepair() const;
 
     // Master loot candidates (from SMSG_LOOT_MASTER_LIST)
-    const std::vector<uint64_t>& getMasterLootCandidates() const { return masterLootCandidates_; }
-    bool hasMasterLootCandidates() const { return !masterLootCandidates_.empty(); }
+    const std::vector<uint64_t>& getMasterLootCandidates() const;
+    bool hasMasterLootCandidates() const;
     void lootMasterGive(uint8_t lootSlot, uint64_t targetGuid);
 
     // Group loot roll (aliased from handler_types.hpp)
     using LootRollEntry = game::LootRollEntry;
-    bool hasPendingLootRoll() const { return pendingLootRollActive_; }
-    const LootRollEntry& getPendingLootRoll() const { return pendingLootRoll_; }
+    bool hasPendingLootRoll() const;
+    const LootRollEntry& getPendingLootRoll() const;
     void sendLootRoll(uint64_t objectGuid, uint32_t slot, uint8_t rollType);
     // rollType: 0=need, 1=greed, 2=disenchant, 96=pass
 
@@ -1475,24 +1464,24 @@ public:
 
     // Gossip POI (aliased from handler_types.hpp)
     using GossipPoi = game::GossipPoi;
-    const std::vector<GossipPoi>& getGossipPois() const { return gossipPois_; }
+    const std::vector<GossipPoi>& getGossipPois() const;
     void clearGossipPois() { gossipPois_.clear(); }
 
     // Quest turn-in
-    bool isQuestRequestItemsOpen() const { return questRequestItemsOpen_; }
-    const QuestRequestItemsData& getQuestRequestItems() const { return currentQuestRequestItems_; }
+    bool isQuestRequestItemsOpen() const;
+    const QuestRequestItemsData& getQuestRequestItems() const;
     void completeQuest();       // Send CMSG_QUESTGIVER_COMPLETE_QUEST
     void closeQuestRequestItems();
 
-    bool isQuestOfferRewardOpen() const { return questOfferRewardOpen_; }
-    const QuestOfferRewardData& getQuestOfferReward() const { return currentQuestOfferReward_; }
+    bool isQuestOfferRewardOpen() const;
+    const QuestOfferRewardData& getQuestOfferReward() const;
     void chooseQuestReward(uint32_t rewardIndex);  // Send CMSG_QUESTGIVER_CHOOSE_REWARD
     void closeQuestOfferReward();
 
     // Quest log
     using QuestLogEntry = QuestHandler::QuestLogEntry;
-    const std::vector<QuestLogEntry>& getQuestLog() const { return questLog_; }
-    int getSelectedQuestLogIndex() const { return selectedQuestLogIndex_; }
+    const std::vector<QuestLogEntry>& getQuestLog() const;
+    int getSelectedQuestLogIndex() const;
     void setSelectedQuestLogIndex(int idx) { selectedQuestLogIndex_ = idx; }
     void abandonQuest(uint32_t questId);
     void shareQuestWithParty(uint32_t questId);  // CMSG_PUSHQUESTTOPARTY
@@ -1503,7 +1492,7 @@ public:
         else trackedQuestIds_.erase(questId);
         saveCharacterConfig();
     }
-    const std::unordered_set<uint32_t>& getTrackedQuestIds() const { return trackedQuestIds_; }
+    const std::unordered_set<uint32_t>& getTrackedQuestIds() const;
     bool isQuestQueryPending(uint32_t questId) const {
         return pendingQuestQueryIds_.count(questId) > 0;
     }
@@ -1685,7 +1674,7 @@ public:
         auto it = npcQuestStatus_.find(guid);
         return (it != npcQuestStatus_.end()) ? it->second : QuestGiverStatus::NONE;
     }
-    const std::unordered_map<uint64_t, QuestGiverStatus>& getNpcQuestStatuses() const { return npcQuestStatus_; }
+    const std::unordered_map<uint64_t, QuestGiverStatus>& getNpcQuestStatuses() const;
 
     // Charge callback — fires when player casts a charge spell toward target
     // Parameters: targetGuid, targetX, targetY, targetZ (canonical WoW coordinates)
@@ -1853,14 +1842,14 @@ public:
     bool isMounted() const { return currentMountDisplayId_ != 0; }
     bool isHostileAttacker(uint64_t guid) const;
     bool isHostileFactionPublic(uint32_t factionTemplateId) const { return isHostileFaction(factionTemplateId); }
-    float getServerRunSpeed() const { return serverRunSpeed_; }
-    float getServerWalkSpeed() const { return serverWalkSpeed_; }
-    float getServerSwimSpeed() const { return serverSwimSpeed_; }
-    float getServerSwimBackSpeed() const { return serverSwimBackSpeed_; }
-    float getServerFlightSpeed() const { return serverFlightSpeed_; }
-    float getServerFlightBackSpeed() const { return serverFlightBackSpeed_; }
-    float getServerRunBackSpeed() const { return serverRunBackSpeed_; }
-    float getServerTurnRate() const { return serverTurnRate_; }
+    float getServerRunSpeed() const;
+    float getServerWalkSpeed() const;
+    float getServerSwimSpeed() const;
+    float getServerSwimBackSpeed() const;
+    float getServerFlightSpeed() const;
+    float getServerFlightBackSpeed() const;
+    float getServerRunBackSpeed() const;
+    float getServerTurnRate() const;
     bool isPlayerRooted() const {
         return (movementInfo.flags & static_cast<uint32_t>(MovementFlags::ROOT)) != 0;
     }
@@ -1890,38 +1879,21 @@ public:
     void dismount();
 
     // Taxi / Flight Paths
-    bool isTaxiWindowOpen() const { return taxiWindowOpen_; }
+    bool isTaxiWindowOpen() const;
     void closeTaxi();
     void activateTaxi(uint32_t destNodeId);
-    bool isOnTaxiFlight() const { return onTaxiFlight_; }
-    bool isTaxiMountActive() const { return taxiMountActive_; }
-    bool isTaxiActivationPending() const { return taxiActivatePending_; }
+    bool isOnTaxiFlight() const;
+    bool isTaxiMountActive() const;
+    bool isTaxiActivationPending() const;
     void forceClearTaxiAndMovementState();
-    const std::string& getTaxiDestName() const { return taxiDestName_; }
-    const ShowTaxiNodesData& getTaxiData() const { return currentTaxiData_; }
-    uint32_t getTaxiCurrentNode() const { return currentTaxiData_.nearestNode; }
+    const std::string& getTaxiDestName() const;
+    const ShowTaxiNodesData& getTaxiData() const;
+    uint32_t getTaxiCurrentNode() const;
 
-    struct TaxiNode {
-        uint32_t id = 0;
-        uint32_t mapId = 0;
-        float x = 0, y = 0, z = 0;
-        std::string name;
-        uint32_t mountDisplayIdAlliance = 0;
-        uint32_t mountDisplayIdHorde = 0;
-    };
-    struct TaxiPathEdge {
-        uint32_t pathId = 0;
-        uint32_t fromNode = 0, toNode = 0;
-        uint32_t cost = 0;
-    };
-    struct TaxiPathNode {
-        uint32_t id = 0;
-        uint32_t pathId = 0;
-        uint32_t nodeIndex = 0;
-        uint32_t mapId = 0;
-        float x = 0, y = 0, z = 0;
-    };
-    const std::unordered_map<uint32_t, TaxiNode>& getTaxiNodes() const { return taxiNodes_; }
+    using TaxiNode = MovementHandler::TaxiNode;
+    using TaxiPathEdge = MovementHandler::TaxiPathEdge;
+    using TaxiPathNode = MovementHandler::TaxiPathNode;
+    const std::unordered_map<uint32_t, TaxiNode>& getTaxiNodes() const;
     bool isKnownTaxiNode(uint32_t nodeId) const {
         if (nodeId == 0 || nodeId > 384) return false;
         uint32_t idx = nodeId - 1;
@@ -1953,7 +1925,7 @@ public:
     void buyBackItem(uint32_t buybackSlot);
     void repairItem(uint64_t vendorGuid, uint64_t itemGuid);
     void repairAll(uint64_t vendorGuid, bool useGuildBank = false);
-    const std::deque<BuybackItem>& getBuybackItems() const { return buybackItems_; }
+    const std::deque<BuybackItem>& getBuybackItems() const;
     void autoEquipItemBySlot(int backpackIndex);
     void autoEquipItemInBag(int bagIndex, int slotIndex);
     void useItemBySlot(int backpackIndex);
@@ -1966,19 +1938,19 @@ public:
     void swapContainerItems(uint8_t srcBag, uint8_t srcSlot, uint8_t dstBag, uint8_t dstSlot);
     void swapBagSlots(int srcBagIndex, int dstBagIndex);
     void useItemById(uint32_t itemId);
-    bool isVendorWindowOpen() const { return vendorWindowOpen; }
-    const ListInventoryData& getVendorItems() const { return currentVendorItems; }
-    void setVendorCanRepair(bool v) { currentVendorItems.canRepair = v; }
+    bool isVendorWindowOpen() const;
+    const ListInventoryData& getVendorItems() const;
+    void setVendorCanRepair(bool v);
 
     // Mail
-    bool isMailboxOpen() const { return mailboxOpen_; }
-    const std::vector<MailMessage>& getMailInbox() const { return mailInbox_; }
-    int getSelectedMailIndex() const { return selectedMailIndex_; }
-    void setSelectedMailIndex(int idx) { selectedMailIndex_ = idx; }
-    bool isMailComposeOpen() const { return showMailCompose_; }
-    void openMailCompose() { showMailCompose_ = true; clearMailAttachments(); }
-    void closeMailCompose() { showMailCompose_ = false; clearMailAttachments(); }
-    bool hasNewMail() const { return hasNewMail_; }
+    bool isMailboxOpen() const;
+    const std::vector<MailMessage>& getMailInbox() const;
+    int getSelectedMailIndex() const;
+    void setSelectedMailIndex(int idx);
+    bool isMailComposeOpen() const;
+    void openMailCompose();
+    void closeMailCompose();
+    bool hasNewMail() const;
     void closeMailbox();
     void sendMail(const std::string& recipient, const std::string& subject,
                   const std::string& body, uint64_t money, uint64_t cod = 0);
@@ -1996,7 +1968,7 @@ public:
     bool attachItemFromBag(int bagIndex, int slotIndex);
     bool detachMailAttachment(int attachIndex);
     void clearMailAttachments();
-    const std::array<MailAttachSlot, 12>& getMailAttachments() const { return mailAttachments_; }
+    const std::array<MailAttachSlot, 12>& getMailAttachments() const;
     int getMailAttachmentCount() const;
     void mailTakeMoney(uint32_t mailId);
     void mailTakeItem(uint32_t mailId, uint32_t itemGuidLow);
@@ -2010,10 +1982,10 @@ public:
     void buyBankSlot();
     void depositItem(uint8_t srcBag, uint8_t srcSlot);
     void withdrawItem(uint8_t srcBag, uint8_t srcSlot);
-    bool isBankOpen() const { return bankOpen_; }
-    uint64_t getBankerGuid() const { return bankerGuid_; }
-    int getEffectiveBankSlots() const { return effectiveBankSlots_; }
-    int getEffectiveBankBagSlots() const { return effectiveBankBagSlots_; }
+    bool isBankOpen() const;
+    uint64_t getBankerGuid() const;
+    int getEffectiveBankSlots() const;
+    int getEffectiveBankBagSlots() const;
 
     // Guild Bank
     void openGuildBank(uint64_t guid);
@@ -2024,10 +1996,10 @@ public:
     void withdrawGuildBankMoney(uint32_t amount);
     void guildBankWithdrawItem(uint8_t tabId, uint8_t bankSlot, uint8_t destBag, uint8_t destSlot);
     void guildBankDepositItem(uint8_t tabId, uint8_t bankSlot, uint8_t srcBag, uint8_t srcSlot);
-    bool isGuildBankOpen() const { return guildBankOpen_; }
-    const GuildBankData& getGuildBankData() const { return guildBankData_; }
-    uint8_t getGuildBankActiveTab() const { return guildBankActiveTab_; }
-    void setGuildBankActiveTab(uint8_t tab) { guildBankActiveTab_ = tab; }
+    bool isGuildBankOpen() const;
+    const GuildBankData& getGuildBankData() const;
+    uint8_t getGuildBankActiveTab() const;
+    void setGuildBankActiveTab(uint8_t tab);
 
     // Auction House
     void openAuctionHouse(uint64_t guid);
@@ -2042,18 +2014,18 @@ public:
     void auctionCancelItem(uint32_t auctionId);
     void auctionListOwnerItems(uint32_t offset = 0);
     void auctionListBidderItems(uint32_t offset = 0);
-    bool isAuctionHouseOpen() const { return auctionOpen_; }
-    uint64_t getAuctioneerGuid() const { return auctioneerGuid_; }
-    const AuctionListResult& getAuctionBrowseResults() const { return auctionBrowseResults_; }
-    const AuctionListResult& getAuctionOwnerResults() const { return auctionOwnerResults_; }
-    const AuctionListResult& getAuctionBidderResults() const { return auctionBidderResults_; }
-    int getAuctionActiveTab() const { return auctionActiveTab_; }
-    void setAuctionActiveTab(int tab) { auctionActiveTab_ = tab; }
-    float getAuctionSearchDelay() const { return auctionSearchDelayTimer_; }
+    bool isAuctionHouseOpen() const;
+    uint64_t getAuctioneerGuid() const;
+    const AuctionListResult& getAuctionBrowseResults() const;
+    const AuctionListResult& getAuctionOwnerResults() const;
+    const AuctionListResult& getAuctionBidderResults() const;
+    int getAuctionActiveTab() const;
+    void setAuctionActiveTab(int tab);
+    float getAuctionSearchDelay() const;
 
     // Trainer
-    bool isTrainerWindowOpen() const { return trainerWindowOpen_; }
-    const TrainerListData& getTrainerSpells() const { return currentTrainerList_; }
+    bool isTrainerWindowOpen() const;
+    const TrainerListData& getTrainerSpells() const;
     void trainSpell(uint32_t spellId);
     void closeTrainer();
     const std::string& getSpellName(uint32_t spellId) const;
@@ -2078,7 +2050,7 @@ public:
         std::string name;
         std::vector<const TrainerSpell*> spells;
     };
-    const std::vector<TrainerTab>& getTrainerTabs() const { return trainerTabs_; }
+    const std::vector<TrainerTab>& getTrainerTabs() const;
     const ItemQueryResponseData* getItemInfo(uint32_t itemId) const {
         auto it = itemInfoCache_.find(itemId);
         return (it != itemInfoCache_.end()) ? &it->second : nullptr;
@@ -2109,7 +2081,7 @@ public:
         if (it == onlineItems_.end()) return {};
         return it->second.socketEnchantIds;
     }
-    uint64_t getVendorGuid() const { return currentVendorItems.vendorGuid; }
+    uint64_t getVendorGuid() const;
 
     /**
      * Set callbacks

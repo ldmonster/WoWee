@@ -205,6 +205,11 @@ public:
     // Instance lockouts
     const std::vector<InstanceLockout>& getInstanceLockouts() const { return instanceLockouts_; }
 
+    // Instance difficulty
+    uint32_t getInstanceDifficulty() const { return instanceDifficulty_; }
+    bool isInstanceHeroic() const { return instanceIsHeroic_; }
+    bool isInInstance() const { return inInstance_; }
+
     // Minimap ping
     void sendMinimapPing(float wowX, float wowY);
 
