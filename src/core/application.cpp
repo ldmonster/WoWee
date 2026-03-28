@@ -3356,7 +3356,18 @@ void Application::setupUICallbacks() {
             if (pit != playerInstances_.end()) instanceId = pit->second;
         }
         if (instanceId != 0) {
-            renderer->getCharacterRenderer()->playAnimation(instanceId, 16, false); // Attack
+            auto* cr = renderer->getCharacterRenderer();
+            // Try weapon-appropriate attack anim: 17=1H, 18=2H, 16=unarmed fallback
+            static const uint32_t attackAnims[] = {17, 18, 16};
+            bool played = false;
+            for (uint32_t anim : attackAnims) {
+                if (cr->hasAnimation(instanceId, anim)) {
+                    cr->playAnimation(instanceId, anim, false);
+                    played = true;
+                    break;
+                }
+            }
+            if (!played) cr->playAnimation(instanceId, 16, false);
         }
     });
 
