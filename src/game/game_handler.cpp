@@ -5074,6 +5074,36 @@ const std::vector<GameHandler::EquipmentSetInfo>& GameHandler::getEquipmentSets(
     return empty;
 }
 
+// Trade state delegation to InventoryHandler (which owns the canonical trade state)
+GameHandler::TradeStatus GameHandler::getTradeStatus() const {
+    if (inventoryHandler_) return static_cast<TradeStatus>(inventoryHandler_->getTradeStatus());
+    return tradeStatus_;
+}
+bool GameHandler::hasPendingTradeRequest() const {
+    return inventoryHandler_ ? inventoryHandler_->hasPendingTradeRequest() : false;
+}
+bool GameHandler::isTradeOpen() const {
+    return inventoryHandler_ ? inventoryHandler_->isTradeOpen() : false;
+}
+const std::string& GameHandler::getTradePeerName() const {
+    if (inventoryHandler_) return inventoryHandler_->getTradePeerName();
+    return tradePeerName_;
+}
+const std::array<GameHandler::TradeSlot, GameHandler::TRADE_SLOT_COUNT>& GameHandler::getMyTradeSlots() const {
+    if (inventoryHandler_) return reinterpret_cast<const std::array<TradeSlot, TRADE_SLOT_COUNT>&>(inventoryHandler_->getMyTradeSlots());
+    return myTradeSlots_;
+}
+const std::array<GameHandler::TradeSlot, GameHandler::TRADE_SLOT_COUNT>& GameHandler::getPeerTradeSlots() const {
+    if (inventoryHandler_) return reinterpret_cast<const std::array<TradeSlot, TRADE_SLOT_COUNT>&>(inventoryHandler_->getPeerTradeSlots());
+    return peerTradeSlots_;
+}
+uint64_t GameHandler::getMyTradeGold() const {
+    return inventoryHandler_ ? inventoryHandler_->getMyTradeGold() : myTradeGold_;
+}
+uint64_t GameHandler::getPeerTradeGold() const {
+    return inventoryHandler_ ? inventoryHandler_->getPeerTradeGold() : peerTradeGold_;
+}
+
 bool GameHandler::supportsEquipmentSets() const {
     return inventoryHandler_ && inventoryHandler_->supportsEquipmentSets();
 }

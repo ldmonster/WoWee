@@ -1307,17 +1307,16 @@ public:
         bool     occupied    = false;
     };
 
-    TradeStatus getTradeStatus() const { return tradeStatus_; }
-    bool hasPendingTradeRequest() const { return tradeStatus_ == TradeStatus::PendingIncoming; }
-    bool isTradeOpen() const { return tradeStatus_ == TradeStatus::Open || tradeStatus_ == TradeStatus::Accepted; }
-    const std::string& getTradePeerName() const { return tradePeerName_; }
+    TradeStatus getTradeStatus() const;
+    bool hasPendingTradeRequest() const;
+    bool isTradeOpen() const;
+    const std::string& getTradePeerName() const;
 
     // My trade slots (what I'm offering)
-    const std::array<TradeSlot, TRADE_SLOT_COUNT>& getMyTradeSlots() const { return myTradeSlots_; }
-    // Peer's trade slots (what they're offering)
-    const std::array<TradeSlot, TRADE_SLOT_COUNT>& getPeerTradeSlots() const { return peerTradeSlots_; }
-    uint64_t getMyTradeGold() const { return myTradeGold_; }
-    uint64_t getPeerTradeGold() const { return peerTradeGold_; }
+    const std::array<TradeSlot, TRADE_SLOT_COUNT>& getMyTradeSlots() const;
+    const std::array<TradeSlot, TRADE_SLOT_COUNT>& getPeerTradeSlots() const;
+    uint64_t getMyTradeGold() const;
+    uint64_t getPeerTradeGold() const;
 
     void acceptTradeRequest();   // respond to incoming SMSG_TRADE_STATUS(1) with CMSG_BEGIN_TRADE
     void declineTradeRequest();  // respond with CMSG_CANCEL_TRADE
