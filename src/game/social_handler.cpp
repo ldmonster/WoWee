@@ -154,7 +154,7 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         readyCheckResults_.clear();
         if (packet.getSize() - packet.getReadPos() >= 8) {
             uint64_t initiatorGuid = packet.readUInt64();
-            auto entity = owner_.entityManager.getEntity(initiatorGuid);
+            auto entity = owner_.getEntityManager().getEntity(initiatorGuid);
             if (auto* unit = dynamic_cast<Unit*>(entity.get()))
                 readyCheckInitiator_ = unit->getName();
         }
@@ -174,11 +174,11 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         uint64_t respGuid = packet.readUInt64();
         uint8_t  isReady  = packet.readUInt8();
         if (isReady) ++readyCheckReadyCount_; else ++readyCheckNotReadyCount_;
-        auto nit = owner_.playerNameCache.find(respGuid);
+        auto nit = owner_.getPlayerNameCache().find(respGuid);
         std::string rname;
-        if (nit != owner_.playerNameCache.end()) rname = nit->second;
+        if (nit != owner_.getPlayerNameCache().end()) rname = nit->second;
         else {
-            auto ent = owner_.entityManager.getEntity(respGuid);
+            auto ent = owner_.getEntityManager().getEntity(respGuid);
             if (ent) rname = std::static_pointer_cast<game::Unit>(ent)->getName();
         }
         if (!rname.empty()) {
@@ -231,9 +231,9 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         uint64_t killerGuid = packet.readUInt64();
         uint64_t victimGuid = packet.readUInt64();
         auto nameFor = [this](uint64_t g) -> std::string {
-            auto nit = owner_.playerNameCache.find(g);
-            if (nit != owner_.playerNameCache.end()) return nit->second;
-            auto ent = owner_.entityManager.getEntity(g);
+            auto nit = owner_.getPlayerNameCache().find(g);
+            if (nit != owner_.getPlayerNameCache().end()) return nit->second;
+            auto ent = owner_.getEntityManager().getEntity(g);
             if (ent && (ent->getType() == game::ObjectType::UNIT ||
                         ent->getType() == game::ObjectType::PLAYER))
                 return std::static_pointer_cast<game::Unit>(ent)->getName();
@@ -303,16 +303,16 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_BATTLEGROUND_PLAYER_JOINED] = [this](network::Packet& packet) {
         if (packet.getSize() - packet.getReadPos() >= 8) {
             uint64_t guid = packet.readUInt64();
-            auto it = owner_.playerNameCache.find(guid);
-            if (it != owner_.playerNameCache.end() && !it->second.empty())
+            auto it = owner_.getPlayerNameCache().find(guid);
+            if (it != owner_.getPlayerNameCache().end() && !it->second.empty())
                 owner_.addSystemChatMessage(it->second + " has entered the battleground.");
         }
     };
     table[Opcode::SMSG_BATTLEGROUND_PLAYER_LEFT] = [this](network::Packet& packet) {
         if (packet.getSize() - packet.getReadPos() >= 8) {
             uint64_t guid = packet.readUInt64();
-            auto it = owner_.playerNameCache.find(guid);
-            if (it != owner_.playerNameCache.end() && !it->second.empty())
+            auto it = owner_.getPlayerNameCache().find(guid);
+            if (it != owner_.getPlayerNameCache().end() && !it->second.empty())
                 owner_.addSystemChatMessage(it->second + " has left the battleground.");
         }
     };
@@ -455,7 +455,7 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         if (roles & 0x08) roleName += "DPS ";
         if (roleName.empty()) roleName = "None";
         std::string pName = "A player";
-        if (auto e = owner_.entityManager.getEntity(roleGuid))
+        if (auto e = owner_.getEntityManager().getEntity(roleGuid))
             if (auto u = std::dynamic_pointer_cast<Unit>(e))
                 pName = u->getName();
         if (ready) owner_.addSystemChatMessage(pName + " has chosen: " + roleName);
@@ -507,7 +507,7 @@ bool SocialHandler::isInGuild() const {
 }
 
 uint32_t SocialHandler::getEntityGuildId(uint64_t guid) const {
-    auto entity = owner_.entityManager.getEntity(guid);
+    auto entity = owner_.getEntityManager().getEntity(guid);
     if (!entity || entity->getType() != ObjectType::PLAYER) return 0;
     const uint16_t ufUnitEnd = fieldIndex(UF::UNIT_END);
     if (ufUnitEnd == 0xFFFF) return 0;
@@ -613,7 +613,7 @@ void SocialHandler::handleInspectResults(network::Packet& packet) {
     size_t bytesLeft = packet.getSize() - packet.getReadPos();
     if (bytesLeft < 6) {
         LOG_WARNING("SMSG_TALENTS_INFO: too short after guid, ", bytesLeft, " bytes");
-        auto entity = owner_.entityManager.getEntity(guid);
+        auto entity = owner_.getEntityManager().getEntity(guid);
         std::string name = "Target";
         if (entity) {
             auto player = std::dynamic_pointer_cast<Player>(entity);
@@ -627,7 +627,7 @@ void SocialHandler::handleInspectResults(network::Packet& packet) {
     uint8_t talentGroupCount = packet.readUInt8();
     uint8_t activeTalentGroup = packet.readUInt8();
 
-    auto entity = owner_.entityManager.getEntity(guid);
+    auto entity = owner_.getEntityManager().getEntity(guid);
     std::string playerName = "Target";
     if (entity) {
         auto player = std::dynamic_pointer_cast<Player>(entity);
@@ -1028,12 +1028,12 @@ void SocialHandler::handleDuelRequested(network::Packet& packet) {
     duelChallengerGuid_ = packet.readUInt64();
     duelFlagGuid_       = packet.readUInt64();
     duelChallengerName_.clear();
-    auto entity = owner_.entityManager.getEntity(duelChallengerGuid_);
+    auto entity = owner_.getEntityManager().getEntity(duelChallengerGuid_);
     if (auto* unit = dynamic_cast<Unit*>(entity.get()))
         duelChallengerName_ = unit->getName();
     if (duelChallengerName_.empty()) {
-        auto nit = owner_.playerNameCache.find(duelChallengerGuid_);
-        if (nit != owner_.playerNameCache.end()) duelChallengerName_ = nit->second;
+        auto nit = owner_.getPlayerNameCache().find(duelChallengerGuid_);
+        if (nit != owner_.getPlayerNameCache().end()) duelChallengerName_ = nit->second;
     }
     if (duelChallengerName_.empty()) {
         char tmp[32];
@@ -1745,9 +1745,9 @@ void SocialHandler::handleFriendList(network::Packet& packet) {
             classId = packet.readUInt32();
         }
         owner_.friendGuids_.insert(guid);
-        auto nit = owner_.playerNameCache.find(guid);
+        auto nit = owner_.getPlayerNameCache().find(guid);
         std::string name;
-        if (nit != owner_.playerNameCache.end()) {
+        if (nit != owner_.getPlayerNameCache().end()) {
             name = nit->second;
             owner_.friendsCache[name] = guid;
         } else {
@@ -1780,15 +1780,15 @@ void SocialHandler::handleContactList(network::Packet& packet) {
                 areaId = packet.readUInt32(); level = packet.readUInt32(); classId = packet.readUInt32();
             }
             owner_.friendGuids_.insert(guid);
-            auto nit = owner_.playerNameCache.find(guid);
-            if (nit != owner_.playerNameCache.end()) owner_.friendsCache[nit->second] = guid;
+            auto nit = owner_.getPlayerNameCache().find(guid);
+            if (nit != owner_.getPlayerNameCache().end()) owner_.friendsCache[nit->second] = guid;
             else owner_.queryPlayerName(guid);
         }
         ContactEntry entry;
         entry.guid = guid; entry.flags = flags; entry.note = std::move(note);
         entry.status = status; entry.areaId = areaId; entry.level = level; entry.classId = classId;
-        auto nit = owner_.playerNameCache.find(guid);
-        if (nit != owner_.playerNameCache.end()) entry.name = nit->second;
+        auto nit = owner_.getPlayerNameCache().find(guid);
+        if (nit != owner_.getPlayerNameCache().end()) entry.name = nit->second;
         owner_.contacts_.push_back(std::move(entry));
     }
     if (owner_.addonEventCallback_) {
@@ -1810,8 +1810,8 @@ void SocialHandler::handleFriendStatus(network::Packet& packet) {
     if (cit != owner_.contacts_.end() && !cit->name.empty()) {
         playerName = cit->name;
     } else {
-        auto it = owner_.playerNameCache.find(data.guid);
-        if (it != owner_.playerNameCache.end()) playerName = it->second;
+        auto it = owner_.getPlayerNameCache().find(data.guid);
+        if (it != owner_.getPlayerNameCache().end()) playerName = it->second;
     }
 
     if (data.status == 1 || data.status == 2) owner_.friendsCache[playerName] = data.guid;
@@ -1850,8 +1850,8 @@ void SocialHandler::handleRandomRoll(network::Packet& packet) {
     if (!RandomRollParser::parse(packet, data)) return;
     std::string rollerName = (data.rollerGuid == owner_.playerGuid) ? "You" : "Someone";
     if (data.rollerGuid != owner_.playerGuid) {
-        auto it = owner_.playerNameCache.find(data.rollerGuid);
-        if (it != owner_.playerNameCache.end()) rollerName = it->second;
+        auto it = owner_.getPlayerNameCache().find(data.rollerGuid);
+        if (it != owner_.getPlayerNameCache().end()) rollerName = it->second;
     }
     std::string msg = rollerName + ((data.rollerGuid == owner_.playerGuid) ? " roll " : " rolls ");
     msg += std::to_string(data.result) + " (" + std::to_string(data.minRoll) + "-" + std::to_string(data.maxRoll) + ")";
@@ -2394,7 +2394,7 @@ void SocialHandler::handlePvpLogData(network::Packet& packet) {
         ps.guid = packet.readUInt64(); ps.team = packet.readUInt8();
         ps.killingBlows = packet.readUInt32(); ps.honorableKills = packet.readUInt32();
         ps.deaths = packet.readUInt32(); ps.bonusHonor = packet.readUInt32();
-        { auto ent = owner_.entityManager.getEntity(ps.guid);
+        { auto ent = owner_.getEntityManager().getEntity(ps.guid);
           if (ent && (ent->getType() == game::ObjectType::PLAYER || ent->getType() == game::ObjectType::UNIT))
               { auto u = std::static_pointer_cast<game::Unit>(ent); if (!u->getName().empty()) ps.name = u->getName(); } }
         if (remaining() < 4) { bgScoreboard_.players.push_back(std::move(ps)); break; }

@@ -257,6 +257,7 @@ private:
     friend class GameHandler;
     friend class InventoryHandler;
     friend class CombatHandler;
+    friend class EntityController;
 
     GameHandler& owner_;
 

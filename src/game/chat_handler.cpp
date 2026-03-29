@@ -138,8 +138,8 @@ void ChatHandler::sendChatMessage(ChatType type, const std::string& message, con
     echo.language = language;
     echo.message = message;
 
-    auto nameIt = owner_.playerNameCache.find(owner_.playerGuid);
-    if (nameIt != owner_.playerNameCache.end()) {
+    auto nameIt = owner_.getPlayerNameCache().find(owner_.playerGuid);
+    if (nameIt != owner_.getPlayerNameCache().end()) {
         echo.senderName = nameIt->second;
     }
 
@@ -179,11 +179,11 @@ void ChatHandler::handleMessageChat(network::Packet& packet) {
 
     // Resolve sender name from entity/cache if not already set by parser
     if (data.senderName.empty() && data.senderGuid != 0) {
-        auto nameIt = owner_.playerNameCache.find(data.senderGuid);
-        if (nameIt != owner_.playerNameCache.end()) {
+        auto nameIt = owner_.getPlayerNameCache().find(data.senderGuid);
+        if (nameIt != owner_.getPlayerNameCache().end()) {
             data.senderName = nameIt->second;
         } else {
-            auto entity = owner_.entityManager.getEntity(data.senderGuid);
+            auto entity = owner_.getEntityManager().getEntity(data.senderGuid);
             if (entity) {
                 if (entity->getType() == ObjectType::PLAYER) {
                     auto player = std::dynamic_pointer_cast<Player>(entity);
@@ -356,11 +356,11 @@ void ChatHandler::handleTextEmote(network::Packet& packet) {
     }
 
     std::string senderName;
-    auto nameIt = owner_.playerNameCache.find(data.senderGuid);
-    if (nameIt != owner_.playerNameCache.end()) {
+    auto nameIt = owner_.getPlayerNameCache().find(data.senderGuid);
+    if (nameIt != owner_.getPlayerNameCache().end()) {
         senderName = nameIt->second;
     } else {
-        auto entity = owner_.entityManager.getEntity(data.senderGuid);
+        auto entity = owner_.getEntityManager().getEntity(data.senderGuid);
         if (entity) {
             auto unit = std::dynamic_pointer_cast<Unit>(entity);
             if (unit) senderName = unit->getName();
@@ -685,7 +685,7 @@ void ChatHandler::handleChannelList(network::Packet& packet) {
         uint64_t memberGuid = packet.readUInt64();
         uint8_t memberFlags = packet.readUInt8();
         std::string name;
-        auto entity = owner_.entityManager.getEntity(memberGuid);
+        auto entity = owner_.getEntityManager().getEntity(memberGuid);
         if (entity) {
             auto player = std::dynamic_pointer_cast<Player>(entity);
             if (player && !player->getName().empty()) name = player->getName();

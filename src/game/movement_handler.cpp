@@ -1180,7 +1180,7 @@ void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
         }
     }
 
-    auto entity = owner_.entityManager.getEntity(moverGuid);
+    auto entity = owner_.getEntityManager().getEntity(moverGuid);
     if (!entity) {
         return;
     }
@@ -1539,7 +1539,7 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
         }
     }
 
-    auto entity = owner_.entityManager.getEntity(data.guid);
+    auto entity = owner_.getEntityManager().getEntity(data.guid);
     if (!entity) {
         return;
     }
@@ -1552,7 +1552,7 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
         if (data.moveType == 4) {
             orientation = core::coords::serverToCanonicalYaw(data.facingAngle);
         } else if (data.moveType == 3) {
-            auto target = owner_.entityManager.getEntity(data.facingTarget);
+            auto target = owner_.getEntityManager().getEntity(data.facingTarget);
             if (target) {
                 float dx = target->getX() - entity->getX();
                 float dy = target->getY() - entity->getY();
@@ -1613,7 +1613,7 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
                 posCanonical.x, posCanonical.y, posCanonical.z, 0);
         }
     } else if (data.moveType == 3 && data.facingTarget != 0) {
-        auto target = owner_.entityManager.getEntity(data.facingTarget);
+        auto target = owner_.getEntityManager().getEntity(data.facingTarget);
         if (target) {
             float dx = target->getX() - entity->getX();
             float dy = target->getY() - entity->getY();
@@ -1635,7 +1635,7 @@ void MovementHandler::handleMonsterMoveTransport(network::Packet& packet) {
     float localY = packet.readFloat();
     float localZ = packet.readFloat();
 
-    auto entity = owner_.entityManager.getEntity(moverGuid);
+    auto entity = owner_.getEntityManager().getEntity(moverGuid);
     if (!entity) return;
 
     if (packet.getReadPos() + 5 > packet.getSize()) {
@@ -1674,7 +1674,7 @@ void MovementHandler::handleMonsterMoveTransport(network::Packet& packet) {
     } else if (moveType == 3) {
         if (packet.getReadPos() + 8 > packet.getSize()) return;
         uint64_t tgtGuid = packet.readUInt64();
-        if (auto tgt = owner_.entityManager.getEntity(tgtGuid)) {
+        if (auto tgt = owner_.getEntityManager().getEntity(tgtGuid)) {
             float dx = tgt->getX() - entity->getX();
             float dy = tgt->getY() - entity->getY();
             if (std::abs(dx) > 0.01f || std::abs(dy) > 0.01f)
@@ -1922,7 +1922,7 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
         owner_.mountCallback_(0);
     }
 
-    for (const auto& [guid, entity] : owner_.entityManager.getEntities()) {
+    for (const auto& [guid, entity] : owner_.getEntityManager().getEntities()) {
         if (guid == owner_.playerGuid) continue;
         if (entity->getType() == ObjectType::UNIT && owner_.creatureDespawnCallback_) {
             owner_.creatureDespawnCallback_(guid);
@@ -1938,7 +1938,7 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
     owner_.unitCastStates_.clear();
     owner_.unitAurasCache_.clear();
     owner_.clearCombatText();
-    owner_.entityManager.clear();
+    owner_.getEntityManager().clear();
     owner_.clearHostileAttackers();
     owner_.worldStates_.clear();
     owner_.gossipPois_.clear();
@@ -2278,7 +2278,7 @@ void MovementHandler::startClientTaxiPath(const std::vector<uint32_t>& pathNodes
     movementInfo.orientation = initialOrientation;
     sanitizeMovementForTaxi();
 
-    auto playerEntity = owner_.entityManager.getEntity(owner_.playerGuid);
+    auto playerEntity = owner_.getEntityManager().getEntity(owner_.playerGuid);
     if (playerEntity) {
         playerEntity->setPosition(start.x, start.y, start.z, initialOrientation);
     }
@@ -2293,7 +2293,7 @@ void MovementHandler::startClientTaxiPath(const std::vector<uint32_t>& pathNodes
 
 void MovementHandler::updateClientTaxi(float deltaTime) {
     if (!taxiClientActive_ || taxiClientPath_.size() < 2) return;
-    auto playerEntity = owner_.entityManager.getEntity(owner_.playerGuid);
+    auto playerEntity = owner_.getEntityManager().getEntity(owner_.playerGuid);
 
     auto finishTaxiFlight = [&]() {
             if (!taxiClientPath_.empty()) {
@@ -2820,7 +2820,7 @@ void MovementHandler::updateAttachedTransportChildren(float /*deltaTime*/) {
     stale.reserve(8);
 
     for (const auto& [childGuid, attachment] : owner_.transportAttachments_) {
-        auto entity = owner_.entityManager.getEntity(childGuid);
+        auto entity = owner_.getEntityManager().getEntity(childGuid);
         if (!entity) {
             stale.push_back(childGuid);
             continue;
