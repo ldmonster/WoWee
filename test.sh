@@ -75,8 +75,19 @@ echo "Linting ${#SOURCE_FILES[@]} source files..."
 EXTRA_TIDY_ARGS=()   # for direct clang-tidy:  --extra-arg=...
 EXTRA_RUN_ARGS=()    # for run-clang-tidy:     -extra-arg=...
 if command -v gcc >/dev/null 2>&1; then
+    # Prepend clang's own resource include dir first so clang uses its own
+    # versions of xmmintrin.h, ia32intrin.h, etc. rather than GCC's.
+    clang_resource_inc="$($CLANG_TIDY -print-resource-dir 2>/dev/null || true)/include"
+    if [[ -d "$clang_resource_inc" ]]; then
+        EXTRA_TIDY_ARGS+=("--extra-arg=-isystem${clang_resource_inc}")
+        EXTRA_RUN_ARGS+=("-extra-arg=-isystem${clang_resource_inc}")
+    fi
+
     while IFS= read -r inc_path; do
         [[ -d "$inc_path" ]] || continue
+        # Skip the GCC compiler built-in include dir — clang's resource dir above
+        # provides compatible replacements for xmmintrin.h, ia32intrin.h, etc.
+        [[ "$inc_path" == */gcc/* ]] && continue
         EXTRA_TIDY_ARGS+=("--extra-arg=-isystem${inc_path}")
         EXTRA_RUN_ARGS+=("-extra-arg=-isystem${inc_path}")
     done < <(

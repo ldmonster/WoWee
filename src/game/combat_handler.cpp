@@ -64,7 +64,7 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
     };
     table[Opcode::SMSG_ATTACKSWING_BADFACING] = [this](network::Packet& /*packet*/) {
         if (autoAttackRequested_ && autoAttackTarget_ != 0) {
-            auto targetEntity = owner_.entityManager.getEntity(autoAttackTarget_);
+            auto targetEntity = owner_.getEntityManager().getEntity(autoAttackTarget_);
             if (targetEntity) {
                 float toTargetX = targetEntity->getX() - owner_.movementInfo.x;
                 float toTargetY = targetEntity->getY() - owner_.movementInfo.y;
@@ -96,7 +96,7 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
         uint64_t guid = packet.readUInt64();
         uint32_t reaction = packet.readUInt32();
         if (reaction == 2 && owner_.npcAggroCallback_) {
-            auto entity = owner_.entityManager.getEntity(guid);
+            auto entity = owner_.getEntityManager().getEntity(guid);
             if (entity)
                 owner_.npcAggroCallback_(guid, glm::vec3(entity->getX(), entity->getY(), entity->getZ()));
         }
@@ -204,7 +204,7 @@ void CombatHandler::startAutoAttack(uint64_t targetGuid) {
 
     // Client-side melee range gate to avoid starting "swing forever" loops when
     // target is already clearly out of range.
-    if (auto target = owner_.entityManager.getEntity(targetGuid)) {
+    if (auto target = owner_.getEntityManager().getEntity(targetGuid)) {
         float dx = owner_.movementInfo.x - target->getLatestX();
         float dy = owner_.movementInfo.y - target->getLatestY();
         float dz = owner_.movementInfo.z - target->getLatestZ();
@@ -368,7 +368,7 @@ void CombatHandler::updateCombatText(float deltaTime) {
 void CombatHandler::autoTargetAttacker(uint64_t attackerGuid) {
     if (attackerGuid == 0 || attackerGuid == owner_.playerGuid) return;
     if (owner_.targetGuid != 0) return;
-    if (!owner_.entityManager.hasEntity(attackerGuid)) return;
+    if (!owner_.getEntityManager().hasEntity(attackerGuid)) return;
     owner_.setTarget(attackerGuid);
 }
 
@@ -389,7 +389,7 @@ void CombatHandler::handleAttackStart(network::Packet& packet) {
 
         // Play aggro sound when NPC attacks player
         if (owner_.npcAggroCallback_) {
-            auto entity = owner_.entityManager.getEntity(data.attackerGuid);
+            auto entity = owner_.getEntityManager().getEntity(data.attackerGuid);
             if (entity && entity->getType() == ObjectType::UNIT) {
                 glm::vec3 pos(entity->getX(), entity->getY(), entity->getZ());
                 owner_.npcAggroCallback_(data.attackerGuid, pos);
@@ -400,8 +400,8 @@ void CombatHandler::handleAttackStart(network::Packet& packet) {
     // Force both participants to face each other at combat start.
     // Uses atan2(-dy, dx): canonical orientation convention where the West/Y
     // component is negated (renderYaw = orientation + 90°, model-forward = render+X).
-    auto attackerEnt = owner_.entityManager.getEntity(data.attackerGuid);
-    auto victimEnt   = owner_.entityManager.getEntity(data.victimGuid);
+    auto attackerEnt = owner_.getEntityManager().getEntity(data.attackerGuid);
+    auto victimEnt   = owner_.getEntityManager().getEntity(data.victimGuid);
     if (attackerEnt && victimEnt) {
         float dx = victimEnt->getX() - attackerEnt->getX();
         float dy = victimEnt->getY() - attackerEnt->getY();
@@ -589,7 +589,7 @@ void CombatHandler::updateAutoAttack(float deltaTime) {
     // Leave combat if auto-attack target is too far away (leash range)
     // and keep melee intent tightly synced while stationary.
     if (autoAttackRequested_ && autoAttackTarget_ != 0) {
-        auto targetEntity = owner_.entityManager.getEntity(autoAttackTarget_);
+        auto targetEntity = owner_.getEntityManager().getEntity(autoAttackTarget_);
         if (targetEntity) {
             const float targetX = targetEntity->getLatestX();
             const float targetY = targetEntity->getLatestY();
@@ -669,7 +669,7 @@ void CombatHandler::updateAutoAttack(float deltaTime) {
     // Keep active melee attackers visually facing the player as positions change.
     if (!hostileAttackers_.empty()) {
         for (uint64_t attackerGuid : hostileAttackers_) {
-            auto attacker = owner_.entityManager.getEntity(attackerGuid);
+            auto attacker = owner_.getEntityManager().getEntity(attackerGuid);
             if (!attacker) continue;
             float dx = owner_.movementInfo.x - attacker->getX();
             float dy = owner_.movementInfo.y - attacker->getY();
@@ -1098,14 +1098,14 @@ void CombatHandler::clearTarget() {
 
 std::shared_ptr<Entity> CombatHandler::getTarget() const {
     if (owner_.targetGuid == 0) return nullptr;
-    return owner_.entityManager.getEntity(owner_.targetGuid);
+    return owner_.getEntityManager().getEntity(owner_.targetGuid);
 }
 
 void CombatHandler::setFocus(uint64_t guid) {
     owner_.focusGuid = guid;
     owner_.fireAddonEvent("PLAYER_FOCUS_CHANGED", {});
     if (guid != 0) {
-        auto entity = owner_.entityManager.getEntity(guid);
+        auto entity = owner_.getEntityManager().getEntity(guid);
         if (entity) {
             std::string name;
             auto unit = std::dynamic_pointer_cast<Unit>(entity);
@@ -1131,7 +1131,7 @@ void CombatHandler::clearFocus() {
 
 std::shared_ptr<Entity> CombatHandler::getFocus() const {
     if (owner_.focusGuid == 0) return nullptr;
-    return owner_.entityManager.getEntity(owner_.focusGuid);
+    return owner_.getEntityManager().getEntity(owner_.focusGuid);
 }
 
 void CombatHandler::setMouseoverGuid(uint64_t guid) {
@@ -1156,7 +1156,7 @@ void CombatHandler::targetLastTarget() {
 void CombatHandler::targetEnemy(bool reverse) {
     // Get list of hostile entities
     std::vector<uint64_t> hostiles;
-    auto& entities = owner_.entityManager.getEntities();
+    auto& entities = owner_.getEntityManager().getEntities();
 
     for (const auto& [guid, entity] : entities) {
         if (entity->getType() == ObjectType::UNIT) {
@@ -1200,7 +1200,7 @@ void CombatHandler::targetEnemy(bool reverse) {
 void CombatHandler::targetFriend(bool reverse) {
     // Get list of friendly entities (players)
     std::vector<uint64_t> friendlies;
-    auto& entities = owner_.entityManager.getEntities();
+    auto& entities = owner_.getEntityManager().getEntities();
 
     for (const auto& [guid, entity] : entities) {
         if (entity->getType() == ObjectType::PLAYER && guid != owner_.playerGuid) {
@@ -1266,7 +1266,7 @@ void CombatHandler::tabTarget(float playerX, float playerY, float playerZ) {
         struct EntityDist { uint64_t guid; float distance; };
         std::vector<EntityDist> sortable;
 
-        for (const auto& [guid, entity] : owner_.entityManager.getEntities()) {
+        for (const auto& [guid, entity] : owner_.getEntityManager().getEntities()) {
             auto t = entity->getType();
             if (t != ObjectType::UNIT && t != ObjectType::PLAYER) continue;
             if (guid == owner_.playerGuid) continue;
@@ -1297,7 +1297,7 @@ void CombatHandler::tabTarget(float playerX, float playerY, float playerZ) {
     while (tries-- > 0) {
         owner_.tabCycleIndex = (owner_.tabCycleIndex + 1) % static_cast<int>(owner_.tabCycleList.size());
         uint64_t guid = owner_.tabCycleList[owner_.tabCycleIndex];
-        auto entity = owner_.entityManager.getEntity(guid);
+        auto entity = owner_.getEntityManager().getEntity(guid);
         if (isValidTabTarget(entity)) {
             setTarget(guid);
             return;
@@ -1373,7 +1373,7 @@ void CombatHandler::togglePvp() {
 
     auto packet = TogglePvpPacket::build();
     owner_.socket->send(packet);
-    auto entity = owner_.entityManager.getEntity(owner_.playerGuid);
+    auto entity = owner_.getEntityManager().getEntity(owner_.playerGuid);
     bool currentlyPvp = false;
     if (entity) {
         currentlyPvp = (entity->getField(59) & 0x00001000) != 0;

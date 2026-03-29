@@ -12,6 +12,7 @@
 #include "game/spell_handler.hpp"
 #include "game/quest_handler.hpp"
 #include "game/movement_handler.hpp"
+#include "game/entity_controller.hpp"
 #include "network/packet.hpp"
 #include <glm/glm.hpp>
 #include <memory>
@@ -243,8 +244,8 @@ public:
     /**
      * Get entity manager (for accessing entities in view)
      */
-    EntityManager& getEntityManager() { return entityManager; }
-    const EntityManager& getEntityManager() const { return entityManager; }
+    EntityManager& getEntityManager() { return entityController_->getEntityManager(); }
+    const EntityManager& getEntityManager() const { return entityController_->getEntityManager(); }
 
     /**
      * Send a chat message
@@ -622,36 +623,38 @@ public:
     void resetCastState();       // force-clear all cast/craft/queue state without sending packets
     void clearUnitCaches();      // clear per-unit cast states and aura caches
 
-    // ---- Phase 1: Name queries ----
+    // ---- Phase 1: Name queries (delegated to EntityController) ----
     void queryPlayerName(uint64_t guid);
     void queryCreatureInfo(uint32_t entry, uint64_t guid);
     void queryGameObjectInfo(uint32_t entry, uint64_t guid);
     const GameObjectQueryResponseData* getCachedGameObjectInfo(uint32_t entry) const {
-        auto it = gameObjectInfoCache_.find(entry);
-        return (it != gameObjectInfoCache_.end()) ? &it->second : nullptr;
+        return entityController_->getCachedGameObjectInfo(entry);
     }
     std::string getCachedPlayerName(uint64_t guid) const;
     std::string getCachedCreatureName(uint32_t entry) const;
+    // Read-only cache access forwarded from EntityController
+    const std::unordered_map<uint64_t, std::string>& getPlayerNameCache() const {
+        return entityController_->getPlayerNameCache();
+    }
+    const std::unordered_map<uint32_t, CreatureQueryResponseData>& getCreatureInfoCache() const {
+        return entityController_->getCreatureInfoCache();
+    }
     // Returns the creature subname/title (e.g. "<Warchief of the Horde>"), empty if not cached
     std::string getCachedCreatureSubName(uint32_t entry) const {
-        auto it = creatureInfoCache.find(entry);
-        return (it != creatureInfoCache.end()) ? it->second.subName : "";
+        return entityController_->getCachedCreatureSubName(entry);
     }
     // Returns the creature rank (0=Normal,1=Elite,2=RareElite,3=Boss,4=Rare)
     // or -1 if not cached yet
     int getCreatureRank(uint32_t entry) const {
-        auto it = creatureInfoCache.find(entry);
-        return (it != creatureInfoCache.end()) ? static_cast<int>(it->second.rank) : -1;
+        return entityController_->getCreatureRank(entry);
     }
     // Returns creature type (1=Beast,2=Dragonkin,...,7=Humanoid,...) or 0 if not cached
     uint32_t getCreatureType(uint32_t entry) const {
-        auto it = creatureInfoCache.find(entry);
-        return (it != creatureInfoCache.end()) ? it->second.creatureType : 0;
+        return entityController_->getCreatureType(entry);
     }
     // Returns creature family (e.g. pet family for beasts) or 0
     uint32_t getCreatureFamily(uint32_t entry) const {
-        auto it = creatureInfoCache.find(entry);
-        return (it != creatureInfoCache.end()) ? it->second.family : 0;
+        return entityController_->getCreatureFamily(entry);
     }
 
     // ---- Phase 2: Combat (delegated to CombatHandler) ----
@@ -1111,8 +1114,8 @@ public:
     glm::vec3 getPlayerTransportOffset() const { return playerTransportOffset_; }
 
     // Check if a GUID is a known transport
-    bool isTransportGuid(uint64_t guid) const { return transportGuids_.count(guid) > 0; }
-    bool hasServerTransportUpdate(uint64_t guid) const { return serverUpdatedTransportGuids_.count(guid) > 0; }
+    bool isTransportGuid(uint64_t guid) const { return entityController_->isTransportGuid(guid); }
+    bool hasServerTransportUpdate(uint64_t guid) const { return entityController_->hasServerTransportUpdate(guid); }
     glm::vec3 getComposedWorldPosition();  // Compose transport transform * local offset
     TransportManager* getTransportManager() { return transportManager_.get(); }
     void setPlayerOnTransport(uint64_t transportGuid, const glm::vec3& localOffset) {
@@ -1152,27 +1155,16 @@ public:
 
     // Look up class/race for a player GUID from name query cache. Returns 0 if unknown.
     uint8_t lookupPlayerClass(uint64_t guid) const {
-        auto it = playerClassRaceCache_.find(guid);
-        return it != playerClassRaceCache_.end() ? it->second.classId : 0;
+        return entityController_->lookupPlayerClass(guid);
     }
     uint8_t lookupPlayerRace(uint64_t guid) const {
-        auto it = playerClassRaceCache_.find(guid);
-        return it != playerClassRaceCache_.end() ? it->second.raceId : 0;
+        return entityController_->lookupPlayerRace(guid);
     }
 
     // Look up a display name for any guid: checks playerNameCache then entity manager.
     // Returns empty string if unknown. Used by chat display to resolve names at render time.
     const std::string& lookupName(uint64_t guid) const {
-        static const std::string kEmpty;
-        auto it = playerNameCache.find(guid);
-        if (it != playerNameCache.end()) return it->second;
-        auto entity = entityManager.getEntity(guid);
-        if (entity) {
-            if (auto* unit = dynamic_cast<const Unit*>(entity.get())) {
-                if (!unit->getName().empty()) return unit->getName();
-            }
-        }
-        return kEmpty;
+        return entityController_->lookupName(guid);
     }
 
     uint8_t getPlayerClass() const {
@@ -2106,6 +2098,7 @@ private:
     friend class SocialHandler;
     friend class QuestHandler;
     friend class WardenHandler;
+    friend class EntityController;
 
     // Dead: autoTargetAttacker moved to CombatHandler
 
@@ -2121,12 +2114,6 @@ private:
     void enqueueIncomingPacket(const network::Packet& packet);
     void enqueueIncomingPacketFront(network::Packet&& packet);
     void processQueuedIncomingPackets();
-    void enqueueUpdateObjectWork(UpdateObjectData&& data);
-    void processPendingUpdateObjectWork(const std::chrono::steady_clock::time_point& start,
-                                        float budgetMs);
-    void processOutOfRangeObjects(const std::vector<uint64_t>& guids);
-    void applyUpdateObjectBlock(const UpdateBlock& block, bool& newItemCreated);
-    void finalizeUpdateObjectBatch(bool newItemCreated);
 
     /**
      * Handle SMSG_AUTH_CHALLENGE from server
@@ -2186,27 +2173,7 @@ private:
      */
     void handlePong(network::Packet& packet);
 
-    /**
-     * Handle SMSG_UPDATE_OBJECT from server
-     */
-    void handleUpdateObject(network::Packet& packet);
-
-    /**
-     * Handle SMSG_COMPRESSED_UPDATE_OBJECT from server
-     */
-    void handleCompressedUpdateObject(network::Packet& packet);
-
-    /**
-     * Handle SMSG_DESTROY_OBJECT from server
-     */
-    void handleDestroyObject(network::Packet& packet);
-
-    // ---- Phase 1 handlers ----
-    void handleNameQueryResponse(network::Packet& packet);
-    void handleCreatureQueryResponse(network::Packet& packet);
-    void handleGameObjectQueryResponse(network::Packet& packet);
-    void handleGameObjectPageText(network::Packet& packet);
-    void handlePageTextQueryResponse(network::Packet& packet);
+    // ---- Phase 1 handlers (entity queries delegated to EntityController) ----
     void handleItemQueryResponse(network::Packet& packet);
     void queryItemInfo(uint32_t entry, uint64_t guid);
     void rebuildOnlineInventory();
@@ -2356,13 +2323,6 @@ private:
     // Network
     std::unique_ptr<network::WorldSocket> socket;
     std::deque<network::Packet> pendingIncomingPackets_;
-    struct PendingUpdateObjectWork {
-        UpdateObjectData data;
-        size_t nextBlockIndex = 0;
-        bool outOfRangeProcessed = false;
-        bool newItemCreated = false;
-    };
-    std::deque<PendingUpdateObjectWork> pendingUpdateObjectWork_;
 
     // State
     WorldState state = WorldState::DISCONNECTED;
@@ -2396,8 +2356,8 @@ private:
     // Inventory
     Inventory inventory;
 
-    // Entity tracking
-    EntityManager entityManager;             // Manages all entities in view
+    // Entity tracking (delegated to EntityController)
+    std::unique_ptr<EntityController> entityController_;
 
     // Chat (state lives in ChatHandler; callbacks remain here for cross-domain access)
     ChatBubbleCallback chatBubbleCallback_;
@@ -2444,16 +2404,7 @@ private:
     uint32_t homeBindZoneId_ = 0;
     glm::vec3 homeBindPos_{0.0f};
 
-    // ---- Phase 1: Name caches ----
-    std::unordered_map<uint64_t, std::string> playerNameCache;
-    // Class/race cache from SMSG_NAME_QUERY_RESPONSE (guid → {classId, raceId})
-    struct PlayerClassRace { uint8_t classId = 0; uint8_t raceId = 0; };
-    std::unordered_map<uint64_t, PlayerClassRace> playerClassRaceCache_;
-    std::unordered_set<uint64_t> pendingNameQueries;
-    std::unordered_map<uint32_t, CreatureQueryResponseData> creatureInfoCache;
-    std::unordered_set<uint32_t> pendingCreatureQueries;
-    std::unordered_map<uint32_t, GameObjectQueryResponseData> gameObjectInfoCache_;
-    std::unordered_set<uint32_t> pendingGameObjectQueries_;
+    // ---- Phase 1: Name caches (moved to EntityController) ----
 
     // ---- Friend/contact list cache ----
     std::unordered_map<std::string, uint64_t> friendsCache;  // name -> guid
@@ -2586,8 +2537,7 @@ private:
         bool hasLocalOrientation = false;
     };
     std::unordered_map<uint64_t, TransportAttachment> transportAttachments_;
-    std::unordered_set<uint64_t> transportGuids_;  // GUIDs of known transport GameObjects
-    std::unordered_set<uint64_t> serverUpdatedTransportGuids_;
+    // Transport GUID tracking moved to EntityController
     uint64_t playerTransportGuid_ = 0;             // Transport the player is riding (0 = none)
     glm::vec3 playerTransportOffset_ = glm::vec3(0.0f); // Player offset on transport
     uint64_t playerTransportStickyGuid_ = 0;       // Last transport player was on (temporary retention)

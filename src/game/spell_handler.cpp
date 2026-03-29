@@ -248,7 +248,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
             owner_.addSystemChatMessage("You have no target.");
             return;
         }
-        auto entity = owner_.entityManager.getEntity(target);
+        auto entity = owner_.getEntityManager().getEntity(target);
         if (!entity) {
             owner_.addSystemChatMessage("You have no target.");
             return;
@@ -284,7 +284,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
             isMeleeAbility = true;
         }
         if (isMeleeAbility && target != 0) {
-            auto entity = owner_.entityManager.getEntity(target);
+            auto entity = owner_.getEntityManager().getEntity(target);
             if (entity) {
                 float dx = entity->getX() - owner_.movementInfo.x;
                 float dy = entity->getY() - owner_.movementInfo.y;
@@ -305,7 +305,7 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     // Send both SET_FACING and a HEARTBEAT so the server has the updated orientation
     // before it processes the cast packet.
     if (target != 0) {
-        auto entity = owner_.entityManager.getEntity(target);
+        auto entity = owner_.getEntityManager().getEntity(target);
         if (entity) {
             float dx = entity->getX() - owner_.movementInfo.x;
             float dy = entity->getY() - owner_.movementInfo.y;
@@ -819,7 +819,7 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
 
     // Show failure reason
     int powerType = -1;
-    auto playerEntity = owner_.entityManager.getEntity(owner_.playerGuid);
+    auto playerEntity = owner_.getEntityManager().getEntity(owner_.playerGuid);
     if (auto playerUnit = std::dynamic_pointer_cast<Unit>(playerEntity)) {
         powerType = playerUnit->getPowerType();
     }
@@ -1418,13 +1418,13 @@ void SpellHandler::handleAchievementEarned(network::Packet& packet) {
         }
     } else {
         std::string senderName;
-        auto entity = owner_.entityManager.getEntity(guid);
+        auto entity = owner_.getEntityManager().getEntity(guid);
         if (auto* unit = dynamic_cast<Unit*>(entity.get())) {
             senderName = unit->getName();
         }
         if (senderName.empty()) {
-            auto nit = owner_.playerNameCache.find(guid);
-            if (nit != owner_.playerNameCache.end())
+            auto nit = owner_.getPlayerNameCache().find(guid);
+            if (nit != owner_.getPlayerNameCache().end())
                 senderName = nit->second;
         }
         if (senderName.empty()) {
@@ -2073,7 +2073,7 @@ void SpellHandler::handleCastResult(network::Packet& packet) {
             owner_.craftQueueSpellId_ = 0; owner_.craftQueueRemaining_ = 0;
             owner_.queuedSpellId_ = 0; owner_.queuedSpellTarget_ = 0;
             int playerPowerType = -1;
-            if (auto pe = owner_.entityManager.getEntity(owner_.playerGuid)) {
+            if (auto pe = owner_.getEntityManager().getEntity(owner_.playerGuid)) {
                 if (auto pu = std::dynamic_pointer_cast<Unit>(pe))
                     playerPowerType = static_cast<int>(pu->getPowerType());
             }
@@ -2151,7 +2151,7 @@ void SpellHandler::handlePlaySpellVisual(network::Packet& packet) {
     if (casterGuid == owner_.playerGuid) {
         spawnPos = renderer->getCharacterPosition();
     } else {
-        auto entity = owner_.entityManager.getEntity(casterGuid);
+        auto entity = owner_.getEntityManager().getEntity(casterGuid);
         if (!entity) return;
         glm::vec3 canonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());
         spawnPos = core::coords::canonicalToRender(canonical);
@@ -2308,7 +2308,7 @@ void SpellHandler::handleSpellFailure(network::Packet& packet) {
         if (failGuid == owner_.playerGuid && failReason != 0) {
             // Show interruption/failure reason in chat and error overlay for player
             int pt = -1;
-            if (auto pe = owner_.entityManager.getEntity(owner_.playerGuid))
+            if (auto pe = owner_.getEntityManager().getEntity(owner_.playerGuid))
                 if (auto pu = std::dynamic_pointer_cast<Unit>(pe))
                     pt = static_cast<int>(pu->getPowerType());
             const char* reason = getSpellCastResultString(failReason, pt);

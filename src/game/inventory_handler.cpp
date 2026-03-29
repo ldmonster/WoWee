@@ -810,8 +810,8 @@ void InventoryHandler::handleLootRoll(network::Packet& packet) {
 
     // Resolve player name
     std::string playerName;
-    auto nit = owner_.playerNameCache.find(playerGuid);
-    if (nit != owner_.playerNameCache.end()) playerName = nit->second;
+    auto nit = owner_.getPlayerNameCache().find(playerGuid);
+    if (nit != owner_.getPlayerNameCache().end()) playerName = nit->second;
     if (playerName.empty()) playerName = "Player";
 
     if (pendingLootRollActive_ &&
@@ -848,8 +848,8 @@ void InventoryHandler::handleLootRollWon(network::Packet& packet) {
     uint8_t rollType    = packet.readUInt8();
 
     std::string winnerName;
-    auto nit = owner_.playerNameCache.find(winnerGuid);
-    if (nit != owner_.playerNameCache.end()) winnerName = nit->second;
+    auto nit = owner_.getPlayerNameCache().find(winnerGuid);
+    if (nit != owner_.getPlayerNameCache().end()) winnerName = nit->second;
     if (winnerName.empty()) winnerName = "Player";
 
     owner_.ensureItemInfo(itemId);
@@ -1374,7 +1374,7 @@ void InventoryHandler::handleListInventory(network::Packet& packet) {
 
     // Play vendor sound
     if (owner_.npcVendorCallback_ && currentVendorItems_.vendorGuid != 0) {
-        auto entity = owner_.entityManager.getEntity(currentVendorItems_.vendorGuid);
+        auto entity = owner_.getEntityManager().getEntity(currentVendorItems_.vendorGuid);
         if (entity && entity->getType() == ObjectType::UNIT) {
             glm::vec3 pos(entity->getX(), entity->getY(), entity->getZ());
             owner_.npcVendorCallback_(currentVendorItems_.vendorGuid, pos);
@@ -2076,8 +2076,8 @@ void InventoryHandler::handleTradeStatus(network::Packet& packet) {
                 tradePeerGuid_ = packet.readUInt64();
             tradeStatus_ = TradeStatus::PendingIncoming;
             // Resolve name
-            auto nit = owner_.playerNameCache.find(tradePeerGuid_);
-            if (nit != owner_.playerNameCache.end()) tradePeerName_ = nit->second;
+            auto nit = owner_.getPlayerNameCache().find(tradePeerGuid_);
+            if (nit != owner_.getPlayerNameCache().end()) tradePeerName_ = nit->second;
             else tradePeerName_ = "Unknown";
             owner_.addSystemChatMessage(tradePeerName_ + " wants to trade with you.");
             if (owner_.addonEventCallback_) owner_.addonEventCallback_("TRADE_REQUEST", {tradePeerName_});
@@ -3098,7 +3098,7 @@ void InventoryHandler::maybeDetectVisibleItemLayout() {
                  " mismatches=", bestMismatches, " score=", bestScore, ")");
 
         // Backfill existing player entities already in view.
-        for (const auto& [guid, ent] : owner_.entityManager.getEntities()) {
+        for (const auto& [guid, ent] : owner_.getEntityManager().getEntities()) {
             if (!ent || ent->getType() != ObjectType::PLAYER) continue;
             if (guid == owner_.playerGuid) continue;
             updateOtherPlayerVisibleItems(guid, ent->getFields());

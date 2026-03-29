@@ -16,6 +16,8 @@ Checks: >
   modernize-deprecated-headers, 
   modernize-make-unique, 
   modernize-make-shared, 
+  modernize-use-nodiscard, 
+  modernize-use-designated-initializers, 
   readability-braces-around-statements, 
   readability-container-size-empty, 
   readability-delete-null-pointer, 
@@ -35,6 +37,7 @@ WarningsAsErrors: ''
 # Suppress the noise from GCC-only LTO flags in compile_commands.json.
 # clang doesn't support -fno-fat-lto-objects; this silences the harmless warning.
 ExtraArgs:
+  - -std=c++20
   - -Wno-ignored-optimization-argument
 
 HeaderFilterRegex: '^.*/include/.*\.hpp$'

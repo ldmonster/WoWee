@@ -504,7 +504,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
         }
         // Re-query all nearby quest giver NPCs so markers refresh
         if (owner_.socket) {
-            for (const auto& [guid, entity] : owner_.entityManager.getEntities()) {
+            for (const auto& [guid, entity] : owner_.getEntityManager().getEntities()) {
                 if (entity->getType() != ObjectType::UNIT) continue;
                 auto unit = std::static_pointer_cast<Unit>(entity);
                 if (unit->getNpcFlags() & 0x02) {
@@ -1557,7 +1557,7 @@ void QuestHandler::handleGossipMessage(network::Packet& packet) {
 
     // Play NPC greeting voice
     if (owner_.npcGreetingCallback_ && currentGossip_.npcGuid != 0) {
-        auto entity = owner_.entityManager.getEntity(currentGossip_.npcGuid);
+        auto entity = owner_.getEntityManager().getEntity(currentGossip_.npcGuid);
         if (entity) {
             glm::vec3 npcPos(entity->getX(), entity->getY(), entity->getZ());
             owner_.npcGreetingCallback_(currentGossip_.npcGuid, npcPos);
@@ -1654,7 +1654,7 @@ void QuestHandler::handleGossipComplete(network::Packet& packet) {
 
     // Play farewell sound before closing
     if (owner_.npcFarewellCallback_ && currentGossip_.npcGuid != 0) {
-        auto entity = owner_.entityManager.getEntity(currentGossip_.npcGuid);
+        auto entity = owner_.getEntityManager().getEntity(currentGossip_.npcGuid);
         if (entity && entity->getType() == ObjectType::UNIT) {
             glm::vec3 pos(entity->getX(), entity->getY(), entity->getZ());
             owner_.npcFarewellCallback_(currentGossip_.npcGuid, pos);
@@ -1865,13 +1865,13 @@ void QuestHandler::handleQuestConfirmAccept(network::Packet& packet) {
     }
 
     sharedQuestSharerName_.clear();
-    auto entity = owner_.entityManager.getEntity(sharedQuestSharerGuid_);
+    auto entity = owner_.getEntityManager().getEntity(sharedQuestSharerGuid_);
     if (auto* unit = dynamic_cast<Unit*>(entity.get())) {
         sharedQuestSharerName_ = unit->getName();
     }
     if (sharedQuestSharerName_.empty()) {
-        auto nit = owner_.playerNameCache.find(sharedQuestSharerGuid_);
-        if (nit != owner_.playerNameCache.end())
+        auto nit = owner_.getPlayerNameCache().find(sharedQuestSharerGuid_);
+        if (nit != owner_.getPlayerNameCache().end())
             sharedQuestSharerName_ = nit->second;
     }
     if (sharedQuestSharerName_.empty()) {

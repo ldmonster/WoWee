@@ -457,6 +457,7 @@ set(WOWEE_SOURCES
     src/game/inventory_handler.cpp
     src/game/social_handler.cpp
     src/game/quest_handler.cpp
+    src/game/entity_controller.cpp
     src/game/warden_handler.cpp
     src/game/warden_crypto.cpp
     src/game/warden_module.cpp
