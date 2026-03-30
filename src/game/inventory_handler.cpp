@@ -194,18 +194,18 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- Item push result ----
     table[Opcode::SMSG_ITEM_PUSH_RESULT] = [this](network::Packet& packet) {
-        // guid(8)+received(4)+created(4)+?+?+bag(1)+slot(4)+itemId(4)+...+count(4)+...
+        // WotLK 3.3.5a: guid(8)+received(4)+created(4)+displayInChat(4)+bagSlot(1)
+        //   +slot(4)+itemId(4)+suffixFactor(4)+randomPropertyId(4)+count(4)+countInInventory(4)
         if (packet.getSize() - packet.getReadPos() < 45) return;
         uint64_t guid = packet.readUInt64();
         if (guid != owner_.playerGuid) { packet.setReadPos(packet.getSize()); return; }
-        /*uint32_t received =*/ packet.readUInt32();
-        /*uint32_t created  =*/ packet.readUInt32();
-        /*uint32_t unk1 =*/ packet.readUInt32();
-        /*uint8_t  unk2 =*/ packet.readUInt8();
-        /*uint8_t  bag  =*/ packet.readUInt8();
-        /*uint32_t slot =*/ packet.readUInt32();
+        /*uint32_t received      =*/ packet.readUInt32();
+        /*uint32_t created       =*/ packet.readUInt32();
+        /*uint32_t displayInChat =*/ packet.readUInt32();
+        /*uint8_t  bagSlot       =*/ packet.readUInt8();
+        /*uint32_t slot          =*/ packet.readUInt32();
         uint32_t itemId = packet.readUInt32();
-        /*uint32_t propSeed =*/ packet.readUInt32();
+        /*uint32_t suffixFactor  =*/ packet.readUInt32();
         int32_t randomProp = static_cast<int32_t>(packet.readUInt32());
         uint32_t count = packet.readUInt32();
 
