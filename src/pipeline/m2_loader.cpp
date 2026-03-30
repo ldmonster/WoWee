@@ -575,7 +575,7 @@ void parseAnimTrackVanilla(const std::vector<uint8_t>& data,
 // FBlocks are like M2Track but WITHOUT the interpolationType/globalSequence prefix.
 void parseFBlock(const std::vector<uint8_t>& data, uint32_t offset,
                  M2FBlock& fb, int valueType) {
-    // valueType: 0 = color (CImVector, 4 bytes RGBA), 1 = alpha (uint16), 2 = scale (float pair)
+    // valueType: 0 = color (C3Vector, 3 floats in 0-255 range), 1 = alpha (uint16), 2 = scale (float pair)
     if (offset + sizeof(FBlockDisk) > data.size()) return;
 
     FBlockDisk disk = readValue<FBlockDisk>(data, offset);
