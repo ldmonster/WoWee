@@ -188,6 +188,9 @@ public:
     void stopCasting();
     void resetCastState();
     void resetTalentState();
+    // Full per-character reset (spells, cooldowns, auras, cast state, talents).
+    // Called from GameHandler::selectCharacter so spell state doesn't bleed between characters.
+    void resetAllState();
     void clearUnitCaches();
 
     // Aura duration
