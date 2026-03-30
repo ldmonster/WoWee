@@ -6114,8 +6114,14 @@ void GameHandler::interactWithGameObject(uint64_t guid) {
     if (spellHandler_ && spellHandler_->casting_ && spellHandler_->currentCastSpellId_ != 0) return;
     // Always clear melee intent before GO interactions.
     stopAutoAttack();
-    // Interact immediately; server drives any real cast/channel feedback.
-    pendingGameObjectInteractGuid_ = 0;
+    // Set the pending GO guid so that:
+    // 1. cancelCast() won't send CMSG_CANCEL_CAST for GO-triggered casts
+    //    (e.g., "Opening" on a quest chest) — without this, any movement
+    //    during the cast cancels it server-side and quest credit is lost.
+    // 2. The cast-completion fallback in update() can call
+    //    performGameObjectInteractionNow after the cast timer expires.
+    // 3. isGameObjectInteractionCasting() returns true during GO casts.
+    pendingGameObjectInteractGuid_ = guid;
     performGameObjectInteractionNow(guid);
 }
 
