@@ -679,8 +679,13 @@ void Application::run() {
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count()
     };
-    std::thread watchdogThread([this, &watchdogRunning, &watchdogHeartbeatMs]() {
-        bool releasedForCurrentStall = false;
+    // Signal flag: watchdog sets this when a stall is detected, main loop
+    // handles the actual SDL calls. SDL2 video functions must only be called
+    // from the main thread (the one that called SDL_Init); calling them from
+    // a background thread is UB on macOS (Cocoa) and unsafe on other platforms.
+    std::atomic<bool> watchdogRequestRelease{false};
+    std::thread watchdogThread([&watchdogRunning, &watchdogHeartbeatMs, &watchdogRequestRelease]() {
+        bool signalledForCurrentStall = false;
         while (watchdogRunning.load(std::memory_order_acquire)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
             const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -688,21 +693,15 @@ void Application::run() {
             const int64_t lastBeatMs = watchdogHeartbeatMs.load(std::memory_order_acquire);
             const int64_t stallMs = nowMs - lastBeatMs;
 
-            // Failsafe: if the main loop stalls while relative mouse mode is active,
-            // forcibly release grab so the user can move the cursor and close the app.
             if (stallMs > 1500) {
-                if (!releasedForCurrentStall) {
-                    SDL_SetRelativeMouseMode(SDL_FALSE);
-                    SDL_ShowCursor(SDL_ENABLE);
-                    if (window && window->getSDLWindow()) {
-                        SDL_SetWindowGrab(window->getSDLWindow(), SDL_FALSE);
-                    }
+                if (!signalledForCurrentStall) {
+                    watchdogRequestRelease.store(true, std::memory_order_release);
                     LOG_WARNING("Main-loop stall detected (", stallMs,
-                                "ms) — force-released mouse capture failsafe");
-                    releasedForCurrentStall = true;
+                                "ms) — requesting mouse capture release");
+                    signalledForCurrentStall = true;
                 }
             } else {
-                releasedForCurrentStall = false;
+                signalledForCurrentStall = false;
             }
         }
     });
@@ -713,6 +712,17 @@ void Application::run() {
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now().time_since_epoch()).count(),
                 std::memory_order_release);
+
+            // Handle watchdog mouse-release request on the main thread where
+            // SDL video calls are safe (required by SDL2 threading model).
+            if (watchdogRequestRelease.exchange(false, std::memory_order_acq_rel)) {
+                SDL_SetRelativeMouseMode(SDL_FALSE);
+                SDL_ShowCursor(SDL_ENABLE);
+                if (window && window->getSDLWindow()) {
+                    SDL_SetWindowGrab(window->getSDLWindow(), SDL_FALSE);
+                }
+                LOG_WARNING("Watchdog: force-released mouse capture on main thread");
+            }
 
             // Calculate delta time
             auto currentTime = std::chrono::high_resolution_clock::now();
