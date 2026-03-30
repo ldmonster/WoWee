@@ -23,27 +23,6 @@ QuestGiverStatus QuestHandler::getQuestGiverStatus(uint64_t guid) const {
     return (it != npcQuestStatus_.end()) ? it->second : QuestGiverStatus::NONE;
 }
 
-// ---------------------------------------------------------------------------
-// File-local utility functions (copied from game_handler.cpp)
-// ---------------------------------------------------------------------------
-
-static std::string buildItemLink(uint32_t itemId, uint32_t quality, const std::string& name) {
-    static const char* kQualHex[] = {
-        "9d9d9d",  // 0 Poor
-        "ffffff",  // 1 Common
-        "1eff00",  // 2 Uncommon
-        "0070dd",  // 3 Rare
-        "a335ee",  // 4 Epic
-        "ff8000",  // 5 Legendary
-        "e6cc80",  // 6 Artifact
-        "e6cc80",  // 7 Heirloom
-    };
-    uint32_t qi = quality < 8 ? quality : 1u;
-    char buf[512];
-    snprintf(buf, sizeof(buf), "|cff%s|Hitem:%u:0:0:0:0:0:0:0:0|h[%s]|h|r",
-             kQualHex[qi], itemId, name.c_str());
-    return std::string(buf);
-}
 
 static std::string formatCopperAmount(uint32_t amount) {
     uint32_t gold = amount / 10000;
@@ -72,8 +51,12 @@ static bool isReadableQuestText(const std::string& s, size_t minLen, size_t maxL
     if (s.size() < minLen || s.size() > maxLen) return false;
     bool hasAlpha = false;
     for (unsigned char c : s) {
-        if (c < 0x20 || c > 0x7E) return false;
-        if (std::isalpha(c)) hasAlpha = true;
+        // Reject control characters but allow UTF-8 multi-byte sequences (0x80+)
+        // so localized servers (French, German, Russian, etc.) work correctly.
+        if (c < 0x20 && c != '\t' && c != '\n' && c != '\r') return false;
+        if (c >= 0x20 && c <= 0x7E && std::isalpha(c)) hasAlpha = true;
+        // UTF-8 continuation/lead bytes (0x80+) are allowed but don't count as alpha
+        // since we only need at least one ASCII letter to distinguish from binary garbage.
     }
     return hasAlpha;
 }
