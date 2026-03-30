@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <random>
 #include <unordered_set>
 
 namespace wowee {
@@ -409,7 +410,7 @@ void ZoneManager::initialize() {
     tileToZone[14 * 100 + 16] = 1657;
     tileToZone[14 * 100 + 17] = 1657;
 
-    std::srand(static_cast<unsigned>(std::time(nullptr)));
+    // Seed removed — music shuffle now uses a local mt19937 (see pickMusicTrack).
 
     LOG_INFO("Zone manager initialized: ", zones.size(), " zones, ", tileToZone.size(), " tile mappings");
 }
@@ -458,7 +459,8 @@ std::string ZoneManager::getRandomMusic(uint32_t zoneId) {
     // Avoid playing the same track back-to-back
     const std::string* pick = pool[0];
     for (int attempts = 0; attempts < 5; ++attempts) {
-        pick = pool[std::rand() % pool.size()];
+        static std::mt19937 musicRng(std::random_device{}());
+        pick = pool[std::uniform_int_distribution<size_t>(0, pool.size() - 1)(musicRng)];
         if (*pick != lastPlayedMusic_) break;
     }
     lastPlayedMusic_ = *pick;

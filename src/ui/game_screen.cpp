@@ -23683,6 +23683,13 @@ void GameScreen::renderWeatherOverlay(game::GameHandler& gameHandler) {
     float sh = io.DisplaySize.y;
     if (sw <= 0.0f || sh <= 0.0f) return;
 
+    // Seeded RNG for weather particle positions — replaces std::rand() which
+    // shares global state and has modulo bias.
+    static std::mt19937 wxRng(std::random_device{}());
+    auto wxRandInt = [](int maxExcl) {
+        return std::uniform_int_distribution<int>(0, std::max(0, maxExcl - 1))(wxRng);
+    };
+
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     const float dt = std::min(io.DeltaTime, 0.05f);   // cap delta at 50ms to avoid teleporting particles
 
@@ -23701,8 +23708,8 @@ void GameScreen::renderWeatherOverlay(game::GameHandler& gameHandler) {
         if (!rs.initialized || rs.lastType != wType ||
             rs.lastW != sw   || rs.lastH != sh) {
             for (int i = 0; i < MAX_DROPS; ++i) {
-                rs.x[i] = static_cast<float>(std::rand() % (static_cast<int>(sw) + 200)) - 100.0f;
-                rs.y[i] = static_cast<float>(std::rand() % static_cast<int>(sh));
+                rs.x[i] = static_cast<float>(wxRandInt(static_cast<int>(sw) + 200)) - 100.0f;
+                rs.y[i] = static_cast<float>(wxRandInt(static_cast<int>(sh)));
             }
             rs.initialized = true;
             rs.lastType = wType;
@@ -23727,7 +23734,7 @@ void GameScreen::renderWeatherOverlay(game::GameHandler& gameHandler) {
             rs.y[i] += fallSpeed * dt;
             if (rs.y[i] > sh + 10.0f) {
                 rs.y[i] = -10.0f;
-                rs.x[i] = static_cast<float>(std::rand() % (static_cast<int>(sw) + 200)) - 100.0f;
+                rs.x[i] = static_cast<float>(wxRandInt(static_cast<int>(sw) + 200)) - 100.0f;
             }
             if (rs.x[i] > sw + 100.0f) rs.x[i] -= sw + 200.0f;
             dl->AddLine(ImVec2(rs.x[i], rs.y[i]),
@@ -23759,9 +23766,9 @@ void GameScreen::renderWeatherOverlay(game::GameHandler& gameHandler) {
 
         if (!ss.initialized || ss.lastW != sw || ss.lastH != sh) {
             for (int i = 0; i < MAX_FLAKES; ++i) {
-                ss.x[i]     = static_cast<float>(std::rand() % static_cast<int>(sw));
-                ss.y[i]     = static_cast<float>(std::rand() % static_cast<int>(sh));
-                ss.phase[i] = static_cast<float>(std::rand() % 628) * 0.01f;
+                ss.x[i]     = static_cast<float>(wxRandInt(static_cast<int>(sw)));
+                ss.y[i]     = static_cast<float>(wxRandInt(static_cast<int>(sh)));
+                ss.phase[i] = static_cast<float>(wxRandInt(628)) * 0.01f;
             }
             ss.initialized = true;
             ss.lastW = sw;
@@ -23782,7 +23789,7 @@ void GameScreen::renderWeatherOverlay(game::GameHandler& gameHandler) {
             ss.phase[i] += dt * 0.25f;
             if (ss.y[i] > sh + 5.0f) {
                 ss.y[i] = -5.0f;
-                ss.x[i] = static_cast<float>(std::rand() % static_cast<int>(sw));
+                ss.x[i] = static_cast<float>(wxRandInt(static_cast<int>(sw)));
             }
             if (ss.x[i] < -5.0f) ss.x[i] += sw + 10.0f;
             if (ss.x[i] > sw + 5.0f) ss.x[i] -= sw + 10.0f;
