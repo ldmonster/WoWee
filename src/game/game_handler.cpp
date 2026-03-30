@@ -4747,7 +4747,8 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
     taxiActivatePending_ = false;
     taxiClientActive_ = false;
     taxiClientPath_.clear();
-    taxiRecoverPending_ = false;
+    // taxiRecoverPending_ is NOT cleared here — it must survive the general
+    // state reset so the recovery check below can detect a mid-flight reconnect.
     taxiStartGrace_ = 0.0f;
     currentMountDisplayId_ = 0;
     taxiMountDisplayId_ = 0;
