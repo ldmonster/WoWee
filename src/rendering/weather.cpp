@@ -353,12 +353,11 @@ void Weather::resetParticles(const Camera& camera) {
 }
 
 glm::vec3 Weather::getRandomPosition(const glm::vec3& center) const {
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
+    // Reuse the shared weather RNG to avoid duplicate generator state
     static std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
 
-    float x = center.x + dist(gen) * SPAWN_VOLUME_SIZE;
-    float z = center.z + dist(gen) * SPAWN_VOLUME_SIZE;
+    float x = center.x + dist(weatherRng()) * SPAWN_VOLUME_SIZE;
+    float z = center.z + dist(weatherRng()) * SPAWN_VOLUME_SIZE;
     float y = center.y;
 
     return glm::vec3(x, y, z);
@@ -440,7 +439,6 @@ void Weather::initializeZoneWeatherDefaults() {
     setZoneWeather(148,  Type::RAIN, 0.1f, 0.4f, 0.15f);  // Darkshore
     setZoneWeather(331,  Type::RAIN, 0.1f, 0.3f, 0.1f);   // Ashenvale
     setZoneWeather(405,  Type::RAIN, 0.1f, 0.3f, 0.1f);   // Desolace
-    setZoneWeather(15,   Type::RAIN, 0.2f, 0.5f, 0.2f);   // Dustwallow Marsh
     setZoneWeather(490,  Type::RAIN, 0.1f, 0.4f, 0.15f);  // Un'Goro Crater
     setZoneWeather(493,  Type::RAIN, 0.1f, 0.3f, 0.1f);   // Moonglade
 

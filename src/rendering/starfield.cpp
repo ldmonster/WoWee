@@ -13,6 +13,14 @@
 namespace wowee {
 namespace rendering {
 
+// Day/night cycle thresholds (hours, 24h clock) for star visibility.
+// Stars fade in over 2 hours at dusk, stay full during night, fade out at dawn.
+static constexpr float kDuskStart = 18.0f;  // stars begin fading in
+static constexpr float kNightStart = 20.0f; // full star visibility
+static constexpr float kDawnStart = 4.0f;   // stars begin fading out
+static constexpr float kDawnEnd = 6.0f;     // stars fully gone
+static constexpr float kFadeDuration = 2.0f;
+
 StarField::StarField() = default;
 
 StarField::~StarField() {
@@ -303,22 +311,20 @@ void StarField::destroyStarBuffers() {
 }
 
 float StarField::getStarIntensity(float timeOfDay) const {
-    // Full night: 20:00–4:00
-    if (timeOfDay >= 20.0f || timeOfDay < 4.0f) {
+    // Full night
+    if (timeOfDay >= kNightStart || timeOfDay < kDawnStart) {
         return 1.0f;
     }
-    // Fade in at dusk: 18:00–20:00
-    else if (timeOfDay >= 18.0f && timeOfDay < 20.0f) {
-        return (timeOfDay - 18.0f) / 2.0f;  // 0 → 1 over 2 hours
+    // Fade in at dusk
+    if (timeOfDay >= kDuskStart) {
+        return (timeOfDay - kDuskStart) / kFadeDuration;
     }
-    // Fade out at dawn: 4:00–6:00
-    else if (timeOfDay >= 4.0f && timeOfDay < 6.0f) {
-        return 1.0f - (timeOfDay - 4.0f) / 2.0f;  // 1 → 0 over 2 hours
+    // Fade out at dawn
+    if (timeOfDay < kDawnEnd) {
+        return 1.0f - (timeOfDay - kDawnStart) / kFadeDuration;
     }
     // Daytime: no stars
-    else {
-        return 0.0f;
-    }
+    return 0.0f;
 }
 
 } // namespace rendering
