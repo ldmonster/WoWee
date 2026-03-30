@@ -1295,38 +1295,36 @@ void WaterRenderer::createWaterMesh(WaterSurface& surface) {
                         renderTile = lsbOrder || msbOrder;
                     }
 
+                    // Render masked-out tiles if any adjacent neighbor is visible,
+                    // to avoid seam gaps at water surface edges.
                     if (!renderTile) {
-                        for (int dy = -1; dy <= 1; dy++) {
-                            for (int dx = -1; dx <= 1; dx++) {
-                                if (dx == 0 && dy == 0) continue;
-                                int nx = x + dx, ny = y + dy;
-                                if (nx < 0 || ny < 0 || nx >= gridWidth-1 || ny >= gridHeight-1) continue;
-                                int neighborIdx;
-                                if (surface.wmoId == 0 && surface.width <= 8 && surface.mask.size() >= 8) {
-                                    neighborIdx = (static_cast<int>(surface.yOffset) + ny) * 8 +
-                                                  (static_cast<int>(surface.xOffset) + nx);
-                                } else {
-                                    neighborIdx = ny * surface.width + nx;
-                                }
-                                int nByteIdx = neighborIdx / 8;
-                                int nBitIdx = neighborIdx % 8;
-                                if (nByteIdx < static_cast<int>(surface.mask.size())) {
-                                    uint8_t nMask = surface.mask[nByteIdx];
-                                    if (isMergedTerrain) {
-                                        if (nMask & (1 << nBitIdx)) {
-                                            renderTile = true;
-                                            goto found_neighbor;
-                                        }
+                        renderTile = [&]() {
+                            for (int dy = -1; dy <= 1; dy++) {
+                                for (int dx = -1; dx <= 1; dx++) {
+                                    if (dx == 0 && dy == 0) continue;
+                                    int nx = x + dx, ny = y + dy;
+                                    if (nx < 0 || ny < 0 || nx >= gridWidth-1 || ny >= gridHeight-1) continue;
+                                    int neighborIdx;
+                                    if (surface.wmoId == 0 && surface.width <= 8 && surface.mask.size() >= 8) {
+                                        neighborIdx = (static_cast<int>(surface.yOffset) + ny) * 8 +
+                                                      (static_cast<int>(surface.xOffset) + nx);
                                     } else {
-                                        if ((nMask & (1 << nBitIdx)) || (nMask & (1 << (7 - nBitIdx)))) {
-                                            renderTile = true;
-                                            goto found_neighbor;
+                                        neighborIdx = ny * surface.width + nx;
+                                    }
+                                    int nByteIdx = neighborIdx / 8;
+                                    int nBitIdx = neighborIdx % 8;
+                                    if (nByteIdx < static_cast<int>(surface.mask.size())) {
+                                        uint8_t nMask = surface.mask[nByteIdx];
+                                        if (isMergedTerrain) {
+                                            if (nMask & (1 << nBitIdx)) return true;
+                                        } else {
+                                            if ((nMask & (1 << nBitIdx)) || (nMask & (1 << (7 - nBitIdx)))) return true;
                                         }
                                     }
                                 }
                             }
-                        }
-                        found_neighbor:;
+                            return false;
+                        }();
                     }
                 }
             }

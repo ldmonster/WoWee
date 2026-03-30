@@ -1469,21 +1469,22 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
         return;
     }
 
-    if (!packet.hasRemaining(4)) goto done;
-    /*uint16_t dur =*/ packet.readUInt16();
-    /*uint16_t timer =*/ packet.readUInt16();
+    // Parse optional pet fields — bail on truncated packets but always log+fire below.
+    do {
+        if (!packet.hasRemaining(4)) break;
+        /*uint16_t dur =*/ packet.readUInt16();
+        /*uint16_t timer =*/ packet.readUInt16();
 
-    if (!packet.hasRemaining(2)) goto done;
-    owner_.petReact_   = packet.readUInt8();
-    owner_.petCommand_ = packet.readUInt8();
+        if (!packet.hasRemaining(2)) break;
+        owner_.petReact_   = packet.readUInt8();
+        owner_.petCommand_ = packet.readUInt8();
 
-    if (!packet.hasRemaining(GameHandler::PET_ACTION_BAR_SLOTS * 4u)) goto done;
-    for (int i = 0; i < GameHandler::PET_ACTION_BAR_SLOTS; ++i) {
-        owner_.petActionSlots_[i] = packet.readUInt32();
-    }
+        if (!packet.hasRemaining(GameHandler::PET_ACTION_BAR_SLOTS * 4u)) break;
+        for (int i = 0; i < GameHandler::PET_ACTION_BAR_SLOTS; ++i) {
+            owner_.petActionSlots_[i] = packet.readUInt32();
+        }
 
-    if (!packet.hasRemaining(1)) goto done;
-    {
+        if (!packet.hasRemaining(1)) break;
         uint8_t spellCount = packet.readUInt8();
         owner_.petSpellList_.clear();
         owner_.petAutocastSpells_.clear();
@@ -1496,14 +1497,13 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
                 owner_.petAutocastSpells_.insert(spellId);
             }
         }
-    }
+    } while (false);
 
-done:
     LOG_INFO("SMSG_PET_SPELLS: petGuid=0x", std::hex, owner_.petGuid_, std::dec,
              " react=", static_cast<int>(owner_.petReact_), " command=", static_cast<int>(owner_.petCommand_),
              " spells=", owner_.petSpellList_.size());
-        owner_.fireAddonEvent("UNIT_PET", {"player"});
-        owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+    owner_.fireAddonEvent("UNIT_PET", {"player"});
+    owner_.fireAddonEvent("PET_BAR_UPDATE", {});
 }
 
 void SpellHandler::sendPetAction(uint32_t action, uint64_t targetGuid) {
