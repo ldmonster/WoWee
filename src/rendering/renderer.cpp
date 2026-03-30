@@ -3601,8 +3601,10 @@ void Renderer::update(float deltaTime) {
                         "Sound\\Music\\ZoneMusic\\TavernHuman\\RA_HumanTavern1A.mp3",
                         "Sound\\Music\\ZoneMusic\\TavernHuman\\RA_HumanTavern2A.mp3",
                     };
+                    // Rotate through tracks so the player doesn't always hear the same one.
+                    // Post-increment: first visit plays index 0, next plays 1, etc.
                     static int tavernTrackIndex = 0;
-                    tavernMusic = tavernTracks[tavernTrackIndex % tavernTracks.size()];
+                    tavernMusic = tavernTracks[tavernTrackIndex++ % tavernTracks.size()];
                     LOG_INFO("Detected tavern WMO ", wmoModelId, ", playing: ", tavernMusic);
                 }
             }
