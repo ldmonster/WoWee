@@ -533,7 +533,10 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
                             }
                         }
                     }
-                    if (reqCount == 0) reqCount = count;  // last-resort: avoid 0/0 display
+                    // Some quests (e.g. escort/event quests) report kill credit updates without
+                    // a corresponding objective count in SMSG_QUEST_QUERY_RESPONSE. Fall back to
+                    // current count so the progress display shows "N/N" instead of "N/0".
+                    if (reqCount == 0) reqCount = count;
                     quest.killCounts[entry] = {count, reqCount};
 
                     std::string creatureName = owner_.getCachedCreatureName(entry);
