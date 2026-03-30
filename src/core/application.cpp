@@ -8472,16 +8472,14 @@ void Application::processAsyncCreatureResults(bool unlimited) {
             continue;
         }
 
-        // Peek: if this result needs a NEW model upload (not cached) and we've hit
-        // the upload budget, defer to next frame without consuming the future.
-        if (modelUploads >= maxUploadsThisTick) {
-            break;
-        }
-
         auto result = it->future.get();
         it = asyncCreatureLoads_.erase(it);
         asyncCreatureDisplayLoads_.erase(result.displayId);
 
+        // Failures and cache hits need no GPU work — process them even when the
+        // upload budget is exhausted. Previously the budget check was above this
+        // point, blocking ALL ready futures (including zero-cost ones) after a
+        // single upload, which throttled creature spawn throughput during world load.
         if (result.permanent_failure) {
             nonRenderableCreatureDisplayIds_.insert(result.displayId);
             creaturePermanentFailureGuids_.insert(result.guid);
@@ -8513,6 +8511,23 @@ void Application::processAsyncCreatureResults(bool unlimited) {
                 pendingCreatureSpawns_.push_back(s);
                 pendingCreatureSpawnGuids_.insert(result.guid);
             }
+            continue;
+        }
+
+        // Only actual GPU uploads count toward the per-tick budget.
+        if (modelUploads >= maxUploadsThisTick) {
+            // Re-queue this result — it needs a GPU upload but we're at budget.
+            // Push a new pending spawn so it's retried next frame.
+            pendingCreatureSpawnGuids_.erase(result.guid);
+            creatureSpawnRetryCounts_.erase(result.guid);
+            PendingCreatureSpawn s{};
+            s.guid = result.guid;
+            s.displayId = result.displayId;
+            s.x = result.x; s.y = result.y; s.z = result.z;
+            s.orientation = result.orientation;
+            s.scale = result.scale;
+            pendingCreatureSpawns_.push_back(s);
+            pendingCreatureSpawnGuids_.insert(result.guid);
             continue;
         }
 
