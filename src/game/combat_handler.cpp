@@ -1070,9 +1070,14 @@ void CombatHandler::setTarget(uint64_t guid) {
 void CombatHandler::clearTarget() {
     if (owner_.targetGuid != 0) {
         LOG_INFO("Target cleared");
+        // Zero the GUID before firing the event so callbacks/addons that query
+        // the current target see null (consistent with setTarget which updates
+        // targetGuid before the event).
+        owner_.targetGuid = 0;
         owner_.fireAddonEvent("PLAYER_TARGET_CHANGED", {});
+    } else {
+        owner_.targetGuid = 0;
     }
-    owner_.targetGuid = 0;
     owner_.tabCycleIndex = -1;
     owner_.tabCycleStale = true;
 }
