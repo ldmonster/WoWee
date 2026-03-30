@@ -5,6 +5,7 @@
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 #include <glm/glm.hpp>
+#include <atomic>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -531,9 +532,10 @@ private:
     std::unordered_map<uint32_t, size_t> instanceIndexById;
     // Collision scratch buffers are thread_local (see m2_renderer.cpp) for thread-safety.
 
-    // Collision query profiling (per frame).
-    mutable double queryTimeMs = 0.0;
-    mutable uint32_t queryCallCount = 0;
+    // Collision query profiling — atomic because getFloorHeight is dispatched
+    // on async threads from camera_controller while the main thread reads these.
+    mutable std::atomic<double> queryTimeMs{0.0};
+    mutable std::atomic<uint32_t> queryCallCount{0};
 
     // Persistent render buffers (avoid per-frame allocation/deallocation)
     struct VisibleEntry {
