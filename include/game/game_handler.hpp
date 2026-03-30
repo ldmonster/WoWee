@@ -2420,7 +2420,8 @@ private:
     std::vector<FactionStandingInit> initialFactions_;
 
     // ---- Ignore list cache ----
-    std::unordered_map<std::string, uint64_t> ignoreCache;  // name -> guid
+    std::unordered_map<std::string, uint64_t> ignoreCache;  // name -> guid (UI display)
+    std::unordered_set<uint64_t> ignoreListGuids_;            // authoritative GUID set from server
 
     // ---- Logout state ----
     bool  loggingOut_        = false;

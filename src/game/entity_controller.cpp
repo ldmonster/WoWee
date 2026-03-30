@@ -1996,6 +1996,12 @@ void EntityController::handleNameQueryResponse(network::Packet& packet) {
             owner_.friendsCache[data.name] = data.guid;
         }
 
+        // Backfill ignore list: SMSG_IGNORE_LIST only contains GUIDs, so
+        // ignoreCache (name→guid for UI) is populated here once names resolve.
+        if (owner_.ignoreListGuids_.count(data.guid)) {
+            owner_.ignoreCache[data.name] = data.guid;
+        }
+
         // Fire UNIT_NAME_UPDATE so nameplate/unit frame addons know the name is available
         if (owner_.addonEventCallback_) {
             std::string unitId;

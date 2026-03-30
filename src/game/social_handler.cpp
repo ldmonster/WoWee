@@ -18,11 +18,7 @@ namespace wowee {
 namespace game {
 
 
-static bool packetHasRemaining(const network::Packet& packet, size_t need) {
-    const size_t size = packet.getSize();
-    const size_t pos = packet.getReadPos();
-    return pos <= size && need <= (size - pos);
-}
+
 
 static const char* lfgJoinResultString(uint8_t result) {
     switch (result) {
@@ -98,13 +94,19 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_CONTACT_LIST] = [this](network::Packet& packet) { handleContactList(packet); };
     table[Opcode::SMSG_FRIEND_LIST] = [this](network::Packet& packet) { handleFriendList(packet); };
     table[Opcode::SMSG_IGNORE_LIST] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 1) return;
+        // Format: uint8 count + count × uint64 guid (no name strings in packet).
+        // Names are resolved via SMSG_NAME_QUERY_RESPONSE after the list arrives.
+        if (!packet.hasRemaining(1)) return;
         uint8_t ignCount = packet.readUInt8();
+        owner_.ignoreListGuids_.clear();
         for (uint8_t i = 0; i < ignCount; ++i) {
-            if (packet.getSize() - packet.getReadPos() < 8) break;
+            if (!packet.hasRemaining(8)) break;
             uint64_t ignGuid = packet.readUInt64();
-            std::string ignName = packet.readString();
-            if (!ignName.empty() && ignGuid != 0) owner_.ignoreCache[ignName] = ignGuid;
+            if (ignGuid != 0) {
+                owner_.ignoreListGuids_.insert(ignGuid);
+                // Query name so UI can display it later
+                owner_.queryPlayerName(ignGuid);
+            }
         }
         LOG_DEBUG("SMSG_IGNORE_LIST: loaded ", (int)ignCount, " ignored players");
     };
@@ -176,8 +178,11 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         std::string rname;
         if (nit != owner_.getPlayerNameCache().end()) rname = nit->second;
         else {
+            // Only cast to Unit if the entity actually is one — a raw
+            // static_pointer_cast on a GameObject would be undefined behavior.
             auto ent = owner_.getEntityManager().getEntity(respGuid);
-            if (ent) rname = std::static_pointer_cast<game::Unit>(ent)->getName();
+            if (ent && (ent->getType() == ObjectType::UNIT || ent->getType() == ObjectType::PLAYER))
+                rname = std::static_pointer_cast<game::Unit>(ent)->getName();
         }
         if (!rname.empty()) {
             bool found = false;
@@ -2151,7 +2156,7 @@ void SocialHandler::handleLfgUpdatePlayer(network::Packet& packet) {
 }
 
 void SocialHandler::handleLfgPlayerReward(network::Packet& packet) {
-    if (!packetHasRemaining(packet, 13)) return;
+    if (!packet.hasRemaining( 13)) return;
     packet.readUInt32(); packet.readUInt32(); packet.readUInt8();
     uint32_t money = packet.readUInt32();
     uint32_t xp = packet.readUInt32();
@@ -2161,9 +2166,9 @@ void SocialHandler::handleLfgPlayerReward(network::Packet& packet) {
     else if (silver > 0) snprintf(moneyBuf, sizeof(moneyBuf), "%us %uc", silver, copper);
     else snprintf(moneyBuf, sizeof(moneyBuf), "%uc", copper);
     std::string rewardMsg = std::string("Dungeon Finder reward: ") + moneyBuf + ", " + std::to_string(xp) + " XP";
-    if (packetHasRemaining(packet, 4)) {
+    if (packet.hasRemaining( 4)) {
         uint32_t rewardCount = packet.readUInt32();
-        for (uint32_t i = 0; i < rewardCount && packetHasRemaining(packet, 9); ++i) {
+        for (uint32_t i = 0; i < rewardCount && packet.hasRemaining( 9); ++i) {
             uint32_t itemId = packet.readUInt32();
             uint32_t itemCount = packet.readUInt32();
             packet.readUInt8();
@@ -2184,7 +2189,7 @@ void SocialHandler::handleLfgPlayerReward(network::Packet& packet) {
 }
 
 void SocialHandler::handleLfgBootProposalUpdate(network::Packet& packet) {
-    if (!packetHasRemaining(packet, 23)) return;
+    if (!packet.hasRemaining( 23)) return;
     bool inProgress = packet.readUInt8() != 0;
     packet.readUInt8(); packet.readUInt8();
     uint32_t totalVotes = packet.readUInt32();
