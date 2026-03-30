@@ -314,6 +314,14 @@ void WorldSocket::send(const Packet& packet) {
 
     const auto& data = packet.getData();
     uint16_t opcode = packet.getOpcode();
+    // CMSG header uses a 16-bit size field, so payloads > 64KB are unsupported.
+    // Guard here rather than silently truncating via cast, which would write a
+    // wrong size to the header while still appending all bytes.
+    if (data.size() > 0xFFFF) {
+        LOG_ERROR("Packet payload too large for CMSG header: ", data.size(),
+                  " bytes (opcode=0x", std::hex, opcode, std::dec, "). Dropping.");
+        return;
+    }
     uint16_t payloadLen = static_cast<uint16_t>(data.size());
 
     // Debug: parse and log character-create payload fields (helps diagnose appearance issues).
@@ -426,14 +434,29 @@ void WorldSocket::send(const Packet& packet) {
                  " payload=", payloadLen, " enc=", encryptionEnabled ? "yes" : "no");
     }
 
-    // Send complete packet
-    ssize_t sent = net::portableSend(sockfd, sendData.data(), sendData.size());
-    if (sent < 0) {
-        LOG_ERROR("Send failed: ", net::errorString(net::lastError()));
-    } else {
-        if (static_cast<size_t>(sent) != sendData.size()) {
-            LOG_WARNING("Partial send: ", sent, " of ", sendData.size(), " bytes");
+    // Send complete packet, retrying on partial sends. Non-blocking sockets
+    // can return fewer bytes than requested when the kernel buffer is full.
+    // Without a retry loop, the server receives a truncated packet and the
+    // TCP stream permanently desyncs (next header lands mid-payload).
+    size_t totalSent = 0;
+    while (totalSent < sendData.size()) {
+        ssize_t sent = net::portableSend(sockfd, sendData.data() + totalSent,
+                                          sendData.size() - totalSent);
+        if (sent < 0) {
+            int err = net::lastError();
+            if (net::isWouldBlock(err)) {
+                // Kernel buffer full — yield briefly and retry.
+                std::this_thread::sleep_for(std::chrono::microseconds(100));
+                continue;
+            }
+            LOG_ERROR("Send failed: ", net::errorString(err));
+            break;
         }
+        if (sent == 0) break;  // connection closed
+        totalSent += static_cast<size_t>(sent);
+    }
+    if (totalSent != sendData.size()) {
+        LOG_WARNING("Incomplete send: ", totalSent, " of ", sendData.size(), " bytes");
     }
 }
 
