@@ -726,13 +726,23 @@ VkTexture* CharacterRenderer::loadTexture(const std::string& path) {
         uint32_t w = blpImage.width, h = blpImage.height;
         std::string ck = key;
         std::vector<uint8_t> px(blpImage.data.begin(), blpImage.data.end());
-        pendingNormalMapCount_.fetch_add(1, std::memory_order_relaxed);
+        // Use acq_rel so the increment is visible to shutdown()'s acquire load
+        // before the thread body begins (relaxed could delay visibility and cause
+        // shutdown() to see 0 and proceed while a thread is still running).
+        pendingNormalMapCount_.fetch_add(1, std::memory_order_acq_rel);
         auto* self = this;
         std::thread([self, ck = std::move(ck), px = std::move(px), w, h]() mutable {
-            auto result = generateNormalHeightMapCPU(std::move(ck), std::move(px), w, h);
-            {
-                std::lock_guard<std::mutex> lock(self->normalMapResultsMutex_);
-                self->completedNormalMaps_.push_back(std::move(result));
+            // try-catch guarantees the counter is decremented even if the compute
+            // throws (e.g., bad_alloc). Without this, shutdown() would deadlock
+            // waiting for a count that never reaches zero.
+            try {
+                auto result = generateNormalHeightMapCPU(std::move(ck), std::move(px), w, h);
+                {
+                    std::lock_guard<std::mutex> lock(self->normalMapResultsMutex_);
+                    self->completedNormalMaps_.push_back(std::move(result));
+                }
+            } catch (const std::exception& e) {
+                LOG_ERROR("Normal map generation failed: ", e.what());
             }
             if (self->pendingNormalMapCount_.fetch_sub(1, std::memory_order_release) == 1) {
                 self->normalMapDoneCV_.notify_one();
