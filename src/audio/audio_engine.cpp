@@ -98,8 +98,11 @@ static bool decodeWavCached(const std::vector<uint8_t>& wavData, DecodedWavCache
     entry.sampleRate = sampleRate;
     entry.frames = framesRead;
     entry.pcmData = pcmData;
-    // Evict oldest half when cache grows too large (keeps ~128 most-recent sounds)
-    if (gDecodedWavCache.size() >= 256) {
+    // Evict oldest half when cache grows too large. 256 entries ≈ 50-100 MB of decoded
+    // PCM data depending on file lengths; halving keeps memory bounded while retaining
+    // recently-heard sounds (footsteps, UI clicks, combat hits) for instant replay.
+    constexpr size_t kMaxCachedSounds = 256;
+    if (gDecodedWavCache.size() >= kMaxCachedSounds) {
         auto it = gDecodedWavCache.begin();
         for (size_t n = gDecodedWavCache.size() / 2; n > 0; --n, ++it) {}
         gDecodedWavCache.erase(gDecodedWavCache.begin(), it);
@@ -239,7 +242,9 @@ bool AudioEngine::playSound2D(const std::vector<uint8_t>& wavData, float volume,
         decoded.pcmData->data(),
         nullptr  // No custom allocator
     );
-    bufferConfig.sampleRate = decoded.sampleRate;  // Critical: preserve original sample rate!
+    // Must set explicitly — miniaudio defaults to device sample rate, which causes
+    // pitch distortion if it differs from the file's native rate (e.g. 22050 vs 44100 Hz).
+    bufferConfig.sampleRate = decoded.sampleRate;
 
     ma_audio_buffer* audioBuffer = static_cast<ma_audio_buffer*>(std::malloc(sizeof(ma_audio_buffer)));
     if (!audioBuffer) return false;
@@ -394,7 +399,9 @@ bool AudioEngine::playSound3D(const std::vector<uint8_t>& wavData, const glm::ve
         decoded.pcmData->data(),
         nullptr
     );
-    bufferConfig.sampleRate = decoded.sampleRate;  // Critical: preserve original sample rate!
+    // Must set explicitly — miniaudio defaults to device sample rate, which causes
+    // pitch distortion if it differs from the file's native rate (e.g. 22050 vs 44100 Hz).
+    bufferConfig.sampleRate = decoded.sampleRate;
 
     ma_audio_buffer* audioBuffer = static_cast<ma_audio_buffer*>(std::malloc(sizeof(ma_audio_buffer)));
     if (!audioBuffer) return false;

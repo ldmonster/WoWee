@@ -139,6 +139,9 @@ void TCPSocket::update() {
     bool sawClose = false;
     bool receivedAny = false;
     for (;;) {
+        // 4 KB per recv() call — large enough for any single game packet while keeping
+        // stack usage reasonable. Typical WoW packets are 20-500 bytes; UPDATE_OBJECT
+        // can reach ~2 KB in crowded zones.
         uint8_t buffer[4096];
         ssize_t received = net::portableRecv(sockfd, buffer, sizeof(buffer));
 
