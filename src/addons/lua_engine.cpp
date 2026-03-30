@@ -378,8 +378,10 @@ static int lua_UnitIsGhost(lua_State* L) {
         if (guid != 0) {
             auto entity = gh->getEntityManager().getEntity(guid);
             if (entity) {
-                uint32_t flags = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS));
-                ghost = (flags & 0x00000100) != 0; // PLAYER_FLAGS_GHOST
+                // Ghost is PLAYER_FLAGS bit 0x10, NOT UNIT_FIELD_FLAGS bit 0x100
+                // (which is UNIT_FLAG_IMMUNE_TO_PC — would flag immune NPCs as ghosts).
+                uint32_t pf = entity->getField(game::fieldIndex(game::UF::PLAYER_FLAGS));
+                ghost = (pf & 0x00000010) != 0;
             }
         }
         lua_pushboolean(L, ghost);
@@ -413,8 +415,9 @@ static int lua_UnitIsAFK(lua_State* L) {
     if (guid != 0) {
         auto entity = gh->getEntityManager().getEntity(guid);
         if (entity) {
-            // PLAYER_FLAGS at UNIT_FIELD_FLAGS: PLAYER_FLAGS_AFK = 0x01
-            uint32_t playerFlags = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS));
+            // AFK is PLAYER_FLAGS bit 0x01, NOT UNIT_FIELD_FLAGS (where 0x01
+            // is UNIT_FLAG_SERVER_CONTROLLED — completely unrelated).
+            uint32_t playerFlags = entity->getField(game::fieldIndex(game::UF::PLAYER_FLAGS));
             lua_pushboolean(L, (playerFlags & 0x01) != 0);
             return 1;
         }
@@ -433,8 +436,9 @@ static int lua_UnitIsDND(lua_State* L) {
     if (guid != 0) {
         auto entity = gh->getEntityManager().getEntity(guid);
         if (entity) {
-            uint32_t playerFlags = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS));
-            lua_pushboolean(L, (playerFlags & 0x02) != 0); // PLAYER_FLAGS_DND
+            // DND is PLAYER_FLAGS bit 0x02, NOT UNIT_FIELD_FLAGS.
+            uint32_t playerFlags = entity->getField(game::fieldIndex(game::UF::PLAYER_FLAGS));
+            lua_pushboolean(L, (playerFlags & 0x02) != 0);
             return 1;
         }
     }
@@ -5139,9 +5143,10 @@ void LuaEngine::registerCoreAPI() {
             if (guid == 0) { return luaReturnFalse(L); }
             auto entity = gh->getEntityManager().getEntity(guid);
             if (!entity) { return luaReturnFalse(L); }
-            // UNIT_FLAG_FFA_PVP = 0x00000080 in UNIT_FIELD_BYTES_2 byte 1
-            uint32_t flags = entity->getField(game::fieldIndex(game::UF::UNIT_FIELD_FLAGS));
-            lua_pushboolean(L, (flags & 0x00080000) ? 1 : 0); // PLAYER_FLAGS_FFA_PVP
+            // FFA PvP is PLAYER_FLAGS bit 0x80, NOT UNIT_FIELD_FLAGS bit 0x00080000
+            // (which is UNIT_FLAG_PACIFIED — would flag pacified mobs as FFA-PVP).
+            uint32_t pf = entity->getField(game::fieldIndex(game::UF::PLAYER_FLAGS));
+            lua_pushboolean(L, (pf & 0x00000080) ? 1 : 0);
             return 1;
         }},
         {"GetBattlefieldStatus", [](lua_State* L) -> int {
