@@ -695,6 +695,9 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
     const bool wotlkLoot = isActiveExpansion("wotlk");
     if (!LootResponseParser::parse(packet, currentLoot_, wotlkLoot)) return;
     const bool hasLoot = !currentLoot_.items.empty() || currentLoot_.gold > 0;
+    LOG_WARNING("[GO-DIAG] SMSG_LOOT_RESPONSE: guid=0x", std::hex, currentLoot_.lootGuid, std::dec,
+                " items=", currentLoot_.items.size(), " gold=", currentLoot_.gold,
+                " hasLoot=", hasLoot);
     if (!hasLoot && owner_.isCasting() && owner_.getCurrentCastSpellId() != 0 && lastInteractedGoGuid_ != 0) {
         LOG_DEBUG("Ignoring empty SMSG_LOOT_RESPONSE during gather cast");
         return;

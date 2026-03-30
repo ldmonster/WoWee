@@ -6114,10 +6114,14 @@ void GameHandler::interactWithNpc(uint64_t guid) {
 }
 
 void GameHandler::interactWithGameObject(uint64_t guid) {
-    if (guid == 0) return;
-    if (!isInWorld()) return;
+    LOG_WARNING("[GO-DIAG] interactWithGameObject called: guid=0x", std::hex, guid, std::dec);
+    if (guid == 0) { LOG_WARNING("[GO-DIAG] BLOCKED: guid==0"); return; }
+    if (!isInWorld()) { LOG_WARNING("[GO-DIAG] BLOCKED: not in world"); return; }
     // Do not overlap an actual spell cast.
-    if (spellHandler_ && spellHandler_->casting_ && spellHandler_->currentCastSpellId_ != 0) return;
+    if (spellHandler_ && spellHandler_->casting_ && spellHandler_->currentCastSpellId_ != 0) {
+        LOG_WARNING("[GO-DIAG] BLOCKED: already casting spellId=", spellHandler_->currentCastSpellId_);
+        return;
+    }
     // Always clear melee intent before GO interactions.
     stopAutoAttack();
     // Set the pending GO guid so that:

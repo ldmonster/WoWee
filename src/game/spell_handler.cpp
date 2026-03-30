@@ -948,6 +948,12 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
 
         const bool wasInTimedCast = casting_ && (data.spellId == currentCastSpellId_);
 
+        LOG_WARNING("[GO-DIAG] SPELL_GO: spellId=", data.spellId,
+                    " casting=", casting_, " currentCast=", currentCastSpellId_,
+                    " wasInTimedCast=", wasInTimedCast,
+                    " lastGoGuid=0x", std::hex, owner_.lastInteractedGoGuid_,
+                    " pendingGoGuid=0x", owner_.pendingGameObjectInteractGuid_, std::dec);
+
         casting_ = false;
         castIsChannel_ = false;
         currentCastSpellId_ = 0;
@@ -955,6 +961,8 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
 
         // Gather node looting: re-send CMSG_LOOT now that the cast completed.
         if (wasInTimedCast && owner_.lastInteractedGoGuid_ != 0) {
+            LOG_WARNING("[GO-DIAG] Sending CMSG_LOOT for GO 0x", std::hex,
+                        owner_.lastInteractedGoGuid_, std::dec);
             owner_.lootTarget(owner_.lastInteractedGoGuid_);
             owner_.lastInteractedGoGuid_ = 0;
         }
