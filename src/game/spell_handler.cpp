@@ -242,6 +242,10 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
     // Self-targeted spells like hearthstone should not send a target
     if (spellId == 8690) target = 0;
 
+    // Track whether a spell-specific block already handled facing so the generic
+    // facing block below doesn't send redundant SET_FACING packets.
+    bool facingHandled = false;
+
     // Warrior Charge (ranks 1-3): client-side range check + charge callback
     if (spellId == 100 || spellId == 6178 || spellId == 11578) {
         if (target == 0) {
@@ -266,23 +270,20 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
             owner_.addSystemChatMessage("Out of range.");
             return;
         }
-        // Face the target before sending the cast packet
         float yaw = std::atan2(-dy, dx);
         owner_.movementInfo.orientation = yaw;
         owner_.sendMovement(Opcode::MSG_MOVE_SET_FACING);
         if (owner_.chargeCallback_) {
             owner_.chargeCallback_(target, tx, ty, tz);
         }
+        facingHandled = true;
     }
 
     // Instant melee abilities: client-side range + facing check
-    {
+    if (!facingHandled) {
         owner_.loadSpellNameCache();
-        bool isMeleeAbility = false;
         auto cacheIt = owner_.spellNameCache_.find(spellId);
-        if (cacheIt != owner_.spellNameCache_.end() && cacheIt->second.schoolMask == 1) {
-            isMeleeAbility = true;
-        }
+        bool isMeleeAbility = (cacheIt != owner_.spellNameCache_.end() && cacheIt->second.schoolMask == 1);
         if (isMeleeAbility && target != 0) {
             auto entity = owner_.getEntityManager().getEntity(target);
             if (entity) {
@@ -297,27 +298,30 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
                 float yaw = std::atan2(-dy, dx);
                 owner_.movementInfo.orientation = yaw;
                 owner_.sendMovement(Opcode::MSG_MOVE_SET_FACING);
+                facingHandled = true;
             }
         }
     }
 
     // Face the target before casting any targeted spell (server checks facing arc).
-    // Send both SET_FACING and a HEARTBEAT so the server has the updated orientation
-    // before it processes the cast packet.
-    if (target != 0) {
+    // Only send if a spell-specific block above didn't already handle facing,
+    // to avoid redundant SET_FACING packets that waste bandwidth.
+    if (!facingHandled && target != 0) {
         auto entity = owner_.getEntityManager().getEntity(target);
         if (entity) {
             float dx = entity->getX() - owner_.movementInfo.x;
             float dy = entity->getY() - owner_.movementInfo.y;
             float lenSq = dx * dx + dy * dy;
             if (lenSq > 0.01f) {
-                // Canonical yaw convention: atan2(-dy, dx) where X=north, Y=west
                 float canonYaw = std::atan2(-dy, dx);
                 owner_.movementInfo.orientation = canonYaw;
                 owner_.sendMovement(Opcode::MSG_MOVE_SET_FACING);
-                owner_.sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
             }
         }
+    }
+    // Heartbeat ensures the server has the updated orientation before the cast packet.
+    if (target != 0) {
+        owner_.sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
     }
 
     auto packet = owner_.packetParsers_
