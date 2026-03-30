@@ -116,6 +116,9 @@ bool hmacSha1Matches(const uint8_t seedBytes[4], const std::string& text, const 
     return outLen == SHA_DIGEST_LENGTH && std::memcmp(out, expected, SHA_DIGEST_LENGTH) == 0;
 }
 
+// Pre-computed HMAC-SHA1 hashes of known door M2 models that Warden checks
+// to verify the client hasn't modified collision geometry (wall-hack detection).
+// These hashes match the unmodified 3.3.5a client data files.
 const std::unordered_map<std::string, std::array<uint8_t, 20>>& knownDoorHashes() {
     static const std::unordered_map<std::string, std::array<uint8_t, 20>> k = {
         {"world\\lordaeron\\stratholme\\activedoodads\\doors\\nox_door_plague.m2",

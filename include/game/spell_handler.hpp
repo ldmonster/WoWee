@@ -249,6 +249,9 @@ private:
     void handleChannelUpdate(network::Packet& packet);
 
     // --- Internal helpers ---
+    // Find the on-use spell for an item (trigger=0 Use or trigger=5 NoDelay).
+    // CMSG_USE_ITEM requires a valid spellId or the server silently ignores it.
+    uint32_t findOnUseSpellId(uint32_t itemId) const;
     void loadSpellNameCache() const;
     void loadSkillLineAbilityDbc();
     void categorizeTrainerSpells();

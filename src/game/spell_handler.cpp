@@ -446,6 +446,18 @@ void SpellHandler::confirmPetUnlearn() {
     petUnlearnCost_ = 0;
 }
 
+uint32_t SpellHandler::findOnUseSpellId(uint32_t itemId) const {
+    if (auto* info = owner_.getItemInfo(itemId)) {
+        for (const auto& sp : info->spells) {
+            // spellTrigger 0 = "Use", 5 = "No Delay" — both are player-activated on-use effects
+            if (sp.spellId != 0 && (sp.spellTrigger == 0 || sp.spellTrigger == 5)) {
+                return sp.spellId;
+            }
+        }
+    }
+    return 0;
+}
+
 void SpellHandler::useItemBySlot(int backpackIndex) {
     if (backpackIndex < 0 || backpackIndex >= owner_.inventory.getBackpackSize()) return;
     const auto& slot = owner_.inventory.getBackpackSlot(backpackIndex);
@@ -457,16 +469,7 @@ void SpellHandler::useItemBySlot(int backpackIndex) {
     }
 
     if (itemGuid != 0 && owner_.state == WorldState::IN_WORLD && owner_.socket) {
-        uint32_t useSpellId = 0;
-        if (auto* info = owner_.getItemInfo(slot.item.itemId)) {
-            for (const auto& sp : info->spells) {
-                if (sp.spellId != 0 && (sp.spellTrigger == 0 || sp.spellTrigger == 5)) {
-                    useSpellId = sp.spellId;
-                    break;
-                }
-            }
-        }
-
+        uint32_t useSpellId = findOnUseSpellId(slot.item.itemId);
         auto packet = owner_.packetParsers_
             ? owner_.packetParsers_->buildUseItem(0xFF, static_cast<uint8_t>(23 + backpackIndex), itemGuid, useSpellId)
             : UseItemPacket::build(0xFF, static_cast<uint8_t>(23 + backpackIndex), itemGuid, useSpellId);
@@ -498,16 +501,7 @@ void SpellHandler::useItemInBag(int bagIndex, int slotIndex) {
              " itemGuid=0x", std::hex, itemGuid, std::dec);
 
     if (itemGuid != 0 && owner_.state == WorldState::IN_WORLD && owner_.socket) {
-        uint32_t useSpellId = 0;
-        if (auto* info = owner_.getItemInfo(slot.item.itemId)) {
-            for (const auto& sp : info->spells) {
-                if (sp.spellId != 0 && (sp.spellTrigger == 0 || sp.spellTrigger == 5)) {
-                    useSpellId = sp.spellId;
-                    break;
-                }
-            }
-        }
-
+        uint32_t useSpellId = findOnUseSpellId(slot.item.itemId);
         uint8_t wowBag = static_cast<uint8_t>(19 + bagIndex);
         auto packet = owner_.packetParsers_
             ? owner_.packetParsers_->buildUseItem(wowBag, static_cast<uint8_t>(slotIndex), itemGuid, useSpellId)
