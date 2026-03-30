@@ -5662,13 +5662,6 @@ void Application::buildCreatureDisplayLookups() {
             hairGeosetMap_[key] = static_cast<uint16_t>(geosetId);
         }
         LOG_INFO("Loaded ", hairGeosetMap_.size(), " hair geoset mappings from CharHairGeosets.dbc");
-        // Debug: dump Human Male (race=1, sex=0) hair geoset mappings
-        for (uint32_t v = 0; v < 20; v++) {
-            uint32_t k = (1u << 16) | (0u << 8) | v;
-            auto it = hairGeosetMap_.find(k);
-            if (it != hairGeosetMap_.end()) {
-            }
-        }
     }
 
     // CharacterFacialHairStyles.dbc: maps (race, sex, facialHairId) → geoset IDs
