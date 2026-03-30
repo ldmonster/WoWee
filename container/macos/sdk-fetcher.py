@@ -32,8 +32,14 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
-import xml.etree.ElementTree as ET
 import zlib
+
+try:
+    import defusedxml.ElementTree as ET
+except ImportError as exc:
+    raise ImportError(
+        "defusedxml is required: pip install defusedxml"
+    ) from exc
 
 # -- Configuration -----------------------------------------------------------
 
@@ -57,6 +63,12 @@ USER_AGENT = "Software%20Update"
 
 # -- Helpers -----------------------------------------------------------------
 
+def _validate_url(url):
+    """Reject non-HTTPS URLs to prevent file:// and other scheme attacks."""
+    if not url.startswith("https://"):
+        raise ValueError(f"Refusing non-HTTPS URL: {url}")
+
+
 def log(msg):
     print(msg, file=sys.stderr, flush=True)
 
@@ -69,8 +81,9 @@ def find_sdk_pkg_url():
         short = cat_url.split("/index-")[1][:25] + "..."
         log(f"    Trying catalog: {short}")
         try:
+            _validate_url(cat_url)
             req = urllib.request.Request(cat_url, headers={"User-Agent": USER_AGENT})
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
                 raw = gzip.decompress(resp.read())
             catalog = plistlib.loads(raw)
         except Exception as exc:
@@ -104,8 +117,9 @@ def find_sdk_pkg_url():
 
 def download(url, dest):
     """Download *url* to *dest* with a basic progress indicator."""
+    _validate_url(url)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=600) as resp:
+    with urllib.request.urlopen(req, timeout=600) as resp:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         total = int(resp.headers.get("Content-Length", 0))
         done = 0
         with open(dest, "wb") as f:
