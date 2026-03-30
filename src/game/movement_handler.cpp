@@ -62,31 +62,21 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
         table[Opcode::SMSG_SPLINE_MOVE_STOP_SWIM]     = makeSynthHandler(0u);
     }
 
-    // Spline speed: each opcode updates a different speed member
-    table[Opcode::SMSG_SPLINE_SET_RUN_SPEED] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 5) return;
-        uint64_t guid = packet.readPackedGuid();
-        if (packet.getSize() - packet.getReadPos() < 4) return;
-        float speed = packet.readFloat();
-        if (guid == owner_.playerGuid && std::isfinite(speed) && speed > 0.01f && speed < 200.0f)
-            serverRunSpeed_ = speed;
+    // Spline speed: all opcodes share the same PackedGuid+float format, differing
+    // only in which member receives the value. Factory avoids 8 copy-pasted lambdas.
+    auto makeSplineSpeedHandler = [this](float MovementHandler::* member) {
+        return [this, member](network::Packet& packet) {
+            if (!packet.hasRemaining(5)) return;
+            uint64_t guid = packet.readPackedGuid();
+            if (!packet.hasRemaining(4)) return;
+            float speed = packet.readFloat();
+            if (guid == owner_.playerGuid && std::isfinite(speed) && speed > 0.01f && speed < 200.0f)
+                this->*member = speed;
+        };
     };
-    table[Opcode::SMSG_SPLINE_SET_RUN_BACK_SPEED] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 5) return;
-        uint64_t guid = packet.readPackedGuid();
-        if (packet.getSize() - packet.getReadPos() < 4) return;
-        float speed = packet.readFloat();
-        if (guid == owner_.playerGuid && std::isfinite(speed) && speed > 0.01f && speed < 200.0f)
-            serverRunBackSpeed_ = speed;
-    };
-    table[Opcode::SMSG_SPLINE_SET_SWIM_SPEED] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 5) return;
-        uint64_t guid = packet.readPackedGuid();
-        if (packet.getSize() - packet.getReadPos() < 4) return;
-        float speed = packet.readFloat();
-        if (guid == owner_.playerGuid && std::isfinite(speed) && speed > 0.01f && speed < 200.0f)
-            serverSwimSpeed_ = speed;
-    };
+    table[Opcode::SMSG_SPLINE_SET_RUN_SPEED]      = makeSplineSpeedHandler(&MovementHandler::serverRunSpeed_);
+    table[Opcode::SMSG_SPLINE_SET_RUN_BACK_SPEED]  = makeSplineSpeedHandler(&MovementHandler::serverRunBackSpeed_);
+    table[Opcode::SMSG_SPLINE_SET_SWIM_SPEED]      = makeSplineSpeedHandler(&MovementHandler::serverSwimSpeed_);
 
     // Force speed changes
     table[Opcode::SMSG_FORCE_RUN_SPEED_CHANGE] = [this](network::Packet& packet) { handleForceRunSpeedChange(packet); };
@@ -212,61 +202,14 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
         owner_.unitMoveFlagsCallback_(guid, 0u); // clear flying/CAN_FLY
     };
 
-    // ---- Spline speed changes for other units ----
-    // These use *logicalOp to distinguish which speed to set, so each gets a separate lambda.
-    table[Opcode::SMSG_SPLINE_SET_FLIGHT_SPEED] = [this](network::Packet& packet) {
-        // Minimal parse: PackedGuid + float speed
-        if (!packet.hasRemaining(5)) return;
-        uint64_t sGuid = packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        float sSpeed = packet.readFloat();
-        if (sGuid == owner_.playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
-            serverFlightSpeed_ = sSpeed;
-        }
-    };
-    table[Opcode::SMSG_SPLINE_SET_FLIGHT_BACK_SPEED] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(5)) return;
-        uint64_t sGuid = packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        float sSpeed = packet.readFloat();
-        if (sGuid == owner_.playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
-            serverFlightBackSpeed_ = sSpeed;
-        }
-    };
-    table[Opcode::SMSG_SPLINE_SET_SWIM_BACK_SPEED] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(5)) return;
-        uint64_t sGuid = packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        float sSpeed = packet.readFloat();
-        if (sGuid == owner_.playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
-            serverSwimBackSpeed_ = sSpeed;
-        }
-    };
-    table[Opcode::SMSG_SPLINE_SET_WALK_SPEED] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(5)) return;
-        uint64_t sGuid = packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        float sSpeed = packet.readFloat();
-        if (sGuid == owner_.playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
-            serverWalkSpeed_ = sSpeed;
-        }
-    };
-    table[Opcode::SMSG_SPLINE_SET_TURN_RATE] = [this](network::Packet& packet) {
-        if (!packet.hasRemaining(5)) return;
-        uint64_t sGuid = packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        float sSpeed = packet.readFloat();
-        if (sGuid == owner_.playerGuid && std::isfinite(sSpeed) && sSpeed > 0.01f && sSpeed < 200.0f) {
-            serverTurnRate_ = sSpeed;  // rad/s
-        }
-    };
-    table[Opcode::SMSG_SPLINE_SET_PITCH_RATE] = [this](network::Packet& packet) {
-        // Minimal parse: PackedGuid + float speed — pitch rate not stored locally
-        if (!packet.hasRemaining(5)) return;
-        (void)packet.readPackedGuid();
-        if (!packet.hasRemaining(4)) return;
-        (void)packet.readFloat();
-    };
+    // Remaining spline speed opcodes — same factory as above.
+    table[Opcode::SMSG_SPLINE_SET_FLIGHT_SPEED]      = makeSplineSpeedHandler(&MovementHandler::serverFlightSpeed_);
+    table[Opcode::SMSG_SPLINE_SET_FLIGHT_BACK_SPEED]  = makeSplineSpeedHandler(&MovementHandler::serverFlightBackSpeed_);
+    table[Opcode::SMSG_SPLINE_SET_SWIM_BACK_SPEED]    = makeSplineSpeedHandler(&MovementHandler::serverSwimBackSpeed_);
+    table[Opcode::SMSG_SPLINE_SET_WALK_SPEED]          = makeSplineSpeedHandler(&MovementHandler::serverWalkSpeed_);
+    table[Opcode::SMSG_SPLINE_SET_TURN_RATE]           = makeSplineSpeedHandler(&MovementHandler::serverTurnRate_);
+    // Pitch rate not stored locally — consume packet to keep stream aligned.
+    table[Opcode::SMSG_SPLINE_SET_PITCH_RATE] = [](network::Packet& packet) { packet.skipAll(); };
 
     // ---- Player movement flag changes (server-pushed) ----
     table[Opcode::SMSG_MOVE_GRAVITY_DISABLE] = [this](network::Packet& packet) {
