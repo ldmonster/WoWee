@@ -464,6 +464,7 @@ bool WMOLoader::loadGroup(const std::vector<uint8_t>& groupData,
             mogpOffset = offset + 68;
 
             // Parse sub-chunks within MOGP
+            int groupLogCount = 0;
             while (mogpOffset + 8 < chunkEnd) {
                 uint32_t subChunkId = read<uint32_t>(groupData, mogpOffset);
                 uint32_t subChunkSize = read<uint32_t>(groupData, mogpOffset);
@@ -479,10 +480,11 @@ bool WMOLoader::loadGroup(const std::vector<uint8_t>& groupData,
                 magic[1] = (subChunkId >> 8) & 0xFF;
                 magic[2] = (subChunkId >> 16) & 0xFF;
                 magic[3] = (subChunkId >> 24) & 0xFF;
-                static int logCount = 0;
-                if (logCount < 30) {
+                // Not static — previously this throttle was per-process, silencing
+                // all WMO group logging after the first 30 sub-chunks globally.
+                if (groupLogCount < 30) {
                     core::Logger::getInstance().debug("  WMO sub-chunk: ", magic, " (0x", std::hex, subChunkId, std::dec, ") size=", subChunkSize);
-                    logCount++;
+                    groupLogCount++;
                 }
 
                 if (subChunkId == 0x4D4F5654) { // MOVT - Vertices
@@ -577,12 +579,11 @@ bool WMOLoader::loadGroup(const std::vector<uint8_t>& groupData,
                         batch.materialId = read<uint8_t>(groupData, mogpOffset);
                         group.batches.push_back(batch);
 
-                        static int batchLogCount = 0;
-                        if (batchLogCount < 15) {
+                        // Non-static so each group gets its own throttle window.
+                        if (static_cast<int>(i) < 15) {
                             core::Logger::getInstance().debug("  Batch[", i, "]: start=", batch.startIndex,
                                 " count=", batch.indexCount, " verts=[", batch.startVertex, "-",
                                 batch.lastVertex, "] mat=", static_cast<int>(batch.materialId), " flags=", static_cast<int>(batch.flags));
-                            batchLogCount++;
                         }
                     }
                 }
