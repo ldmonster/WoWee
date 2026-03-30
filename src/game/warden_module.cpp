@@ -37,7 +37,9 @@ WardenModule::WardenModule()
     : loaded_(false)
     , moduleMemory_(nullptr)
     , moduleSize_(0)
-    , moduleBase_(0x400000) // Default module base address
+    // 0x400000 is the default PE image base for 32-bit Windows executables.
+    // Warden modules are loaded as if they were PE DLLs at this base address.
+    , moduleBase_(0x400000)
 {
 }
 
@@ -77,10 +79,13 @@ bool WardenModule::load(const std::vector<uint8_t>& moduleData,
         // Expected with placeholder modulus — verification is skipped gracefully
     }
 
-    // Step 4: Strip RSA signature (last 256 bytes) then zlib decompress
+    // Step 4: Strip RSA-2048 signature (last 256 bytes = 2048 bits) then zlib decompress.
+    // Blizzard signs each Warden module to prevent tampering; we strip it since we
+    // use a placeholder RSA modulus and can't verify the signature.
+    static constexpr size_t kRsaSignatureSize = 256;
     std::vector<uint8_t> dataWithoutSig;
-    if (decryptedData_.size() > 256) {
-        dataWithoutSig.assign(decryptedData_.begin(), decryptedData_.end() - 256);
+    if (decryptedData_.size() > kRsaSignatureSize) {
+        dataWithoutSig.assign(decryptedData_.begin(), decryptedData_.end() - kRsaSignatureSize);
     } else {
         dataWithoutSig = decryptedData_;
     }
