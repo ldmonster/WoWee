@@ -787,6 +787,13 @@ void MovementHandler::handleForceSpeedChange(network::Packet& packet, const char
 
     if (guid != owner_.playerGuid) return;
 
+    // Validate BEFORE sending ACK — if we echo a bad speed back to the server
+    // but don't apply it locally, the client and server desync on movement speed.
+    if (std::isnan(newSpeed) || newSpeed < 0.1f || newSpeed > 100.0f) {
+        LOG_WARNING("Ignoring invalid ", name, " speed: ", newSpeed);
+        return;
+    }
+
     if (owner_.socket) {
         network::Packet ack(wireOpcode(ackOpcode));
         const bool legacyGuidAck =
@@ -823,11 +830,6 @@ void MovementHandler::handleForceSpeedChange(network::Packet& packet, const char
 
         ack.writeFloat(newSpeed);
         owner_.socket->send(ack);
-    }
-
-    if (std::isnan(newSpeed) || newSpeed < 0.1f || newSpeed > 100.0f) {
-        LOG_WARNING("Ignoring invalid ", name, " speed: ", newSpeed);
-        return;
     }
 
     if (speedStorage) *speedStorage = newSpeed;
