@@ -902,28 +902,36 @@ void QuestHandler::selectGossipOption(uint32_t optionId) {
         if (opt.id != optionId) continue;
         LOG_INFO("  matched option: id=", opt.id, " icon=", (int)opt.icon, " text='", opt.text, "'");
 
-        // Icon-based NPC interaction fallbacks
-        if (opt.icon == 6) {
-            auto pkt = BankerActivatePacket::build(currentGossip_.npcGuid);
-            owner_.socket->send(pkt);
-            LOG_INFO("Sent CMSG_BANKER_ACTIVATE for npc=0x", std::hex, currentGossip_.npcGuid, std::dec);
-        }
-
         std::string text = opt.text;
         std::string textLower = text;
         std::transform(textLower.begin(), textLower.end(), textLower.begin(),
                        [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
 
-        if (text == "GOSSIP_OPTION_AUCTIONEER" || textLower.find("auction") != std::string::npos) {
+        // Icon- and text-based NPC interaction fallbacks.
+        // Use flags to avoid sending the same activation packet twice when
+        // both the icon and text match (e.g., banker icon 6 + "deposit box").
+        bool sentBanker = false;
+        bool sentAuction = false;
+
+        if (opt.icon == 6) {
+            auto pkt = BankerActivatePacket::build(currentGossip_.npcGuid);
+            owner_.socket->send(pkt);
+            sentBanker = true;
+            LOG_INFO("Sent CMSG_BANKER_ACTIVATE (icon) for npc=0x", std::hex, currentGossip_.npcGuid, std::dec);
+        }
+
+        if (!sentAuction && (text == "GOSSIP_OPTION_AUCTIONEER" || textLower.find("auction") != std::string::npos)) {
             auto pkt = AuctionHelloPacket::build(currentGossip_.npcGuid);
             owner_.socket->send(pkt);
+            sentAuction = true;
             LOG_INFO("Sent MSG_AUCTION_HELLO for npc=0x", std::hex, currentGossip_.npcGuid, std::dec);
         }
 
-        if (text == "GOSSIP_OPTION_BANKER" || textLower.find("deposit box") != std::string::npos) {
+        if (!sentBanker && (text == "GOSSIP_OPTION_BANKER" || textLower.find("deposit box") != std::string::npos)) {
             auto pkt = BankerActivatePacket::build(currentGossip_.npcGuid);
             owner_.socket->send(pkt);
-            LOG_INFO("Sent CMSG_BANKER_ACTIVATE for npc=0x", std::hex, currentGossip_.npcGuid, std::dec);
+            sentBanker = true;
+            LOG_INFO("Sent CMSG_BANKER_ACTIVATE (text) for npc=0x", std::hex, currentGossip_.npcGuid, std::dec);
         }
 
         const bool isVendor = (text == "GOSSIP_OPTION_VENDOR" ||
@@ -1493,50 +1501,8 @@ void QuestHandler::handleGossipMessage(network::Packet& packet) {
     if (owner_.addonEventCallback_) owner_.addonEventCallback_("GOSSIP_SHOW", {});
     owner_.closeVendor(); // Close vendor if gossip opens
 
-    // Update known quest-log entries based on gossip quests.
-    bool hasAvailableQuest = false;
-    bool hasRewardQuest = false;
-    bool hasIncompleteQuest = false;
-    auto questIconIsCompletable = [](uint32_t icon) {
-        return icon == 5 || icon == 6 || icon == 10;
-    };
-    auto questIconIsIncomplete = [](uint32_t icon) {
-        return icon == 3 || icon == 4;
-    };
-    auto questIconIsAvailable = [](uint32_t icon) {
-        return icon == 2 || icon == 7 || icon == 8;
-    };
-
-    for (const auto& questItem : currentGossip_.quests) {
-        bool isCompletable = questIconIsCompletable(questItem.questIcon);
-        bool isIncomplete  = questIconIsIncomplete(questItem.questIcon);
-        bool isAvailable   = questIconIsAvailable(questItem.questIcon);
-
-        hasAvailableQuest |= isAvailable;
-        hasRewardQuest |= isCompletable;
-        hasIncompleteQuest |= isIncomplete;
-
-        // Update existing quest entry if present
-        for (auto& quest : questLog_) {
-            if (quest.questId == questItem.questId) {
-                quest.complete = isCompletable;
-                quest.title = questItem.title;
-                LOG_INFO("Updated quest ", questItem.questId, " in log: complete=", isCompletable);
-                break;
-            }
-        }
-    }
-
-    // Keep overhead marker aligned with what this gossip actually offers.
-    if (currentGossip_.npcGuid != 0) {
-        QuestGiverStatus derivedStatus = QuestGiverStatus::NONE;
-        if (hasRewardQuest) derivedStatus = QuestGiverStatus::REWARD;
-        else if (hasAvailableQuest) derivedStatus = QuestGiverStatus::AVAILABLE;
-        else if (hasIncompleteQuest) derivedStatus = QuestGiverStatus::INCOMPLETE;
-        if (derivedStatus != QuestGiverStatus::NONE) {
-            npcQuestStatus_[currentGossip_.npcGuid] = derivedStatus;
-        }
-    }
+    // Classify gossip quests and update quest log + overhead NPC markers.
+    classifyGossipQuests(true);
 
     // Play NPC greeting voice
     if (owner_.npcGreetingCallback_ && currentGossip_.npcGuid != 0) {
@@ -1597,39 +1563,51 @@ void QuestHandler::handleQuestgiverQuestList(network::Packet& packet) {
     if (owner_.addonEventCallback_) owner_.addonEventCallback_("GOSSIP_SHOW", {});
     owner_.closeVendor();
 
-    bool hasAvailableQuest = false;
-    bool hasRewardQuest = false;
-    bool hasIncompleteQuest = false;
-    auto questIconIsCompletable = [](uint32_t icon) {
-        return icon == 5 || icon == 6 || icon == 10;
-    };
-    auto questIconIsIncomplete = [](uint32_t icon) {
-        return icon == 3 || icon == 4;
-    };
-    auto questIconIsAvailable = [](uint32_t icon) {
-        return icon == 2 || icon == 7 || icon == 8;
-    };
-
-    for (const auto& questItem : currentGossip_.quests) {
-        bool isCompletable = questIconIsCompletable(questItem.questIcon);
-        bool isIncomplete  = questIconIsIncomplete(questItem.questIcon);
-        bool isAvailable   = questIconIsAvailable(questItem.questIcon);
-        hasAvailableQuest |= isAvailable;
-        hasRewardQuest |= isCompletable;
-        hasIncompleteQuest |= isIncomplete;
-    }
-    if (currentGossip_.npcGuid != 0) {
-        QuestGiverStatus derivedStatus = QuestGiverStatus::NONE;
-        if (hasRewardQuest) derivedStatus = QuestGiverStatus::REWARD;
-        else if (hasAvailableQuest) derivedStatus = QuestGiverStatus::AVAILABLE;
-        else if (hasIncompleteQuest) derivedStatus = QuestGiverStatus::INCOMPLETE;
-        if (derivedStatus != QuestGiverStatus::NONE) {
-            npcQuestStatus_[currentGossip_.npcGuid] = derivedStatus;
-        }
-    }
+    classifyGossipQuests(false);
 
     LOG_INFO("Questgiver quest list: npc=0x", std::hex, currentGossip_.npcGuid, std::dec,
              " quests=", currentGossip_.quests.size());
+}
+
+// Shared quest-icon classification for gossip windows. Derives NPC quest status
+// from icon values so overhead markers stay aligned with what the NPC offers.
+// updateQuestLog: if true, also patches quest log completion state (gossip handler
+// does this because it has the freshest data; quest-list handler skips it because
+// completion updates arrive via separate packets).
+void QuestHandler::classifyGossipQuests(bool updateQuestLog) {
+    // Icon values come from the server's QUEST_STATUS enum, not a client constant,
+    // so these magic numbers are protocol-defined and stable across expansions.
+    auto isCompletable = [](uint32_t icon) { return icon == 5 || icon == 6 || icon == 10; };
+    auto isIncomplete  = [](uint32_t icon) { return icon == 3 || icon == 4; };
+    auto isAvailable   = [](uint32_t icon) { return icon == 2 || icon == 7 || icon == 8; };
+
+    bool hasAvailable = false, hasReward = false, hasIncomplete = false;
+    for (const auto& q : currentGossip_.quests) {
+        bool completable = isCompletable(q.questIcon);
+        bool incomplete  = isIncomplete(q.questIcon);
+        bool available   = isAvailable(q.questIcon);
+        hasAvailable |= available;
+        hasReward |= completable;
+        hasIncomplete |= incomplete;
+
+        if (updateQuestLog) {
+            for (auto& entry : questLog_) {
+                if (entry.questId == q.questId) {
+                    entry.complete = completable;
+                    entry.title = q.title;
+                    break;
+                }
+            }
+        }
+    }
+    if (currentGossip_.npcGuid != 0) {
+        QuestGiverStatus status = QuestGiverStatus::NONE;
+        if (hasReward) status = QuestGiverStatus::REWARD;
+        else if (hasAvailable) status = QuestGiverStatus::AVAILABLE;
+        else if (hasIncomplete) status = QuestGiverStatus::INCOMPLETE;
+        if (status != QuestGiverStatus::NONE)
+            npcQuestStatus_[currentGossip_.npcGuid] = status;
+    }
 }
 
 void QuestHandler::handleGossipComplete(network::Packet& packet) {
