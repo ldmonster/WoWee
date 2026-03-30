@@ -2349,10 +2349,12 @@ void GameHandler::registerOpcodeHandlers() {
                     }
                     uint32_t oldLevel = serverPlayerLevel_;
                     serverPlayerLevel_ = std::max(serverPlayerLevel_, newLevel);
+                    // Update the character-list entry so the selection screen
+                    // shows the correct level if the player logs out and back.
                     for (auto& ch : characters) {
                         if (ch.guid == playerGuid) {
                             ch.level = serverPlayerLevel_;
-                            return;
+                            break;  // was 'return' — must NOT exit here or level-up notification is skipped
                         }
                     }
                     if (newLevel > oldLevel) {
