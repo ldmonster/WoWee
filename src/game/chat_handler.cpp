@@ -27,7 +27,7 @@ void ChatHandler::registerOpcodes(DispatchTable& table) {
     };
     table[Opcode::SMSG_EMOTE] = [this](network::Packet& packet) {
         if (owner_.getState() != WorldState::IN_WORLD) return;
-        if (packet.getSize() - packet.getReadPos() < 12) return;
+        if (!packet.hasRemaining(12)) return;
         uint32_t emoteAnim  = packet.readUInt32();
         uint64_t sourceGuid = packet.readUInt64();
         if (owner_.emoteAnimCallback_ && sourceGuid != 0)

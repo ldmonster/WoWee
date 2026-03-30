@@ -152,7 +152,7 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         readyCheckNotReadyCount_ = 0;
         readyCheckInitiator_.clear();
         readyCheckResults_.clear();
-        if (packet.getSize() - packet.getReadPos() >= 8) {
+        if (packet.hasRemaining(8)) {
             uint64_t initiatorGuid = packet.readUInt64();
             auto entity = owner_.getEntityManager().getEntity(initiatorGuid);
             if (auto* unit = dynamic_cast<Unit*>(entity.get()))
@@ -170,7 +170,7 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
             owner_.addonEventCallback_("READY_CHECK", {readyCheckInitiator_});
     };
     table[Opcode::MSG_RAID_READY_CHECK_CONFIRM] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 9) { packet.setReadPos(packet.getSize()); return; }
+        if (!packet.hasRemaining(9)) { packet.setReadPos(packet.getSize()); return; }
         uint64_t respGuid = packet.readUInt64();
         uint8_t  isReady  = packet.readUInt8();
         if (isReady) ++readyCheckReadyCount_; else ++readyCheckNotReadyCount_;
@@ -223,14 +223,14 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
     };
     table[Opcode::SMSG_DUEL_INBOUNDS] = [this](network::Packet& /*packet*/) {};
     table[Opcode::SMSG_DUEL_COUNTDOWN] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 4) {
+        if (packet.hasRemaining(4)) {
             uint32_t ms = packet.readUInt32();
             duelCountdownMs_ = (ms > 0 && ms <= 30000) ? ms : 3000;
             duelCountdownStartedAt_ = std::chrono::steady_clock::now();
         }
     };
     table[Opcode::SMSG_PARTYKILLLOG] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 16) return;
+        if (!packet.hasRemaining(16)) return;
         uint64_t killerGuid = packet.readUInt64();
         uint64_t victimGuid = packet.readUInt64();
         auto nameFor = [this](uint64_t g) -> std::string {
@@ -261,7 +261,7 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_PETITION_SHOWLIST] = [this](network::Packet& packet) { handlePetitionShowlist(packet); };
     table[Opcode::SMSG_TURN_IN_PETITION_RESULTS] = [this](network::Packet& packet) { handleTurnInPetitionResults(packet); };
     table[Opcode::SMSG_OFFER_PETITION_ERROR] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 4) {
+        if (packet.hasRemaining(4)) {
             uint32_t err = packet.readUInt32();
             if (err == 1) owner_.addSystemChatMessage("Player is already in a guild.");
             else if (err == 2) owner_.addSystemChatMessage("Player already has a petition.");
@@ -282,9 +282,9 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::MSG_BATTLEGROUND_PLAYER_POSITIONS] = [this](network::Packet& packet) {
         bgPlayerPositions_.clear();
         for (int grp = 0; grp < 2; ++grp) {
-            if (packet.getSize() - packet.getReadPos() < 4) break;
+            if (!packet.hasRemaining(4)) break;
             uint32_t count = packet.readUInt32();
-            for (uint32_t i = 0; i < count && packet.getSize() - packet.getReadPos() >= 16; ++i) {
+            for (uint32_t i = 0; i < count && packet.getRemainingSize() >= 16; ++i) {
                 BgPlayerPosition pos;
                 pos.guid = packet.readUInt64();
                 pos.wowX = packet.readFloat();
@@ -304,7 +304,7 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         owner_.addSystemChatMessage("You have joined the battleground queue.");
     };
     table[Opcode::SMSG_BATTLEGROUND_PLAYER_JOINED] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 8) {
+        if (packet.hasRemaining(8)) {
             uint64_t guid = packet.readUInt64();
             auto it = owner_.getPlayerNameCache().find(guid);
             if (it != owner_.getPlayerNameCache().end() && !it->second.empty())
@@ -312,7 +312,7 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         }
     };
     table[Opcode::SMSG_BATTLEGROUND_PLAYER_LEFT] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 8) {
+        if (packet.hasRemaining(8)) {
             uint64_t guid = packet.readUInt64();
             auto it = owner_.getPlayerNameCache().find(guid);
             if (it != owner_.getPlayerNameCache().end() && !it->second.empty())
@@ -369,13 +369,13 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         owner_.addSystemChatMessage("You are now saved to this instance.");
     };
     table[Opcode::SMSG_RAID_INSTANCE_MESSAGE] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 12) return;
+        if (!packet.hasRemaining(12)) return;
         uint32_t msgType = packet.readUInt32();
         uint32_t mapId   = packet.readUInt32();
         packet.readUInt32(); // diff
         std::string mapLabel = owner_.getMapName(mapId);
         if (mapLabel.empty()) mapLabel = "instance #" + std::to_string(mapId);
-        if (msgType == 1 && packet.getSize() - packet.getReadPos() >= 4) {
+        if (msgType == 1 && packet.hasRemaining(4)) {
             uint32_t timeLeft = packet.readUInt32();
             owner_.addSystemChatMessage(mapLabel + " will reset in " + std::to_string(timeLeft / 60) + " minute(s).");
         } else if (msgType == 2) {
@@ -385,7 +385,7 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         }
     };
     table[Opcode::SMSG_INSTANCE_RESET] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 4) return;
+        if (!packet.hasRemaining(4)) return;
         uint32_t mapId = packet.readUInt32();
         auto it = std::remove_if(instanceLockouts_.begin(), instanceLockouts_.end(),
             [mapId](const InstanceLockout& lo){ return lo.mapId == mapId; });
@@ -395,7 +395,7 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         owner_.addSystemChatMessage(mapLabel + " has been reset.");
     };
     table[Opcode::SMSG_INSTANCE_RESET_FAILED] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 8) return;
+        if (!packet.hasRemaining(8)) return;
         uint32_t mapId  = packet.readUInt32();
         uint32_t reason = packet.readUInt32();
         static const char* resetFailReasons[] = {
@@ -409,7 +409,7 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         owner_.addSystemChatMessage("Cannot reset " + mapLabel + ": " + reasonMsg);
     };
     table[Opcode::SMSG_INSTANCE_LOCK_WARNING_QUERY] = [this](network::Packet& packet) {
-        if (!owner_.socket || packet.getSize() - packet.getReadPos() < 17) return;
+        if (!owner_.socket || !packet.hasRemaining(17)) return;
         uint32_t ilMapId    = packet.readUInt32();
         uint32_t ilDiff     = packet.readUInt32();
         uint32_t ilTimeLeft = packet.readUInt32();
@@ -448,7 +448,7 @@ void SocialHandler::registerOpcodes(DispatchTable& table) {
         owner_.addSystemChatMessage("Dungeon Finder: You may continue your dungeon.");
     };
     table[Opcode::SMSG_LFG_ROLE_CHOSEN] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 13) { packet.setReadPos(packet.getSize()); return; }
+        if (!packet.hasRemaining(13)) { packet.setReadPos(packet.getSize()); return; }
         uint64_t roleGuid = packet.readUInt64();
         uint8_t  ready    = packet.readUInt8();
         uint32_t roles    = packet.readUInt32();
@@ -558,12 +558,12 @@ void SocialHandler::inspectTarget() {
 }
 
 void SocialHandler::handleInspectResults(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 1) return;
+    if (!packet.hasRemaining(1)) return;
     uint8_t talentType = packet.readUInt8();
 
     if (talentType == 0) {
         // Own talent info
-        if (packet.getSize() - packet.getReadPos() < 6) {
+        if (!packet.hasRemaining(6)) {
             LOG_DEBUG("SMSG_TALENTS_INFO type=0: too short");
             return;
         }
@@ -573,20 +573,20 @@ void SocialHandler::handleInspectResults(network::Packet& packet) {
         if (activeTalentGroup > 1) activeTalentGroup = 0;
         owner_.activeTalentSpec_ = activeTalentGroup;
         for (uint8_t g = 0; g < talentGroupCount && g < 2; ++g) {
-            if (packet.getSize() - packet.getReadPos() < 1) break;
+            if (!packet.hasRemaining(1)) break;
             uint8_t talentCount = packet.readUInt8();
             owner_.learnedTalents_[g].clear();
             for (uint8_t t = 0; t < talentCount; ++t) {
-                if (packet.getSize() - packet.getReadPos() < 5) break;
+                if (!packet.hasRemaining(5)) break;
                 uint32_t talentId = packet.readUInt32();
                 uint8_t  rank     = packet.readUInt8();
                 owner_.learnedTalents_[g][talentId] = rank + 1u;
             }
-            if (packet.getSize() - packet.getReadPos() < 1) break;
+            if (!packet.hasRemaining(1)) break;
             owner_.learnedGlyphs_[g].fill(0);
             uint8_t glyphCount = packet.readUInt8();
             for (uint8_t gl = 0; gl < glyphCount; ++gl) {
-                if (packet.getSize() - packet.getReadPos() < 2) break;
+                if (!packet.hasRemaining(2)) break;
                 uint16_t glyphId = packet.readUInt16();
                 if (gl < GameHandler::MAX_GLYPH_SLOTS) owner_.learnedGlyphs_[g][gl] = glyphId;
             }
@@ -608,12 +608,12 @@ void SocialHandler::handleInspectResults(network::Packet& packet) {
 
     // talentType == 1: inspect result
     const bool talentTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
-    if (packet.getSize() - packet.getReadPos() < (talentTbc ? 8u : 2u)) return;
+    if (packet.getRemainingSize() < (talentTbc ? 8u : 2u)) return;
     uint64_t guid = talentTbc
         ? packet.readUInt64() : packet.readPackedGuid();
     if (guid == 0) return;
 
-    size_t bytesLeft = packet.getSize() - packet.getReadPos();
+    size_t bytesLeft = packet.getRemainingSize();
     if (bytesLeft < 6) {
         LOG_WARNING("SMSG_TALENTS_INFO: too short after guid, ", bytesLeft, " bytes");
         auto entity = owner_.getEntityManager().getEntity(guid);
@@ -639,33 +639,33 @@ void SocialHandler::handleInspectResults(network::Packet& packet) {
 
     uint32_t totalTalents = 0;
     for (uint8_t g = 0; g < talentGroupCount && g < 2; ++g) {
-        bytesLeft = packet.getSize() - packet.getReadPos();
+        bytesLeft = packet.getRemainingSize();
         if (bytesLeft < 1) break;
         uint8_t talentCount = packet.readUInt8();
         for (uint8_t t = 0; t < talentCount; ++t) {
-            bytesLeft = packet.getSize() - packet.getReadPos();
+            bytesLeft = packet.getRemainingSize();
             if (bytesLeft < 5) break;
             packet.readUInt32();
             packet.readUInt8();
             totalTalents++;
         }
-        bytesLeft = packet.getSize() - packet.getReadPos();
+        bytesLeft = packet.getRemainingSize();
         if (bytesLeft < 1) break;
         uint8_t glyphCount = packet.readUInt8();
         for (uint8_t gl = 0; gl < glyphCount; ++gl) {
-            bytesLeft = packet.getSize() - packet.getReadPos();
+            bytesLeft = packet.getRemainingSize();
             if (bytesLeft < 2) break;
             packet.readUInt16();
         }
     }
 
     std::array<uint16_t, 19> enchantIds{};
-    bytesLeft = packet.getSize() - packet.getReadPos();
+    bytesLeft = packet.getRemainingSize();
     if (bytesLeft >= 4) {
         uint32_t slotMask = packet.readUInt32();
         for (int slot = 0; slot < 19; ++slot) {
             if (slotMask & (1u << slot)) {
-                bytesLeft = packet.getSize() - packet.getReadPos();
+                bytesLeft = packet.getRemainingSize();
                 if (bytesLeft < 2) break;
                 enchantIds[slot] = packet.readUInt16();
             }
@@ -1031,7 +1031,7 @@ void SocialHandler::reportPlayer(uint64_t targetGuid, const std::string& reason)
 }
 
 void SocialHandler::handleDuelRequested(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 16) { packet.setReadPos(packet.getSize()); return; }
+    if (!packet.hasRemaining(16)) { packet.setReadPos(packet.getSize()); return; }
     duelChallengerGuid_ = packet.readUInt64();
     duelFlagGuid_       = packet.readUInt64();
     duelChallengerName_.clear();
@@ -1055,7 +1055,7 @@ void SocialHandler::handleDuelRequested(network::Packet& packet) {
 }
 
 void SocialHandler::handleDuelComplete(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 1) return;
+    if (!packet.hasRemaining(1)) return;
     uint8_t started = packet.readUInt8();
     pendingDuelRequest_ = false;
     duelCountdownMs_ = 0;
@@ -1064,7 +1064,7 @@ void SocialHandler::handleDuelComplete(network::Packet& packet) {
 }
 
 void SocialHandler::handleDuelWinner(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 3) return;
+    if (!packet.hasRemaining(3)) return;
     uint8_t duelType = packet.readUInt8();
     std::string winner = packet.readString();
     std::string loser  = packet.readString();
@@ -1300,7 +1300,7 @@ void SocialHandler::handlePartyCommandResult(network::Packet& packet) {
 }
 
 void SocialHandler::handlePartyMemberStats(network::Packet& packet, bool isFull) {
-    auto remaining = [&]() { return packet.getSize() - packet.getReadPos(); };
+    auto remaining = [&]() { return packet.getRemainingSize(); };
     const bool isWotLK = isActiveExpansion("wotlk");
 
     if (isFull) { if (remaining() < 1) return; packet.readUInt8(); }
@@ -1605,7 +1605,7 @@ void SocialHandler::handlePetitionShowlist(network::Packet& packet) {
 }
 
 void SocialHandler::handlePetitionQueryResponse(network::Packet& packet) {
-    auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
+    auto rem = [&]() { return packet.getRemainingSize(); };
     if (rem() < 12) return;
     /*uint32_t entry =*/ packet.readUInt32();
     uint64_t petGuid = packet.readUInt64();
@@ -1616,7 +1616,7 @@ void SocialHandler::handlePetitionQueryResponse(network::Packet& packet) {
 }
 
 void SocialHandler::handlePetitionShowSignatures(network::Packet& packet) {
-    auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
+    auto rem = [&]() { return packet.getRemainingSize(); };
     if (rem() < 21) return;
     petitionInfo_ = PetitionInfo{};
     petitionInfo_.petitionGuid = packet.readUInt64();
@@ -1636,7 +1636,7 @@ void SocialHandler::handlePetitionShowSignatures(network::Packet& packet) {
 }
 
 void SocialHandler::handlePetitionSignResults(network::Packet& packet) {
-    auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
+    auto rem = [&]() { return packet.getRemainingSize(); };
     if (rem() < 20) return;
     uint64_t petGuid    = packet.readUInt64();
     uint64_t playerGuid = packet.readUInt64();
@@ -1719,13 +1719,13 @@ void SocialHandler::handleWho(network::Packet& packet) {
         if (packet.getReadPos() >= packet.getSize()) break;
         std::string playerName = packet.readString();
         std::string guildName = packet.readString();
-        if (packet.getSize() - packet.getReadPos() < 12) break;
+        if (!packet.hasRemaining(12)) break;
         uint32_t level   = packet.readUInt32();
         uint32_t classId = packet.readUInt32();
         uint32_t raceId  = packet.readUInt32();
-        if (hasGender && packet.getSize() - packet.getReadPos() >= 1) packet.readUInt8();
+        if (hasGender && packet.hasRemaining(1)) packet.readUInt8();
         uint32_t zoneId = 0;
-        if (packet.getSize() - packet.getReadPos() >= 4) zoneId = packet.readUInt32();
+        if (packet.hasRemaining(4)) zoneId = packet.readUInt32();
         WhoEntry entry;
         entry.name = playerName; entry.guildName = guildName;
         entry.level = level; entry.classId = classId;
@@ -1739,7 +1739,7 @@ void SocialHandler::handleWho(network::Packet& packet) {
 // ============================================================
 
 void SocialHandler::handleFriendList(network::Packet& packet) {
-    auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
+    auto rem = [&]() { return packet.getRemainingSize(); };
     if (rem() < 1) return;
     uint8_t count = packet.readUInt8();
     owner_.contacts_.erase(std::remove_if(owner_.contacts_.begin(), owner_.contacts_.end(),
@@ -1771,7 +1771,7 @@ void SocialHandler::handleFriendList(network::Packet& packet) {
 }
 
 void SocialHandler::handleContactList(network::Packet& packet) {
-    auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
+    auto rem = [&]() { return packet.getRemainingSize(); };
     if (rem() < 8) { packet.setReadPos(packet.getSize()); return; }
     owner_.lastContactListMask_  = packet.readUInt32();
     owner_.lastContactListCount_ = packet.readUInt32();
@@ -1898,27 +1898,27 @@ void SocialHandler::handleLogoutComplete(network::Packet& /*packet*/) {
 // ============================================================
 
 void SocialHandler::handleBattlefieldStatus(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     uint32_t queueSlot = packet.readUInt32();
     const bool classicFormat = isClassicLikeExpansion();
     uint8_t arenaType = 0;
     if (!classicFormat) {
-        if (packet.getSize() - packet.getReadPos() < 1) return;
+        if (!packet.hasRemaining(1)) return;
         arenaType = packet.readUInt8();
-        if (packet.getSize() - packet.getReadPos() < 1) return;
+        if (!packet.hasRemaining(1)) return;
         packet.readUInt8();
     } else {
-        if (packet.getSize() - packet.getReadPos() < 4) return;
+        if (!packet.hasRemaining(4)) return;
     }
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     uint32_t bgTypeId = packet.readUInt32();
-    if (packet.getSize() - packet.getReadPos() < 2) return;
+    if (!packet.hasRemaining(2)) return;
     packet.readUInt16();
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     packet.readUInt32(); // instanceId
-    if (packet.getSize() - packet.getReadPos() < 1) return;
+    if (!packet.hasRemaining(1)) return;
     packet.readUInt8(); // isRated
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     uint32_t statusId = packet.readUInt32();
 
     static const std::pair<uint32_t, const char*> kBgNames[] = {
@@ -1936,12 +1936,12 @@ void SocialHandler::handleBattlefieldStatus(network::Packet& packet) {
     }
 
     uint32_t inviteTimeout = 80, avgWaitSec = 0, timeInQueueSec = 0;
-    if (statusId == 1 && packet.getSize() - packet.getReadPos() >= 8) {
+    if (statusId == 1 && packet.hasRemaining(8)) {
         avgWaitSec = packet.readUInt32() / 1000; timeInQueueSec = packet.readUInt32() / 1000;
     } else if (statusId == 2) {
-        if (packet.getSize() - packet.getReadPos() >= 4) inviteTimeout = packet.readUInt32();
-        if (packet.getSize() - packet.getReadPos() >= 4) packet.readUInt32();
-    } else if (statusId == 3 && packet.getSize() - packet.getReadPos() >= 8) {
+        if (packet.hasRemaining(4)) inviteTimeout = packet.readUInt32();
+        if (packet.hasRemaining(4)) packet.readUInt32();
+    } else if (statusId == 3 && packet.hasRemaining(8)) {
         packet.readUInt32(); packet.readUInt32();
     }
 
@@ -1966,19 +1966,19 @@ void SocialHandler::handleBattlefieldStatus(network::Packet& packet) {
 }
 
 void SocialHandler::handleBattlefieldList(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 5) return;
+    if (!packet.hasRemaining(5)) return;
     AvailableBgInfo info;
     info.bgTypeId = packet.readUInt32();
     info.isRegistered = packet.readUInt8() != 0;
     const bool isWotlk = isActiveExpansion("wotlk");
     const bool isTbc = isActiveExpansion("tbc");
-    if (isTbc || isWotlk) { if (packet.getSize() - packet.getReadPos() < 1) return; info.isHoliday = packet.readUInt8() != 0; }
-    if (isWotlk) { if (packet.getSize() - packet.getReadPos() < 8) return; info.minLevel = packet.readUInt32(); info.maxLevel = packet.readUInt32(); }
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (isTbc || isWotlk) { if (!packet.hasRemaining(1)) return; info.isHoliday = packet.readUInt8() != 0; }
+    if (isWotlk) { if (!packet.hasRemaining(8)) return; info.minLevel = packet.readUInt32(); info.maxLevel = packet.readUInt32(); }
+    if (!packet.hasRemaining(4)) return;
     uint32_t count = std::min(packet.readUInt32(), 256u);
     info.instanceIds.reserve(count);
     for (uint32_t i = 0; i < count; ++i) {
-        if (packet.getSize() - packet.getReadPos() < 4) break;
+        if (!packet.hasRemaining(4)) break;
         info.instanceIds.push_back(packet.readUInt32());
     }
     bool updated = false;
@@ -2035,13 +2035,13 @@ void SocialHandler::handleRaidInstanceInfo(network::Packet& packet) {
     const bool isTbc = isActiveExpansion("tbc");
     const bool isClassic = isClassicLikeExpansion();
     const bool useTbcFormat = isTbc || isClassic;
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     uint32_t count = packet.readUInt32();
     instanceLockouts_.clear();
     instanceLockouts_.reserve(count);
     const size_t kEntrySize = useTbcFormat ? 13 : 18;
     for (uint32_t i = 0; i < count; ++i) {
-        if (packet.getSize() - packet.getReadPos() < kEntrySize) break;
+        if (packet.getRemainingSize() < kEntrySize) break;
         InstanceLockout lo;
         lo.mapId = packet.readUInt32(); lo.difficulty = packet.readUInt32();
         if (useTbcFormat) { lo.resetTime = packet.readUInt32(); lo.locked = packet.readUInt8() != 0; lo.extended = false; }
@@ -2051,7 +2051,7 @@ void SocialHandler::handleRaidInstanceInfo(network::Packet& packet) {
 }
 
 void SocialHandler::handleInstanceDifficulty(network::Packet& packet) {
-    auto rem = [&]() { return packet.getSize() - packet.getReadPos(); };
+    auto rem = [&]() { return packet.getRemainingSize(); };
     if (rem() < 4) return;
     uint32_t prevDifficulty = instanceDifficulty_;
     instanceDifficulty_ = packet.readUInt32();
@@ -2075,7 +2075,7 @@ void SocialHandler::handleInstanceDifficulty(network::Packet& packet) {
 // ============================================================
 
 void SocialHandler::handleLfgJoinResult(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 2) return;
+    if (!packet.hasRemaining(2)) return;
     uint8_t result = packet.readUInt8();
     uint8_t state  = packet.readUInt8();
     if (result == 0) {
@@ -2092,7 +2092,7 @@ void SocialHandler::handleLfgJoinResult(network::Packet& packet) {
 }
 
 void SocialHandler::handleLfgQueueStatus(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 33) return;
+    if (!packet.hasRemaining(33)) return;
     lfgDungeonId_ = packet.readUInt32();
     int32_t avgWait = static_cast<int32_t>(packet.readUInt32());
     int32_t waitTime = static_cast<int32_t>(packet.readUInt32());
@@ -2104,7 +2104,7 @@ void SocialHandler::handleLfgQueueStatus(network::Packet& packet) {
 }
 
 void SocialHandler::handleLfgProposalUpdate(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 17) return;
+    if (!packet.hasRemaining(17)) return;
     uint32_t dungeonId = packet.readUInt32();
     uint32_t proposalId = packet.readUInt32();
     uint32_t proposalState = packet.readUInt32();
@@ -2124,7 +2124,7 @@ void SocialHandler::handleLfgProposalUpdate(network::Packet& packet) {
 }
 
 void SocialHandler::handleLfgRoleCheckUpdate(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 6) return;
+    if (!packet.hasRemaining(6)) return;
     packet.readUInt32();
     uint8_t roleCheckState = packet.readUInt8();
     packet.readUInt8();
@@ -2134,10 +2134,10 @@ void SocialHandler::handleLfgRoleCheckUpdate(network::Packet& packet) {
 }
 
 void SocialHandler::handleLfgUpdatePlayer(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 1) return;
+    if (!packet.hasRemaining(1)) return;
     uint8_t updateType = packet.readUInt8();
     bool hasExtra = (updateType != 0 && updateType != 1 && updateType != 15 && updateType != 17 && updateType != 18);
-    if (!hasExtra || packet.getSize() - packet.getReadPos() < 3) {
+    if (!hasExtra || !packet.hasRemaining(3)) {
         switch (updateType) {
             case 8:  lfgState_ = LfgState::None; owner_.addSystemChatMessage("Dungeon Finder: Removed from queue."); break;
             case 9:  lfgState_ = LfgState::Queued; owner_.addSystemChatMessage("Dungeon Finder: Proposal failed — re-queuing."); break;
@@ -2149,9 +2149,9 @@ void SocialHandler::handleLfgUpdatePlayer(network::Packet& packet) {
         return;
     }
     packet.readUInt8(); packet.readUInt8(); packet.readUInt8();
-    if (packet.getSize() - packet.getReadPos() >= 1) {
+    if (packet.hasRemaining(1)) {
         uint8_t count = packet.readUInt8();
-        for (uint8_t i = 0; i < count && packet.getSize() - packet.getReadPos() >= 4; ++i) {
+        for (uint8_t i = 0; i < count && packet.getRemainingSize() >= 4; ++i) {
             uint32_t dungeonEntry = packet.readUInt32();
             if (i == 0) lfgDungeonId_ = dungeonEntry;
         }
@@ -2221,7 +2221,7 @@ void SocialHandler::handleLfgBootProposalUpdate(network::Packet& packet) {
 }
 
 void SocialHandler::handleLfgTeleportDenied(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 1) return;
+    if (!packet.hasRemaining(1)) return;
     uint8_t reason = packet.readUInt8();
     owner_.addSystemChatMessage(std::string("Dungeon Finder: ") + lfgTeleportDeniedString(reason));
 }
@@ -2283,7 +2283,7 @@ void SocialHandler::lfgSetBootVote(bool vote) {
 // ============================================================
 
 void SocialHandler::handleArenaTeamCommandResult(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 8) return;
+    if (!packet.hasRemaining(8)) return;
     uint32_t command = packet.readUInt32();
     std::string name = packet.readString();
     uint32_t error = packet.readUInt32();
@@ -2294,30 +2294,30 @@ void SocialHandler::handleArenaTeamCommandResult(network::Packet& packet) {
 }
 
 void SocialHandler::handleArenaTeamQueryResponse(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     uint32_t teamId = packet.readUInt32();
     std::string teamName = packet.readString();
     uint32_t teamType = 0;
-    if (packet.getSize() - packet.getReadPos() >= 4) teamType = packet.readUInt32();
+    if (packet.hasRemaining(4)) teamType = packet.readUInt32();
     for (auto& s : arenaTeamStats_) { if (s.teamId == teamId) { s.teamName = teamName; s.teamType = teamType; return; } }
     ArenaTeamStats stub; stub.teamId = teamId; stub.teamName = teamName; stub.teamType = teamType;
     arenaTeamStats_.push_back(std::move(stub));
 }
 
 void SocialHandler::handleArenaTeamRoster(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 9) return;
+    if (!packet.hasRemaining(9)) return;
     uint32_t teamId = packet.readUInt32();
     packet.readUInt8();
     uint32_t memberCount = std::min(packet.readUInt32(), 100u);
     ArenaTeamRoster roster; roster.teamId = teamId; roster.members.reserve(memberCount);
     for (uint32_t i = 0; i < memberCount; ++i) {
-        if (packet.getSize() - packet.getReadPos() < 12) break;
+        if (!packet.hasRemaining(12)) break;
         ArenaTeamMember m;
         m.guid = packet.readUInt64(); m.online = (packet.readUInt8() != 0); m.name = packet.readString();
-        if (packet.getSize() - packet.getReadPos() < 20) break;
+        if (!packet.hasRemaining(20)) break;
         m.weekGames = packet.readUInt32(); m.weekWins = packet.readUInt32();
         m.seasonGames = packet.readUInt32(); m.seasonWins = packet.readUInt32(); m.personalRating = packet.readUInt32();
-        if (packet.getSize() - packet.getReadPos() >= 8) { packet.readFloat(); packet.readFloat(); }
+        if (packet.hasRemaining(8)) { packet.readFloat(); packet.readFloat(); }
         roster.members.push_back(std::move(m));
     }
     for (auto& r : arenaTeamRosters_) { if (r.teamId == teamId) { r = std::move(roster); return; } }
@@ -2331,10 +2331,10 @@ void SocialHandler::handleArenaTeamInvite(network::Packet& packet) {
 }
 
 void SocialHandler::handleArenaTeamEvent(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 1) return;
+    if (!packet.hasRemaining(1)) return;
     uint8_t event = packet.readUInt8();
     uint8_t strCount = 0;
-    if (packet.getSize() - packet.getReadPos() >= 1) strCount = packet.readUInt8();
+    if (packet.hasRemaining(1)) strCount = packet.readUInt8();
     std::string param1, param2;
     if (strCount >= 1 && packet.getSize() > packet.getReadPos()) param1 = packet.readString();
     if (strCount >= 2 && packet.getSize() > packet.getReadPos()) param2 = packet.readString();
@@ -2352,7 +2352,7 @@ void SocialHandler::handleArenaTeamEvent(network::Packet& packet) {
 }
 
 void SocialHandler::handleArenaTeamStats(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 28) return;
+    if (!packet.hasRemaining(28)) return;
     ArenaTeamStats stats;
     stats.teamId = packet.readUInt32(); stats.rating = packet.readUInt32();
     stats.weekGames = packet.readUInt32(); stats.weekWins = packet.readUInt32();
@@ -2372,7 +2372,7 @@ void SocialHandler::requestArenaTeamRoster(uint32_t teamId) {
 }
 
 void SocialHandler::handleArenaError(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     uint32_t error = packet.readUInt32();
     std::string msg;
     switch (error) {
@@ -2386,7 +2386,7 @@ void SocialHandler::handleArenaError(network::Packet& packet) {
 }
 
 void SocialHandler::handlePvpLogData(network::Packet& packet) {
-    auto remaining = [&]() { return packet.getSize() - packet.getReadPos(); };
+    auto remaining = [&]() { return packet.getRemainingSize(); };
     if (remaining() < 1) return;
     bgScoreboard_ = BgScoreboardData{};
     bgScoreboard_.isArena = (packet.readUInt8() != 0);

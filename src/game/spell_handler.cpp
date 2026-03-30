@@ -1045,16 +1045,16 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
 void SpellHandler::handleSpellCooldown(network::Packet& packet) {
     const bool isClassicFormat = isClassicLikeExpansion();
 
-    if (packet.getSize() - packet.getReadPos() < 8) return;
+    if (!packet.hasRemaining(8)) return;
     /*guid*/ packet.readUInt64();
 
     if (!isClassicFormat) {
-        if (packet.getSize() - packet.getReadPos() < 1) return;
+        if (!packet.hasRemaining(1)) return;
         /*flags*/ packet.readUInt8();
     }
 
     const size_t entrySize = isClassicFormat ? 12u : 8u;
-    while (packet.getSize() - packet.getReadPos() >= entrySize) {
+    while (packet.getRemainingSize() >= entrySize) {
         uint32_t spellId    = packet.readUInt32();
         uint32_t cdItemId   = 0;
         if (isClassicFormat) cdItemId = packet.readUInt32();
@@ -1099,9 +1099,9 @@ void SpellHandler::handleSpellCooldown(network::Packet& packet) {
 }
 
 void SpellHandler::handleCooldownEvent(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     uint32_t spellId = packet.readUInt32();
-    if (packet.getSize() - packet.getReadPos() >= 8)
+    if (packet.hasRemaining(8))
         packet.readUInt64();
     spellCooldowns_.erase(spellId);
     for (auto& slot : owner_.actionBar) {
@@ -1171,7 +1171,7 @@ void SpellHandler::handleAuraUpdate(network::Packet& packet, bool isAll) {
 void SpellHandler::handleLearnedSpell(network::Packet& packet) {
     const bool classicSpellId = isClassicLikeExpansion();
     const size_t minSz = classicSpellId ? 2u : 4u;
-    if (packet.getSize() - packet.getReadPos() < minSz) return;
+    if (packet.getRemainingSize() < minSz) return;
     uint32_t spellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
 
     const bool alreadyKnown = knownSpells_.count(spellId) > 0;
@@ -1218,7 +1218,7 @@ void SpellHandler::handleLearnedSpell(network::Packet& packet) {
 void SpellHandler::handleRemovedSpell(network::Packet& packet) {
     const bool classicSpellId = isClassicLikeExpansion();
     const size_t minSz = classicSpellId ? 2u : 4u;
-    if (packet.getSize() - packet.getReadPos() < minSz) return;
+    if (packet.getRemainingSize() < minSz) return;
     uint32_t spellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
     knownSpells_.erase(spellId);
     LOG_INFO("Removed spell: ", spellId);
@@ -1243,7 +1243,7 @@ void SpellHandler::handleRemovedSpell(network::Packet& packet) {
 void SpellHandler::handleSupercededSpell(network::Packet& packet) {
     const bool classicSpellId = isClassicLikeExpansion();
     const size_t minSz = classicSpellId ? 4u : 8u;
-    if (packet.getSize() - packet.getReadPos() < minSz) return;
+    if (packet.getRemainingSize() < minSz) return;
     uint32_t oldSpellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
     uint32_t newSpellId = classicSpellId ? packet.readUInt16() : packet.readUInt32();
 
@@ -1279,12 +1279,12 @@ void SpellHandler::handleSupercededSpell(network::Packet& packet) {
 }
 
 void SpellHandler::handleUnlearnSpells(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     uint32_t spellCount = packet.readUInt32();
     LOG_INFO("Unlearning ", spellCount, " spells");
 
     bool barChanged = false;
-    for (uint32_t i = 0; i < spellCount && packet.getSize() - packet.getReadPos() >= 4; ++i) {
+    for (uint32_t i = 0; i < spellCount && packet.getRemainingSize() >= 4; ++i) {
         uint32_t spellId = packet.readUInt32();
         knownSpells_.erase(spellId);
         LOG_INFO("  Unlearned spell: ", spellId);
@@ -1303,12 +1303,12 @@ void SpellHandler::handleUnlearnSpells(network::Packet& packet) {
 }
 
 void SpellHandler::handleTalentsInfo(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 1) return;
+    if (!packet.hasRemaining(1)) return;
     uint8_t talentType = packet.readUInt8();
     if (talentType != 0) {
         return;
     }
-    if (packet.getSize() - packet.getReadPos() < 6) {
+    if (!packet.hasRemaining(6)) {
         LOG_WARNING("handleTalentsInfo: packet too short for header");
         return;
     }
@@ -1323,20 +1323,20 @@ void SpellHandler::handleTalentsInfo(network::Packet& packet) {
     activeTalentSpec_ = activeTalentGroup;
 
     for (uint8_t g = 0; g < talentGroupCount && g < 2; ++g) {
-        if (packet.getSize() - packet.getReadPos() < 1) break;
+        if (!packet.hasRemaining(1)) break;
         uint8_t talentCount = packet.readUInt8();
         learnedTalents_[g].clear();
         for (uint8_t t = 0; t < talentCount; ++t) {
-            if (packet.getSize() - packet.getReadPos() < 5) break;
+            if (!packet.hasRemaining(5)) break;
             uint32_t talentId = packet.readUInt32();
             uint8_t  rank     = packet.readUInt8();
             learnedTalents_[g][talentId] = rank + 1u;
         }
         learnedGlyphs_[g].fill(0);
-        if (packet.getSize() - packet.getReadPos() < 1) break;
+        if (!packet.hasRemaining(1)) break;
         uint8_t glyphCount = packet.readUInt8();
         for (uint8_t gl = 0; gl < glyphCount; ++gl) {
-            if (packet.getSize() - packet.getReadPos() < 2) break;
+            if (!packet.hasRemaining(2)) break;
             uint16_t glyphId = packet.readUInt16();
             if (gl < MAX_GLYPH_SLOTS) learnedGlyphs_[g][gl] = glyphId;
         }
@@ -1365,7 +1365,7 @@ void SpellHandler::handleTalentsInfo(network::Packet& packet) {
 }
 
 void SpellHandler::handleAchievementEarned(network::Packet& packet) {
-    size_t remaining = packet.getSize() - packet.getReadPos();
+    size_t remaining = packet.getRemainingSize();
     if (remaining < 16) return;
 
     uint64_t guid          = packet.readUInt64();

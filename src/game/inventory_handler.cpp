@@ -40,20 +40,20 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_LOOT_ROLL_WON] = [this](network::Packet& packet) { handleLootRollWon(packet); };
     table[Opcode::SMSG_LOOT_MASTER_LIST] = [this](network::Packet& packet) {
         masterLootCandidates_.clear();
-        if (packet.getSize() - packet.getReadPos() < 1) return;
+        if (!packet.hasRemaining(1)) return;
         uint8_t mlCount = packet.readUInt8();
         masterLootCandidates_.reserve(mlCount);
         for (uint8_t i = 0; i < mlCount; ++i) {
-            if (packet.getSize() - packet.getReadPos() < 8) break;
+            if (!packet.hasRemaining(8)) break;
             masterLootCandidates_.push_back(packet.readUInt64());
         }
     };
 
     // ---- Loot money / misc consume ----
     table[Opcode::SMSG_LOOT_MONEY_NOTIFY] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 4) return;
+        if (!packet.hasRemaining(4)) return;
         uint32_t amount = packet.readUInt32();
-        if (packet.getSize() - packet.getReadPos() >= 1)
+        if (packet.hasRemaining(1))
             /*uint8_t soleLooter =*/ packet.readUInt8();
         owner_.playerMoneyCopper_ += amount;
         owner_.pendingMoneyDelta_ = amount;
@@ -103,7 +103,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         // randProp(4) + countdown(4) + voteMask(1)
         const bool hasMapId = isActiveExpansion("wotlk");
         const size_t minSz = hasMapId ? 33 : 29;
-        if (packet.getSize() - packet.getReadPos() < minSz) return;
+        if (packet.getRemainingSize() < minSz) return;
         uint64_t objectGuid = packet.readUInt64();
         if (hasMapId) packet.readUInt32(); // mapId
         uint32_t lootSlot = packet.readUInt32();
@@ -137,7 +137,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
 
     table[Opcode::SMSG_LOOT_ALL_PASSED] = [this](network::Packet& packet) {
         // objectGuid(8) + lootSlot(4) + itemId(4) + randSuffix(4) + randProp(4)
-        if (packet.getSize() - packet.getReadPos() < 24) return;
+        if (!packet.hasRemaining(24)) return;
         /*uint64_t objectGuid =*/ packet.readUInt64();
         /*uint32_t lootSlot   =*/ packet.readUInt32();
         uint32_t itemId     = packet.readUInt32();
@@ -154,13 +154,13 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
 
     table[Opcode::SMSG_LOOT_ITEM_NOTIFY] = [this](network::Packet& packet) {
         // objectGuid(8) + lootSlot(1) [Classic: uint32; WotLK: uint8]
-        if (packet.getSize() - packet.getReadPos() < 9) return;
+        if (!packet.hasRemaining(9)) return;
         /*uint64_t objectGuid =*/ packet.readUInt64();
         uint32_t lootSlot;
         if (isActiveExpansion("wotlk")) {
             lootSlot = packet.readUInt8();
         } else {
-            if (packet.getSize() - packet.getReadPos() < 4) return;
+            if (!packet.hasRemaining(4)) return;
             lootSlot = packet.readUInt32();
         }
         // Try to resolve item name
@@ -182,7 +182,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
     };
 
     table[Opcode::SMSG_LOOT_SLOT_CHANGED] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 1) {
+        if (packet.hasRemaining(1)) {
             uint8_t slotIdx = packet.readUInt8();
             LOG_DEBUG("SMSG_LOOT_SLOT_CHANGED: slot=", (int)slotIdx);
             // The server re-sends loot info for this slot; we can refresh from
@@ -194,7 +194,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_ITEM_PUSH_RESULT] = [this](network::Packet& packet) {
         // WotLK 3.3.5a: guid(8)+received(4)+created(4)+displayInChat(4)+bagSlot(1)
         //   +slot(4)+itemId(4)+suffixFactor(4)+randomPropertyId(4)+count(4)+countInInventory(4)
-        if (packet.getSize() - packet.getReadPos() < 45) return;
+        if (!packet.hasRemaining(45)) return;
         uint64_t guid = packet.readUInt64();
         if (guid != owner_.playerGuid) { packet.setReadPos(packet.getSize()); return; }
         /*uint32_t received      =*/ packet.readUInt32();
@@ -238,7 +238,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- Open container ----
     table[Opcode::SMSG_OPEN_CONTAINER] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 8) {
+        if (packet.hasRemaining(8)) {
             uint64_t containerGuid = packet.readUInt64();
             LOG_DEBUG("SMSG_OPEN_CONTAINER: guid=0x", std::hex, containerGuid, std::dec);
         }
@@ -246,7 +246,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- Sell / Buy / Inventory ----
     table[Opcode::SMSG_SELL_ITEM] = [this](network::Packet& packet) {
-        if ((packet.getSize() - packet.getReadPos()) >= 17) {
+        if ((packet.getRemainingSize()) >= 17) {
             uint64_t vendorGuid = packet.readUInt64();
             uint64_t itemGuid = packet.readUInt64();
             uint8_t result = packet.readUInt8();
@@ -307,16 +307,16 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
     };
 
     table[Opcode::SMSG_INVENTORY_CHANGE_FAILURE] = [this](network::Packet& packet) {
-        if ((packet.getSize() - packet.getReadPos()) >= 1) {
+        if ((packet.getRemainingSize()) >= 1) {
             uint8_t error = packet.readUInt8();
             if (error != 0) {
                 LOG_WARNING("SMSG_INVENTORY_CHANGE_FAILURE: error=", (int)error);
                 uint32_t requiredLevel = 0;
-                if (packet.getSize() - packet.getReadPos() >= 17) {
+                if (packet.hasRemaining(17)) {
                     packet.readUInt64();
                     packet.readUInt64();
                     packet.readUInt8();
-                    if (error == 1 && packet.getSize() - packet.getReadPos() >= 4)
+                    if (error == 1 && packet.hasRemaining(4))
                         requiredLevel = packet.readUInt32();
                 }
                 const char* errMsg = nullptr;
@@ -403,7 +403,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
     };
 
     table[Opcode::SMSG_BUY_FAILED] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 13) {
+        if (packet.hasRemaining(13)) {
             uint64_t vendorGuid = packet.readUInt64();
             uint32_t itemIdOrSlot = packet.readUInt32();
             uint8_t errCode = packet.readUInt8();
@@ -460,7 +460,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
     };
 
     table[Opcode::SMSG_BUY_ITEM] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 20) {
+        if (packet.hasRemaining(20)) {
             /*uint64_t vendorGuid =*/ packet.readUInt64();
             /*uint32_t vendorSlot =*/ packet.readUInt32();
             /*int32_t  newCount   =*/ static_cast<int32_t>(packet.readUInt32());
@@ -516,13 +516,13 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_AUCTION_COMMAND_RESULT] = [this](network::Packet& packet) { handleAuctionCommandResult(packet); };
 
     table[Opcode::SMSG_AUCTION_OWNER_NOTIFICATION] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 16) {
+        if (packet.hasRemaining(16)) {
             /*uint32_t auctionId =*/ packet.readUInt32();
             uint32_t action    = packet.readUInt32();
             /*uint32_t error   =*/ packet.readUInt32();
             uint32_t itemEntry = packet.readUInt32();
             int32_t ownerRandProp = 0;
-            if (packet.getSize() - packet.getReadPos() >= 4)
+            if (packet.hasRemaining(4))
                 ownerRandProp = static_cast<int32_t>(packet.readUInt32());
             owner_.ensureItemInfo(itemEntry);
             auto* info = owner_.getItemInfo(itemEntry);
@@ -569,7 +569,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
     };
 
     table[Opcode::SMSG_AUCTION_REMOVED_NOTIFICATION] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 12) {
+        if (packet.hasRemaining(12)) {
             /*uint32_t auctionId =*/ packet.readUInt32();
             uint32_t itemEntry = packet.readUInt32();
             int32_t itemRandom = static_cast<int32_t>(packet.readUInt32());
@@ -591,7 +591,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_EQUIPMENT_SET_LIST] = [this](network::Packet& packet) { handleEquipmentSetList(packet); };
     table[Opcode::SMSG_EQUIPMENT_SET_SAVED] = [this](network::Packet& packet) {
         std::string setName;
-        if (packet.getSize() - packet.getReadPos() >= 12) {
+        if (packet.hasRemaining(12)) {
             uint32_t setIndex = packet.readUInt32();
             uint64_t setGuid  = packet.readUInt64();
             bool found = false;
@@ -637,7 +637,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
     };
 
     table[Opcode::SMSG_EQUIPMENT_SET_USE_RESULT] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 1) {
+        if (packet.hasRemaining(1)) {
             uint8_t result = packet.readUInt8();
             if (result != 0) { owner_.addUIError("Failed to equip item set."); owner_.addSystemChatMessage("Failed to equip item set."); }
         }
@@ -796,7 +796,7 @@ void InventoryHandler::sendLootRoll(uint64_t objectGuid, uint32_t slot, uint8_t 
 void InventoryHandler::handleLootRoll(network::Packet& packet) {
     // objectGuid(8) + lootSlot(4) + playerGuid(8) + itemId(4) + itemRandSuffix(4) +
     // itemRandProp(4) + rollNumber(1) + rollType(1) + autoPass(1)
-    if (packet.getSize() - packet.getReadPos() < 35) return;
+    if (!packet.hasRemaining(35)) return;
     uint64_t objectGuid = packet.readUInt64();
     uint32_t lootSlot   = packet.readUInt32();
     uint64_t playerGuid = packet.readUInt64();
@@ -836,7 +836,7 @@ void InventoryHandler::handleLootRoll(network::Packet& packet) {
 
 void InventoryHandler::handleLootRollWon(network::Packet& packet) {
     // objectGuid(8) + lootSlot(4) + itemId(4) + itemSuffix(4) + itemProp(4) + playerGuid(8) + rollNumber(1) + rollType(1)
-    if (packet.getSize() - packet.getReadPos() < 34) return;
+    if (!packet.hasRemaining(34)) return;
     /*uint64_t objectGuid =*/ packet.readUInt64();
     /*uint32_t lootSlot   =*/ packet.readUInt32();
     uint32_t itemId     = packet.readUInt32();
@@ -1610,7 +1610,7 @@ void InventoryHandler::mailMarkAsRead(uint32_t mailId) {
 }
 
 void InventoryHandler::handleShowMailbox(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 8) return;
+    if (!packet.hasRemaining(8)) return;
     mailboxGuid_ = packet.readUInt64();
     mailboxOpen_ = true;
     selectedMailIndex_ = -1;
@@ -1629,7 +1629,7 @@ void InventoryHandler::handleMailListResult(network::Packet& packet) {
 }
 
 void InventoryHandler::handleSendMailResult(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 12) return;
+    if (!packet.hasRemaining(12)) return;
     uint32_t mailId = packet.readUInt32();
     uint32_t action = packet.readUInt32();
     uint32_t error  = packet.readUInt32();
@@ -1735,13 +1735,13 @@ void InventoryHandler::withdrawItem(uint8_t srcBag, uint8_t srcSlot) {
 }
 
 void InventoryHandler::handleShowBank(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 8) return;
+    if (!packet.hasRemaining(8)) return;
     uint64_t guid = packet.readUInt64();
     openBank(guid);
 }
 
 void InventoryHandler::handleBuyBankSlotResult(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     uint32_t result = packet.readUInt32();
     if (result == 0) {
         owner_.addSystemChatMessage("Bank slot purchased.");
@@ -1887,7 +1887,7 @@ void InventoryHandler::auctionListBidderItems(uint32_t offset) {
 }
 
 void InventoryHandler::handleAuctionHello(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 12) return;
+    if (!packet.hasRemaining(12)) return;
     uint64_t guid = packet.readUInt64();
     uint32_t houseId = packet.readUInt32();
     auctioneerGuid_ = guid;
@@ -1935,7 +1935,7 @@ void InventoryHandler::handleAuctionBidderListResult(network::Packet& packet) {
 }
 
 void InventoryHandler::handleAuctionCommandResult(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 12) return;
+    if (!packet.hasRemaining(12)) return;
     uint32_t auctionId = packet.readUInt32();
     uint32_t action = packet.readUInt32();
     uint32_t error  = packet.readUInt32();
@@ -1986,7 +1986,7 @@ void InventoryHandler::queryItemText(uint64_t itemGuid) {
 }
 
 void InventoryHandler::handleItemTextQueryResponse(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 1) return;
+    if (!packet.hasRemaining(1)) return;
     std::string text = packet.readString();
     if (!text.empty()) {
         itemText_ = std::move(text);
@@ -2061,7 +2061,7 @@ void InventoryHandler::resetTradeState() {
 }
 
 void InventoryHandler::handleTradeStatus(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     uint32_t status = packet.readUInt32();
     LOG_WARNING("SMSG_TRADE_STATUS: status=", status, " size=", packet.getSize());
     switch (status) {
@@ -2070,7 +2070,7 @@ void InventoryHandler::handleTradeStatus(network::Packet& packet) {
             owner_.addSystemChatMessage("Trade failed: player is busy.");
             break;
         case 1: { // TRADE_STATUS_PROPOSED
-            if (packet.getSize() - packet.getReadPos() >= 8)
+            if (packet.hasRemaining(8))
                 tradePeerGuid_ = packet.readUInt64();
             tradeStatus_ = TradeStatus::PendingIncoming;
             // Resolve name
@@ -2140,7 +2140,7 @@ void InventoryHandler::handleTradeStatusExtended(network::Packet& packet) {
                 " readPos=", packet.getReadPos());
     // WotLK format: whichPlayer(4) + tradeCount(4) + N items × (slot(1)+64bytes) + gold(4)
     // Total for empty trade: 8 + 8×65 + 4 = 532 (matches observed packet size)
-    if (packet.getSize() - packet.getReadPos() < 8) return;
+    if (!packet.hasRemaining(8)) return;
     uint32_t whichPlayer = packet.readUInt32();   // 0=self, 1=peer (uint32 not uint8!)
     uint32_t tradeCount = packet.readUInt32();
     auto& slots = (whichPlayer == 0) ? myTradeSlots_ : peerTradeSlots_;
@@ -2148,12 +2148,12 @@ void InventoryHandler::handleTradeStatusExtended(network::Packet& packet) {
     LOG_WARNING("  whichPlayer=", whichPlayer, " tradeCount=", tradeCount);
 
     for (uint32_t i = 0; i < tradeCount; ++i) {
-        if (packet.getSize() - packet.getReadPos() < 1) break;
+        if (!packet.hasRemaining(1)) break;
         uint8_t slotNum = packet.readUInt8();
         // Per-slot: 4(item)+4(display)+4(stack)+4(wrapped)+8(creator)
         //           +4(enchant)+3×4(gems)+4(maxDur)+4(dur)+4(spellCharges)
         //           +4(suffixFactor)+4(randomPropId)+4(lockId) = 64 bytes
-        if (packet.getSize() - packet.getReadPos() < 64) { packet.setReadPos(packet.getSize()); return; }
+        if (!packet.hasRemaining(64)) { packet.setReadPos(packet.getSize()); return; }
         uint32_t itemId    = packet.readUInt32();
         uint32_t displayId = packet.readUInt32();
         uint32_t stackCnt  = packet.readUInt32();
@@ -2177,7 +2177,7 @@ void InventoryHandler::handleTradeStatusExtended(network::Packet& packet) {
     }
 
     // Gold
-    if (packet.getSize() - packet.getReadPos() >= 4) {
+    if (packet.hasRemaining(4)) {
         uint32_t gold = packet.readUInt32();
         if (whichPlayer == 0) myTradeGold_ = gold;
         else peerTradeGold_ = gold;
@@ -2287,7 +2287,7 @@ void InventoryHandler::deleteEquipmentSet(uint64_t setGuid) {
 }
 
 void InventoryHandler::handleEquipmentSetList(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     uint32_t count = packet.readUInt32();
     if (count > 10) {
         LOG_WARNING("SMSG_EQUIPMENT_SET_LIST: unexpected count ", count, ", ignoring");
@@ -2297,7 +2297,7 @@ void InventoryHandler::handleEquipmentSetList(network::Packet& packet) {
     equipmentSets_.clear();
     equipmentSets_.reserve(count);
     for (uint32_t i = 0; i < count; ++i) {
-        if (packet.getSize() - packet.getReadPos() < 16) break;
+        if (!packet.hasRemaining(16)) break;
         EquipmentSet es;
         es.setGuid        = packet.readUInt64();
         es.setId          = packet.readUInt32();
@@ -2305,7 +2305,7 @@ void InventoryHandler::handleEquipmentSetList(network::Packet& packet) {
         es.iconName       = packet.readString();
         es.ignoreSlotMask = packet.readUInt32();
         for (int slot = 0; slot < 19; ++slot) {
-            if (packet.getSize() - packet.getReadPos() < 8) break;
+            if (!packet.hasRemaining(8)) break;
             es.itemGuids[slot] = packet.readUInt64();
         }
         equipmentSets_.push_back(std::move(es));

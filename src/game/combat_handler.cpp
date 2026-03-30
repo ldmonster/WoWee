@@ -33,9 +33,9 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
         if (owner_.addonEventCallback_) owner_.addonEventCallback_("UNIT_THREAT_LIST_UPDATE", {});
     };
     table[Opcode::SMSG_THREAT_REMOVE] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 1) return;
+        if (!packet.hasRemaining(1)) return;
         uint64_t unitGuid   = packet.readPackedGuid();
-        if (packet.getSize() - packet.getReadPos() < 1) return;
+        if (!packet.hasRemaining(1)) return;
         uint64_t victimGuid = packet.readPackedGuid();
         auto it = threatLists_.find(unitGuid);
         if (it != threatLists_.end()) {
@@ -92,7 +92,7 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
     };
     table[Opcode::SMSG_ATTACKERSTATEUPDATE] = [this](network::Packet& packet) { handleAttackerStateUpdate(packet); };
     table[Opcode::SMSG_AI_REACTION] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 12) return;
+        if (!packet.hasRemaining(12)) return;
         uint64_t guid = packet.readUInt64();
         uint32_t reaction = packet.readUInt32();
         if (reaction == 2 && owner_.npcAggroCallback_) {
@@ -108,7 +108,7 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
     table[Opcode::SMSG_ENVIRONMENTAL_DAMAGE_LOG] = [this](network::Packet& packet) {
         // uint64 victimGuid + uint8 envDmgType + uint32 damage + uint32 absorbed + uint32 resisted
         // envDmgType: 0=Exhausted(fatigue), 1=Drowning, 2=Fall, 3=Lava, 4=Slime, 5=Fire
-        if (packet.getSize() - packet.getReadPos() < 21) { packet.setReadPos(packet.getSize()); return; }
+        if (!packet.hasRemaining(21)) { packet.setReadPos(packet.getSize()); return; }
         uint64_t victimGuid  = packet.readUInt64();
         uint8_t envType      = packet.readUInt8();
         uint32_t dmg         = packet.readUInt32();
@@ -133,20 +133,20 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
             // Both packets share the same format:
             // packed_guid (unit) + packed_guid (highest-threat target or target, unused here)
             // + uint32 count + count × (packed_guid victim + uint32 threat)
-            if (packet.getSize() - packet.getReadPos() < 1) return;
+            if (!packet.hasRemaining(1)) return;
             uint64_t unitGuid = packet.readPackedGuid();
-            if (packet.getSize() - packet.getReadPos() < 1) return;
+            if (!packet.hasRemaining(1)) return;
             (void)packet.readPackedGuid(); // highest-threat / current target
-            if (packet.getSize() - packet.getReadPos() < 4) return;
+            if (!packet.hasRemaining(4)) return;
             uint32_t cnt = packet.readUInt32();
             if (cnt > 100) { packet.setReadPos(packet.getSize()); return; } // sanity
             std::vector<ThreatEntry> list;
             list.reserve(cnt);
             for (uint32_t i = 0; i < cnt; ++i) {
-                if (packet.getSize() - packet.getReadPos() < 1) return;
+                if (!packet.hasRemaining(1)) return;
                 ThreatEntry entry;
                 entry.victimGuid = packet.readPackedGuid();
-                if (packet.getSize() - packet.getReadPos() < 4) return;
+                if (!packet.hasRemaining(4)) return;
                 entry.threat = packet.readUInt32();
                 list.push_back(entry);
             }
@@ -558,7 +558,7 @@ void CombatHandler::handleSpellHealLog(network::Packet& packet) {
 }
 
 void CombatHandler::handleSetForcedReactions(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     uint32_t count = packet.readUInt32();
     if (count > 64) {
         LOG_WARNING("SMSG_SET_FORCED_REACTIONS: suspicious count ", count, ", ignoring");
@@ -567,7 +567,7 @@ void CombatHandler::handleSetForcedReactions(network::Packet& packet) {
     }
     forcedReactions_.clear();
     for (uint32_t i = 0; i < count; ++i) {
-        if (packet.getSize() - packet.getReadPos() < 8) break;
+        if (!packet.hasRemaining(8)) break;
         uint32_t factionId = packet.readUInt32();
         uint32_t reaction  = packet.readUInt32();
         forcedReactions_[factionId] = static_cast<uint8_t>(reaction);

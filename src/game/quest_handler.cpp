@@ -299,7 +299,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- SMSG_GOSSIP_POI ----
     table[Opcode::SMSG_GOSSIP_POI] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 20) return;
+        if (!packet.hasRemaining(20)) return;
         /*uint32_t flags =*/ packet.readUInt32();
         float poiX = packet.readFloat();
         float poiY = packet.readFloat();
@@ -335,7 +335,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- SMSG_QUESTGIVER_STATUS ----
     table[Opcode::SMSG_QUESTGIVER_STATUS] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 9) {
+        if (packet.hasRemaining(9)) {
             uint64_t npcGuid = packet.readUInt64();
             uint8_t status = owner_.packetParsers_->readQuestGiverStatus(packet);
             npcQuestStatus_[npcGuid] = static_cast<QuestGiverStatus>(status);
@@ -344,10 +344,10 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- SMSG_QUESTGIVER_STATUS_MULTIPLE ----
     table[Opcode::SMSG_QUESTGIVER_STATUS_MULTIPLE] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 4) return;
+        if (!packet.hasRemaining(4)) return;
         uint32_t count = packet.readUInt32();
         for (uint32_t i = 0; i < count; ++i) {
-            if (packet.getSize() - packet.getReadPos() < 9) break;
+            if (!packet.hasRemaining(9)) break;
             uint64_t npcGuid = packet.readUInt64();
             uint8_t status = owner_.packetParsers_->readQuestGiverStatus(packet);
             npcQuestStatus_[npcGuid] = static_cast<QuestGiverStatus>(status);
@@ -356,7 +356,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- SMSG_QUESTUPDATE_FAILED ----
     table[Opcode::SMSG_QUESTUPDATE_FAILED] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 4) {
+        if (packet.hasRemaining(4)) {
             uint32_t questId = packet.readUInt32();
             std::string questTitle;
             for (const auto& q : questLog_)
@@ -368,7 +368,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- SMSG_QUESTUPDATE_FAILEDTIMER ----
     table[Opcode::SMSG_QUESTUPDATE_FAILEDTIMER] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 4) {
+        if (packet.hasRemaining(4)) {
             uint32_t questId = packet.readUInt32();
             std::string questTitle;
             for (const auto& q : questLog_)
@@ -381,7 +381,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
     // ---- SMSG_QUESTGIVER_QUEST_FAILED ----
     table[Opcode::SMSG_QUESTGIVER_QUEST_FAILED] = [this](network::Packet& packet) {
         // uint32 questId + uint32 reason
-        if (packet.getSize() - packet.getReadPos() >= 8) {
+        if (packet.hasRemaining(8)) {
             uint32_t questId = packet.readUInt32();
             uint32_t reason = packet.readUInt32();
             std::string questTitle;
@@ -407,7 +407,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- SMSG_QUESTGIVER_QUEST_INVALID ----
     table[Opcode::SMSG_QUESTGIVER_QUEST_INVALID] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 4) {
+        if (packet.hasRemaining(4)) {
             uint32_t failReason = packet.readUInt32();
             pendingTurnInRewardRequest_ = false;
             const char* reasonStr = "Unknown";
@@ -454,7 +454,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- SMSG_QUESTGIVER_QUEST_COMPLETE ----
     table[Opcode::SMSG_QUESTGIVER_QUEST_COMPLETE] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 4) {
+        if (packet.hasRemaining(4)) {
             uint32_t questId = packet.readUInt32();
             LOG_INFO("Quest completed: questId=", questId);
             if (pendingTurnInQuestId_ == questId) {
@@ -501,14 +501,14 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- SMSG_QUESTUPDATE_ADD_KILL ----
     table[Opcode::SMSG_QUESTUPDATE_ADD_KILL] = [this](network::Packet& packet) {
-        size_t rem = packet.getSize() - packet.getReadPos();
+        size_t rem = packet.getRemainingSize();
         if (rem >= 12) {
             uint32_t questId = packet.readUInt32();
             clearPendingQuestAccept(questId);
             uint32_t entry = packet.readUInt32();
             uint32_t count = packet.readUInt32();
             uint32_t reqCount = 0;
-            if (packet.getSize() - packet.getReadPos() >= 4) {
+            if (packet.hasRemaining(4)) {
                 reqCount = packet.readUInt32();
             }
 
@@ -575,7 +575,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- SMSG_QUESTUPDATE_ADD_ITEM ----
     table[Opcode::SMSG_QUESTUPDATE_ADD_ITEM] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 8) {
+        if (packet.hasRemaining(8)) {
             uint32_t itemId = packet.readUInt32();
             uint32_t count = packet.readUInt32();
             owner_.queryItemInfo(itemId, 0);
@@ -640,14 +640,14 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- SMSG_QUESTUPDATE_COMPLETE ----
     table[Opcode::SMSG_QUESTUPDATE_COMPLETE] = [this](network::Packet& packet) {
-        size_t rem = packet.getSize() - packet.getReadPos();
+        size_t rem = packet.getRemainingSize();
         if (rem >= 12) {
             uint32_t questId = packet.readUInt32();
             clearPendingQuestAccept(questId);
             uint32_t entry = packet.readUInt32();
             uint32_t count = packet.readUInt32();
             uint32_t reqCount = 0;
-            if (packet.getSize() - packet.getReadPos() >= 4) reqCount = packet.readUInt32();
+            if (packet.hasRemaining(4)) reqCount = packet.readUInt32();
             if (reqCount == 0) reqCount = count;
             LOG_INFO("Quest kill update (compat via COMPLETE): questId=", questId,
                      " entry=", entry, " count=", count, "/", reqCount);
@@ -677,7 +677,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- SMSG_QUEST_FORCE_REMOVE ----
     table[Opcode::SMSG_QUEST_FORCE_REMOVE] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() < 4) {
+        if (!packet.hasRemaining(4)) {
             LOG_WARNING("SMSG_QUEST_FORCE_REMOVE/SET_REST_START too short");
             return;
         }
@@ -832,12 +832,12 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
 
     // ---- SMSG_QUESTUPDATE_ADD_PVP_KILL ----
     table[Opcode::SMSG_QUESTUPDATE_ADD_PVP_KILL] = [this](network::Packet& packet) {
-        if (packet.getSize() - packet.getReadPos() >= 16) {
+        if (packet.hasRemaining(16)) {
             /*uint64_t guid =*/ packet.readUInt64();
             uint32_t questId = packet.readUInt32();
             uint32_t count   = packet.readUInt32();
             uint32_t reqCount = 0;
-            if (packet.getSize() - packet.getReadPos() >= 4) {
+            if (packet.hasRemaining(4)) {
                 reqCount = packet.readUInt32();
             }
 
@@ -1515,7 +1515,7 @@ void QuestHandler::handleGossipMessage(network::Packet& packet) {
 }
 
 void QuestHandler::handleQuestgiverQuestList(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 8) return;
+    if (!packet.hasRemaining(8)) return;
 
     GossipMessageData data;
     data.npcGuid = packet.readUInt64();
@@ -1523,7 +1523,7 @@ void QuestHandler::handleQuestgiverQuestList(network::Packet& packet) {
     data.titleTextId = 0;
 
     std::string header = packet.readString();
-    if (packet.getSize() - packet.getReadPos() >= 8) {
+    if (packet.hasRemaining(8)) {
         (void)packet.readUInt32(); // emoteDelay / unk
         (void)packet.readUInt32(); // emote / unk
     }
@@ -1531,7 +1531,7 @@ void QuestHandler::handleQuestgiverQuestList(network::Packet& packet) {
 
     // questCount is uint8 in all WoW versions for SMSG_QUESTGIVER_QUEST_LIST.
     uint32_t questCount = 0;
-    if (packet.getSize() - packet.getReadPos() >= 1) {
+    if (packet.hasRemaining(1)) {
         questCount = packet.readUInt8();
     }
 
@@ -1539,13 +1539,13 @@ void QuestHandler::handleQuestgiverQuestList(network::Packet& packet) {
 
     data.quests.reserve(questCount);
     for (uint32_t i = 0; i < questCount; ++i) {
-        if (packet.getSize() - packet.getReadPos() < 12) break;
+        if (!packet.hasRemaining(12)) break;
         GossipQuestItem q;
         q.questId = packet.readUInt32();
         q.questIcon = packet.readUInt32();
         q.questLevel = static_cast<int32_t>(packet.readUInt32());
 
-        if (hasQuestFlagsField && packet.getSize() - packet.getReadPos() >= 5) {
+        if (hasQuestFlagsField && packet.hasRemaining(5)) {
             q.questFlags = packet.readUInt32();
             q.isRepeatable = packet.readUInt8();
         } else {
@@ -1643,10 +1643,10 @@ void QuestHandler::handleQuestPoiQueryResponse(network::Packet& packet) {
     //       uint32 unk2
     //       uint32 pointCount
     //       per point: int32 x, int32 y
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     const uint32_t questCount = packet.readUInt32();
     for (uint32_t qi = 0; qi < questCount; ++qi) {
-        if (packet.getSize() - packet.getReadPos() < 8) return;
+        if (!packet.hasRemaining(8)) return;
         const uint32_t questId  = packet.readUInt32();
         const uint32_t poiCount = packet.readUInt32();
 
@@ -1665,7 +1665,7 @@ void QuestHandler::handleQuestPoiQueryResponse(network::Packet& packet) {
         }
 
         for (uint32_t pi = 0; pi < poiCount; ++pi) {
-            if (packet.getSize() - packet.getReadPos() < 28) return;
+            if (!packet.hasRemaining(28)) return;
             packet.readUInt32();  // poiId
             packet.readUInt32();  // objIndex (int32)
             const uint32_t mapId    = packet.readUInt32();
@@ -1675,7 +1675,7 @@ void QuestHandler::handleQuestPoiQueryResponse(network::Packet& packet) {
             packet.readUInt32();  // unk2
             const uint32_t pointCount = packet.readUInt32();
             if (pointCount == 0) continue;
-            if (packet.getSize() - packet.getReadPos() < pointCount * 8) return;
+            if (packet.getRemainingSize() < pointCount * 8) return;
             float sumX = 0.0f, sumY = 0.0f;
             for (uint32_t pt = 0; pt < pointCount; ++pt) {
                 const int32_t px = static_cast<int32_t>(packet.readUInt32());
@@ -1816,12 +1816,12 @@ void QuestHandler::handleQuestOfferReward(network::Packet& packet) {
 }
 
 void QuestHandler::handleQuestConfirmAccept(network::Packet& packet) {
-    size_t rem = packet.getSize() - packet.getReadPos();
+    size_t rem = packet.getRemainingSize();
     if (rem < 4) return;
 
     sharedQuestId_    = packet.readUInt32();
     sharedQuestTitle_ = packet.readString();
-    if (packet.getSize() - packet.getReadPos() >= 8) {
+    if (packet.hasRemaining(8)) {
         sharedQuestSharerGuid_ = packet.readUInt64();
     }
 

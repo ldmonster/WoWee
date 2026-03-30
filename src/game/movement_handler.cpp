@@ -40,7 +40,7 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
                      Opcode::SMSG_SPLINE_MOVE_ROOT,
                      Opcode::SMSG_SPLINE_MOVE_SET_HOVER }) {
         table[op] = [this](network::Packet& packet) {
-            if (packet.getSize() - packet.getReadPos() >= 1)
+            if (packet.hasRemaining(1))
                 (void)packet.readPackedGuid();
         };
     }
@@ -49,7 +49,7 @@ void MovementHandler::registerOpcodes(DispatchTable& table) {
     {
         auto makeSynthHandler = [this](uint32_t synthFlags) {
             return [this, synthFlags](network::Packet& packet) {
-                if (packet.getSize() - packet.getReadPos() < 1) return;
+                if (!packet.hasRemaining(1)) return;
                 uint64_t guid = packet.readPackedGuid();
                 if (guid == 0 || guid == owner_.playerGuid || !owner_.unitMoveFlagsCallback_) return;
                 owner_.unitMoveFlagsCallback_(guid, synthFlags);
@@ -809,7 +809,7 @@ void MovementHandler::handleForceSpeedChange(network::Packet& packet, const char
         ? packet.readUInt64() : packet.readPackedGuid();
     uint32_t counter = packet.readUInt32();
 
-    size_t remaining = packet.getSize() - packet.getReadPos();
+    size_t remaining = packet.getRemainingSize();
     if (remaining >= 8) {
         packet.readUInt32();
     } else if (remaining >= 5) {
@@ -853,10 +853,10 @@ void MovementHandler::handleForceRunSpeedChange(network::Packet& packet) {
 
 void MovementHandler::handleForceMoveRootState(network::Packet& packet, bool rooted) {
     const bool rootTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
-    if (packet.getSize() - packet.getReadPos() < (rootTbc ? 8u : 2u)) return;
+    if (packet.getRemainingSize() < (rootTbc ? 8u : 2u)) return;
     uint64_t guid = rootTbc
         ? packet.readUInt64() : packet.readPackedGuid();
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     uint32_t counter = packet.readUInt32();
 
     LOG_INFO(rooted ? "SMSG_FORCE_MOVE_ROOT" : "SMSG_FORCE_MOVE_UNROOT",
@@ -879,10 +879,10 @@ void MovementHandler::handleForceMoveRootState(network::Packet& packet, bool roo
 void MovementHandler::handleForceMoveFlagChange(network::Packet& packet, const char* name,
                                                   Opcode ackOpcode, uint32_t flag, bool set) {
     const bool fmfTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
-    if (packet.getSize() - packet.getReadPos() < (fmfTbcLike ? 8u : 2u)) return;
+    if (packet.getRemainingSize() < (fmfTbcLike ? 8u : 2u)) return;
     uint64_t guid = fmfTbcLike
         ? packet.readUInt64() : packet.readPackedGuid();
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     uint32_t counter = packet.readUInt32();
 
     LOG_INFO("SMSG_FORCE_", name, ": guid=0x", std::hex, guid, std::dec, " counter=", counter);
@@ -904,9 +904,9 @@ void MovementHandler::handleForceMoveFlagChange(network::Packet& packet, const c
 
 void MovementHandler::handleMoveSetCollisionHeight(network::Packet& packet) {
     const bool legacyGuid = isClassicLikeExpansion() || isActiveExpansion("tbc");
-    if (packet.getSize() - packet.getReadPos() < (legacyGuid ? 8u : 2u)) return;
+    if (packet.getRemainingSize() < (legacyGuid ? 8u : 2u)) return;
     uint64_t guid = legacyGuid ? packet.readUInt64() : packet.readPackedGuid();
-    if (packet.getSize() - packet.getReadPos() < 8) return;
+    if (!packet.hasRemaining(8)) return;
     uint32_t counter = packet.readUInt32();
     float height = packet.readFloat();
 
@@ -926,10 +926,10 @@ void MovementHandler::handleMoveSetCollisionHeight(network::Packet& packet) {
 
 void MovementHandler::handleMoveKnockBack(network::Packet& packet) {
     const bool mkbTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
-    if (packet.getSize() - packet.getReadPos() < (mkbTbc ? 8u : 2u)) return;
+    if (packet.getRemainingSize() < (mkbTbc ? 8u : 2u)) return;
     uint64_t guid = mkbTbc
         ? packet.readUInt64() : packet.readPackedGuid();
-    if (packet.getSize() - packet.getReadPos() < 20) return;
+    if (!packet.hasRemaining(20)) return;
     uint32_t counter = packet.readUInt32();
     float vcos    = packet.readFloat();
     float vsin    = packet.readFloat();
@@ -960,7 +960,7 @@ void MovementHandler::handleMoveSetSpeed(network::Packet& packet) {
     uint64_t moverGuid = useFull
         ? packet.readUInt64() : packet.readPackedGuid();
 
-    const size_t remaining = packet.getSize() - packet.getReadPos();
+    const size_t remaining = packet.getRemainingSize();
     if (remaining < 4) return;
     if (remaining > 4) {
         packet.setReadPos(packet.getSize() - 4);
@@ -1466,7 +1466,7 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
 }
 
 void MovementHandler::handleMonsterMoveTransport(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 8 + 1 + 8 + 12) return;
+    if (packet.getRemainingSize() < 8 + 1 + 8 + 12) return;
     uint64_t moverGuid = packet.readUInt64();
     /*uint8_t unk =*/ packet.readUInt8();
     uint64_t transportGuid = packet.readUInt64();
@@ -1618,19 +1618,19 @@ void MovementHandler::handleMonsterMoveTransport(network::Packet& packet) {
 
 void MovementHandler::handleTeleportAck(network::Packet& packet) {
     const bool taTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
-    if (packet.getSize() - packet.getReadPos() < (taTbc ? 8u : 4u)) {
+    if (packet.getRemainingSize() < (taTbc ? 8u : 4u)) {
         LOG_WARNING("MSG_MOVE_TELEPORT_ACK too short");
         return;
     }
 
     uint64_t guid = taTbc
         ? packet.readUInt64() : packet.readPackedGuid();
-    if (packet.getSize() - packet.getReadPos() < 4) return;
+    if (!packet.hasRemaining(4)) return;
     uint32_t counter = packet.readUInt32();
 
     const bool taNoFlags2 = isClassicLikeExpansion() || isActiveExpansion("tbc");
     const size_t minMoveSz = taNoFlags2 ? (4 + 4 + 4 * 4) : (4 + 2 + 4 + 4 * 4);
-    if (packet.getSize() - packet.getReadPos() < minMoveSz) {
+    if (packet.getRemainingSize() < minMoveSz) {
         LOG_WARNING("MSG_MOVE_TELEPORT_ACK: not enough data for movement info");
         return;
     }
@@ -1679,7 +1679,7 @@ void MovementHandler::handleTeleportAck(network::Packet& packet) {
 }
 
 void MovementHandler::handleNewWorld(network::Packet& packet) {
-    if (packet.getSize() - packet.getReadPos() < 20) {
+    if (!packet.hasRemaining(20)) {
         LOG_WARNING("SMSG_NEW_WORLD too short");
         return;
     }
