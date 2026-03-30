@@ -209,7 +209,8 @@ void BLPLoader::decompressDXT1(const uint8_t* src, uint8_t* dst, int width, int 
             uint16_t c0 = block[0] | (block[1] << 8);
             uint16_t c1 = block[2] | (block[3] << 8);
 
-            // Convert RGB565 to RGB888
+            // Convert RGB565 to RGB888: extract 5/6/5-bit channels and scale to [0..255].
+            // R = bits[15:11] (5-bit, /31), G = bits[10:5] (6-bit, /63), B = bits[4:0] (5-bit, /31)
             uint8_t r0 = ((c0 >> 11) & 0x1F) * 255 / 31;
             uint8_t g0 = ((c0 >> 5) & 0x3F) * 255 / 63;
             uint8_t b0 = (c0 & 0x1F) * 255 / 31;
@@ -303,7 +304,7 @@ void BLPLoader::decompressDXT3(const uint8_t* src, uint8_t* dst, int width, int 
                         case 3: pixel[0] = (r0 + 2*r1) / 3; pixel[1] = (g0 + 2*g1) / 3; pixel[2] = (b0 + 2*b1) / 3; break;
                     }
 
-                    // Apply 4-bit alpha
+                    // Apply 4-bit alpha: scale [0..15] → [0..255] via (n * 255 / 15)
                     int alphaIndex = py * 4 + px;
                     uint8_t alpha4 = (alphaBlock >> (alphaIndex * 4)) & 0xF;
                     pixel[3] = alpha4 * 255 / 15;
@@ -416,7 +417,8 @@ void BLPLoader::decompressPalette(const uint8_t* src, uint8_t* dst, const uint32
         if (alphaDepth == 8) {
             dst[i * 4 + 3] = alphaData[i];
         } else if (alphaDepth == 4) {
-            // 4-bit alpha: 2 pixels per byte
+            // 4-bit alpha: 2 pixels packed per byte (low nibble first).
+            // Multiply by 17 to scale [0..15] → [0..255] (equivalent to n * 255 / 15).
             uint8_t alphaByte = alphaData[i / 2];
             dst[i * 4 + 3] = (i % 2 == 0) ? ((alphaByte & 0x0F) * 17) : ((alphaByte >> 4) * 17);
         } else if (alphaDepth == 1) {
