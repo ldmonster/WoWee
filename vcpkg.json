@@ -10,6 +10,7 @@
     "glew",
     "glm",
     "zlib",
-    "ffmpeg"
+    "ffmpeg",
+    "vulkan-headers"
   ]
 }

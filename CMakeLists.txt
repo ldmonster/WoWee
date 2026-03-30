@@ -248,27 +248,97 @@ endif()
 find_package(SDL2 REQUIRED)
 find_package(Vulkan QUIET)
 if(NOT Vulkan_FOUND)
-    # Fallback: some distros / CMake versions need pkg-config to locate Vulkan.
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(VULKAN_PKG vulkan)
-        if(VULKAN_PKG_FOUND)
-            add_library(Vulkan::Vulkan INTERFACE IMPORTED)
-            set_target_properties(Vulkan::Vulkan PROPERTIES
-                INTERFACE_INCLUDE_DIRECTORIES "${VULKAN_PKG_INCLUDE_DIRS}"
-                INTERFACE_LINK_LIBRARIES "${VULKAN_PKG_LIBRARIES}"
-            )
-            if(VULKAN_PKG_LIBRARY_DIRS)
+    # For Windows cross-compilation the host pkg-config finds the Linux libvulkan-dev
+    # and injects /usr/include as an INTERFACE_INCLUDE_DIRECTORY, which causes
+    # MinGW clang to pull in glibc headers (bits/libc-header-start.h) instead of
+    # the MinGW sysroot headers.  Skip the host pkg-config path entirely and instead
+    # locate Vulkan via vcpkg-installed vulkan-headers or the MinGW toolchain.
+    if(CMAKE_CROSSCOMPILING AND WIN32)
+        # The cross-compile build script generates a Vulkan import library
+        # (libvulkan-1.a) in ${CMAKE_BINARY_DIR}/vulkan-import from the headers.
+        set(_VULKAN_IMPORT_DIR "${CMAKE_BINARY_DIR}/vulkan-import")
+
+        find_package(VulkanHeaders CONFIG QUIET)
+        if(VulkanHeaders_FOUND)
+            if(NOT TARGET Vulkan::Vulkan)
+                add_library(Vulkan::Vulkan INTERFACE IMPORTED)
+            endif()
+            # Vulkan::Headers is provided by vcpkg's vulkan-headers port and carries
+            # the correct MinGW include path — no Linux system headers involved.
+            set_property(TARGET Vulkan::Vulkan APPEND PROPERTY
+                INTERFACE_LINK_LIBRARIES Vulkan::Headers)
+            # Link against the Vulkan loader import library (vulkan-1.dll).
+            if(EXISTS "${_VULKAN_IMPORT_DIR}/libvulkan-1.a")
                 set_property(TARGET Vulkan::Vulkan APPEND PROPERTY
-                    INTERFACE_LINK_DIRECTORIES "${VULKAN_PKG_LIBRARY_DIRS}")
+                    INTERFACE_LINK_DIRECTORIES "${_VULKAN_IMPORT_DIR}")
+                set_property(TARGET Vulkan::Vulkan APPEND PROPERTY
+                    INTERFACE_LINK_LIBRARIES vulkan-1)
             endif()
             set(Vulkan_FOUND TRUE)
-            message(STATUS "Found Vulkan via pkg-config: ${VULKAN_PKG_LIBRARIES}")
+            message(STATUS "Found Vulkan headers for Windows cross-compile via vcpkg VulkanHeaders")
+        else()
+            # Last-resort: check the LLVM-MinGW toolchain sysroot directly.
+            find_path(_VULKAN_MINGW_INCLUDE NAMES vulkan/vulkan.h
+                PATHS /opt/llvm-mingw/x86_64-w64-mingw32/include NO_DEFAULT_PATH)
+            if(_VULKAN_MINGW_INCLUDE)
+                if(NOT TARGET Vulkan::Vulkan)
+                    add_library(Vulkan::Vulkan INTERFACE IMPORTED)
+                endif()
+                set_target_properties(Vulkan::Vulkan PROPERTIES
+                    INTERFACE_INCLUDE_DIRECTORIES "${_VULKAN_MINGW_INCLUDE}")
+                # Link against the Vulkan loader import library (vulkan-1.dll).
+                if(EXISTS "${_VULKAN_IMPORT_DIR}/libvulkan-1.a")
+                    set_property(TARGET Vulkan::Vulkan APPEND PROPERTY
+                        INTERFACE_LINK_DIRECTORIES "${_VULKAN_IMPORT_DIR}")
+                    set_property(TARGET Vulkan::Vulkan APPEND PROPERTY
+                        INTERFACE_LINK_LIBRARIES vulkan-1)
+                endif()
+                set(Vulkan_FOUND TRUE)
+                message(STATUS "Found Vulkan headers in LLVM-MinGW sysroot: ${_VULKAN_MINGW_INCLUDE}")
+            endif()
+        endif()
+    elseif(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        # macOS cross-compilation: use vcpkg-installed vulkan-headers.
+        # The host pkg-config would find Linux libvulkan-dev headers which the
+        # macOS cross-compiler cannot use (different sysroot).
+        find_package(VulkanHeaders CONFIG QUIET)
+        if(VulkanHeaders_FOUND)
+            if(NOT TARGET Vulkan::Vulkan)
+                add_library(Vulkan::Vulkan INTERFACE IMPORTED)
+            endif()
+            set_property(TARGET Vulkan::Vulkan APPEND PROPERTY
+                INTERFACE_LINK_LIBRARIES Vulkan::Headers)
+            set(Vulkan_FOUND TRUE)
+            message(STATUS "Found Vulkan headers for macOS cross-compile via vcpkg VulkanHeaders")
+        endif()
+    else()
+        # Fallback: some distros / CMake versions need pkg-config to locate Vulkan.
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(VULKAN_PKG vulkan)
+            if(VULKAN_PKG_FOUND)
+                add_library(Vulkan::Vulkan INTERFACE IMPORTED)
+                set_target_properties(Vulkan::Vulkan PROPERTIES
+                    INTERFACE_INCLUDE_DIRECTORIES "${VULKAN_PKG_INCLUDE_DIRS}"
+                    INTERFACE_LINK_LIBRARIES "${VULKAN_PKG_LIBRARIES}"
+                )
+                if(VULKAN_PKG_LIBRARY_DIRS)
+                    set_property(TARGET Vulkan::Vulkan APPEND PROPERTY
+                        INTERFACE_LINK_DIRECTORIES "${VULKAN_PKG_LIBRARY_DIRS}")
+                endif()
+                set(Vulkan_FOUND TRUE)
+                message(STATUS "Found Vulkan via pkg-config: ${VULKAN_PKG_LIBRARIES}")
+            endif()
         endif()
     endif()
     if(NOT Vulkan_FOUND)
         message(FATAL_ERROR "Could not find Vulkan. Install libvulkan-dev (Linux), vulkan-loader (macOS), or the Vulkan SDK (Windows).")
     endif()
+endif()
+# macOS cross-compilation: the Vulkan loader (MoltenVK) is not available at link
+# time. Allow unresolved Vulkan symbols — they are resolved at runtime.
+if(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    add_link_options("-undefined" "dynamic_lookup")
 endif()
 # GL/GLEW kept temporarily for unconverted sub-renderers during Vulkan migration.
 # These files compile against GL types but their code is never called — the Vulkan
@@ -674,12 +744,16 @@ set(WOWEE_HEADERS
 
 set(WOWEE_PLATFORM_SOURCES)
 if(WIN32)
-    # Copy icon into build tree so llvm-rc can find it via the relative path in wowee.rc
+    # Copy icon into build tree so windres can find it via the relative path
+    # in wowee.rc ("assets\\wowee.ico").  Tell the RC compiler to also search
+    # the build directory — GNU windres uses cwd (already the build dir) but
+    # llvm-windres resolves relative to the .rc file, so it needs the hint.
     configure_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/assets/Wowee.ico
         ${CMAKE_CURRENT_BINARY_DIR}/assets/wowee.ico
         COPYONLY
     )
+    set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} -I ${CMAKE_CURRENT_BINARY_DIR} -I ${CMAKE_CURRENT_SOURCE_DIR}")
     list(APPEND WOWEE_PLATFORM_SOURCES resources/wowee.rc)
 endif()
 
