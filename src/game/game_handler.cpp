@@ -6213,39 +6213,37 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
              " entry=", goEntry, " type=", goType,
              " name='", goName, "' chestLike=", chestLike, " isMailbox=", isMailbox);
 
+    // Always send CMSG_GAMEOBJ_USE first — this triggers the server-side
+    // GameObject::Use() handler for all GO types.
+    auto usePacket = GameObjectUsePacket::build(guid);
+    socket->send(usePacket);
+    lastInteractedGoGuid_ = guid;
+
     if (chestLike) {
-        // For chest-like GOs: send CMSG_GAMEOBJ_USE (opens the chest) followed
-        // immediately by CMSG_LOOT (requests loot contents). Both sent in the
-        // same frame so the server processes them sequentially: USE transitions
-        // the GO to lootable state, then LOOT reads the contents.
-        auto usePacket = GameObjectUsePacket::build(guid);
-        socket->send(usePacket);
+        // Chest-like GOs also need a CMSG_LOOT to open the loot window.
+        // Sent in the same frame: USE transitions the GO to lootable state,
+        // then LOOT requests the contents.
         lootTarget(guid);
-        lastInteractedGoGuid_ = guid;
-    } else {
-        // Non-chest GOs (doors, buttons, quest givers, etc.): use CMSG_GAMEOBJ_USE
-        auto packet = GameObjectUsePacket::build(guid);
-        socket->send(packet);
-        lastInteractedGoGuid_ = guid;
+    } else if (isMailbox) {
+        LOG_INFO("Mailbox interaction: opening mail UI and requesting mail list");
+        mailboxGuid_ = guid;
+        mailboxOpen_ = true;
+        hasNewMail_ = false;
+        selectedMailIndex_ = -1;
+        showMailCompose_ = false;
+        refreshMailList();
+    }
 
-        if (isMailbox) {
-            LOG_INFO("Mailbox interaction: opening mail UI and requesting mail list");
-            mailboxGuid_ = guid;
-            mailboxOpen_ = true;
-            hasNewMail_ = false;
-            selectedMailIndex_ = -1;
-            showMailCompose_ = false;
-            refreshMailList();
-        }
-
-        // CMSG_GAMEOBJ_REPORT_USE for GO AI scripts (quest givers, etc.)
-        if (!isMailbox) {
-            const auto* table = getActiveOpcodeTable();
-            if (table && table->hasOpcode(Opcode::CMSG_GAMEOBJ_REPORT_USE)) {
-                network::Packet reportUse(wireOpcode(Opcode::CMSG_GAMEOBJ_REPORT_USE));
-                reportUse.writeUInt64(guid);
-                socket->send(reportUse);
-            }
+    // CMSG_GAMEOBJ_REPORT_USE triggers GO AI scripts (SmartAI, ScriptAI) which
+    // is where many quest objectives grant credit. Previously this was only sent
+    // for non-chest GOs, so chest-type quest objectives (Bundle of Wood, etc.)
+    // never triggered the server-side quest credit script.
+    if (!isMailbox) {
+        const auto* table = getActiveOpcodeTable();
+        if (table && table->hasOpcode(Opcode::CMSG_GAMEOBJ_REPORT_USE)) {
+            network::Packet reportUse(wireOpcode(Opcode::CMSG_GAMEOBJ_REPORT_USE));
+            reportUse.writeUInt64(guid);
+            socket->send(reportUse);
         }
     }
 }
