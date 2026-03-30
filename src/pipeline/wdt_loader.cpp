@@ -69,7 +69,9 @@ WDTInfo parseWDT(const std::vector<uint8_t>& data) {
             // Null-terminated WMO path string(s)
             if (chunkSize > 0) {
                 const char* str = reinterpret_cast<const char*>(chunkData);
-                size_t len = std::strlen(str);
+                // Bound scan to chunkSize to avoid OOB read on truncated files
+                // (strlen has no upper bound if the data lacks a null terminator).
+                size_t len = strnlen(str, chunkSize);
                 if (len > 0) {
                     info.rootWMOPath = std::string(str, len);
                     LOG_DEBUG("WDT root WMO: ", info.rootWMOPath);
