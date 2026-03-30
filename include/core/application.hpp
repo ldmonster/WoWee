@@ -344,7 +344,8 @@ private:
     std::unordered_map<uint64_t, OnlinePlayerAppearanceState> onlinePlayerAppearance_;
     std::unordered_map<uint64_t, std::pair<std::array<uint32_t, 19>, std::array<uint8_t, 19>>> pendingOnlinePlayerEquipment_;
     // Deferred equipment compositing queue — processes max 1 per frame to avoid stutter
-    std::vector<std::pair<uint64_t, std::pair<std::array<uint32_t, 19>, std::array<uint8_t, 19>>>> deferredEquipmentQueue_;
+    // deque: consumed from front in a loop; vector::erase(begin) would be O(n²).
+    std::deque<std::pair<uint64_t, std::pair<std::array<uint32_t, 19>, std::array<uint8_t, 19>>>> deferredEquipmentQueue_;
     void processDeferredEquipmentQueue();
     // Async equipment texture pre-decode: BLP decode on background thread, composite on main thread
     struct PreparedEquipmentUpdate {
@@ -402,7 +403,7 @@ private:
         uint8_t facialFeatures;
         float x, y, z, orientation;
     };
-    std::vector<PendingPlayerSpawn> pendingPlayerSpawns_;
+    std::deque<PendingPlayerSpawn> pendingPlayerSpawns_;
     std::unordered_set<uint64_t> pendingPlayerSpawnGuids_;
     void processPlayerSpawnQueue();
     std::unordered_set<uint64_t> creaturePermanentFailureGuids_;
@@ -415,7 +416,7 @@ private:
         float x, y, z, orientation;
         float scale = 1.0f;
     };
-    std::vector<PendingGameObjectSpawn> pendingGameObjectSpawns_;
+    std::deque<PendingGameObjectSpawn> pendingGameObjectSpawns_;
     void processGameObjectSpawnQueue();
 
     // Async WMO loading for game objects (file I/O + parse on background thread)
