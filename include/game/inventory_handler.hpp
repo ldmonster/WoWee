@@ -374,6 +374,7 @@ private:
         uint32_t offset = 0;
     };
     AuctionSearchParams lastAuctionSearch_;
+    bool hasAuctionSearch_ = false;  // true after any search (including empty-name browse-all)
     enum class AuctionResultTarget { BROWSE, OWNER, BIDDER };
     AuctionResultTarget pendingAuctionTarget_ = AuctionResultTarget::BROWSE;
 

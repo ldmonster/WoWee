@@ -1834,6 +1834,7 @@ void InventoryHandler::auctionSearch(const std::string& name, uint8_t levelMin, 
                                       uint32_t invTypeMask, uint8_t usableOnly, uint32_t offset) {
     if (owner_.state != WorldState::IN_WORLD || !owner_.socket || auctioneerGuid_ == 0) return;
     lastAuctionSearch_ = {name, levelMin, levelMax, quality, itemClass, itemSubClass, invTypeMask, usableOnly, offset};
+    hasAuctionSearch_ = true;
     pendingAuctionTarget_ = AuctionResultTarget::BROWSE;
     auto packet = AuctionListItemsPacket::build(auctioneerGuid_, offset, name,
                                                   levelMin, levelMax, invTypeMask,
@@ -1946,8 +1947,9 @@ void InventoryHandler::handleAuctionCommandResult(network::Packet& packet) {
             owner_.addonEventCallback_("PLAYER_MONEY", {});
             owner_.addonEventCallback_("BAG_UPDATE", {});
         }
-        // Re-query after successful buy/bid
-        if (action == 2 && lastAuctionSearch_.name.length() > 0) {
+        // Re-query after successful buy/bid so the list reflects the change.
+        // Previously gated on name.length()>0 which skipped browse-all (empty name).
+        if (action == 2 && hasAuctionSearch_) {
             auctionSearch(lastAuctionSearch_.name, lastAuctionSearch_.levelMin, lastAuctionSearch_.levelMax,
                          lastAuctionSearch_.quality, lastAuctionSearch_.itemClass, lastAuctionSearch_.itemSubClass,
                          lastAuctionSearch_.invTypeMask, lastAuctionSearch_.usableOnly, lastAuctionSearch_.offset);
