@@ -2357,9 +2357,9 @@ void InventoryHandler::handleItemQueryResponse(network::Packet& packet) {
     }
 
     owner_.pendingItemQueries_.erase(data.entry);
-    LOG_WARNING("handleItemQueryResponse: entry=", data.entry, " name='", data.name,
-              "' displayInfoId=", data.displayInfoId, " valid=", data.valid,
-              " pending=", owner_.pendingItemQueries_.size());
+    LOG_DEBUG("handleItemQueryResponse: entry=", data.entry, " name='", data.name,
+             "' class=", data.itemClass, " subClass=", data.subClass,
+             " invType=", data.inventoryType, " valid=", data.valid);
 
     if (data.valid) {
         owner_.itemInfoCache_[data.entry] = data;

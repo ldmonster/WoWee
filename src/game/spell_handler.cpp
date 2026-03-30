@@ -852,8 +852,7 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
         return;
     }
     LOG_DEBUG("SMSG_SPELL_START: caster=0x", std::hex, data.casterUnit, std::dec,
-              " spell=", data.spellId, " castTime=", data.castTime,
-              " isPlayer=", (data.casterUnit == owner_.playerGuid));
+              " spell=", data.spellId, " castTime=", data.castTime);
 
     // Track cast bar for any non-player caster
     if (data.casterUnit != owner_.playerGuid && data.castTime > 0) {

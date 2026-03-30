@@ -10620,12 +10620,13 @@ void GameScreen::renderCastBar(game::GameHandler& gameHandler) {
     float barX = (screenW - barW) / 2.0f;
     float barY = screenH - 120.0f;
 
-    ImGui::SetNextWindowPos(ImVec2(barX, barY), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(barX, barY), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(barW, 40), ImGuiCond_Always);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar |
-                             ImGuiWindowFlags_NoScrollbar;
+                             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoFocusOnAppearing;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 0.9f));
