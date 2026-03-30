@@ -82,9 +82,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         }
         if (owner_.addonEventCallback_) owner_.addonEventCallback_("PLAYER_MONEY", {});
     };
-    for (auto op : { Opcode::SMSG_LOOT_CLEAR_MONEY }) {
-        table[op] = [](network::Packet& /*packet*/) {};
-    }
+    table[Opcode::SMSG_LOOT_CLEAR_MONEY] = [](network::Packet& /*packet*/) {};
 
     // ---- Read item (books) (moved from GameHandler) ----
     table[Opcode::SMSG_READ_ITEM_OK] = [this](network::Packet& packet) {
@@ -196,7 +194,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         //   +slot(4)+itemId(4)+suffixFactor(4)+randomPropertyId(4)+count(4)+countInInventory(4)
         if (!packet.hasRemaining(45)) return;
         uint64_t guid = packet.readUInt64();
-        if (guid != owner_.playerGuid) { packet.setReadPos(packet.getSize()); return; }
+        if (guid != owner_.playerGuid) { packet.skipAll(); return; }
         /*uint32_t received      =*/ packet.readUInt32();
         /*uint32_t created       =*/ packet.readUInt32();
         /*uint32_t displayInChat =*/ packet.readUInt32();
@@ -540,7 +538,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
             else
                 owner_.addSystemChatMessage("Your auction of " + itemLink + " has sold!");
         }
-        packet.setReadPos(packet.getSize());
+        packet.skipAll();
     };
 
     table[Opcode::SMSG_AUCTION_BIDDER_NOTIFICATION] = [this](network::Packet& packet) {
@@ -584,7 +582,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
             std::string remLink = buildItemLink(itemEntry, remQuality, rawName3);
             owner_.addSystemChatMessage("Your auction of " + remLink + " has expired.");
         }
-        packet.setReadPos(packet.getSize());
+        packet.skipAll();
     };
 
     // ---- Equipment Sets ----
@@ -1675,7 +1673,7 @@ void InventoryHandler::handleQueryNextMailTime(network::Packet& packet) {
     float nextTime = packet.readFloat();
     uint32_t count = packet.readUInt32();
     hasNewMail_ = (nextTime >= 0.0f && count > 0);
-    packet.setReadPos(packet.getSize());
+    packet.skipAll();
 }
 
 // ============================================================
@@ -2153,7 +2151,7 @@ void InventoryHandler::handleTradeStatusExtended(network::Packet& packet) {
         // Per-slot: 4(item)+4(display)+4(stack)+4(wrapped)+8(creator)
         //           +4(enchant)+3×4(gems)+4(maxDur)+4(dur)+4(spellCharges)
         //           +4(suffixFactor)+4(randomPropId)+4(lockId) = 64 bytes
-        if (!packet.hasRemaining(64)) { packet.setReadPos(packet.getSize()); return; }
+        if (!packet.hasRemaining(64)) { packet.skipAll(); return; }
         uint32_t itemId    = packet.readUInt32();
         uint32_t displayId = packet.readUInt32();
         uint32_t stackCnt  = packet.readUInt32();
@@ -2291,7 +2289,7 @@ void InventoryHandler::handleEquipmentSetList(network::Packet& packet) {
     uint32_t count = packet.readUInt32();
     if (count > 10) {
         LOG_WARNING("SMSG_EQUIPMENT_SET_LIST: unexpected count ", count, ", ignoring");
-        packet.setReadPos(packet.getSize());
+        packet.skipAll();
         return;
     }
     equipmentSets_.clear();
