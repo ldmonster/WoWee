@@ -388,17 +388,21 @@ bool TerrainRenderer::loadTerrain(const pipeline::TerrainMesh& mesh,
             allocCI.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
             VmaAllocationInfo mapInfo{};
-            vmaCreateBuffer(vkCtx->getAllocator(), &bufCI, &allocCI,
-                            &gpuChunk.paramsUBO, &gpuChunk.paramsAlloc, &mapInfo);
+            // Check return value — a null UBO handle would cause the GPU to
+            // read from an invalid descriptor, crashing the driver under
+            // memory pressure instead of gracefully skipping the chunk.
+            if (vmaCreateBuffer(vkCtx->getAllocator(), &bufCI, &allocCI,
+                                &gpuChunk.paramsUBO, &gpuChunk.paramsAlloc, &mapInfo) != VK_SUCCESS) {
+                LOG_WARNING("Terrain chunk UBO allocation failed — skipping chunk");
+                destroyChunkGPU(gpuChunk);
+                continue;
+            }
             if (mapInfo.pMappedData) {
                 std::memcpy(mapInfo.pMappedData, &params, sizeof(params));
             }
 
-            // Allocate and write material descriptor set
             gpuChunk.materialSet = allocateMaterialSet();
             if (!gpuChunk.materialSet) {
-                // Pool exhaustion can happen transiently while tile churn is high.
-                // Drop this chunk instead of retaining non-renderable GPU resources.
                 destroyChunkGPU(gpuChunk);
                 continue;
             }
@@ -484,15 +488,18 @@ bool TerrainRenderer::loadTerrainIncremental(const pipeline::TerrainMesh& mesh,
         allocCI.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
         VmaAllocationInfo mapInfo{};
-        vmaCreateBuffer(vkCtx->getAllocator(), &bufCI, &allocCI,
-                        &gpuChunk.paramsUBO, &gpuChunk.paramsAlloc, &mapInfo);
+        if (vmaCreateBuffer(vkCtx->getAllocator(), &bufCI, &allocCI,
+                            &gpuChunk.paramsUBO, &gpuChunk.paramsAlloc, &mapInfo) != VK_SUCCESS) {
+            LOG_WARNING("Terrain chunk UBO allocation failed (incremental) — skipping chunk");
+            destroyChunkGPU(gpuChunk);
+            continue;
+        }
         if (mapInfo.pMappedData) {
             std::memcpy(mapInfo.pMappedData, &params, sizeof(params));
         }
 
         gpuChunk.materialSet = allocateMaterialSet();
         if (!gpuChunk.materialSet) {
-            // Keep memory/work bounded under descriptor pool pressure.
             destroyChunkGPU(gpuChunk);
             continue;
         }
