@@ -1546,13 +1546,15 @@ void SpellHandler::handleListStabledPets(network::Packet& packet) {
     owner_.stabledPets_.reserve(petCount);
 
     for (uint8_t i = 0; i < petCount; ++i) {
-        if (!packet.hasRemaining(4) + 4 + 4) break;
+        // petNumber(4) + entry(4) + level(4) = 12 bytes before the name string
+        if (!packet.hasRemaining(12)) break;
         GameHandler::StabledPet pet;
         pet.petNumber = packet.readUInt32();
         pet.entry     = packet.readUInt32();
         pet.level     = packet.readUInt32();
         pet.name      = packet.readString();
-        if (!packet.hasRemaining(4) + 1) break;
+        // displayId(4) + isActive(1) = 5 bytes after the name string
+        if (!packet.hasRemaining(5)) break;
         pet.displayId = packet.readUInt32();
         pet.isActive  = (packet.readUInt8() != 0);
         owner_.stabledPets_.push_back(std::move(pet));
@@ -1614,6 +1616,17 @@ void SpellHandler::resetCastState() {
     queuedSpellTarget_ = 0;
     owner_.pendingGameObjectInteractGuid_ = 0;
     owner_.lastInteractedGoGuid_ = 0;
+}
+
+void SpellHandler::resetAllState() {
+    knownSpells_.clear();
+    spellCooldowns_.clear();
+    playerAuras_.clear();
+    targetAuras_.clear();
+    unitAurasCache_.clear();
+    unitCastStates_.clear();
+    resetCastState();
+    resetTalentState();
 }
 
 void SpellHandler::resetTalentState() {
