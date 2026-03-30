@@ -547,10 +547,12 @@ void SpellHandler::useItemById(uint32_t itemId) {
 }
 
 const std::vector<SpellHandler::SpellBookTab>& SpellHandler::getSpellBookTabs() {
-    static size_t lastSpellCount = 0;
-    if (lastSpellCount == knownSpells_.size() && !spellBookTabsDirty_)
+    // Must be an instance member, not static — a static is shared across all
+    // SpellHandler instances, so switching characters with the same spell count
+    // would skip the rebuild and return the previous character's tabs.
+    if (lastSpellCount_ == knownSpells_.size() && !spellBookTabsDirty_)
         return spellBookTabs_;
-    lastSpellCount = knownSpells_.size();
+    lastSpellCount_ = knownSpells_.size();
     spellBookTabsDirty_ = false;
     spellBookTabs_.clear();
 

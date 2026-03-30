@@ -307,6 +307,7 @@ private:
 
     // Spell book tabs
     std::vector<SpellBookTab> spellBookTabs_;
+    size_t lastSpellCount_ = 0;
     bool spellBookTabsDirty_ = true;
 
     // Talent wipe confirm dialog
