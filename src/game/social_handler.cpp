@@ -778,7 +778,11 @@ void SocialHandler::removeIgnore(const std::string& playerName) {
     auto packet = DelIgnorePacket::build(it->second);
     owner_.socket->send(packet);
     owner_.addSystemChatMessage("Removing " + playerName + " from ignore list...");
-    owner_.ignoreCache.erase(it);
+    // Don't erase from ignoreCache here — wait for the server's SMSG_IGNORE_LIST
+    // response to confirm. Erasing optimistically desyncs the cache if the server
+    // rejects the request. (Compare with removeFriend which also waits for
+    // SMSG_FRIEND_STATUS before updating its cache.)
+    owner_.ignoreListGuids_.erase(it->second);
     LOG_INFO("Sent remove ignore request for: ", playerName);
 }
 
@@ -1817,8 +1821,12 @@ void SocialHandler::handleFriendStatus(network::Packet& packet) {
         if (it != owner_.getPlayerNameCache().end()) playerName = it->second;
     }
 
-    if (data.status == 1 || data.status == 2) owner_.friendsCache[playerName] = data.guid;
-    else if (data.status == 0) owner_.friendsCache.erase(playerName);
+    // Only update friendsCache when we have a resolved name — inserting an empty
+    // key creates a phantom entry that masks the real one when the name arrives.
+    if (!playerName.empty()) {
+        if (data.status == 1 || data.status == 2) owner_.friendsCache[playerName] = data.guid;
+        else if (data.status == 0) owner_.friendsCache.erase(playerName);
+    }
 
     if (data.status == 0) {
         if (cit != owner_.contacts_.end())
