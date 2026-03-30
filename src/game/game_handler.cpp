@@ -1356,55 +1356,28 @@ void GameHandler::update(float deltaTime) {
             checkAreaTriggers();
         }
 
-        // Update cast timer (Phase 3)
+        // Cancel GO interaction cast if player enters combat (auto-attack).
         if (pendingGameObjectInteractGuid_ != 0 &&
             combatHandler_ && (combatHandler_->isAutoAttacking() || combatHandler_->hasAutoAttackIntent())) {
             pendingGameObjectInteractGuid_ = 0;
-            if (spellHandler_) { spellHandler_->casting_ = false; spellHandler_->castIsChannel_ = false; spellHandler_->currentCastSpellId_ = 0; spellHandler_->castTimeRemaining_ = 0.0f; }
+            if (spellHandler_) spellHandler_->resetCastState();
             addUIError("Interrupted.");
             addSystemChatMessage("Interrupted.");
         }
-        if (spellHandler_ && spellHandler_->casting_ && spellHandler_->castTimeRemaining_ > 0.0f) {
-            spellHandler_->castTimeRemaining_ -= deltaTime;
-            if (spellHandler_->castTimeRemaining_ <= 0.0f) {
-                if (pendingGameObjectInteractGuid_ != 0) {
-                    uint64_t interactGuid = pendingGameObjectInteractGuid_;
-                    pendingGameObjectInteractGuid_ = 0;
-                    performGameObjectInteractionNow(interactGuid);
-                }
-                spellHandler_->casting_ = false;
-                spellHandler_->castIsChannel_ = false;
-                spellHandler_->currentCastSpellId_ = 0;
-                spellHandler_->castTimeRemaining_ = 0.0f;
+        // Check if client-side cast timer expired (tick-down is in SpellHandler::updateTimers).
+        // SMSG_SPELL_GO normally clears casting, but GO interaction casts are client-timed
+        // and need this fallback to trigger the loot/use action.
+        if (spellHandler_ && spellHandler_->casting_ && spellHandler_->castTimeRemaining_ <= 0.0f) {
+            if (pendingGameObjectInteractGuid_ != 0) {
+                uint64_t interactGuid = pendingGameObjectInteractGuid_;
+                pendingGameObjectInteractGuid_ = 0;
+                performGameObjectInteractionNow(interactGuid);
             }
+            spellHandler_->resetCastState();
         }
 
-        // Tick down all tracked unit cast bars (in SpellHandler)
-        if (spellHandler_) {
-            for (auto it = spellHandler_->unitCastStates_.begin(); it != spellHandler_->unitCastStates_.end(); ) {
-                auto& s = it->second;
-                if (s.casting && s.timeRemaining > 0.0f) {
-                    s.timeRemaining -= deltaTime;
-                    if (s.timeRemaining <= 0.0f) {
-                        it = spellHandler_->unitCastStates_.erase(it);
-                        continue;
-                    }
-                }
-                ++it;
-            }
-        }
-
-        // Update spell cooldowns (in SpellHandler)
-        if (spellHandler_) {
-            for (auto it = spellHandler_->spellCooldowns_.begin(); it != spellHandler_->spellCooldowns_.end(); ) {
-                it->second -= deltaTime;
-                if (it->second <= 0.0f) {
-                    it = spellHandler_->spellCooldowns_.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-        }
+        // Unit cast states and spell cooldowns are ticked by SpellHandler::updateTimers()
+        // (called from GameHandler::updateTimers above). No duplicate tick-down here.
 
         // Update action bar cooldowns
         for (auto& slot : actionBar) {

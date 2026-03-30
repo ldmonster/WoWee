@@ -1615,6 +1615,7 @@ void SpellHandler::resetCastState() {
     castIsChannel_ = false;
     currentCastSpellId_ = 0;
     castTimeRemaining_ = 0.0f;
+    castTimeTotal_ = 0.0f;  // Must match castTimeRemaining_ to keep getCastProgress() == 0
     craftQueueSpellId_ = 0;
     craftQueueRemaining_ = 0;
     queuedSpellId_ = 0;
@@ -1853,11 +1854,16 @@ float SpellHandler::getSpellDuration(uint32_t spellId) const {
 }
 
 const std::string& SpellHandler::getSpellName(uint32_t spellId) const {
+    // Lazy-load Spell.dbc so callers don't need to know about initialization order.
+    // Every other DBC-backed getter (getSpellDescription, getSpellSchoolMask, etc.)
+    // already does this; these two were missed.
+    loadSpellNameCache();
     auto it = owner_.spellNameCache_.find(spellId);
     return (it != owner_.spellNameCache_.end()) ? it->second.name : SPELL_EMPTY_STRING;
 }
 
 const std::string& SpellHandler::getSpellRank(uint32_t spellId) const {
+    loadSpellNameCache();
     auto it = owner_.spellNameCache_.find(spellId);
     return (it != owner_.spellNameCache_.end()) ? it->second.rank : SPELL_EMPTY_STRING;
 }
