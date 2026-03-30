@@ -781,7 +781,7 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
                                         std::replace(np.begin(), np.end(), '/', '\\');
                                         auto knownIt = knownDoorHashes().find(np);
                                         if (knownIt != knownDoorHashes().end()) { found = true; hash.assign(knownIt->second.begin(), knownIt->second.end()); }
-                                        auto* am = core::Application::getInstance().getAssetManager();
+                                        auto* am = owner_.services().assetManager;
                                         if (am && am->isInitialized() && !found) {
                                             std::vector<uint8_t> fd;
                                             std::string rp = resolveCaseInsensitiveDataPath(am->getDataPath(), filePath);
@@ -1194,7 +1194,7 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
                                 hash.assign(knownIt->second.begin(), knownIt->second.end());
                             }
 
-                            auto* am = core::Application::getInstance().getAssetManager();
+                            auto* am = owner_.services().assetManager;
                             if (am && am->isInitialized() && !found) {
                                 std::vector<uint8_t> fileData;
                                 std::string resolvedFsPath =

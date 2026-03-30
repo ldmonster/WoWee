@@ -469,7 +469,7 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
                         owner_.questCompleteCallback_(questId, it->title);
                     }
                     // Play quest-complete sound
-                    if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                    if (auto* renderer = owner_.services().renderer) {
                         if (auto* sfx = renderer->getUiSoundManager())
                             sfx->playQuestComplete();
                     }
@@ -1092,7 +1092,7 @@ void QuestHandler::acceptQuest() {
     pendingQuestAcceptNpcGuids_[questId] = npcGuid;
 
     // Play quest-accept sound
-    if (auto* renderer = core::Application::getInstance().getRenderer()) {
+    if (auto* renderer = owner_.services().renderer) {
         if (auto* sfx = renderer->getUiSoundManager())
             sfx->playQuestActivate();
     }

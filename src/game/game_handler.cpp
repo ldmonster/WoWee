@@ -1,4 +1,5 @@
 #include "game/game_handler.hpp"
+#include "game/game_utils.hpp"
 #include "game/chat_handler.hpp"
 #include "game/movement_handler.hpp"
 #include "game/combat_handler.hpp"
@@ -91,23 +92,6 @@ bool isAuthCharPipelineOpcode(LogicalOpcode op) {
 } // end anonymous namespace
 
 namespace {
-
-bool isActiveExpansion(const char* expansionId) {
-    auto& app = core::Application::getInstance();
-    auto* registry = app.getExpansionRegistry();
-    if (!registry) return false;
-    auto* profile = registry->getActive();
-    if (!profile) return false;
-    return profile->id == expansionId;
-}
-
-bool isClassicLikeExpansion() {
-    return isActiveExpansion("classic") || isActiveExpansion("turtle");
-}
-
-bool isPreWotlk() {
-    return isClassicLikeExpansion() || isActiveExpansion("tbc");
-}
 
 bool envFlagEnabled(const char* key, bool defaultValue = false) {
     const char* raw = std::getenv(key);
@@ -615,7 +599,7 @@ static QuestQueryRewards tryParseQuestRewards(const std::vector<uint8_t>& data,
 
 template<typename ManagerGetter, typename Callback>
 void GameHandler::withSoundManager(ManagerGetter getter, Callback cb) {
-    if (auto* renderer = core::Application::getInstance().getRenderer()) {
+    if (auto* renderer = services_.renderer) {
         if (auto* mgr = (renderer->*getter)()) cb(mgr);
     }
 }
@@ -639,7 +623,8 @@ void GameHandler::registerWorldHandler(LogicalOpcode op, void (GameHandler::*han
     };
 }
 
-GameHandler::GameHandler() {
+GameHandler::GameHandler(GameServices& services)
+    : services_(services) {
     LOG_DEBUG("GameHandler created");
 
     setActiveOpcodeTable(&opcodeTable_);
@@ -819,7 +804,7 @@ void GameHandler::resetDbcCaches() {
     // Clear the AssetManager DBC file cache so that expansion-specific DBCs
     // (CharSections, ItemDisplayInfo, etc.) are reloaded from the new expansion's
     // MPQ files instead of returning stale data from a previous session/expansion.
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = services_.assetManager;
     if (am) {
         am->clearDBCCache();
     }
@@ -1213,7 +1198,7 @@ void GameHandler::updateTimers(float deltaTime) {
             }
             if (!alreadyAnnounced && pendingLootMoneyAmount_ > 0) {
                 addSystemChatMessage("Looted: " + formatCopperAmount(pendingLootMoneyAmount_));
-                auto* renderer = core::Application::getInstance().getRenderer();
+                auto* renderer = services_.renderer;
                 if (renderer) {
                     if (auto* sfx = renderer->getUiSoundManager()) {
                         if (pendingLootMoneyAmount_ >= 10000) {
@@ -3105,7 +3090,7 @@ void GameHandler::registerOpcodeHandlers() {
         uint64_t impTargetGuid = packet.readUInt64();
         uint32_t impVisualId   = packet.readUInt32();
         if (impVisualId == 0) return;
-        auto* renderer = core::Application::getInstance().getRenderer();
+        auto* renderer = services_.renderer;
         if (!renderer) return;
         glm::vec3 spawnPos;
         if (impTargetGuid == playerGuid) {
@@ -7268,7 +7253,7 @@ void GameHandler::loadTitleNameCache() const {
     if (titleNameCacheLoaded_) return;
     titleNameCacheLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = services_.assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto dbc = am->loadDBC("CharTitles.dbc");
@@ -7320,7 +7305,7 @@ void GameHandler::loadAchievementNameCache() {
     if (achievementNameCacheLoaded_) return;
     achievementNameCacheLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = services_.assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto dbc = am->loadDBC("Achievement.dbc");
@@ -7405,7 +7390,7 @@ void GameHandler::loadFactionNameCache() const {
     if (factionNameCacheLoaded_) return;
     factionNameCacheLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = services_.assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto dbc = am->loadDBC("Faction.dbc");
@@ -7506,7 +7491,7 @@ void GameHandler::loadAreaNameCache() const {
     if (areaNameCacheLoaded_) return;
     areaNameCacheLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = services_.assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto dbc = am->loadDBC("WorldMapArea.dbc");
@@ -7541,7 +7526,7 @@ void GameHandler::loadMapNameCache() const {
     if (mapNameCacheLoaded_) return;
     mapNameCacheLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = services_.assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto dbc = am->loadDBC("Map.dbc");
@@ -7574,7 +7559,7 @@ void GameHandler::loadLfgDungeonDbc() const {
     if (lfgDungeonNameCacheLoaded_) return;
     lfgDungeonNameCacheLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = services_.assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto dbc = am->loadDBC("LFGDungeons.dbc");

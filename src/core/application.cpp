@@ -256,7 +256,6 @@ bool Application::initialize() {
 
     // Create subsystems
     authHandler = std::make_unique<auth::AuthHandler>();
-    gameHandler = std::make_unique<game::GameHandler>();
     world = std::make_unique<game::World>();
 
     // Create and initialize expansion registry
@@ -267,6 +266,14 @@ bool Application::initialize() {
 
     // Create asset manager
     assetManager = std::make_unique<pipeline::AssetManager>();
+
+    // Populate game services — all subsystems now available
+    gameServices_.renderer = renderer.get();
+    gameServices_.assetManager = assetManager.get();
+    gameServices_.expansionRegistry = expansionRegistry_.get();
+
+    // Create game handler with explicit service dependencies
+    gameHandler = std::make_unique<game::GameHandler>(gameServices_);
 
     // Try to get WoW data path from environment variable
     const char* dataPathEnv = std::getenv("WOW_DATA_PATH");
@@ -5657,6 +5664,8 @@ void Application::buildCreatureDisplayLookups() {
 
     gryphonDisplayId_ = resolveDisplayIdForExactPath("Creature\\Gryphon\\Gryphon.m2");
     wyvernDisplayId_  = resolveDisplayIdForExactPath("Creature\\Wyvern\\Wyvern.m2");
+    gameServices_.gryphonDisplayId = gryphonDisplayId_;
+    gameServices_.wyvernDisplayId  = wyvernDisplayId_;
     LOG_INFO("Taxi mount displayIds: gryphon=", gryphonDisplayId_, " wyvern=", wyvernDisplayId_);
 
     // CharHairGeosets.dbc: maps (race, sex, hairStyleId) → skinSectionId for hair mesh

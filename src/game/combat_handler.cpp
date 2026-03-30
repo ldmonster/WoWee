@@ -451,7 +451,7 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
     }
 
     // Play combat sounds via CombatSoundManager + character vocalizations
-    if (auto* renderer = core::Application::getInstance().getRenderer()) {
+    if (auto* renderer = owner_.services().renderer) {
         if (auto* csm = renderer->getCombatSoundManager()) {
             auto weaponSize = audio::CombatSoundManager::WeaponSize::MEDIUM;
             if (data.isMiss()) {

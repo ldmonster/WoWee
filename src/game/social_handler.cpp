@@ -1049,7 +1049,7 @@ void SocialHandler::handleDuelRequested(network::Packet& packet) {
     }
     pendingDuelRequest_ = true;
     owner_.addSystemChatMessage(duelChallengerName_ + " challenges you to a duel!");
-    if (auto* renderer = core::Application::getInstance().getRenderer())
+    if (auto* renderer = owner_.services().renderer)
         if (auto* sfx = renderer->getUiSoundManager()) sfx->playTargetSelect();
     if (owner_.addonEventCallback_) owner_.addonEventCallback_("DUEL_REQUESTED", {duelChallengerName_});
 }
@@ -1215,7 +1215,7 @@ void SocialHandler::handleGroupInvite(network::Packet& packet) {
     pendingInviterName = data.inviterName;
     if (!data.inviterName.empty())
         owner_.addSystemChatMessage(data.inviterName + " has invited you to a group.");
-    if (auto* renderer = core::Application::getInstance().getRenderer())
+    if (auto* renderer = owner_.services().renderer)
         if (auto* sfx = renderer->getUiSoundManager()) sfx->playTargetSelect();
     if (owner_.addonEventCallback_)
         owner_.addonEventCallback_("PARTY_INVITE_REQUEST", {data.inviterName});

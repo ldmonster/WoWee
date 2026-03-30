@@ -70,7 +70,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         }
         if (!alreadyAnnounced) {
             owner_.addSystemChatMessage("Looted: " + formatCopperAmount(amount));
-            auto* renderer = core::Application::getInstance().getRenderer();
+            auto* renderer = owner_.services().renderer;
             if (renderer) {
                 if (auto* sfx = renderer->getUiSoundManager()) {
                     if (amount >= 10000) sfx->playLootCoinLarge();
@@ -222,7 +222,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         std::string msg = "Received item: " + link;
         if (count > 1) msg += " x" + std::to_string(count);
         owner_.addSystemChatMessage(msg);
-        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+        if (auto* renderer = owner_.services().renderer) {
             if (auto* sfx = renderer->getUiSoundManager())
                 sfx->playLootItem();
         }
@@ -253,7 +253,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                      " result=", static_cast<int>(result));
             if (result == 0) {
                 pendingSellToBuyback_.erase(itemGuid);
-                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* renderer = owner_.services().renderer) {
                     if (auto* sfx = renderer->getUiSoundManager())
                         sfx->playDropOnGround();
                 }
@@ -295,7 +295,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                 const char* msg = (result < 7) ? sellErrors[result] : "Unknown sell error";
                 owner_.addUIError(std::string("Sell failed: ") + msg);
                 owner_.addSystemChatMessage(std::string("Sell failed: ") + msg);
-                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* renderer = owner_.services().renderer) {
                     if (auto* sfx = renderer->getUiSoundManager())
                         sfx->playError();
                 }
@@ -392,7 +392,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                 std::string msg = errMsg ? errMsg : "Inventory error (" + std::to_string(error) + ").";
                 owner_.addUIError(msg);
                 owner_.addSystemChatMessage(msg);
-                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* renderer = owner_.services().renderer) {
                     if (auto* sfx = renderer->getUiSoundManager())
                         sfx->playError();
                 }
@@ -450,7 +450,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
             }
             owner_.addUIError(msg);
             owner_.addSystemChatMessage(msg);
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* renderer = owner_.services().renderer) {
                 if (auto* sfx = renderer->getUiSoundManager())
                     sfx->playError();
             }
@@ -474,7 +474,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                 std::string msg = "Purchased: " + buildItemLink(pendingBuyItemId_, buyQuality, itemLabel);
                 if (itemCount > 1) msg += " x" + std::to_string(itemCount);
                 owner_.addSystemChatMessage(msg);
-                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* renderer = owner_.services().renderer) {
                     if (auto* sfx = renderer->getUiSoundManager())
                         sfx->playPickupBag();
                 }
@@ -766,7 +766,7 @@ void InventoryHandler::handleLootRemoved(network::Packet& packet) {
             std::string msgStr = "Looted: " + link;
             if (it->count > 1) msgStr += " x" + std::to_string(it->count);
             owner_.addSystemChatMessage(msgStr);
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* renderer = owner_.services().renderer) {
                 if (auto* sfx = renderer->getUiSoundManager())
                     sfx->playLootItem();
             }
@@ -2380,7 +2380,7 @@ void InventoryHandler::handleItemQueryResponse(network::Packet& packet) {
                 std::string msg = "Received: " + link;
                 if (it->count > 1) msg += " x" + std::to_string(it->count);
                 owner_.addSystemChatMessage(msg);
-                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* renderer = owner_.services().renderer) {
                     if (auto* sfx = renderer->getUiSoundManager()) sfx->playLootItem();
                 }
                 if (owner_.itemLootCallback_) owner_.itemLootCallback_(data.entry, it->count, data.quality, itemName);
@@ -3147,7 +3147,7 @@ void InventoryHandler::handleTrainerBuySucceeded(network::Packet& packet) {
         owner_.addSystemChatMessage("You have learned " + name + ".");
     else
         owner_.addSystemChatMessage("Spell learned.");
-    if (auto* renderer = core::Application::getInstance().getRenderer())
+    if (auto* renderer = owner_.services().renderer)
         if (auto* sfx = renderer->getUiSoundManager()) sfx->playQuestActivate();
     owner_.fireAddonEvent("TRAINER_UPDATE", {});
     owner_.fireAddonEvent("SPELLS_CHANGED", {});
@@ -3169,7 +3169,7 @@ void InventoryHandler::handleTrainerBuyFailed(network::Packet& packet) {
     else if (errorCode != 0) msg += " (error " + std::to_string(errorCode) + ")";
     owner_.addUIError(msg);
     owner_.addSystemChatMessage(msg);
-    if (auto* renderer = core::Application::getInstance().getRenderer())
+    if (auto* renderer = owner_.services().renderer)
         if (auto* sfx = renderer->getUiSoundManager()) sfx->playError();
 }
 
