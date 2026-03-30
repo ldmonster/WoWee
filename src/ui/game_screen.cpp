@@ -12184,13 +12184,17 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             }
         }
 
-        // Click to target / right-click context: detect clicks inside the nameplate region
+        // Click to target / right-click context: detect clicks inside the nameplate region.
+        // Use the wider of name text or health bar for the horizontal hit area so short
+        // names like "Wolf" don't produce a tiny clickable strip narrower than the bar.
         if (!ImGui::GetIO().WantCaptureMouse) {
             ImVec2 mouse = ImGui::GetIO().MousePos;
-            float nx0 = nameX - 2.0f;
+            float hitLeft  = std::min(nameX, barX) - 2.0f;
+            float hitRight = std::max(nameX + textSize.x, barX + barW) + 2.0f;
             float ny0 = nameY - 1.0f;
-            float nx1 = nameX + textSize.x + 2.0f;
             float ny1 = sy + barH + 2.0f;
+            float nx0 = hitLeft;
+            float nx1 = hitRight;
             if (mouse.x >= nx0 && mouse.x <= nx1 && mouse.y >= ny0 && mouse.y <= ny1) {
                 // Track mouseover for [target=mouseover] macro conditionals
                 gameHandler.setMouseoverGuid(guid);
