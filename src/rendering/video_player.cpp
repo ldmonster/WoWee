@@ -187,7 +187,11 @@ bool VideoPlayer::decodeNextFrame() {
     AVPacket* pkt = reinterpret_cast<AVPacket*>(packet);
     SwsContext* sws = reinterpret_cast<SwsContext*>(swsCtx);
 
-    while (true) {
+    // Cap iterations to prevent infinite spinning on corrupt/truncated video
+    // files where av_read_frame fails but av_seek_frame succeeds, looping
+    // endlessly through the same corrupt region.
+    constexpr int kMaxDecodeAttempts = 500;
+    for (int attempt = 0; attempt < kMaxDecodeAttempts; ++attempt) {
         int ret = av_read_frame(fmt, pkt);
         if (ret < 0) {
             if (av_seek_frame(fmt, videoStreamIndex, 0, AVSEEK_FLAG_BACKWARD) >= 0) {
@@ -224,6 +228,8 @@ bool VideoPlayer::decodeNextFrame() {
         uploadFrame();
         return true;
     }
+    LOG_WARNING("Video decode: exceeded ", kMaxDecodeAttempts, " attempts — possible corrupt file");
+    return false;
 }
 
 void VideoPlayer::uploadFrame() {
