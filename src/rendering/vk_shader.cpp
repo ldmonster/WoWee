@@ -32,6 +32,7 @@ bool VkShaderModule::loadFromFile(VkDevice device, const std::string& path) {
     }
 
     size_t fileSize = static_cast<size_t>(file.tellg());
+    // SPIR-V is a stream of 32-bit words — file size must be a multiple of 4
     if (fileSize == 0 || fileSize % 4 != 0) {
         LOG_ERROR("Invalid SPIR-V file size (", fileSize, "): ", path);
         return false;
