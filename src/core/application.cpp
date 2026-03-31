@@ -2928,7 +2928,7 @@ void Application::setupUICallbacks() {
     // Level-up callback — play sound, cheer emote, and trigger UI ding overlay + 3D effect
     gameHandler->setLevelUpCallback([this](uint32_t newLevel) {
         if (uiManager) {
-            uiManager->getGameScreen().triggerDing(newLevel);
+            uiManager->getGameScreen().toastManager().triggerDing(newLevel);
         }
         if (renderer) {
             renderer->triggerLevelUpEffect(renderer->getCharacterPosition());
@@ -2938,7 +2938,7 @@ void Application::setupUICallbacks() {
     // Achievement earned callback — show toast banner
     gameHandler->setAchievementEarnedCallback([this](uint32_t achievementId, const std::string& name) {
         if (uiManager) {
-            uiManager->getGameScreen().triggerAchievementToast(achievementId, name);
+            uiManager->getGameScreen().toastManager().triggerAchievementToast(achievementId, name);
         }
     });
 

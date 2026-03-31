@@ -557,6 +557,7 @@ set(WOWEE_SOURCES
     src/ui/character_screen.cpp
     src/ui/game_screen.cpp
     src/ui/chat_panel.cpp
+    src/ui/toast_manager.cpp
     src/ui/inventory_screen.cpp
     src/ui/quest_log_screen.cpp
     src/ui/spellbook_screen.cpp

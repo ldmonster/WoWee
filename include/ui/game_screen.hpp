@@ -10,6 +10,7 @@
 #include "ui/talent_screen.hpp"
 #include "ui/keybinding_manager.hpp"
 #include "ui/chat_panel.hpp"
+#include "ui/toast_manager.hpp"
 #include <vulkan/vulkan.h>
 #include <imgui.h>
 #include <string>
@@ -48,6 +49,9 @@ private:
     // Chat panel (extracted from GameScreen — owns all chat state and rendering)
     ChatPanel chatPanel_;
 
+    // Toast manager (extracted from GameScreen — owns all toast/notification state and rendering)
+    ToastManager toastManager_;
+
     // Action bar error-flash: spellId → wall-clock time (seconds) when the flash ends.
     // Populated by the SpellCastFailedCallback; queried during action bar button rendering.
     std::unordered_map<uint32_t, float> actionFlashEndTimes_;
@@ -65,8 +69,7 @@ private:
     float damageFlashAlpha_ = 0.0f; // Screen edge flash intensity (fades to 0)
     bool  damageFlashEnabled_ = true;
     bool  lowHealthVignetteEnabled_ = true; // Persistent pulsing red vignette below 20% HP
-    float levelUpFlashAlpha_ = 0.0f; // Golden level-up burst effect (fades to 0)
-    uint32_t levelUpDisplayLevel_ = 0; // Level shown in level-up text
+
 
     // Raid Warning / Boss Emote big-text overlay (center-screen, fades after 5s)
     struct RaidWarnEntry {
@@ -87,34 +90,14 @@ private:
     bool castFailedCallbackSet_ = false;
     static constexpr float kActionFlashDuration = 0.5f;  // seconds for error-red overlay to fade
 
-    // Reputation change toast: brief colored slide-in below minimap
-    struct RepToastEntry { std::string factionName; int32_t delta = 0; int32_t standing = 0; float age = 0.0f; };
-    std::vector<RepToastEntry> repToasts_;
-    bool repChangeCallbackSet_ = false;
-    static constexpr float kRepToastLifetime = 3.5f;
 
-    // Quest completion toast: slide-in when a quest is turned in
-    struct QuestCompleteToastEntry { uint32_t questId = 0; std::string title; float age = 0.0f; };
-    std::vector<QuestCompleteToastEntry> questCompleteToasts_;
-    bool questCompleteCallbackSet_ = false;
-    static constexpr float kQuestCompleteToastLifetime = 4.0f;
-
-    // Zone entry toast: brief banner when entering a new zone
-    struct ZoneToastEntry { std::string zoneName; float age = 0.0f; };
-    std::vector<ZoneToastEntry> zoneToasts_;
-
-    struct AreaTriggerToast { std::string text; float age = 0.0f; };
-    std::vector<AreaTriggerToast> areaTriggerToasts_;
-    void renderAreaTriggerToasts(float deltaTime, game::GameHandler& gameHandler);
-    std::string lastKnownZone_;
-    static constexpr float kZoneToastLifetime = 3.0f;
 
     // Death screen: elapsed time since the death dialog first appeared
     float deathElapsed_ = 0.0f;
     bool deathTimerRunning_ = false;
     // WoW forces release after ~6 minutes; show countdown until then
     static constexpr float kForcedReleaseSec = 360.0f;
-    void renderZoneToasts(float deltaTime);
+
     bool showPlayerInfo = false;
     bool showSocialFrame_ = false;  // O key toggles social/friends list
     bool showGuildRoster_ = false;
@@ -291,8 +274,7 @@ private:
     void renderPartyFrames(game::GameHandler& gameHandler);
     void renderBossFrames(game::GameHandler& gameHandler);
     void renderUIErrors(game::GameHandler& gameHandler, float deltaTime);
-    void renderRepToasts(float deltaTime);
-    void renderQuestCompleteToasts(float deltaTime);
+
     void renderGroupInvitePopup(game::GameHandler& gameHandler);
     void renderDuelRequestPopup(game::GameHandler& gameHandler);
     void renderDuelCountdown(game::GameHandler& gameHandler);
@@ -465,8 +447,7 @@ private:
 
     static std::string getSettingsPath();
 
-    bool levelUpCallbackSet_ = false;
-    bool achievementCallbackSet_ = false;
+
 
     // Mail compose state
     char mailRecipientBuffer_[256] = "";
@@ -520,107 +501,13 @@ private:
     glm::vec2 leftClickPressPos_ = glm::vec2(0.0f);
     bool leftClickWasPress_ = false;
 
-    // Level-up ding animation
-    static constexpr float DING_DURATION = 4.0f;
-    float dingTimer_ = 0.0f;
-    uint32_t dingLevel_ = 0;
-    uint32_t dingHpDelta_   = 0;
-    uint32_t dingManaDelta_ = 0;
-    uint32_t dingStats_[5]  = {};  // str/agi/sta/int/spi deltas
-    void renderDingEffect();
 
-    // Achievement toast banner
-    static constexpr float ACHIEVEMENT_TOAST_DURATION = 5.0f;
-    float achievementToastTimer_ = 0.0f;
-    uint32_t achievementToastId_ = 0;
-    std::string achievementToastName_;
-    void renderAchievementToast();
-
-    // Area discovery toast ("Discovered! <AreaName> +XP XP")
-    static constexpr float DISCOVERY_TOAST_DURATION = 4.0f;
-    float discoveryToastTimer_ = 0.0f;
-    std::string discoveryToastName_;
-    uint32_t discoveryToastXP_ = 0;
-    bool areaDiscoveryCallbackSet_ = false;
-    void renderDiscoveryToast();
-
-    // Whisper toast — brief overlay at screen top when a whisper arrives while chat is not focused
-    struct WhisperToastEntry {
-        std::string sender;
-        std::string preview;   // first ~60 chars of message
-        float age = 0.0f;
-    };
-    static constexpr float WHISPER_TOAST_DURATION = 5.0f;
-    std::vector<WhisperToastEntry> whisperToasts_;
-    size_t whisperSeenCount_ = 0;     // how many chat entries have been scanned for whispers
-    void renderWhisperToasts();
-
-    // Quest objective progress toast ("Quest: <ObjectiveName> X/Y")
-    struct QuestProgressToastEntry {
-        std::string questTitle;
-        std::string objectiveName;
-        uint32_t current = 0;
-        uint32_t required = 0;
-        float age = 0.0f;
-    };
-    static constexpr float QUEST_TOAST_DURATION = 4.0f;
-    std::vector<QuestProgressToastEntry> questToasts_;
-    bool questProgressCallbackSet_ = false;
-    void renderQuestProgressToasts();
-
-    // Nearby player level-up toast ("<Name> is now level X!")
-    struct PlayerLevelUpToastEntry {
-        uint64_t guid = 0;
-        std::string playerName;  // resolved lazily at render time
-        uint32_t newLevel = 0;
-        float age = 0.0f;
-    };
-    static constexpr float PLAYER_LEVELUP_TOAST_DURATION = 4.0f;
-    std::vector<PlayerLevelUpToastEntry> playerLevelUpToasts_;
-    bool otherPlayerLevelUpCallbackSet_ = false;
-    void renderPlayerLevelUpToasts(game::GameHandler& gameHandler);
-
-    // PvP honor credit toast ("+N Honor" shown when an honorable kill is credited)
-    struct PvpHonorToastEntry {
-        uint32_t honor = 0;
-        uint32_t victimRank = 0;  // 0 = unranked / not available
-        float age = 0.0f;
-    };
-    static constexpr float PVP_HONOR_TOAST_DURATION = 3.5f;
-    std::vector<PvpHonorToastEntry> pvpHonorToasts_;
-    bool pvpHonorCallbackSet_ = false;
-    void renderPvpHonorToasts();
-
-    // Item loot toast — quality-coloured popup when an item is received
-    struct ItemLootToastEntry {
-        uint32_t itemId = 0;
-        uint32_t count = 0;
-        uint32_t quality = 1;  // 0=grey,1=white,2=green,3=blue,4=purple,5=orange
-        std::string name;
-        float age = 0.0f;
-    };
-    static constexpr float ITEM_LOOT_TOAST_DURATION = 3.0f;
-    std::vector<ItemLootToastEntry> itemLootToasts_;
-    bool itemLootCallbackSet_ = false;
-    void renderItemLootToasts();
-
-    // Resurrection flash: brief "You have been resurrected!" overlay on ghost→alive transition
-    float resurrectFlashTimer_ = 0.0f;
-    static constexpr float kResurrectFlashDuration = 3.0f;
-    bool ghostStateCallbackSet_ = false;
     bool appearanceCallbackSet_ = false;
     bool ghostOpacityStateKnown_ = false;
     bool ghostOpacityLastState_ = false;
     uint32_t ghostOpacityLastInstanceId_ = 0;
-    void renderResurrectFlash();
 
-    // Zone discovery text ("Entering: <ZoneName>")
-    static constexpr float ZONE_TEXT_DURATION = 5.0f;
-    float zoneTextTimer_ = 0.0f;
-    std::string zoneTextName_;
-    std::string lastKnownZoneName_;
-    uint32_t lastKnownWorldStateZoneId_ = 0;
-    void renderZoneText(game::GameHandler& gameHandler);
+
     void renderWeatherOverlay(game::GameHandler& gameHandler);
 
     // Cooldown tracker
@@ -635,11 +522,8 @@ private:
     size_t dpsLogSeenCount_   = 0;     // log entries already scanned
 
 public:
-    void triggerDing(uint32_t newLevel, uint32_t hpDelta = 0, uint32_t manaDelta = 0,
-                     uint32_t str = 0, uint32_t agi = 0, uint32_t sta = 0,
-                     uint32_t intel = 0, uint32_t spi = 0);
-    void triggerAchievementToast(uint32_t achievementId, std::string name = {});
     void openDungeonFinder() { showDungeonFinder_ = true; }
+    ToastManager& toastManager() { return toastManager_; }
 };
 
 } // namespace ui
