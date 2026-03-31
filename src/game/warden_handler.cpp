@@ -535,22 +535,15 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
                 bool isTurtle = isActiveExpansion("turtle");
                 bool isClassic = (owner_.build <= 6005) && !isTurtle;
 
-                if (!isTurtle && !isClassic) {
-                    // WotLK/TBC (AzerothCore, etc.): strict servers BAN for wrong HASH_RESULT.
-                    // Without a matching CR entry we cannot compute the correct hash
-                    // (requires executing the module's native init function).
-                    // Safest action: don't respond. Server will time-out and kick (not ban).
-                    LOG_WARNING("Warden: HASH_REQUEST seed=", seedHex,
-                                " — no CR match, SKIPPING response to avoid account ban");
-                    LOG_WARNING("Warden: To fix, provide a .cr file with the correct seed→reply entry for this module");
-                    // Stay in WAIT_HASH_REQUEST — server will eventually kick.
-                    break;
-                }
+                // Previously we skipped the response for WotLK/TBC to avoid bans on strict
+                // servers (e.g. Warmane). However, most servers (AzerothCore, ChromieCraft,
+                // TrinityCore) are permissive and only kick — not ban — for wrong hashes.
+                // Skipping causes a guaranteed kick-on-timeout, while sending a fallback
+                // hash at least lets permissive servers continue the session.
+                // For strict servers, provide a .cr file with the correct seed→reply.
 
-                // Turtle/Classic: lenient servers (log-only penalties, no bans).
-                // Send a best-effort fallback hash so we can continue the handshake.
                 LOG_WARNING("Warden: No CR match (seed=", seedHex,
-                            "), sending fallback hash (lenient server)");
+                            "), sending fallback hash");
 
                 std::vector<uint8_t> fallbackReply;
                 if (wardenLoadedModule_ && wardenLoadedModule_->isLoaded()) {
