@@ -39,17 +39,17 @@ struct WardenFuncList {
  * IMPLEMENTATION STATUS:
  * ✅ Module metadata parsing and validation
  * ✅ RC4 decryption (WardenCrypto)
- * ✅ RSA-2048 signature verification (OpenSSL EVP — placeholder modulus)
+ * ✅ RSA-2048 signature verification (OpenSSL EVP — real Blizzard modulus)
  * ✅ zlib decompression
  * ✅ Custom executable format parsing (3 pair-format variants)
  * ✅ Address relocation (delta-encoded fixups)
  * ✅ x86 emulation via Unicorn Engine (cross-platform)
  * ✅ Client callbacks (sendPacket, validateModule, generateRC4)
- * ⏳ API binding / IAT patching (stub — module imports not yet resolved)
- * ⏳ RSA modulus needs verification against real WoW.exe build
+ * ✅ API binding / IAT patching (parses import table, auto-stubs unknown APIs)
+ * ✅ RSA modulus verified (Blizzard key, same across 1.12.1/2.4.3/3.3.5a)
  *
- * For strict servers, the API binding stub may cause module init to fail.
- * For permissive servers, fake responses in WardenHandler work.
+ * Non-fatal verification: RSA mismatch logs warning but continues loading,
+ * so private-server modules signed with custom keys still work.
  */
 class WardenModule {
 public:
