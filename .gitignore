@@ -67,6 +67,7 @@ extern/*
 !extern/vk-bootstrap
 !extern/vk_mem_alloc.h
 !extern/lua-5.1.5
+!extern/VERSIONS.md
 
 # ImGui state
 imgui.ini
