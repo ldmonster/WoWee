@@ -287,118 +287,118 @@ void GameScreen::render(game::GameHandler& gameHandler) {
 
     // Apply UI transparency setting
     float prevAlpha = ImGui::GetStyle().Alpha;
-    ImGui::GetStyle().Alpha = uiOpacity_;
+    ImGui::GetStyle().Alpha = settingsPanel_.uiOpacity_;
 
     // Sync minimap opacity with UI opacity
     {
         auto* renderer = core::Application::getInstance().getRenderer();
         if (renderer) {
             if (auto* minimap = renderer->getMinimap()) {
-                minimap->setOpacity(uiOpacity_);
+                minimap->setOpacity(settingsPanel_.uiOpacity_);
             }
         }
     }
 
     // Apply initial settings when renderer becomes available
-    if (!minimapSettingsApplied_) {
+    if (!settingsPanel_.minimapSettingsApplied_) {
         auto* renderer = core::Application::getInstance().getRenderer();
         if (renderer) {
             if (auto* minimap = renderer->getMinimap()) {
-                minimapRotate_ = false;
-                pendingMinimapRotate = false;
+                settingsPanel_.minimapRotate_ = false;
+                settingsPanel_.pendingMinimapRotate = false;
                 minimap->setRotateWithCamera(false);
-                minimap->setSquareShape(minimapSquare_);
-                minimapSettingsApplied_ = true;
+                minimap->setSquareShape(settingsPanel_.minimapSquare_);
+                settingsPanel_.minimapSettingsApplied_ = true;
             }
             if (auto* zm = renderer->getZoneManager()) {
-                zm->setUseOriginalSoundtrack(pendingUseOriginalSoundtrack);
+                zm->setUseOriginalSoundtrack(settingsPanel_.pendingUseOriginalSoundtrack);
             }
             if (auto* tm = renderer->getTerrainManager()) {
-                tm->setGroundClutterDensityScale(static_cast<float>(pendingGroundClutterDensity) / 100.0f);
+                tm->setGroundClutterDensityScale(static_cast<float>(settingsPanel_.pendingGroundClutterDensity) / 100.0f);
             }
             // Restore mute state: save actual master volume first, then apply mute
-            if (soundMuted_) {
+            if (settingsPanel_.soundMuted_) {
                 float actual = audio::AudioEngine::instance().getMasterVolume();
-                preMuteVolume_ = (actual > 0.0f) ? actual
-                    : static_cast<float>(pendingMasterVolume) / 100.0f;
+                settingsPanel_.preMuteVolume_ = (actual > 0.0f) ? actual
+                    : static_cast<float>(settingsPanel_.pendingMasterVolume) / 100.0f;
                 audio::AudioEngine::instance().setMasterVolume(0.0f);
             }
         }
     }
 
     // Apply saved volume settings once when audio managers first become available
-    if (!volumeSettingsApplied_) {
+    if (!settingsPanel_.volumeSettingsApplied_) {
         auto* renderer = core::Application::getInstance().getRenderer();
         if (renderer && renderer->getUiSoundManager()) {
-            applyAudioVolumes(renderer);
-            volumeSettingsApplied_ = true;
+            settingsPanel_.applyAudioVolumes(renderer);
+            settingsPanel_.volumeSettingsApplied_ = true;
         }
     }
 
     // Apply saved MSAA setting once when renderer is available
-    if (!msaaSettingsApplied_ && pendingAntiAliasing > 0) {
+    if (!settingsPanel_.msaaSettingsApplied_ && settingsPanel_.pendingAntiAliasing > 0) {
         auto* renderer = core::Application::getInstance().getRenderer();
         if (renderer) {
             static const VkSampleCountFlagBits aaSamples[] = {
                 VK_SAMPLE_COUNT_1_BIT, VK_SAMPLE_COUNT_2_BIT,
                 VK_SAMPLE_COUNT_4_BIT, VK_SAMPLE_COUNT_8_BIT
             };
-            renderer->setMsaaSamples(aaSamples[pendingAntiAliasing]);
-            msaaSettingsApplied_ = true;
+            renderer->setMsaaSamples(aaSamples[settingsPanel_.pendingAntiAliasing]);
+            settingsPanel_.msaaSettingsApplied_ = true;
         }
     } else {
-        msaaSettingsApplied_ = true;
+        settingsPanel_.msaaSettingsApplied_ = true;
     }
 
     // Apply saved FXAA setting once when renderer is available
-    if (!fxaaSettingsApplied_) {
+    if (!settingsPanel_.fxaaSettingsApplied_) {
         auto* renderer = core::Application::getInstance().getRenderer();
         if (renderer) {
-            renderer->setFXAAEnabled(pendingFXAA);
-            fxaaSettingsApplied_ = true;
+            renderer->setFXAAEnabled(settingsPanel_.pendingFXAA);
+            settingsPanel_.fxaaSettingsApplied_ = true;
         }
     }
 
     // Apply saved water refraction setting once when renderer is available
-    if (!waterRefractionApplied_) {
+    if (!settingsPanel_.waterRefractionApplied_) {
         auto* renderer = core::Application::getInstance().getRenderer();
         if (renderer) {
-            renderer->setWaterRefractionEnabled(pendingWaterRefraction);
-            waterRefractionApplied_ = true;
+            renderer->setWaterRefractionEnabled(settingsPanel_.pendingWaterRefraction);
+            settingsPanel_.waterRefractionApplied_ = true;
         }
     }
 
     // Apply saved normal mapping / POM settings once when WMO renderer is available
-    if (!normalMapSettingsApplied_) {
+    if (!settingsPanel_.normalMapSettingsApplied_) {
         auto* renderer = core::Application::getInstance().getRenderer();
         if (renderer) {
             if (auto* wr = renderer->getWMORenderer()) {
-                wr->setNormalMappingEnabled(pendingNormalMapping);
-                wr->setNormalMapStrength(pendingNormalMapStrength);
-                wr->setPOMEnabled(pendingPOM);
-                wr->setPOMQuality(pendingPOMQuality);
+                wr->setNormalMappingEnabled(settingsPanel_.pendingNormalMapping);
+                wr->setNormalMapStrength(settingsPanel_.pendingNormalMapStrength);
+                wr->setPOMEnabled(settingsPanel_.pendingPOM);
+                wr->setPOMQuality(settingsPanel_.pendingPOMQuality);
                 if (auto* cr = renderer->getCharacterRenderer()) {
-                    cr->setNormalMappingEnabled(pendingNormalMapping);
-                    cr->setNormalMapStrength(pendingNormalMapStrength);
-                    cr->setPOMEnabled(pendingPOM);
-                    cr->setPOMQuality(pendingPOMQuality);
+                    cr->setNormalMappingEnabled(settingsPanel_.pendingNormalMapping);
+                    cr->setNormalMapStrength(settingsPanel_.pendingNormalMapStrength);
+                    cr->setPOMEnabled(settingsPanel_.pendingPOM);
+                    cr->setPOMQuality(settingsPanel_.pendingPOMQuality);
                 }
-                normalMapSettingsApplied_ = true;
+                settingsPanel_.normalMapSettingsApplied_ = true;
             }
         }
     }
 
     // Apply saved upscaling setting once when renderer is available
-    if (!fsrSettingsApplied_) {
+    if (!settingsPanel_.fsrSettingsApplied_) {
         auto* renderer = core::Application::getInstance().getRenderer();
         if (renderer) {
             static constexpr float fsrScales[] = { 0.77f, 0.67f, 0.59f, 1.00f };
-            pendingFSRQuality = std::clamp(pendingFSRQuality, 0, 3);
-            renderer->setFSRQuality(fsrScales[pendingFSRQuality]);
-            renderer->setFSRSharpness(pendingFSRSharpness);
-            renderer->setFSR2DebugTuning(pendingFSR2JitterSign, pendingFSR2MotionVecScaleX, pendingFSR2MotionVecScaleY);
-            renderer->setAmdFsr3FramegenEnabled(pendingAMDFramegen);
-            int effectiveMode = pendingUpscalingMode;
+            settingsPanel_.pendingFSRQuality = std::clamp(settingsPanel_.pendingFSRQuality, 0, 3);
+            renderer->setFSRQuality(fsrScales[settingsPanel_.pendingFSRQuality]);
+            renderer->setFSRSharpness(settingsPanel_.pendingFSRSharpness);
+            renderer->setFSR2DebugTuning(settingsPanel_.pendingFSR2JitterSign, settingsPanel_.pendingFSR2MotionVecScaleX, settingsPanel_.pendingFSR2MotionVecScaleY);
+            renderer->setAmdFsr3FramegenEnabled(settingsPanel_.pendingAMDFramegen);
+            int effectiveMode = settingsPanel_.pendingUpscalingMode;
 
             // Defer FSR2/FSR3 activation until fully in-world to avoid
             // init issues during login/character selection screens.
@@ -408,15 +408,15 @@ void GameScreen::render(game::GameHandler& gameHandler) {
             } else {
                 renderer->setFSREnabled(effectiveMode == 1);
                 renderer->setFSR2Enabled(effectiveMode == 2);
-                fsrSettingsApplied_ = true;
+                settingsPanel_.fsrSettingsApplied_ = true;
             }
         }
     }
 
     // Apply auto-loot / auto-sell settings to GameHandler every frame (cheap bool sync)
-    gameHandler.setAutoLoot(pendingAutoLoot);
-    gameHandler.setAutoSellGrey(pendingAutoSellGrey);
-    gameHandler.setAutoRepair(pendingAutoRepair);
+    gameHandler.setAutoLoot(settingsPanel_.pendingAutoLoot);
+    gameHandler.setAutoSellGrey(settingsPanel_.pendingAutoSellGrey);
+    gameHandler.setAutoRepair(settingsPanel_.pendingAutoRepair);
 
     // Sync chat auto-join settings to GameHandler
     gameHandler.chatAutoJoin.general = chatPanel_.chatAutoJoinGeneral;
@@ -504,21 +504,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         renderPartyFrames(gameHandler);
     }
     renderBossFrames(gameHandler);
-    renderGroupInvitePopup(gameHandler);
-    renderDuelRequestPopup(gameHandler);
-    renderDuelCountdown(gameHandler);
-    renderLootRollPopup(gameHandler);
-    renderTradeRequestPopup(gameHandler);
-    renderTradeWindow(gameHandler);
-    renderSummonRequestPopup(gameHandler);
-    renderSharedQuestPopup(gameHandler);
-    renderItemTextWindow(gameHandler);
-    renderGuildInvitePopup(gameHandler);
-    renderReadyCheckPopup(gameHandler);
-    renderBgInvitePopup(gameHandler);
-    renderBfMgrInvitePopup(gameHandler);
-    renderLfgProposalPopup(gameHandler);
-    renderLfgRoleCheckPopup(gameHandler);
+    dialogManager_.renderDialogs(gameHandler, inventoryScreen, chatPanel_);
     renderGuildRoster(gameHandler);
     renderSocialFrame(gameHandler);
     renderBuffBar(gameHandler);
@@ -556,12 +542,10 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     renderLogoutCountdown(gameHandler);
     renderDeathScreen(gameHandler);
     renderReclaimCorpseButton(gameHandler);
-    renderResurrectDialog(gameHandler);
-    renderTalentWipeConfirmDialog(gameHandler);
-    renderPetUnlearnConfirmDialog(gameHandler);
+    dialogManager_.renderLateDialogs(gameHandler);
     chatPanel_.renderBubbles(gameHandler);
     renderEscapeMenu();
-    renderSettingsWindow();
+    settingsPanel_.renderSettingsWindow(inventoryScreen, chatPanel_, [this]() { saveSettings(); });
     toastManager_.renderLateToasts(gameHandler);
     renderWeatherOverlay(gameHandler);
 
@@ -764,7 +748,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         }
 
         // Detect HP drop (ignore transitions from 0 — entity just spawned or uninitialized)
-        if (damageFlashEnabled_ && lastPlayerHp_ > 0 && currentHp < lastPlayerHp_ && currentHp > 0)
+        if (settingsPanel_.damageFlashEnabled_ && lastPlayerHp_ > 0 && currentHp < lastPlayerHp_ && currentHp > 0)
             damageFlashAlpha_ = 1.0f;
         lastPlayerHp_ = currentHp;
 
@@ -812,7 +796,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         }
 
         // Only show when alive and below 20% HP; intensity increases as HP drops
-        if (lowHealthVignetteEnabled_ && !isDead && hpPct < 0.20f && hpPct > 0.0f) {
+        if (settingsPanel_.lowHealthVignetteEnabled_ && !isDead && hpPct < 0.20f && hpPct > 0.0f) {
             // Base intensity from HP deficit (0 at 20%, 1 at 0%); pulse at ~1.5 Hz
             float danger = (0.20f - hpPct) / 0.20f;
             float pulse  = 0.55f + 0.45f * std::sin(static_cast<float>(ImGui::GetTime()) * 9.4f);
@@ -1047,11 +1031,11 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
         }
 
         if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_SETTINGS, true)) {
-            if (showSettingsWindow) {
-                showSettingsWindow = false;
+            if (settingsPanel_.showSettingsWindow) {
+                settingsPanel_.showSettingsWindow = false;
             } else if (showEscapeMenu) {
                 showEscapeMenu = false;
-                showEscapeSettingsNotice = false;
+                settingsPanel_.showEscapeSettingsNotice = false;
             } else if (gameHandler.isCasting()) {
                 gameHandler.cancelCast();
             } else if (gameHandler.isLootWindowOpen()) {
@@ -1117,7 +1101,7 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
 
             if (KeybindingManager::getInstance().isActionPressed(KeybindingManager::Action::TOGGLE_NAMEPLATES)) {
                 if (ImGui::GetIO().KeyShift)
-                    showFriendlyNameplates_ = !showFriendlyNameplates_;
+                    settingsPanel_.showFriendlyNameplates_ = !settingsPanel_.showFriendlyNameplates_;
                 else
                     showNameplates_ = !showNameplates_;
             }
@@ -4439,7 +4423,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
     float screenH = displaySize.y > 0.0f ? displaySize.y : 720.0f;
     auto* assetMgr = core::Application::getInstance().getAssetManager();
 
-    float slotSize = 48.0f * pendingActionBarScale;
+    float slotSize = 48.0f * settingsPanel_.pendingActionBarScale;
     float spacing = 4.0f;
     float padding = 8.0f;
     float barW = 12 * slotSize + 11 * spacing + padding * 2;
@@ -5142,13 +5126,13 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
     };
 
     // Bar 2 (slots 12-23) — only show if at least one slot is populated
-    if (pendingShowActionBar2) {
+    if (settingsPanel_.pendingShowActionBar2) {
         bool bar2HasContent = false;
         for (int i = 0; i < game::GameHandler::SLOTS_PER_BAR; ++i)
             if (!bar[game::GameHandler::SLOTS_PER_BAR + i].isEmpty()) { bar2HasContent = true; break; }
 
-        float bar2X = barX + pendingActionBar2OffsetX;
-        float bar2Y = barY - barH - 2.0f + pendingActionBar2OffsetY;
+        float bar2X = barX + settingsPanel_.pendingActionBar2OffsetX;
+        float bar2Y = barY - barH - 2.0f + settingsPanel_.pendingActionBar2OffsetY;
         ImGui::SetNextWindowPos(ImVec2(bar2X, bar2Y), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(barW, barH), ImGuiCond_Always);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
@@ -5204,7 +5188,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
     ImGui::PopStyleVar(4);
 
     // Right side vertical bar (bar 3, slots 24-35)
-    if (pendingShowRightBar) {
+    if (settingsPanel_.pendingShowRightBar) {
         bool bar3HasContent = false;
         for (int i = 0; i < game::GameHandler::SLOTS_PER_BAR; ++i)
             if (!bar[game::GameHandler::SLOTS_PER_BAR * 2 + i].isEmpty()) { bar3HasContent = true; break; }
@@ -5212,7 +5196,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
         float sideBarW = slotSize + padding * 2;
         float sideBarH = game::GameHandler::SLOTS_PER_BAR * slotSize + (game::GameHandler::SLOTS_PER_BAR - 1) * spacing + padding * 2;
         float sideBarX = screenW - sideBarW - 4.0f;
-        float sideBarY = (screenH - sideBarH) / 2.0f + pendingRightBarOffsetY;
+        float sideBarY = (screenH - sideBarH) / 2.0f + settingsPanel_.pendingRightBarOffsetY;
 
         ImGui::SetNextWindowPos(ImVec2(sideBarX, sideBarY), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(sideBarW, sideBarH), ImGuiCond_Always);
@@ -5233,7 +5217,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
     }
 
     // Left side vertical bar (bar 4, slots 36-47)
-    if (pendingShowLeftBar) {
+    if (settingsPanel_.pendingShowLeftBar) {
         bool bar4HasContent = false;
         for (int i = 0; i < game::GameHandler::SLOTS_PER_BAR; ++i)
             if (!bar[game::GameHandler::SLOTS_PER_BAR * 3 + i].isEmpty()) { bar4HasContent = true; break; }
@@ -5241,7 +5225,7 @@ void GameScreen::renderActionBar(game::GameHandler& gameHandler) {
         float sideBarW = slotSize + padding * 2;
         float sideBarH = game::GameHandler::SLOTS_PER_BAR * slotSize + (game::GameHandler::SLOTS_PER_BAR - 1) * spacing + padding * 2;
         float sideBarX = 4.0f;
-        float sideBarY = (screenH - sideBarH) / 2.0f + pendingLeftBarOffsetY;
+        float sideBarY = (screenH - sideBarH) / 2.0f + settingsPanel_.pendingLeftBarOffsetY;
 
         ImGui::SetNextWindowPos(ImVec2(sideBarX, sideBarY), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(sideBarW, sideBarH), ImGuiCond_Always);
@@ -5389,7 +5373,7 @@ void GameScreen::renderStanceBar(game::GameHandler& gameHandler) {
     float barH = slotSize + padding * 2.0f;
 
     // Position the stance bar immediately to the left of the action bar
-    float actionSlot = 48.0f * pendingActionBarScale;
+    float actionSlot = 48.0f * settingsPanel_.pendingActionBarScale;
     float actionBarW = 12.0f * actionSlot + 11.0f * 4.0f + 8.0f * 2.0f;
     float actionBarX = (screenW - actionBarW) / 2.0f;
     float actionBarH = actionSlot + 24.0f;
@@ -5762,7 +5746,7 @@ void GameScreen::renderXpBar(game::GameHandler& gameHandler) {
     (void)window;  // Not used for positioning; kept for AssetManager if needed
 
     // Position just above both action bars (bar1 at screenH-barH, bar2 above that)
-    float slotSize = 48.0f * pendingActionBarScale;
+    float slotSize = 48.0f * settingsPanel_.pendingActionBarScale;
     float spacing = 4.0f;
     float padding = 8.0f;
     float barW = 12 * slotSize + 11 * spacing + padding * 2;
@@ -5776,8 +5760,8 @@ void GameScreen::renderXpBar(game::GameHandler& gameHandler) {
     // bar2 top edge (when visible): bar1 top - barH - 2 + bar2 vertical offset
     float bar1TopY = screenH - barH;
     float xpBarY;
-    if (pendingShowActionBar2) {
-        float bar2TopY = bar1TopY - barH - 2.0f + pendingActionBar2OffsetY;
+    if (settingsPanel_.pendingShowActionBar2) {
+        float bar2TopY = bar1TopY - barH - 2.0f + settingsPanel_.pendingActionBar2OffsetY;
         xpBarY = bar2TopY - xpBarH - 2.0f;
     } else {
         xpBarY = bar1TopY - xpBarH - 2.0f;
@@ -5952,7 +5936,7 @@ void GameScreen::renderRepBar(game::GameHandler& gameHandler) {
     float screenW = displaySize.x > 0.0f ? displaySize.x : 1280.0f;
     float screenH = displaySize.y > 0.0f ? displaySize.y : 720.0f;
 
-    float slotSize = 48.0f * pendingActionBarScale;
+    float slotSize = 48.0f * settingsPanel_.pendingActionBarScale;
     float spacing  = 4.0f;
     float padding  = 8.0f;
     float barW     = 12 * slotSize + 11 * spacing + padding * 2;
@@ -5964,8 +5948,8 @@ void GameScreen::renderRepBar(game::GameHandler& gameHandler) {
 
     float bar1TopY = screenH - barH_ab;
     float xpBarY;
-    if (pendingShowActionBar2) {
-        float bar2TopY = bar1TopY - barH_ab - 2.0f + pendingActionBar2OffsetY;
+    if (settingsPanel_.pendingShowActionBar2) {
+        float bar2TopY = bar1TopY - barH_ab - 2.0f + settingsPanel_.pendingActionBar2OffsetY;
         xpBarY = bar2TopY - xpBarH - 2.0f;
     } else {
         xpBarY = bar1TopY - xpBarH - 2.0f;
@@ -6188,7 +6172,7 @@ void GameScreen::renderMirrorTimers(game::GameHandler& gameHandler) {
 // ============================================================
 
 void GameScreen::renderCooldownTracker(game::GameHandler& gameHandler) {
-    if (!showCooldownTracker_) return;
+    if (!settingsPanel_.showCooldownTracker_) return;
 
     const auto& cooldowns = gameHandler.getSpellCooldowns();
     if (cooldowns.empty()) return;
@@ -6936,7 +6920,7 @@ void GameScreen::renderCombatText(game::GameHandler& gameHandler) {
 // ============================================================
 
 void GameScreen::renderDPSMeter(game::GameHandler& gameHandler) {
-    if (!showDPSMeter_) return;
+    if (!settingsPanel_.showDPSMeter_) return;
     if (gameHandler.getState() != game::WorldState::IN_WORLD) return;
 
     const float dt = ImGui::GetIO().DeltaTime;
@@ -7148,7 +7132,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         bool isTarget = (guid == targetGuid);
 
         // Player nameplates use Shift+V toggle; NPC/enemy nameplates use V toggle
-        if (isPlayer && !showFriendlyNameplates_) continue;
+        if (isPlayer && !settingsPanel_.showFriendlyNameplates_) continue;
         if (!isPlayer && !showNameplates_) continue;
 
         // For corpses (dead units), only show a minimal grey nameplate if selected
@@ -7253,8 +7237,8 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
               : IM_COL32(20,  20,  20, A(180));
 
         // Bar geometry
-        const float barW = 80.0f * nameplateScale_;
-        const float barH = 8.0f * nameplateScale_;
+        const float barW = 80.0f * settingsPanel_.nameplateScale_;
+        const float barH = 8.0f * settingsPanel_.nameplateScale_;
         const float barX = sx - barW * 0.5f;
 
         // Guard against division by zero when maxHealth hasn't been populated yet
@@ -7308,7 +7292,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
             const auto* cs = gameHandler.getUnitCastState(guid);
             if (cs && cs->casting && cs->timeTotal > 0.0f) {
                 float castPct = std::clamp((cs->timeTotal - cs->timeRemaining) / cs->timeTotal, 0.0f, 1.0f);
-                const float cbH = 6.0f * nameplateScale_;
+                const float cbH = 6.0f * settingsPanel_.nameplateScale_;
 
                 // Spell icon + name above the cast bar
                 const std::string& spellName = gameHandler.getSpellName(cs->spellId);
@@ -7377,7 +7361,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
         if (isTarget && unit->isHostile() && !isCorpse) {
             const auto& auras = gameHandler.getTargetAuras();
             const uint64_t pguid = gameHandler.getPlayerGuid();
-            const float dotSize = 6.0f * nameplateScale_;
+            const float dotSize = 6.0f * settingsPanel_.nameplateScale_;
             const float dotGap  = 2.0f;
             float dotX = barX;
             for (const auto& aura : auras) {
@@ -8809,852 +8793,6 @@ void GameScreen::renderBossFrames(game::GameHandler& gameHandler) {
 
     ImGui::PopStyleColor();
     ImGui::PopStyleVar();
-}
-
-// ============================================================
-// Group Invite Popup (Phase 4)
-// ============================================================
-
-void GameScreen::renderGroupInvitePopup(game::GameHandler& gameHandler) {
-    if (!gameHandler.hasPendingGroupInvite()) return;
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 150, 200), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_Always);
-
-    if (ImGui::Begin("Group Invite", nullptr, kDialogFlags)) {
-        ImGui::Text("%s has invited you to a group.", gameHandler.getPendingInviterName().c_str());
-        ImGui::Spacing();
-
-        if (ImGui::Button("Accept", ImVec2(130, 30))) {
-            gameHandler.acceptGroupInvite();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Decline", ImVec2(130, 30))) {
-            gameHandler.declineGroupInvite();
-        }
-    }
-    ImGui::End();
-}
-
-void GameScreen::renderDuelRequestPopup(game::GameHandler& gameHandler) {
-    if (!gameHandler.hasPendingDuelRequest()) return;
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 150, 250), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_Always);
-
-    if (ImGui::Begin("Duel Request", nullptr, kDialogFlags)) {
-        ImGui::Text("%s challenges you to a duel!", gameHandler.getDuelChallengerName().c_str());
-        ImGui::Spacing();
-
-        if (ImGui::Button("Accept", ImVec2(130, 30))) {
-            gameHandler.acceptDuel();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Decline", ImVec2(130, 30))) {
-            gameHandler.forfeitDuel();
-        }
-    }
-    ImGui::End();
-}
-
-void GameScreen::renderDuelCountdown(game::GameHandler& gameHandler) {
-    float remaining = gameHandler.getDuelCountdownRemaining();
-    if (remaining <= 0.0f) return;
-
-    ImVec2 displaySize = ImGui::GetIO().DisplaySize;
-    float screenW = displaySize.x > 0.0f ? displaySize.x : 1280.0f;
-    float screenH = displaySize.y > 0.0f ? displaySize.y : 720.0f;
-
-    auto* dl = ImGui::GetForegroundDrawList();
-    ImFont* font = ImGui::GetFont();
-    float fontSize = ImGui::GetFontSize();
-
-    // Show integer countdown or "Fight!" when under 0.5s
-    char buf[32];
-    if (remaining > 0.5f) {
-        snprintf(buf, sizeof(buf), "%d", static_cast<int>(std::ceil(remaining)));
-    } else {
-        snprintf(buf, sizeof(buf), "Fight!");
-    }
-
-    // Large font by scaling — use 4x font size for dramatic effect
-    float scale = 4.0f;
-    float scaledSize = fontSize * scale;
-    ImVec2 textSz = font->CalcTextSizeA(scaledSize, FLT_MAX, 0.0f, buf);
-    float tx = (screenW - textSz.x) * 0.5f;
-    float ty = screenH * 0.35f - textSz.y * 0.5f;
-
-    // Pulsing alpha: fades in and out per second
-    float pulse = 0.75f + 0.25f * std::sin(static_cast<float>(ImGui::GetTime()) * 6.28f);
-    uint8_t alpha = static_cast<uint8_t>(255 * pulse);
-
-    // Color: golden countdown, red "Fight!"
-    ImU32 color = (remaining > 0.5f)
-        ? IM_COL32(255, 200, 50, alpha)
-        : IM_COL32(255, 60, 60, alpha);
-
-    // Drop shadow
-    dl->AddText(font, scaledSize, ImVec2(tx + 2.0f, ty + 2.0f), IM_COL32(0, 0, 0, alpha / 2), buf);
-    dl->AddText(font, scaledSize, ImVec2(tx, ty), color, buf);
-}
-
-void GameScreen::renderItemTextWindow(game::GameHandler& gameHandler) {
-    if (!gameHandler.isItemTextOpen()) return;
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-    float screenH = window ? static_cast<float>(window->getHeight()) :  720.0f;
-
-    ImGui::SetNextWindowPos(ImVec2(screenW * 0.5f - 200, screenH * 0.15f),
-                            ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
-
-    bool open = true;
-    if (!ImGui::Begin("Book", &open, ImGuiWindowFlags_NoCollapse)) {
-        ImGui::End();
-        if (!open) gameHandler.closeItemText();
-        return;
-    }
-    if (!open) {
-        ImGui::End();
-        gameHandler.closeItemText();
-        return;
-    }
-
-    // Parchment-toned background text
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 0.1f, 0.0f, 1.0f));
-    ImGui::TextWrapped("%s", gameHandler.getItemText().c_str());
-    ImGui::PopStyleColor();
-
-    ImGui::Spacing();
-    if (ImGui::Button("Close", ImVec2(80, 0))) {
-        gameHandler.closeItemText();
-    }
-
-    ImGui::End();
-}
-
-void GameScreen::renderSharedQuestPopup(game::GameHandler& gameHandler) {
-    if (!gameHandler.hasPendingSharedQuest()) return;
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 175, 490), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_Always);
-
-    if (ImGui::Begin("Shared Quest", nullptr, kDialogFlags)) {
-        ImGui::Text("%s has shared a quest with you:", gameHandler.getSharedQuestSharerName().c_str());
-        ImGui::TextColored(colors::kBrightGold, "\"%s\"", gameHandler.getSharedQuestTitle().c_str());
-        ImGui::Spacing();
-
-        if (ImGui::Button("Accept", ImVec2(130, 30))) {
-            gameHandler.acceptSharedQuest();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Decline", ImVec2(130, 30))) {
-            gameHandler.declineSharedQuest();
-        }
-    }
-    ImGui::End();
-}
-
-void GameScreen::renderSummonRequestPopup(game::GameHandler& gameHandler) {
-    if (!gameHandler.hasPendingSummonRequest()) return;
-
-    // Tick the timeout down
-    float dt = ImGui::GetIO().DeltaTime;
-    gameHandler.tickSummonTimeout(dt);
-    if (!gameHandler.hasPendingSummonRequest()) return;  // expired
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 175, 430), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_Always);
-
-    if (ImGui::Begin("Summon Request", nullptr, kDialogFlags)) {
-        ImGui::Text("%s is summoning you.", gameHandler.getSummonerName().c_str());
-        float t = gameHandler.getSummonTimeoutSec();
-        if (t > 0.0f) {
-            ImGui::Text("Time remaining: %.0fs", t);
-        }
-        ImGui::Spacing();
-
-        if (ImGui::Button("Accept", ImVec2(130, 30))) {
-            gameHandler.acceptSummon();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Decline", ImVec2(130, 30))) {
-            gameHandler.declineSummon();
-        }
-    }
-    ImGui::End();
-}
-
-void GameScreen::renderTradeRequestPopup(game::GameHandler& gameHandler) {
-    if (!gameHandler.hasPendingTradeRequest()) return;
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 150, 370), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_Always);
-
-    if (ImGui::Begin("Trade Request", nullptr, kDialogFlags)) {
-        ImGui::Text("%s wants to trade with you.", gameHandler.getTradePeerName().c_str());
-        ImGui::Spacing();
-
-        if (ImGui::Button("Accept", ImVec2(130, 30))) {
-            gameHandler.acceptTradeRequest();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Decline", ImVec2(130, 30))) {
-            gameHandler.declineTradeRequest();
-        }
-    }
-    ImGui::End();
-}
-
-void GameScreen::renderTradeWindow(game::GameHandler& gameHandler) {
-    if (!gameHandler.isTradeOpen()) return;
-
-    const auto& mySlots   = gameHandler.getMyTradeSlots();
-    const auto& peerSlots = gameHandler.getPeerTradeSlots();
-    const uint64_t myGold   = gameHandler.getMyTradeGold();
-    const uint64_t peerGold = gameHandler.getPeerTradeGold();
-    const auto& peerName = gameHandler.getTradePeerName();
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-    float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
-
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2.0f - 240.0f, screenH / 2.0f - 180.0f), ImGuiCond_Once);
-    ImGui::SetNextWindowSize(ImVec2(480.0f, 360.0f), ImGuiCond_Once);
-
-    bool open = true;
-    if (ImGui::Begin(("Trade with " + peerName).c_str(), &open,
-                     kDialogFlags)) {
-
-        auto formatGold = [](uint64_t copper, char* buf, size_t bufsz) {
-            uint64_t g = copper / 10000;
-            uint64_t s = (copper % 10000) / 100;
-            uint64_t c = copper % 100;
-            if (g > 0) std::snprintf(buf, bufsz, "%llug %llus %lluc",
-                                     (unsigned long long)g, (unsigned long long)s, (unsigned long long)c);
-            else if (s > 0) std::snprintf(buf, bufsz, "%llus %lluc",
-                                          (unsigned long long)s, (unsigned long long)c);
-            else std::snprintf(buf, bufsz, "%lluc", (unsigned long long)c);
-        };
-
-        auto renderSlotColumn = [&](const char* label,
-                                    const std::array<game::GameHandler::TradeSlot,
-                                                     game::GameHandler::TRADE_SLOT_COUNT>& slots,
-                                    uint64_t gold, bool isMine) {
-            ImGui::Text("%s", label);
-            ImGui::Separator();
-
-            for (int i = 0; i < game::GameHandler::TRADE_SLOT_COUNT; ++i) {
-                const auto& slot = slots[i];
-                ImGui::PushID(i * (isMine ? 1 : -1) - (isMine ? 0 : 100));
-
-                if (slot.occupied && slot.itemId != 0) {
-                    const auto* info = gameHandler.getItemInfo(slot.itemId);
-                    std::string name = (info && info->valid && !info->name.empty())
-                        ? info->name
-                        : ("Item " + std::to_string(slot.itemId));
-                    if (slot.stackCount > 1)
-                        name += " x" + std::to_string(slot.stackCount);
-                    ImVec4 qc = (info && info->valid)
-                        ? InventoryScreen::getQualityColor(static_cast<game::ItemQuality>(info->quality))
-                        : ImVec4(1.0f, 0.9f, 0.5f, 1.0f);
-                    if (info && info->valid && info->displayInfoId != 0) {
-                        VkDescriptorSet iconTex = inventoryScreen.getItemIcon(info->displayInfoId);
-                        if (iconTex) {
-                            ImGui::Image((ImTextureID)(uintptr_t)iconTex, ImVec2(16, 16));
-                            ImGui::SameLine();
-                        }
-                    }
-                    ImGui::TextColored(qc, "%d. %s", i + 1, name.c_str());
-                    if (isMine && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                        gameHandler.clearTradeItem(static_cast<uint8_t>(i));
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        if (info && info->valid) inventoryScreen.renderItemTooltip(*info);
-                        else if (isMine) ImGui::SetTooltip("Double-click to remove");
-                    }
-                    if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
-                        ImGui::GetIO().KeyShift && info && info->valid && !info->name.empty()) {
-                        std::string link = buildItemChatLink(info->entry, info->quality, info->name);
-                        chatPanel_.insertChatLink(link);
-                    }
-                } else {
-                    ImGui::TextDisabled("  %d. (empty)", i + 1);
-
-                    // Allow dragging inventory items into trade slots via right-click context menu
-                    char addItemId[16]; snprintf(addItemId, sizeof(addItemId), "##additem%d", i);
-                    if (isMine && ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
-                        ImGui::OpenPopup(addItemId);
-                    }
-                }
-
-                if (isMine) {
-                    char addItemId[16]; snprintf(addItemId, sizeof(addItemId), "##additem%d", i);
-                    // Drag-from-inventory: show small popup listing bag items
-                    if (ImGui::BeginPopup(addItemId)) {
-                        ImGui::TextDisabled("Add from inventory:");
-                        const auto& inv = gameHandler.getInventory();
-                        // Backpack slots 0-15 (bag=255)
-                        for (int si = 0; si < game::Inventory::BACKPACK_SLOTS; ++si) {
-                            const auto& slot = inv.getBackpackSlot(si);
-                            if (slot.empty()) continue;
-                            const auto* ii = gameHandler.getItemInfo(slot.item.itemId);
-                            std::string iname = (ii && ii->valid && !ii->name.empty())
-                                ? ii->name
-                                : (!slot.item.name.empty() ? slot.item.name
-                                   : ("Item " + std::to_string(slot.item.itemId)));
-                            if (ImGui::Selectable(iname.c_str())) {
-                                // bag=255 = main backpack
-                                gameHandler.setTradeItem(static_cast<uint8_t>(i), 255u,
-                                                         static_cast<uint8_t>(si));
-                                ImGui::CloseCurrentPopup();
-                            }
-                        }
-                        ImGui::EndPopup();
-                    }
-                }
-                ImGui::PopID();
-            }
-
-            // Gold row
-            char gbuf[48];
-            formatGold(gold, gbuf, sizeof(gbuf));
-            ImGui::Spacing();
-            if (isMine) {
-                ImGui::Text("Gold offered: %s", gbuf);
-                static char goldInput[32] = "0";
-                ImGui::SetNextItemWidth(120.0f);
-                if (ImGui::InputText("##goldset", goldInput, sizeof(goldInput),
-                                     ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_EnterReturnsTrue)) {
-                    uint64_t copper = std::strtoull(goldInput, nullptr, 10);
-                    gameHandler.setTradeGold(copper);
-                }
-                ImGui::SameLine();
-                ImGui::TextDisabled("(copper, Enter to set)");
-            } else {
-                ImGui::Text("Gold offered: %s", gbuf);
-            }
-        };
-
-        // Two-column layout: my offer | peer offer
-        float colW = ImGui::GetContentRegionAvail().x * 0.5f - 4.0f;
-        ImGui::BeginChild("##myoffer", ImVec2(colW, 240.0f), true);
-        renderSlotColumn("Your offer", mySlots, myGold, true);
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("##peroffer", ImVec2(colW, 240.0f), true);
-        renderSlotColumn((peerName + "'s offer").c_str(), peerSlots, peerGold, false);
-        ImGui::EndChild();
-
-        // Buttons
-        ImGui::Spacing();
-        ImGui::Separator();
-        float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-        if (ImGui::Button("Accept Trade", ImVec2(bw, 0))) {
-            gameHandler.acceptTrade();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(bw, 0))) {
-            gameHandler.cancelTrade();
-        }
-    }
-    ImGui::End();
-
-    if (!open) {
-        gameHandler.cancelTrade();
-    }
-}
-
-void GameScreen::renderLootRollPopup(game::GameHandler& gameHandler) {
-    if (!gameHandler.hasPendingLootRoll()) return;
-
-    const auto& roll = gameHandler.getPendingLootRoll();
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 175, 310), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_Always);
-
-    if (ImGui::Begin("Loot Roll", nullptr, kDialogFlags)) {
-        // Quality color for item name
-        uint8_t q = roll.itemQuality;
-        ImVec4 col = ui::getQualityColor(static_cast<game::ItemQuality>(q));
-
-        // Countdown bar
-        {
-            auto now = std::chrono::steady_clock::now();
-            float elapsedMs = static_cast<float>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(now - roll.rollStartedAt).count());
-            float totalMs   = static_cast<float>(roll.rollCountdownMs > 0 ? roll.rollCountdownMs : 60000);
-            float fraction  = 1.0f - std::min(elapsedMs / totalMs, 1.0f);
-            float remainSec = (totalMs - elapsedMs) / 1000.0f;
-            if (remainSec < 0.0f) remainSec = 0.0f;
-
-            // Color: green → yellow → red
-            ImVec4 barColor;
-            if (fraction > 0.5f)
-                barColor = ImVec4(0.2f + (1.0f - fraction) * 1.4f, 0.85f, 0.2f, 1.0f);
-            else if (fraction > 0.2f)
-                barColor = ImVec4(1.0f, fraction * 1.7f, 0.1f, 1.0f);
-            else {
-                float pulse = 0.7f + 0.3f * std::sin(static_cast<float>(ImGui::GetTime()) * 6.0f);
-                barColor = ImVec4(pulse, 0.1f * pulse, 0.1f * pulse, 1.0f);
-            }
-
-            char timeBuf[16];
-            std::snprintf(timeBuf, sizeof(timeBuf), "%.0fs", remainSec);
-            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, barColor);
-            ImGui::ProgressBar(fraction, ImVec2(-1, 12), timeBuf);
-            ImGui::PopStyleColor();
-        }
-
-        ImGui::Text("An item is up for rolls:");
-
-        // Show item icon if available
-        const auto* rollInfo = gameHandler.getItemInfo(roll.itemId);
-        uint32_t rollDisplayId = rollInfo ? rollInfo->displayInfoId : 0;
-        VkDescriptorSet rollIcon = rollDisplayId ? inventoryScreen.getItemIcon(rollDisplayId) : VK_NULL_HANDLE;
-        if (rollIcon) {
-            ImGui::Image((ImTextureID)(uintptr_t)rollIcon, ImVec2(24, 24));
-            ImGui::SameLine();
-        }
-        // Prefer live item info (arrives via SMSG_ITEM_QUERY_SINGLE_RESPONSE after the
-        // roll popup opens); fall back to the name cached at SMSG_LOOT_START_ROLL time.
-        const char* displayName = (rollInfo && rollInfo->valid && !rollInfo->name.empty())
-            ? rollInfo->name.c_str()
-            : roll.itemName.c_str();
-        if (rollInfo && rollInfo->valid)
-            col = ui::getQualityColor(static_cast<game::ItemQuality>(rollInfo->quality));
-        ImGui::TextColored(col, "[%s]", displayName);
-        if (ImGui::IsItemHovered() && rollInfo && rollInfo->valid) {
-            inventoryScreen.renderItemTooltip(*rollInfo);
-        }
-        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
-            ImGui::GetIO().KeyShift && rollInfo && rollInfo->valid && !rollInfo->name.empty()) {
-            std::string link = buildItemChatLink(rollInfo->entry, rollInfo->quality, rollInfo->name);
-            chatPanel_.insertChatLink(link);
-        }
-        ImGui::Spacing();
-
-        // voteMask bits: 0x01=pass, 0x02=need, 0x04=greed, 0x08=disenchant
-        const uint8_t vm = roll.voteMask;
-        bool first = true;
-        if (vm & 0x02) {
-            if (ImGui::Button("Need", ImVec2(80, 30)))
-                gameHandler.sendLootRoll(roll.objectGuid, roll.slot, 0);
-            first = false;
-        }
-        if (vm & 0x04) {
-            if (!first) ImGui::SameLine();
-            if (ImGui::Button("Greed", ImVec2(80, 30)))
-                gameHandler.sendLootRoll(roll.objectGuid, roll.slot, 1);
-            first = false;
-        }
-        if (vm & 0x08) {
-            if (!first) ImGui::SameLine();
-            if (ImGui::Button("Disenchant", ImVec2(95, 30)))
-                gameHandler.sendLootRoll(roll.objectGuid, roll.slot, 2);
-            first = false;
-        }
-        if (vm & 0x01) {
-            if (!first) ImGui::SameLine();
-            if (ImGui::Button("Pass", ImVec2(70, 30)))
-                gameHandler.sendLootRoll(roll.objectGuid, roll.slot, 96);
-        }
-
-        // Live roll results from group members
-        if (!roll.playerRolls.empty()) {
-            ImGui::Separator();
-            ImGui::TextDisabled("Rolls so far:");
-            // Roll-type label + color
-            static constexpr const char* kRollLabels[] = {"Need", "Greed", "Disenchant", "Pass"};
-            static constexpr ImVec4 kRollColors[] = {
-                ImVec4(0.2f, 0.9f, 0.2f, 1.0f),  // Need  — green
-                ImVec4(0.3f, 0.6f, 1.0f, 1.0f),  // Greed — blue
-                ImVec4(0.7f, 0.3f, 0.9f, 1.0f),  // Disenchant — purple
-                kColorDarkGray,  // Pass  — gray
-            };
-            auto rollTypeIndex = [](uint8_t t) -> int {
-                if (t == 0) return 0;
-                if (t == 1) return 1;
-                if (t == 2) return 2;
-                return 3; // pass (96 or unknown)
-            };
-
-            if (ImGui::BeginTable("##lootrolls", 3,
-                    ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
-                ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Type",   ImGuiTableColumnFlags_WidthFixed, 72.0f);
-                ImGui::TableSetupColumn("Roll",   ImGuiTableColumnFlags_WidthFixed, 32.0f);
-                for (const auto& r : roll.playerRolls) {
-                    int ri = rollTypeIndex(r.rollType);
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted(r.playerName.c_str());
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::TextColored(kRollColors[ri], "%s", kRollLabels[ri]);
-                    ImGui::TableSetColumnIndex(2);
-                    if (r.rollType != 96) {
-                        ImGui::TextColored(kRollColors[ri], "%d", static_cast<int>(r.rollNum));
-                    } else {
-                        ImGui::TextDisabled("—");
-                    }
-                }
-                ImGui::EndTable();
-            }
-        }
-    }
-    ImGui::End();
-}
-
-void GameScreen::renderGuildInvitePopup(game::GameHandler& gameHandler) {
-    if (!gameHandler.hasPendingGuildInvite()) return;
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 175, 250), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_Always);
-
-    if (ImGui::Begin("Guild Invite", nullptr, kDialogFlags)) {
-        ImGui::TextWrapped("%s has invited you to join %s.",
-                           gameHandler.getPendingGuildInviterName().c_str(),
-                           gameHandler.getPendingGuildInviteGuildName().c_str());
-        ImGui::Spacing();
-
-        if (ImGui::Button("Accept", ImVec2(155, 30))) {
-            gameHandler.acceptGuildInvite();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Decline", ImVec2(155, 30))) {
-            gameHandler.declineGuildInvite();
-        }
-    }
-    ImGui::End();
-}
-
-void GameScreen::renderReadyCheckPopup(game::GameHandler& gameHandler) {
-    if (!gameHandler.hasPendingReadyCheck()) return;
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-    float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
-
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 175, screenH / 2 - 60), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_Always);
-
-    if (ImGui::Begin("Ready Check", nullptr, kDialogFlags)) {
-        const std::string& initiator = gameHandler.getReadyCheckInitiator();
-        if (initiator.empty()) {
-            ImGui::Text("A ready check has been initiated!");
-        } else {
-            ImGui::TextWrapped("%s has initiated a ready check!", initiator.c_str());
-        }
-        ImGui::Spacing();
-
-        if (ImGui::Button("Ready", ImVec2(155, 30))) {
-            gameHandler.respondToReadyCheck(true);
-            gameHandler.dismissReadyCheck();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Not Ready", ImVec2(155, 30))) {
-            gameHandler.respondToReadyCheck(false);
-            gameHandler.dismissReadyCheck();
-        }
-
-        // Live player responses
-        const auto& results = gameHandler.getReadyCheckResults();
-        if (!results.empty()) {
-            ImGui::Separator();
-            if (ImGui::BeginTable("##rcresults", 2,
-                    ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
-                ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 72.0f);
-                for (const auto& r : results) {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted(r.name.c_str());
-                    ImGui::TableSetColumnIndex(1);
-                    if (r.ready) {
-                        ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.2f, 1.0f), "Ready");
-                    } else {
-                        ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), "Not Ready");
-                    }
-                }
-                ImGui::EndTable();
-            }
-        }
-    }
-    ImGui::End();
-}
-
-void GameScreen::renderBgInvitePopup(game::GameHandler& gameHandler) {
-    if (!gameHandler.hasPendingBgInvite()) return;
-
-    const auto& queues = gameHandler.getBgQueues();
-    // Find the first WAIT_JOIN slot
-    const game::GameHandler::BgQueueSlot* slot = nullptr;
-    for (const auto& s : queues) {
-        if (s.statusId == 2) { slot = &s; break; }
-    }
-    if (!slot) return;
-
-    // Compute time remaining
-    auto now = std::chrono::steady_clock::now();
-    double elapsed = std::chrono::duration<double>(now - slot->inviteReceivedTime).count();
-    double remaining = static_cast<double>(slot->inviteTimeout) - elapsed;
-
-    // If invite has expired, clear it silently (server will handle the queue)
-    if (remaining <= 0.0) {
-        gameHandler.declineBattlefield(slot->queueSlot);
-        return;
-    }
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-    float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
-
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 190, screenH / 2 - 70), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_Always);
-
-    ImGui::PushStyleColor(ImGuiCol_WindowBg,   ImVec4(0.08f, 0.08f, 0.18f, 0.95f));
-    ImGui::PushStyleColor(ImGuiCol_Border,     ImVec4(0.4f, 0.4f, 1.0f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.15f, 0.15f, 0.4f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
-
-    const ImGuiWindowFlags popupFlags =
-        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
-
-    if (ImGui::Begin("Battleground Ready!", nullptr, popupFlags)) {
-        // BG name from stored queue data
-        std::string bgName = slot->bgName.empty() ? "Battleground" : slot->bgName;
-        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "%s", bgName.c_str());
-        ImGui::TextWrapped("A spot has opened! You have %d seconds to enter.", static_cast<int>(remaining));
-        ImGui::Spacing();
-
-        // Countdown progress bar
-        float frac = static_cast<float>(remaining / static_cast<double>(slot->inviteTimeout));
-        frac = std::clamp(frac, 0.0f, 1.0f);
-        ImVec4 barColor = frac > 0.5f ? colors::kHealthGreen
-                        : frac > 0.25f ? ImVec4(0.9f, 0.7f, 0.1f, 1.0f)
-                                       : colors::kDarkRed;
-        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, barColor);
-        char countdownLabel[32];
-        snprintf(countdownLabel, sizeof(countdownLabel), "%ds", static_cast<int>(remaining));
-        ImGui::ProgressBar(frac, ImVec2(-1, 16), countdownLabel);
-        ImGui::PopStyleColor();
-        ImGui::Spacing();
-
-        ImGui::PushStyleColor(ImGuiCol_Button,        colors::kBtnGreen);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors::kFriendlyGreen);
-        if (ImGui::Button("Enter Battleground", ImVec2(180, 30))) {
-            gameHandler.acceptBattlefield(slot->queueSlot);
-        }
-        ImGui::PopStyleColor(2);
-
-        ImGui::SameLine();
-
-        ImGui::PushStyleColor(ImGuiCol_Button,        colors::kBtnRed);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors::kDangerRed);
-        if (ImGui::Button("Leave Queue", ImVec2(175, 30))) {
-            gameHandler.declineBattlefield(slot->queueSlot);
-        }
-        ImGui::PopStyleColor(2);
-    }
-    ImGui::End();
-
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor(3);
-}
-
-void GameScreen::renderBfMgrInvitePopup(game::GameHandler& gameHandler) {
-    // Only shown on WotLK servers (outdoor battlefields like Wintergrasp use the BF Manager)
-    if (!gameHandler.hasBfMgrInvite()) return;
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-    float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
-
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2.0f - 190.0f, screenH / 2.0f - 55.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(380.0f, 0.0f), ImGuiCond_Always);
-
-    ImGui::PushStyleColor(ImGuiCol_WindowBg,      ImVec4(0.08f, 0.10f, 0.20f, 0.96f));
-    ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.5f, 0.5f, 1.0f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.15f, 0.15f, 0.45f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
-
-    const ImGuiWindowFlags flags =
-        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
-
-    if (ImGui::Begin("Battlefield", nullptr, flags)) {
-        // Resolve zone name for Wintergrasp (zoneId 4197)
-        uint32_t zoneId = gameHandler.getBfMgrZoneId();
-        const char* zoneName = nullptr;
-        if (zoneId == 4197) zoneName = "Wintergrasp";
-        else if (zoneId == 5095) zoneName = "Tol Barad";
-
-        if (zoneName) {
-            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "%s", zoneName);
-        } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "Outdoor Battlefield");
-        }
-        ImGui::Spacing();
-        ImGui::TextWrapped("You are invited to join the outdoor battlefield. Do you want to enter?");
-        ImGui::Spacing();
-
-        ImGui::PushStyleColor(ImGuiCol_Button,        colors::kBtnGreen);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors::kFriendlyGreen);
-        if (ImGui::Button("Enter Battlefield", ImVec2(178, 28))) {
-            gameHandler.acceptBfMgrInvite();
-        }
-        ImGui::PopStyleColor(2);
-
-        ImGui::SameLine();
-
-        ImGui::PushStyleColor(ImGuiCol_Button,        colors::kBtnRed);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors::kDangerRed);
-        if (ImGui::Button("Decline", ImVec2(175, 28))) {
-            gameHandler.declineBfMgrInvite();
-        }
-        ImGui::PopStyleColor(2);
-    }
-    ImGui::End();
-
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor(3);
-}
-
-void GameScreen::renderLfgProposalPopup(game::GameHandler& gameHandler) {
-    using LfgState = game::GameHandler::LfgState;
-    if (gameHandler.getLfgState() != LfgState::Proposal) return;
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-    float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
-
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2.0f - 175.0f, screenH / 2.0f - 65.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(350.0f, 0.0f), ImGuiCond_Always);
-
-    ImGui::PushStyleColor(ImGuiCol_WindowBg,      ImVec4(0.08f, 0.14f, 0.08f, 0.96f));
-    ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.3f, 0.8f, 0.3f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.1f, 0.3f, 0.1f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
-
-    const ImGuiWindowFlags flags =
-        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
-
-    if (ImGui::Begin("Dungeon Finder", nullptr, flags)) {
-        ImGui::TextColored(kColorGreen, "A group has been found!");
-        ImGui::Spacing();
-        ImGui::TextWrapped("Please accept or decline to join the dungeon.");
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        ImGui::PushStyleColor(ImGuiCol_Button,        colors::kBtnGreen);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors::kFriendlyGreen);
-        if (ImGui::Button("Accept", ImVec2(155.0f, 30.0f))) {
-            gameHandler.lfgAcceptProposal(gameHandler.getLfgProposalId(), true);
-        }
-        ImGui::PopStyleColor(2);
-
-        ImGui::SameLine();
-
-        ImGui::PushStyleColor(ImGuiCol_Button,        colors::kBtnRed);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors::kDangerRed);
-        if (ImGui::Button("Decline", ImVec2(155.0f, 30.0f))) {
-            gameHandler.lfgAcceptProposal(gameHandler.getLfgProposalId(), false);
-        }
-        ImGui::PopStyleColor(2);
-    }
-    ImGui::End();
-
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor(3);
-}
-
-void GameScreen::renderLfgRoleCheckPopup(game::GameHandler& gameHandler) {
-    using LfgState = game::GameHandler::LfgState;
-    if (gameHandler.getLfgState() != LfgState::RoleCheck) return;
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-    float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
-
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2.0f - 160.0f, screenH / 2.0f - 80.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_Always);
-
-    ImGui::PushStyleColor(ImGuiCol_WindowBg,      ImVec4(0.08f, 0.08f, 0.18f, 0.96f));
-    ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.3f, 0.5f, 0.9f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.1f, 0.1f, 0.3f, 1.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
-
-    const ImGuiWindowFlags flags =
-        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
-
-    if (ImGui::Begin("Role Check##LfgRoleCheck", nullptr, flags)) {
-        ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "Confirm your role:");
-        ImGui::Spacing();
-
-        // Role checkboxes
-        bool isTank   = (lfgRoles_ & 0x02) != 0;
-        bool isHealer = (lfgRoles_ & 0x04) != 0;
-        bool isDps    = (lfgRoles_ & 0x08) != 0;
-
-        if (ImGui::Checkbox("Tank",   &isTank))   lfgRoles_ = (lfgRoles_ & ~0x02) | (isTank   ? 0x02 : 0);
-        ImGui::SameLine(120.0f);
-        if (ImGui::Checkbox("Healer", &isHealer)) lfgRoles_ = (lfgRoles_ & ~0x04) | (isHealer ? 0x04 : 0);
-        ImGui::SameLine(220.0f);
-        if (ImGui::Checkbox("DPS",    &isDps))    lfgRoles_ = (lfgRoles_ & ~0x08) | (isDps    ? 0x08 : 0);
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        bool hasRole = (lfgRoles_ & 0x0E) != 0;
-        if (!hasRole) ImGui::BeginDisabled();
-
-        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.15f, 0.4f, 0.15f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
-        if (ImGui::Button("Accept", ImVec2(140.0f, 28.0f))) {
-            gameHandler.lfgSetRoles(lfgRoles_);
-        }
-        ImGui::PopStyleColor(2);
-
-        if (!hasRole) ImGui::EndDisabled();
-
-        ImGui::SameLine();
-
-        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.4f, 0.15f, 0.15f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
-        if (ImGui::Button("Leave Queue", ImVec2(140.0f, 28.0f))) {
-            gameHandler.lfgLeave();
-        }
-        ImGui::PopStyleColor(2);
-    }
-    ImGui::End();
-
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor(3);
 }
 
 void GameScreen::renderGuildRoster(game::GameHandler& gameHandler) {
@@ -12613,7 +11751,7 @@ void GameScreen::renderEscapeMenu() {
         if (ImGui::Button("Logout", ImVec2(-1, 0))) {
             core::Application::getInstance().logoutToLogin();
             showEscapeMenu = false;
-            showEscapeSettingsNotice = false;
+            settingsPanel_.showEscapeSettingsNotice = false;
         }
         if (ImGui::Button("Quit", ImVec2(-1, 0))) {
             auto* renderer = core::Application::getInstance().getRenderer();
@@ -12625,9 +11763,9 @@ void GameScreen::renderEscapeMenu() {
             core::Application::getInstance().shutdown();
         }
         if (ImGui::Button("Settings", ImVec2(-1, 0))) {
-            showEscapeSettingsNotice = false;
-            showSettingsWindow = true;
-            settingsInit = false;
+            settingsPanel_.showEscapeSettingsNotice = false;
+            settingsPanel_.showSettingsWindow = true;
+            settingsPanel_.settingsInit = false;
             showEscapeMenu = false;
         }
         if (ImGui::Button("Instance Lockouts", ImVec2(-1, 0))) {
@@ -12643,7 +11781,7 @@ void GameScreen::renderEscapeMenu() {
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 10.0f));
         if (ImGui::Button("Back to Game", ImVec2(-1, 0))) {
             showEscapeMenu = false;
-            showEscapeSettingsNotice = false;
+            settingsPanel_.showEscapeSettingsNotice = false;
         }
         ImGui::PopStyleVar();
     }
@@ -13204,1383 +12342,6 @@ void GameScreen::renderReclaimCorpseButton(game::GameHandler& gameHandler) {
     ImGui::PopStyleVar(2);
 }
 
-void GameScreen::renderResurrectDialog(game::GameHandler& gameHandler) {
-    if (!gameHandler.showResurrectDialog()) return;
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-    float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
-
-    float dlgW = 300.0f;
-    float dlgH = 110.0f;
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2 - dlgW / 2, screenH * 0.3f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(dlgW, dlgH), ImGuiCond_Always);
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.15f, 0.95f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.4f, 0.4f, 0.8f, 1.0f));
-
-    if (ImGui::Begin("##ResurrectDialog", nullptr,
-            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar)) {
-
-        ImGui::Spacing();
-        const std::string& casterName = gameHandler.getResurrectCasterName();
-        std::string text = casterName.empty()
-            ? "Return to life?"
-            : casterName + " wishes to resurrect you.";
-        float textW = ImGui::CalcTextSize(text.c_str()).x;
-        ImGui::SetCursorPosX(std::max(4.0f, (dlgW - textW) / 2));
-        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "%s", text.c_str());
-
-        ImGui::Spacing();
-        ImGui::Spacing();
-
-        float btnW = 100.0f;
-        float spacing = 20.0f;
-        ImGui::SetCursorPosX((dlgW - btnW * 2 - spacing) / 2);
-
-        ImGui::PushStyleColor(ImGuiCol_Button, colors::kBtnDkGreen);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors::kBtnDkGreenHover);
-        if (ImGui::Button("Accept", ImVec2(btnW, 30))) {
-            gameHandler.acceptResurrect();
-        }
-        ImGui::PopStyleColor(2);
-
-        ImGui::SameLine(0, spacing);
-
-        ImGui::PushStyleColor(ImGuiCol_Button, colors::kBtnDkRed);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors::kBtnDkRedHover);
-        if (ImGui::Button("Decline", ImVec2(btnW, 30))) {
-            gameHandler.declineResurrect();
-        }
-        ImGui::PopStyleColor(2);
-    }
-    ImGui::End();
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar();
-}
-
-// ============================================================
-// Talent Wipe Confirm Dialog
-// ============================================================
-
-void GameScreen::renderTalentWipeConfirmDialog(game::GameHandler& gameHandler) {
-    if (!gameHandler.showTalentWipeConfirmDialog()) return;
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-    float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
-
-    float dlgW = 340.0f;
-    float dlgH = 130.0f;
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2 - dlgW / 2, screenH * 0.3f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(dlgW, dlgH), ImGuiCond_Always);
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.15f, 0.95f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.8f, 0.7f, 0.2f, 1.0f));
-
-    if (ImGui::Begin("##TalentWipeDialog", nullptr,
-            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar)) {
-
-        ImGui::Spacing();
-        uint32_t cost = gameHandler.getTalentWipeCost();
-        uint32_t gold = cost / 10000;
-        uint32_t silver = (cost % 10000) / 100;
-        uint32_t copper = cost % 100;
-        char costStr[64];
-        if (gold > 0)
-            std::snprintf(costStr, sizeof(costStr), "%ug %us %uc", gold, silver, copper);
-        else if (silver > 0)
-            std::snprintf(costStr, sizeof(costStr), "%us %uc", silver, copper);
-        else
-            std::snprintf(costStr, sizeof(costStr), "%uc", copper);
-
-        std::string text = "Reset your talents for ";
-        text += costStr;
-        text += "?";
-        float textW = ImGui::CalcTextSize(text.c_str()).x;
-        ImGui::SetCursorPosX(std::max(4.0f, (dlgW - textW) / 2));
-        ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.4f, 1.0f), "%s", text.c_str());
-
-        ImGui::Spacing();
-        ImGui::SetCursorPosX(8.0f);
-        ImGui::TextDisabled("All talent points will be refunded.");
-        ImGui::Spacing();
-
-        float btnW = 110.0f;
-        float spacing = 20.0f;
-        ImGui::SetCursorPosX((dlgW - btnW * 2 - spacing) / 2);
-
-        ImGui::PushStyleColor(ImGuiCol_Button, colors::kBtnDkGreen);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors::kBtnDkGreenHover);
-        if (ImGui::Button("Confirm", ImVec2(btnW, 30))) {
-            gameHandler.confirmTalentWipe();
-        }
-        ImGui::PopStyleColor(2);
-
-        ImGui::SameLine(0, spacing);
-
-        ImGui::PushStyleColor(ImGuiCol_Button, colors::kBtnDkRed);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors::kBtnDkRedHover);
-        if (ImGui::Button("Cancel", ImVec2(btnW, 30))) {
-            gameHandler.cancelTalentWipe();
-        }
-        ImGui::PopStyleColor(2);
-    }
-    ImGui::End();
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar();
-}
-
-void GameScreen::renderPetUnlearnConfirmDialog(game::GameHandler& gameHandler) {
-    if (!gameHandler.showPetUnlearnDialog()) return;
-
-    auto* window = core::Application::getInstance().getWindow();
-    float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-    float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
-
-    float dlgW = 340.0f;
-    float dlgH = 130.0f;
-    ImGui::SetNextWindowPos(ImVec2(screenW / 2 - dlgW / 2, screenH * 0.3f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(dlgW, dlgH), ImGuiCond_Always);
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.15f, 0.95f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.8f, 0.7f, 0.2f, 1.0f));
-
-    if (ImGui::Begin("##PetUnlearnDialog", nullptr,
-            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar)) {
-
-        ImGui::Spacing();
-        uint32_t cost = gameHandler.getPetUnlearnCost();
-        uint32_t gold = cost / 10000;
-        uint32_t silver = (cost % 10000) / 100;
-        uint32_t copper = cost % 100;
-        char costStr[64];
-        if (gold > 0)
-            std::snprintf(costStr, sizeof(costStr), "%ug %us %uc", gold, silver, copper);
-        else if (silver > 0)
-            std::snprintf(costStr, sizeof(costStr), "%us %uc", silver, copper);
-        else
-            std::snprintf(costStr, sizeof(costStr), "%uc", copper);
-
-        std::string text = std::string("Reset your pet's talents for ") + costStr + "?";
-        float textW = ImGui::CalcTextSize(text.c_str()).x;
-        ImGui::SetCursorPosX(std::max(4.0f, (dlgW - textW) / 2));
-        ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.4f, 1.0f), "%s", text.c_str());
-
-        ImGui::Spacing();
-        ImGui::SetCursorPosX(8.0f);
-        ImGui::TextDisabled("All pet talent points will be refunded.");
-        ImGui::Spacing();
-
-        float btnW = 110.0f;
-        float spacing = 20.0f;
-        ImGui::SetCursorPosX((dlgW - btnW * 2 - spacing) / 2);
-
-        ImGui::PushStyleColor(ImGuiCol_Button, colors::kBtnDkGreen);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors::kBtnDkGreenHover);
-        if (ImGui::Button("Confirm##petunlearn", ImVec2(btnW, 30))) {
-            gameHandler.confirmPetUnlearn();
-        }
-        ImGui::PopStyleColor(2);
-
-        ImGui::SameLine(0, spacing);
-
-        ImGui::PushStyleColor(ImGuiCol_Button, colors::kBtnDkRed);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colors::kBtnDkRedHover);
-        if (ImGui::Button("Cancel##petunlearn", ImVec2(btnW, 30))) {
-            gameHandler.cancelPetUnlearn();
-        }
-        ImGui::PopStyleColor(2);
-    }
-    ImGui::End();
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar();
-}
-
-// ============================================================
-// Settings Window
-// ============================================================
-
-void GameScreen::renderSettingsInterfaceTab() {
-ImGui::Spacing();
-ImGui::BeginChild("InterfaceSettings", ImVec2(0, 360), true);
-
-ImGui::SeparatorText("Action Bars");
-ImGui::Spacing();
-ImGui::SetNextItemWidth(200.0f);
-if (ImGui::SliderFloat("Action Bar Scale", &pendingActionBarScale, 0.5f, 1.5f, "%.2fx")) {
-    saveSettings();
-}
-ImGui::Spacing();
-
-if (ImGui::Checkbox("Show Second Action Bar", &pendingShowActionBar2)) {
-    saveSettings();
-}
-ImGui::SameLine();
-ImGui::TextDisabled("(Shift+1 through Shift+=)");
-
-if (pendingShowActionBar2) {
-    ImGui::Spacing();
-    ImGui::TextUnformatted("Second Bar Position Offset");
-    ImGui::SetNextItemWidth(160.0f);
-    if (ImGui::SliderFloat("Horizontal##bar2x", &pendingActionBar2OffsetX, -600.0f, 600.0f, "%.0f px")) {
-        saveSettings();
-    }
-    ImGui::SetNextItemWidth(160.0f);
-    if (ImGui::SliderFloat("Vertical##bar2y", &pendingActionBar2OffsetY, -400.0f, 400.0f, "%.0f px")) {
-        saveSettings();
-    }
-    if (ImGui::Button("Reset Position##bar2")) {
-        pendingActionBar2OffsetX = 0.0f;
-        pendingActionBar2OffsetY = 0.0f;
-        saveSettings();
-    }
-}
-
-ImGui::Spacing();
-if (ImGui::Checkbox("Show Right Side Bar", &pendingShowRightBar)) {
-    saveSettings();
-}
-ImGui::SameLine();
-ImGui::TextDisabled("(Slots 25-36)");
-if (pendingShowRightBar) {
-    ImGui::SetNextItemWidth(160.0f);
-    if (ImGui::SliderFloat("Vertical Offset##rbar", &pendingRightBarOffsetY, -400.0f, 400.0f, "%.0f px")) {
-        saveSettings();
-    }
-}
-
-ImGui::Spacing();
-if (ImGui::Checkbox("Show Left Side Bar", &pendingShowLeftBar)) {
-    saveSettings();
-}
-ImGui::SameLine();
-ImGui::TextDisabled("(Slots 37-48)");
-if (pendingShowLeftBar) {
-    ImGui::SetNextItemWidth(160.0f);
-    if (ImGui::SliderFloat("Vertical Offset##lbar", &pendingLeftBarOffsetY, -400.0f, 400.0f, "%.0f px")) {
-        saveSettings();
-    }
-}
-
-ImGui::Spacing();
-ImGui::SeparatorText("Nameplates");
-ImGui::Spacing();
-ImGui::SetNextItemWidth(200.0f);
-if (ImGui::SliderFloat("Nameplate Scale", &nameplateScale_, 0.5f, 2.0f, "%.2fx")) {
-    saveSettings();
-}
-
-ImGui::Spacing();
-ImGui::SeparatorText("Network");
-ImGui::Spacing();
-if (ImGui::Checkbox("Show Latency Meter", &pendingShowLatencyMeter)) {
-    showLatencyMeter_ = pendingShowLatencyMeter;
-    saveSettings();
-}
-ImGui::SameLine();
-ImGui::TextDisabled("(ms indicator near minimap)");
-
-if (ImGui::Checkbox("Show DPS/HPS Meter", &showDPSMeter_)) {
-    saveSettings();
-}
-ImGui::SameLine();
-ImGui::TextDisabled("(damage/healing per second above action bar)");
-
-if (ImGui::Checkbox("Show Cooldown Tracker", &showCooldownTracker_)) {
-    saveSettings();
-}
-ImGui::SameLine();
-ImGui::TextDisabled("(active spell cooldowns near action bar)");
-
-ImGui::Spacing();
-ImGui::SeparatorText("Screen Effects");
-ImGui::Spacing();
-if (ImGui::Checkbox("Damage Flash", &damageFlashEnabled_)) {
-    if (!damageFlashEnabled_) damageFlashAlpha_ = 0.0f;
-    saveSettings();
-}
-ImGui::SameLine();
-ImGui::TextDisabled("(red vignette on taking damage)");
-
-if (ImGui::Checkbox("Low Health Vignette", &lowHealthVignetteEnabled_)) {
-    saveSettings();
-}
-ImGui::SameLine();
-ImGui::TextDisabled("(pulsing red edges below 20%% HP)");
-
-ImGui::EndChild();
-}
-
-void GameScreen::renderSettingsGameplayTab() {
-    auto* renderer = core::Application::getInstance().getRenderer();
-ImGui::Spacing();
-
-ImGui::Text("Controls");
-ImGui::Separator();
-if (ImGui::SliderFloat("Mouse Sensitivity", &pendingMouseSensitivity, 0.05f, 1.0f, "%.2f")) {
-    if (renderer) {
-        if (auto* cameraController = renderer->getCameraController()) {
-            cameraController->setMouseSensitivity(pendingMouseSensitivity);
-        }
-    }
-    saveSettings();
-}
-if (ImGui::Checkbox("Invert Mouse", &pendingInvertMouse)) {
-    if (renderer) {
-        if (auto* cameraController = renderer->getCameraController()) {
-            cameraController->setInvertMouse(pendingInvertMouse);
-        }
-    }
-    saveSettings();
-}
-if (ImGui::Checkbox("Extended Camera Zoom", &pendingExtendedZoom)) {
-    if (renderer) {
-        if (auto* cameraController = renderer->getCameraController()) {
-            cameraController->setExtendedZoom(pendingExtendedZoom);
-        }
-    }
-    saveSettings();
-}
-if (ImGui::SliderFloat("Camera Stiffness", &pendingCameraStiffness, 5.0f, 100.0f, "%.0f")) {
-    if (renderer) {
-        if (auto* cameraController = renderer->getCameraController()) {
-            cameraController->setCameraSmoothSpeed(pendingCameraStiffness);
-        }
-    }
-    saveSettings();
-}
-ImGui::SetItemTooltip("Higher = tighter camera with less sway. Default: 30");
-if (ImGui::SliderFloat("Camera Pivot Height", &pendingPivotHeight, 0.0f, 3.0f, "%.1f")) {
-    if (renderer) {
-        if (auto* cameraController = renderer->getCameraController()) {
-            cameraController->setPivotHeight(pendingPivotHeight);
-        }
-    }
-    saveSettings();
-}
-ImGui::SetItemTooltip("Height of camera orbit point above feet. Lower = less detached feel. Default: 1.8");
-if (ImGui::IsItemHovered())
-    ImGui::SetTooltip("Allow the camera to zoom out further than normal");
-
-if (ImGui::SliderFloat("Field of View", &pendingFov, 45.0f, 110.0f, "%.0f°")) {
-    if (renderer) {
-        if (auto* camera = renderer->getCamera()) {
-            camera->setFov(pendingFov);
-        }
-    }
-    saveSettings();
-}
-if (ImGui::IsItemHovered())
-    ImGui::SetTooltip("Camera field of view in degrees (default: 70)");
-
-ImGui::Spacing();
-ImGui::Spacing();
-
-ImGui::Text("Interface");
-ImGui::Separator();
-if (ImGui::SliderInt("UI Opacity", &pendingUiOpacity, 20, 100, "%d%%")) {
-    uiOpacity_ = static_cast<float>(pendingUiOpacity) / 100.0f;
-    saveSettings();
-}
-if (ImGui::Checkbox("Rotate Minimap", &pendingMinimapRotate)) {
-    // Force north-up minimap.
-    minimapRotate_ = false;
-    pendingMinimapRotate = false;
-    if (renderer) {
-        if (auto* minimap = renderer->getMinimap()) {
-            minimap->setRotateWithCamera(false);
-        }
-    }
-    saveSettings();
-}
-if (ImGui::Checkbox("Square Minimap", &pendingMinimapSquare)) {
-    minimapSquare_ = pendingMinimapSquare;
-    if (renderer) {
-        if (auto* minimap = renderer->getMinimap()) {
-            minimap->setSquareShape(minimapSquare_);
-        }
-    }
-    saveSettings();
-}
-if (ImGui::Checkbox("Show Nearby NPC Dots", &pendingMinimapNpcDots)) {
-    minimapNpcDots_ = pendingMinimapNpcDots;
-    saveSettings();
-}
-// Zoom controls
-ImGui::Text("Minimap Zoom:");
-ImGui::SameLine();
-if (ImGui::Button("  -  ")) {
-    if (renderer) {
-        if (auto* minimap = renderer->getMinimap()) {
-            minimap->zoomOut();
-            saveSettings();
-        }
-    }
-}
-ImGui::SameLine();
-if (ImGui::Button("  +  ")) {
-    if (renderer) {
-        if (auto* minimap = renderer->getMinimap()) {
-            minimap->zoomIn();
-            saveSettings();
-        }
-    }
-}
-
-ImGui::Spacing();
-ImGui::Text("Loot");
-ImGui::Separator();
-if (ImGui::Checkbox("Auto Loot", &pendingAutoLoot)) {
-    saveSettings();  // per-frame sync applies pendingAutoLoot to gameHandler
-}
-if (ImGui::IsItemHovered())
-    ImGui::SetTooltip("Automatically pick up all items when looting");
-if (ImGui::Checkbox("Auto Sell Greys", &pendingAutoSellGrey)) {
-    saveSettings();
-}
-if (ImGui::IsItemHovered())
-    ImGui::SetTooltip("Automatically sell all grey (poor quality) items when opening a vendor");
-if (ImGui::Checkbox("Auto Repair", &pendingAutoRepair)) {
-    saveSettings();
-}
-if (ImGui::IsItemHovered())
-    ImGui::SetTooltip("Automatically repair all damaged equipment when opening an armorer vendor");
-
-ImGui::Spacing();
-ImGui::Text("Bags");
-ImGui::Separator();
-if (ImGui::Checkbox("Separate Bag Windows", &pendingSeparateBags)) {
-    inventoryScreen.setSeparateBags(pendingSeparateBags);
-    saveSettings();
-}
-if (ImGui::Checkbox("Show Key Ring", &pendingShowKeyring)) {
-    inventoryScreen.setShowKeyring(pendingShowKeyring);
-    saveSettings();
-}
-
-ImGui::Spacing();
-ImGui::Separator();
-ImGui::Spacing();
-
-if (ImGui::Button("Restore Gameplay Defaults", ImVec2(-1, 0))) {
-    pendingMouseSensitivity = 0.2f;
-    pendingInvertMouse = false;
-    pendingExtendedZoom = false;
-    pendingUiOpacity = 65;
-    pendingMinimapRotate = false;
-    pendingMinimapSquare = false;
-    pendingMinimapNpcDots = false;
-    pendingSeparateBags = true;
-    inventoryScreen.setSeparateBags(true);
-    pendingShowKeyring = true;
-    inventoryScreen.setShowKeyring(true);
-    uiOpacity_ = 0.65f;
-    minimapRotate_ = false;
-    minimapSquare_ = false;
-    minimapNpcDots_ = false;
-    if (renderer) {
-        if (auto* cameraController = renderer->getCameraController()) {
-            cameraController->setMouseSensitivity(pendingMouseSensitivity);
-            cameraController->setInvertMouse(pendingInvertMouse);
-            cameraController->setExtendedZoom(pendingExtendedZoom);
-        }
-        if (auto* minimap = renderer->getMinimap()) {
-            minimap->setRotateWithCamera(minimapRotate_);
-            minimap->setSquareShape(minimapSquare_);
-        }
-    }
-    saveSettings();
-}
-
-}
-
-void GameScreen::renderSettingsControlsTab() {
-ImGui::Spacing();
-
-ImGui::Text("Keybindings");
-ImGui::Separator();
-
-auto& km = ui::KeybindingManager::getInstance();
-int numActions = km.getActionCount();
-
-for (int i = 0; i < numActions; ++i) {
-    auto action = static_cast<ui::KeybindingManager::Action>(i);
-    const char* actionName = km.getActionName(action);
-    ImGuiKey currentKey = km.getKeyForAction(action);
-
-    // Display current binding
-    ImGui::Text("%s:", actionName);
-    ImGui::SameLine(200);
-
-    // Get human-readable key name (basic implementation)
-    const char* keyName = "Unknown";
-    if (currentKey >= ImGuiKey_A && currentKey <= ImGuiKey_Z) {
-        static char keyBuf[16];
-        snprintf(keyBuf, sizeof(keyBuf), "%c", 'A' + (currentKey - ImGuiKey_A));
-        keyName = keyBuf;
-    } else if (currentKey >= ImGuiKey_0 && currentKey <= ImGuiKey_9) {
-        static char keyBuf[16];
-        snprintf(keyBuf, sizeof(keyBuf), "%c", '0' + (currentKey - ImGuiKey_0));
-        keyName = keyBuf;
-    } else if (currentKey == ImGuiKey_Escape) {
-        keyName = "Escape";
-    } else if (currentKey == ImGuiKey_Enter) {
-        keyName = "Enter";
-    } else if (currentKey == ImGuiKey_Tab) {
-        keyName = "Tab";
-    } else if (currentKey == ImGuiKey_Space) {
-        keyName = "Space";
-    } else if (currentKey >= ImGuiKey_F1 && currentKey <= ImGuiKey_F12) {
-        static char keyBuf[16];
-        snprintf(keyBuf, sizeof(keyBuf), "F%d", 1 + (currentKey - ImGuiKey_F1));
-        keyName = keyBuf;
-    }
-
-    ImGui::Text("[%s]", keyName);
-
-    // Rebind button
-    ImGui::SameLine(350);
-    if (ImGui::Button(awaitingKeyPress && pendingRebindAction == i ? "Waiting..." : "Rebind", ImVec2(100, 0))) {
-        pendingRebindAction = i;
-        awaitingKeyPress = true;
-    }
-}
-
-// Handle key press during rebinding
-if (awaitingKeyPress && pendingRebindAction >= 0) {
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text("Press any key to bind to this action (Esc to cancel)...");
-
-    // Check for any key press
-    bool foundKey = false;
-    ImGuiKey newKey = ImGuiKey_None;
-    for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; ++k) {
-        if (ImGui::IsKeyPressed(static_cast<ImGuiKey>(k), false)) {
-            if (k == ImGuiKey_Escape) {
-                // Cancel rebinding
-                awaitingKeyPress = false;
-                pendingRebindAction = -1;
-                foundKey = true;
-                break;
-            }
-            newKey = static_cast<ImGuiKey>(k);
-            foundKey = true;
-            break;
-        }
-    }
-
-    if (foundKey && newKey != ImGuiKey_None) {
-        auto action = static_cast<ui::KeybindingManager::Action>(pendingRebindAction);
-        km.setKeyForAction(action, newKey);
-        awaitingKeyPress = false;
-        pendingRebindAction = -1;
-        saveSettings();
-    }
-}
-
-ImGui::Spacing();
-ImGui::Separator();
-ImGui::Spacing();
-
-if (ImGui::Button("Reset to Defaults", ImVec2(-1, 0))) {
-    km.resetToDefaults();
-    awaitingKeyPress = false;
-    pendingRebindAction = -1;
-    saveSettings();
-}
-
-}
-
-void GameScreen::renderSettingsAudioTab() {
-    auto* renderer = core::Application::getInstance().getRenderer();
-ImGui::Spacing();
-ImGui::BeginChild("AudioSettings", ImVec2(0, 360), true);
-
-// Helper lambda to apply audio settings
-auto applyAudioSettings = [&]() {
-    applyAudioVolumes(renderer);
-    saveSettings();
-};
-
-ImGui::Text("Master Volume");
-if (ImGui::SliderInt("##MasterVolume", &pendingMasterVolume, 0, 100, "%d%%")) {
-    applyAudioSettings();
-}
-ImGui::Separator();
-
-if (ImGui::Checkbox("Enable WoWee Music", &pendingUseOriginalSoundtrack)) {
-    if (renderer) {
-        if (auto* zm = renderer->getZoneManager()) {
-            zm->setUseOriginalSoundtrack(pendingUseOriginalSoundtrack);
-        }
-    }
-    saveSettings();
-}
-if (ImGui::IsItemHovered())
-    ImGui::SetTooltip("Include WoWee music tracks in zone music rotation");
-ImGui::Separator();
-
-ImGui::Text("Music");
-if (ImGui::SliderInt("##MusicVolume", &pendingMusicVolume, 0, 100, "%d%%")) {
-    applyAudioSettings();
-}
-
-ImGui::Spacing();
-ImGui::Text("Ambient Sounds");
-if (ImGui::SliderInt("##AmbientVolume", &pendingAmbientVolume, 0, 100, "%d%%")) {
-    applyAudioSettings();
-}
-ImGui::TextWrapped("Weather, zones, cities, emitters");
-
-ImGui::Spacing();
-ImGui::Text("UI Sounds");
-if (ImGui::SliderInt("##UiVolume", &pendingUiVolume, 0, 100, "%d%%")) {
-    applyAudioSettings();
-}
-ImGui::TextWrapped("Buttons, loot, quest complete");
-
-ImGui::Spacing();
-ImGui::Text("Combat Sounds");
-if (ImGui::SliderInt("##CombatVolume", &pendingCombatVolume, 0, 100, "%d%%")) {
-    applyAudioSettings();
-}
-ImGui::TextWrapped("Weapon swings, impacts, grunts");
-
-ImGui::Spacing();
-ImGui::Text("Spell Sounds");
-if (ImGui::SliderInt("##SpellVolume", &pendingSpellVolume, 0, 100, "%d%%")) {
-    applyAudioSettings();
-}
-ImGui::TextWrapped("Magic casting and impacts");
-
-ImGui::Spacing();
-ImGui::Text("Movement Sounds");
-if (ImGui::SliderInt("##MovementVolume", &pendingMovementVolume, 0, 100, "%d%%")) {
-    applyAudioSettings();
-}
-ImGui::TextWrapped("Water splashes, jump/land");
-
-ImGui::Spacing();
-ImGui::Text("Footsteps");
-if (ImGui::SliderInt("##FootstepVolume", &pendingFootstepVolume, 0, 100, "%d%%")) {
-    applyAudioSettings();
-}
-
-ImGui::Spacing();
-ImGui::Text("NPC Voices");
-if (ImGui::SliderInt("##NpcVoiceVolume", &pendingNpcVoiceVolume, 0, 100, "%d%%")) {
-    applyAudioSettings();
-}
-
-ImGui::Spacing();
-ImGui::Text("Mount Sounds");
-if (ImGui::SliderInt("##MountVolume", &pendingMountVolume, 0, 100, "%d%%")) {
-    applyAudioSettings();
-}
-
-ImGui::Spacing();
-ImGui::Text("Activity Sounds");
-if (ImGui::SliderInt("##ActivityVolume", &pendingActivityVolume, 0, 100, "%d%%")) {
-    applyAudioSettings();
-}
-ImGui::TextWrapped("Swimming, eating, drinking");
-
-ImGui::EndChild();
-
-if (ImGui::Button("Restore Audio Defaults", ImVec2(-1, 0))) {
-    pendingMasterVolume = 100;
-    pendingMusicVolume = 30; // default music volume
-    pendingAmbientVolume = 100;
-    pendingUiVolume = 100;
-    pendingCombatVolume = 100;
-    pendingSpellVolume = 100;
-    pendingMovementVolume = 100;
-    pendingFootstepVolume = 100;
-    pendingNpcVoiceVolume = 100;
-    pendingMountVolume = 100;
-    pendingActivityVolume = 100;
-    applyAudioSettings();
-}
-
-}
-
-void GameScreen::renderSettingsAboutTab() {
-ImGui::Spacing();
-ImGui::Spacing();
-
-ImGui::TextWrapped("WoWee - World of Warcraft Client Emulator");
-ImGui::Spacing();
-ImGui::Separator();
-ImGui::Spacing();
-
-ImGui::Text("Developer");
-ImGui::Indent();
-ImGui::Text("Kelsi Davis");
-ImGui::Unindent();
-ImGui::Spacing();
-
-ImGui::Text("GitHub");
-ImGui::Indent();
-ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "https://github.com/Kelsidavis/WoWee");
-if (ImGui::IsItemHovered()) {
-    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    ImGui::SetTooltip("Click to copy");
-}
-if (ImGui::IsItemClicked()) {
-    ImGui::SetClipboardText("https://github.com/Kelsidavis/WoWee");
-}
-ImGui::Unindent();
-ImGui::Spacing();
-
-ImGui::Text("Contact");
-ImGui::Indent();
-ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "github.com/Kelsidavis");
-if (ImGui::IsItemHovered()) {
-    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    ImGui::SetTooltip("Click to copy");
-}
-if (ImGui::IsItemClicked()) {
-    ImGui::SetClipboardText("https://github.com/Kelsidavis");
-}
-ImGui::Unindent();
-
-ImGui::Spacing();
-ImGui::Separator();
-ImGui::Spacing();
-
-ImGui::TextWrapped("A multi-expansion WoW client supporting Classic, TBC, and WotLK (3.3.5a).");
-ImGui::Spacing();
-ImGui::TextDisabled("Built with Vulkan, SDL2, and ImGui");
-
-}
-
-void GameScreen::renderSettingsWindow() {
-    if (!showSettingsWindow) return;
-
-    auto* window = core::Application::getInstance().getWindow();
-    auto* renderer = core::Application::getInstance().getRenderer();
-    if (!window) return;
-
-    static constexpr int kResolutions[][2] = {
-        {1280, 720},
-        {1600, 900},
-        {1920, 1080},
-        {2560, 1440},
-        {3840, 2160},
-    };
-    static constexpr int kResCount = sizeof(kResolutions) / sizeof(kResolutions[0]);
-    constexpr int kDefaultResW = 1920;
-    constexpr int kDefaultResH = 1080;
-    constexpr bool kDefaultFullscreen = false;
-    constexpr bool kDefaultVsync = true;
-    constexpr bool kDefaultShadows = true;
-    constexpr int kDefaultGroundClutterDensity = 100;
-
-    int defaultResIndex = 0;
-    for (int i = 0; i < kResCount; i++) {
-        if (kResolutions[i][0] == kDefaultResW && kResolutions[i][1] == kDefaultResH) {
-            defaultResIndex = i;
-            break;
-        }
-    }
-
-    if (!settingsInit) {
-        pendingFullscreen = window->isFullscreen();
-        pendingVsync = window->isVsyncEnabled();
-        if (renderer) {
-            renderer->setShadowsEnabled(pendingShadows);
-            renderer->setShadowDistance(pendingShadowDistance);
-            // Read non-volume settings from actual state (volumes come from saved settings)
-            if (auto* cameraController = renderer->getCameraController()) {
-                pendingMouseSensitivity = cameraController->getMouseSensitivity();
-                pendingInvertMouse = cameraController->isInvertMouse();
-                cameraController->setExtendedZoom(pendingExtendedZoom);
-            }
-        }
-        pendingResIndex = 0;
-        int curW = window->getWidth();
-        int curH = window->getHeight();
-        for (int i = 0; i < kResCount; i++) {
-            if (kResolutions[i][0] == curW && kResolutions[i][1] == curH) {
-                pendingResIndex = i;
-                break;
-            }
-        }
-        pendingUiOpacity = static_cast<int>(std::lround(uiOpacity_ * 100.0f));
-        pendingMinimapRotate = minimapRotate_;
-        pendingMinimapSquare = minimapSquare_;
-        pendingMinimapNpcDots = minimapNpcDots_;
-        pendingShowLatencyMeter = showLatencyMeter_;
-        if (renderer) {
-            if (auto* minimap = renderer->getMinimap()) {
-                minimap->setRotateWithCamera(minimapRotate_);
-                minimap->setSquareShape(minimapSquare_);
-            }
-            if (auto* zm = renderer->getZoneManager()) {
-                pendingUseOriginalSoundtrack = zm->getUseOriginalSoundtrack();
-            }
-        }
-        settingsInit = true;
-    }
-
-    ImGuiIO& io = ImGui::GetIO();
-    float screenW = io.DisplaySize.x;
-    float screenH = io.DisplaySize.y;
-    ImVec2 size(520.0f, std::min(screenH * 0.9f, 720.0f));
-    ImVec2 pos((screenW - size.x) * 0.5f, (screenH - size.y) * 0.5f);
-
-    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(size, ImGuiCond_Always);
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar;
-
-    if (ImGui::Begin("##SettingsWindow", nullptr, flags)) {
-        ImGui::Text("Settings");
-        ImGui::Separator();
-
-        if (ImGui::BeginTabBar("SettingsTabs", ImGuiTabBarFlags_None)) {
-            // ============================================================
-            // VIDEO TAB
-            // ============================================================
-            if (ImGui::BeginTabItem("Video")) {
-                ImGui::Spacing();
-
-                // Graphics Quality Presets
-                {
-                    const char* presetLabels[] = { "Custom", "Low", "Medium", "High", "Ultra" };
-                    int presetIdx = static_cast<int>(pendingGraphicsPreset);
-                    if (ImGui::Combo("Quality Preset", &presetIdx, presetLabels, 5)) {
-                        pendingGraphicsPreset = static_cast<GraphicsPreset>(presetIdx);
-                        if (pendingGraphicsPreset != GraphicsPreset::CUSTOM) {
-                            applyGraphicsPreset(pendingGraphicsPreset);
-                            saveSettings();
-                        }
-                    }
-                    ImGui::TextDisabled("Adjust these for custom settings");
-                }
-
-                ImGui::Spacing();
-                ImGui::Separator();
-                ImGui::Spacing();
-
-                if (ImGui::Checkbox("Fullscreen", &pendingFullscreen)) {
-                    window->setFullscreen(pendingFullscreen);
-                    updateGraphicsPresetFromCurrentSettings();
-                    saveSettings();
-                }
-                if (ImGui::Checkbox("VSync", &pendingVsync)) {
-                    window->setVsync(pendingVsync);
-                    updateGraphicsPresetFromCurrentSettings();
-                    saveSettings();
-                }
-                if (ImGui::Checkbox("Shadows", &pendingShadows)) {
-                    if (renderer) renderer->setShadowsEnabled(pendingShadows);
-                    updateGraphicsPresetFromCurrentSettings();
-                    saveSettings();
-                }
-                if (pendingShadows) {
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(150.0f);
-                    if (ImGui::SliderFloat("Distance##shadow", &pendingShadowDistance, 40.0f, 500.0f, "%.0f")) {
-                        if (renderer) renderer->setShadowDistance(pendingShadowDistance);
-                        updateGraphicsPresetFromCurrentSettings();
-                        saveSettings();
-                    }
-                }
-                {
-                    if (ImGui::Checkbox("Water Refraction", &pendingWaterRefraction)) {
-                        if (renderer) renderer->setWaterRefractionEnabled(pendingWaterRefraction);
-                        updateGraphicsPresetFromCurrentSettings();
-                        saveSettings();
-                    }
-                }
-                {
-                    const char* aaLabels[] = { "Off", "2x MSAA", "4x MSAA", "8x MSAA" };
-                    bool fsr2Active = renderer && renderer->isFSR2Enabled();
-                    if (fsr2Active) {
-                        ImGui::BeginDisabled();
-                        int disabled = 0;
-                        ImGui::Combo("Anti-Aliasing (FSR3)", &disabled, "Off (FSR3 active)\0", 1);
-                        ImGui::EndDisabled();
-                    } else if (ImGui::Combo("Anti-Aliasing", &pendingAntiAliasing, aaLabels, 4)) {
-                        static const VkSampleCountFlagBits aaSamples[] = {
-                            VK_SAMPLE_COUNT_1_BIT, VK_SAMPLE_COUNT_2_BIT,
-                            VK_SAMPLE_COUNT_4_BIT, VK_SAMPLE_COUNT_8_BIT
-                        };
-                        if (renderer) renderer->setMsaaSamples(aaSamples[pendingAntiAliasing]);
-                        updateGraphicsPresetFromCurrentSettings();
-                        saveSettings();
-                    }
-                    // FXAA — post-process, combinable with MSAA or FSR3
-                    {
-                        if (ImGui::Checkbox("FXAA (post-process)", &pendingFXAA)) {
-                            if (renderer) renderer->setFXAAEnabled(pendingFXAA);
-                            updateGraphicsPresetFromCurrentSettings();
-                            saveSettings();
-                        }
-                        if (ImGui::IsItemHovered()) {
-                            if (fsr2Active)
-                                ImGui::SetTooltip("FXAA applies spatial anti-aliasing after FSR3 upscaling.\nFSR3 + FXAA is the recommended ultra-quality combination.");
-                            else
-                                ImGui::SetTooltip("FXAA smooths jagged edges as a post-process pass.\nCan be combined with MSAA for extra quality.");
-                        }
-                    }
-                }
-                // FSR Upscaling
-                {
-                    // FSR mode selection: Off, FSR 1.0 (Spatial), FSR 3.x (Temporal)
-                    const char* fsrModeLabels[] = { "Off", "FSR 1.0 (Spatial)", "FSR 3.x (Temporal)" };
-                    int fsrMode = pendingUpscalingMode;
-                    if (ImGui::Combo("Upscaling", &fsrMode, fsrModeLabels, 3)) {
-                        pendingUpscalingMode = fsrMode;
-                        pendingFSR = (fsrMode == 1);
-                        if (renderer) {
-                            renderer->setFSREnabled(fsrMode == 1);
-                            renderer->setFSR2Enabled(fsrMode == 2);
-                        }
-                        saveSettings();
-                    }
-                    if (fsrMode > 0) {
-                        if (fsrMode == 2 && renderer) {
-                            ImGui::TextDisabled("FSR3 backend: %s",
-                                renderer->isAmdFsr2SdkAvailable() ? "AMD FidelityFX SDK" : "Internal fallback");
-                            if (renderer->isAmdFsr3FramegenSdkAvailable()) {
-                                if (ImGui::Checkbox("AMD FSR3 Frame Generation (Experimental)", &pendingAMDFramegen)) {
-                                    renderer->setAmdFsr3FramegenEnabled(pendingAMDFramegen);
-                                    saveSettings();
-                                }
-                                const char* runtimeStatus = "Unavailable";
-                                if (renderer->isAmdFsr3FramegenRuntimeActive()) {
-                                    runtimeStatus = "Active";
-                                } else if (renderer->isAmdFsr3FramegenRuntimeReady()) {
-                                    runtimeStatus = "Ready";
-                                } else {
-                                    runtimeStatus = "Unavailable";
-                                }
-                                ImGui::TextDisabled("Runtime: %s (%s)",
-                                    runtimeStatus, renderer->getAmdFsr3FramegenRuntimePath());
-                                if (!renderer->isAmdFsr3FramegenRuntimeReady()) {
-                                    const std::string& runtimeErr = renderer->getAmdFsr3FramegenRuntimeError();
-                                    if (!runtimeErr.empty()) {
-                                        ImGui::TextDisabled("Reason: %s", runtimeErr.c_str());
-                                    }
-                                }
-                            } else {
-                                ImGui::BeginDisabled();
-                                bool disabledFg = false;
-                                ImGui::Checkbox("AMD FSR3 Frame Generation (Experimental)", &disabledFg);
-                                ImGui::EndDisabled();
-                                ImGui::TextDisabled("Requires FidelityFX-SDK framegen headers.");
-                            }
-                        }
-                        const char* fsrQualityLabels[] = { "Native (100%)", "Ultra Quality (77%)", "Quality (67%)", "Balanced (59%)" };
-                        static constexpr float fsrScaleFactors[] = { 0.77f, 0.67f, 0.59f, 1.00f };
-                        static constexpr int displayToInternal[] = { 3, 0, 1, 2 };
-                        pendingFSRQuality = std::clamp(pendingFSRQuality, 0, 3);
-                        int fsrQualityDisplay = 0;
-                        for (int i = 0; i < 4; ++i) {
-                            if (displayToInternal[i] == pendingFSRQuality) {
-                                fsrQualityDisplay = i;
-                                break;
-                            }
-                        }
-                        if (ImGui::Combo("FSR Quality", &fsrQualityDisplay, fsrQualityLabels, 4)) {
-                            pendingFSRQuality = displayToInternal[fsrQualityDisplay];
-                            if (renderer) renderer->setFSRQuality(fsrScaleFactors[pendingFSRQuality]);
-                            saveSettings();
-                        }
-                        if (ImGui::SliderFloat("FSR Sharpness", &pendingFSRSharpness, 0.0f, 2.0f, "%.1f")) {
-                            if (renderer) renderer->setFSRSharpness(pendingFSRSharpness);
-                            saveSettings();
-                        }
-                        if (fsrMode == 2) {
-                            ImGui::SeparatorText("FSR3 Tuning");
-                            if (ImGui::SliderFloat("Jitter Sign", &pendingFSR2JitterSign, -2.0f, 2.0f, "%.2f")) {
-                                if (renderer) {
-                                    renderer->setFSR2DebugTuning(
-                                        pendingFSR2JitterSign,
-                                        pendingFSR2MotionVecScaleX,
-                                        pendingFSR2MotionVecScaleY);
-                                }
-                                saveSettings();
-                            }
-                            ImGui::TextDisabled("Tip: 0.38 is the current recommended default.");
-                        }
-                    }
-                }
-                if (ImGui::SliderInt("Ground Clutter Density", &pendingGroundClutterDensity, 0, 150, "%d%%")) {
-                    if (renderer) {
-                        if (auto* tm = renderer->getTerrainManager()) {
-                            tm->setGroundClutterDensityScale(static_cast<float>(pendingGroundClutterDensity) / 100.0f);
-                        }
-                    }
-                    saveSettings();
-                }
-                if (ImGui::Checkbox("Normal Mapping", &pendingNormalMapping)) {
-                    if (renderer) {
-                        if (auto* wr = renderer->getWMORenderer()) {
-                            wr->setNormalMappingEnabled(pendingNormalMapping);
-                        }
-                        if (auto* cr = renderer->getCharacterRenderer()) {
-                            cr->setNormalMappingEnabled(pendingNormalMapping);
-                        }
-                    }
-                    saveSettings();
-                }
-                if (pendingNormalMapping) {
-                    if (ImGui::SliderFloat("Normal Map Strength", &pendingNormalMapStrength, 0.0f, 2.0f, "%.1f")) {
-                        if (renderer) {
-                            if (auto* wr = renderer->getWMORenderer()) {
-                                wr->setNormalMapStrength(pendingNormalMapStrength);
-                            }
-                            if (auto* cr = renderer->getCharacterRenderer()) {
-                                cr->setNormalMapStrength(pendingNormalMapStrength);
-                            }
-                        }
-                        saveSettings();
-                    }
-                }
-                if (ImGui::Checkbox("Parallax Mapping", &pendingPOM)) {
-                    if (renderer) {
-                        if (auto* wr = renderer->getWMORenderer()) {
-                            wr->setPOMEnabled(pendingPOM);
-                        }
-                        if (auto* cr = renderer->getCharacterRenderer()) {
-                            cr->setPOMEnabled(pendingPOM);
-                        }
-                    }
-                    saveSettings();
-                }
-                if (pendingPOM) {
-                    const char* pomLabels[] = { "Low", "Medium", "High" };
-                    if (ImGui::Combo("Parallax Quality", &pendingPOMQuality, pomLabels, 3)) {
-                        if (renderer) {
-                            if (auto* wr = renderer->getWMORenderer()) {
-                                wr->setPOMQuality(pendingPOMQuality);
-                            }
-                            if (auto* cr = renderer->getCharacterRenderer()) {
-                                cr->setPOMQuality(pendingPOMQuality);
-                            }
-                        }
-                        saveSettings();
-                    }
-                }
-
-                const char* resLabel = "Resolution";
-                const char* resItems[kResCount];
-                char resBuf[kResCount][16];
-                for (int i = 0; i < kResCount; i++) {
-                    snprintf(resBuf[i], sizeof(resBuf[i]), "%dx%d", kResolutions[i][0], kResolutions[i][1]);
-                    resItems[i] = resBuf[i];
-                }
-                if (ImGui::Combo(resLabel, &pendingResIndex, resItems, kResCount)) {
-                    window->applyResolution(kResolutions[pendingResIndex][0], kResolutions[pendingResIndex][1]);
-                    saveSettings();
-                }
-
-                ImGui::Spacing();
-                ImGui::Separator();
-                ImGui::Spacing();
-
-                ImGui::SetNextItemWidth(200.0f);
-                if (ImGui::SliderInt("Brightness", &pendingBrightness, 0, 100, "%d%%")) {
-                    if (renderer) renderer->setBrightness(static_cast<float>(pendingBrightness) / 50.0f);
-                    saveSettings();
-                }
-
-                ImGui::Spacing();
-                ImGui::Separator();
-                ImGui::Spacing();
-
-                if (ImGui::Button("Restore Video Defaults", ImVec2(-1, 0))) {
-                    pendingFullscreen = kDefaultFullscreen;
-                    pendingVsync = kDefaultVsync;
-                    pendingShadows = kDefaultShadows;
-                    pendingShadowDistance = 300.0f;
-                    pendingGroundClutterDensity = kDefaultGroundClutterDensity;
-                    pendingAntiAliasing = 0;
-                    pendingNormalMapping = true;
-                    pendingNormalMapStrength = 0.8f;
-                    pendingPOM = true;
-                    pendingPOMQuality = 1;
-                    pendingResIndex = defaultResIndex;
-                    pendingBrightness = 50;
-                    window->setFullscreen(pendingFullscreen);
-                    window->setVsync(pendingVsync);
-                    window->applyResolution(kResolutions[pendingResIndex][0], kResolutions[pendingResIndex][1]);
-                    if (renderer) renderer->setBrightness(1.0f);
-                    pendingWaterRefraction = false;
-                    if (renderer) {
-                        renderer->setShadowsEnabled(pendingShadows);
-                        renderer->setShadowDistance(pendingShadowDistance);
-                    }
-                    if (renderer) renderer->setWaterRefractionEnabled(pendingWaterRefraction);
-                    if (renderer) renderer->setMsaaSamples(VK_SAMPLE_COUNT_1_BIT);
-                    if (renderer) {
-                        if (auto* tm = renderer->getTerrainManager()) {
-                            tm->setGroundClutterDensityScale(static_cast<float>(pendingGroundClutterDensity) / 100.0f);
-                        }
-                    }
-                    if (renderer) {
-                        if (auto* wr = renderer->getWMORenderer()) {
-                            wr->setNormalMappingEnabled(pendingNormalMapping);
-                            wr->setNormalMapStrength(pendingNormalMapStrength);
-                            wr->setPOMEnabled(pendingPOM);
-                            wr->setPOMQuality(pendingPOMQuality);
-                        }
-                        if (auto* cr = renderer->getCharacterRenderer()) {
-                            cr->setNormalMappingEnabled(pendingNormalMapping);
-                            cr->setNormalMapStrength(pendingNormalMapStrength);
-                            cr->setPOMEnabled(pendingPOM);
-                            cr->setPOMQuality(pendingPOMQuality);
-                        }
-                    }
-                    saveSettings();
-                }
-
-                ImGui::EndTabItem();
-            }
-
-            // ============================================================
-            // INTERFACE TAB
-            // ============================================================
-            if (ImGui::BeginTabItem("Interface")) {
-                renderSettingsInterfaceTab();
-                ImGui::EndTabItem();
-            }
-
-            // ============================================================
-            // AUDIO TAB
-            // ============================================================
-            if (ImGui::BeginTabItem("Audio")) {
-                renderSettingsAudioTab();
-                ImGui::EndTabItem();
-            }
-
-            // ============================================================
-            // GAMEPLAY TAB
-            // ============================================================
-            if (ImGui::BeginTabItem("Gameplay")) {
-                renderSettingsGameplayTab();
-                ImGui::EndTabItem();
-            }
-
-            // ============================================================
-            // CONTROLS TAB
-            // ============================================================
-            if (ImGui::BeginTabItem("Controls")) {
-                renderSettingsControlsTab();
-                ImGui::EndTabItem();
-            }
-
-            // ============================================================
-            // CHAT TAB
-            // ============================================================
-            if (ImGui::BeginTabItem("Chat")) {
-                chatPanel_.renderSettingsTab([this]{ saveSettings(); });
-                ImGui::EndTabItem();
-            }
-
-            // ============================================================
-            // ABOUT TAB
-            // ============================================================
-            if (ImGui::BeginTabItem("About")) {
-                renderSettingsAboutTab();
-                ImGui::EndTabItem();
-            }
-
-            ImGui::EndTabBar();
-        }
-
-        ImGui::Spacing();
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 10.0f));
-        if (ImGui::Button("Back to Game", ImVec2(-1, 0))) {
-            showSettingsWindow = false;
-        }
-        ImGui::PopStyleVar();
-    }
-    ImGui::End();
-}
-
-void GameScreen::applyGraphicsPreset(GraphicsPreset preset) {
-    auto* renderer = core::Application::getInstance().getRenderer();
-
-    // Define preset values based on quality level
-    switch (preset) {
-        case GraphicsPreset::LOW: {
-            pendingShadows = false;
-            pendingShadowDistance = 100.0f;
-            pendingAntiAliasing = 0;  // Off
-            pendingNormalMapping = false;
-            pendingPOM = false;
-            pendingGroundClutterDensity = 25;
-            if (renderer) {
-                renderer->setShadowsEnabled(false);
-                renderer->setMsaaSamples(VK_SAMPLE_COUNT_1_BIT);
-                if (auto* wr = renderer->getWMORenderer()) {
-                    wr->setNormalMappingEnabled(false);
-                    wr->setPOMEnabled(false);
-                }
-                if (auto* cr = renderer->getCharacterRenderer()) {
-                    cr->setNormalMappingEnabled(false);
-                    cr->setPOMEnabled(false);
-                }
-                if (auto* tm = renderer->getTerrainManager()) {
-                    tm->setGroundClutterDensityScale(0.25f);
-                }
-            }
-            break;
-        }
-        case GraphicsPreset::MEDIUM: {
-            pendingShadows = true;
-            pendingShadowDistance = 200.0f;
-            pendingAntiAliasing = 1;  // 2x MSAA
-            pendingNormalMapping = true;
-            pendingNormalMapStrength = 0.6f;
-            pendingPOM = true;
-            pendingPOMQuality = 0;  // Low
-            pendingGroundClutterDensity = 60;
-            if (renderer) {
-                renderer->setShadowsEnabled(true);
-                renderer->setShadowDistance(200.0f);
-                renderer->setMsaaSamples(VK_SAMPLE_COUNT_2_BIT);
-                if (auto* wr = renderer->getWMORenderer()) {
-                    wr->setNormalMappingEnabled(true);
-                    wr->setNormalMapStrength(0.6f);
-                    wr->setPOMEnabled(true);
-                    wr->setPOMQuality(0);
-                }
-                if (auto* cr = renderer->getCharacterRenderer()) {
-                    cr->setNormalMappingEnabled(true);
-                    cr->setNormalMapStrength(0.6f);
-                    cr->setPOMEnabled(true);
-                    cr->setPOMQuality(0);
-                }
-                if (auto* tm = renderer->getTerrainManager()) {
-                    tm->setGroundClutterDensityScale(0.60f);
-                }
-            }
-            break;
-        }
-        case GraphicsPreset::HIGH: {
-            pendingShadows = true;
-            pendingShadowDistance = 350.0f;
-            pendingAntiAliasing = 2;  // 4x MSAA
-            pendingNormalMapping = true;
-            pendingNormalMapStrength = 0.8f;
-            pendingPOM = true;
-            pendingPOMQuality = 1;  // Medium
-            pendingGroundClutterDensity = 100;
-            if (renderer) {
-                renderer->setShadowsEnabled(true);
-                renderer->setShadowDistance(350.0f);
-                renderer->setMsaaSamples(VK_SAMPLE_COUNT_4_BIT);
-                if (auto* wr = renderer->getWMORenderer()) {
-                    wr->setNormalMappingEnabled(true);
-                    wr->setNormalMapStrength(0.8f);
-                    wr->setPOMEnabled(true);
-                    wr->setPOMQuality(1);
-                }
-                if (auto* cr = renderer->getCharacterRenderer()) {
-                    cr->setNormalMappingEnabled(true);
-                    cr->setNormalMapStrength(0.8f);
-                    cr->setPOMEnabled(true);
-                    cr->setPOMQuality(1);
-                }
-                if (auto* tm = renderer->getTerrainManager()) {
-                    tm->setGroundClutterDensityScale(1.0f);
-                }
-            }
-            break;
-        }
-        case GraphicsPreset::ULTRA: {
-            pendingShadows = true;
-            pendingShadowDistance = 500.0f;
-            pendingAntiAliasing = 3;  // 8x MSAA
-            pendingFXAA = true;       // FXAA on top of MSAA for maximum smoothness
-            pendingNormalMapping = true;
-            pendingNormalMapStrength = 1.2f;
-            pendingPOM = true;
-            pendingPOMQuality = 2;  // High
-            pendingGroundClutterDensity = 150;
-            if (renderer) {
-                renderer->setShadowsEnabled(true);
-                renderer->setShadowDistance(500.0f);
-                renderer->setMsaaSamples(VK_SAMPLE_COUNT_8_BIT);
-                renderer->setFXAAEnabled(true);
-                if (auto* wr = renderer->getWMORenderer()) {
-                    wr->setNormalMappingEnabled(true);
-                    wr->setNormalMapStrength(1.2f);
-                    wr->setPOMEnabled(true);
-                    wr->setPOMQuality(2);
-                }
-                if (auto* cr = renderer->getCharacterRenderer()) {
-                    cr->setNormalMappingEnabled(true);
-                    cr->setNormalMapStrength(1.2f);
-                    cr->setPOMEnabled(true);
-                    cr->setPOMQuality(2);
-                }
-                if (auto* tm = renderer->getTerrainManager()) {
-                    tm->setGroundClutterDensityScale(1.5f);
-                }
-            }
-            break;
-        }
-        default:
-            break;
-    }
-
-    currentGraphicsPreset = preset;
-    pendingGraphicsPreset = preset;
-}
-
-void GameScreen::updateGraphicsPresetFromCurrentSettings() {
-    // Check if current settings match any preset, otherwise mark as CUSTOM
-    // This is a simplified check; could be enhanced with more detailed matching
-
-    auto matchesPreset = [this](GraphicsPreset preset) -> bool {
-        switch (preset) {
-            case GraphicsPreset::LOW:
-                return !pendingShadows && pendingAntiAliasing == 0 && !pendingNormalMapping && !pendingPOM &&
-                       pendingGroundClutterDensity <= 30;
-            case GraphicsPreset::MEDIUM:
-                return pendingShadows && pendingShadowDistance >= 180 && pendingShadowDistance <= 220 &&
-                       pendingAntiAliasing == 1 && pendingNormalMapping && pendingPOM &&
-                       pendingGroundClutterDensity >= 50 && pendingGroundClutterDensity <= 70;
-            case GraphicsPreset::HIGH:
-                return pendingShadows && pendingShadowDistance >= 330 && pendingShadowDistance <= 370 &&
-                       pendingAntiAliasing == 2 && pendingNormalMapping && pendingPOM &&
-                       pendingGroundClutterDensity >= 90 && pendingGroundClutterDensity <= 110;
-            case GraphicsPreset::ULTRA:
-                return pendingShadows && pendingShadowDistance >= 480 && pendingAntiAliasing == 3 &&
-                       pendingFXAA && pendingNormalMapping && pendingPOM && pendingGroundClutterDensity >= 140;
-            default:
-                return false;
-        }
-    };
-
-    // Try to match a preset, otherwise mark as custom
-    if (matchesPreset(GraphicsPreset::LOW)) {
-        pendingGraphicsPreset = GraphicsPreset::LOW;
-    } else if (matchesPreset(GraphicsPreset::MEDIUM)) {
-        pendingGraphicsPreset = GraphicsPreset::MEDIUM;
-    } else if (matchesPreset(GraphicsPreset::HIGH)) {
-        pendingGraphicsPreset = GraphicsPreset::HIGH;
-    } else if (matchesPreset(GraphicsPreset::ULTRA)) {
-        pendingGraphicsPreset = GraphicsPreset::ULTRA;
-    } else {
-        pendingGraphicsPreset = GraphicsPreset::CUSTOM;
-    }
-}
-
 void GameScreen::renderQuestMarkers(game::GameHandler& gameHandler) {
     const auto& statuses = gameHandler.getNpcQuestStatuses();
     if (statuses.empty()) return;
@@ -14754,7 +12515,7 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     }
 
     // Optional base nearby NPC dots (independent of quest status packets).
-    if (minimapNpcDots_) {
+    if (settingsPanel_.minimapNpcDots_) {
         ImVec2 mouse = ImGui::GetMousePos();
         for (const auto& [guid, entity] : gameHandler.getEntityManager().getEntities()) {
             if (!entity || entity->getType() != game::ObjectType::UNIT) continue;
@@ -14786,7 +12547,7 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
 
     // Nearby other-player dots — shown when NPC dots are enabled.
     // Party members are already drawn as squares above; other players get a small circle.
-    if (minimapNpcDots_) {
+    if (settingsPanel_.minimapNpcDots_) {
         const uint64_t selfGuid = gameHandler.getPlayerGuid();
         const auto& partyData = gameHandler.getPartyData();
         for (const auto& [guid, entity] : gameHandler.getEntityManager().getEntities()) {
@@ -14849,7 +12610,7 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
 
     // Interactable game object dots (chests, resource nodes) when NPC dots are enabled.
     // Shown as small orange triangles to distinguish from unit dots and loot corpses.
-    if (minimapNpcDots_) {
+    if (settingsPanel_.minimapNpcDots_) {
         ImVec2 mouse = ImGui::GetMousePos();
         for (const auto& [guid, entity] : gameHandler.getEntityManager().getEntities()) {
             if (!entity || entity->getType() != game::ObjectType::GAMEOBJECT) continue;
@@ -15533,9 +13294,9 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
                 minimap->setSquareShape(!squareShape);
             }
 
-            bool npcDots = minimapNpcDots_;
+            bool npcDots = settingsPanel_.minimapNpcDots_;
             if (ImGui::MenuItem("Show NPC Dots", nullptr, npcDots)) {
-                minimapNpcDots_ = !minimapNpcDots_;
+                settingsPanel_.minimapNpcDots_ = !settingsPanel_.minimapNpcDots_;
             }
 
             ImGui::EndPopup();
@@ -15544,38 +13305,38 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
 
     auto applyMuteState = [&]() {
         auto* activeRenderer = core::Application::getInstance().getRenderer();
-        float masterScale = soundMuted_ ? 0.0f : static_cast<float>(pendingMasterVolume) / 100.0f;
+        float masterScale = settingsPanel_.soundMuted_ ? 0.0f : static_cast<float>(settingsPanel_.pendingMasterVolume) / 100.0f;
         audio::AudioEngine::instance().setMasterVolume(masterScale);
         if (!activeRenderer) return;
         if (auto* music = activeRenderer->getMusicManager()) {
-            music->setVolume(pendingMusicVolume);
+            music->setVolume(settingsPanel_.pendingMusicVolume);
         }
         if (auto* ambient = activeRenderer->getAmbientSoundManager()) {
-            ambient->setVolumeScale(pendingAmbientVolume / 100.0f);
+            ambient->setVolumeScale(settingsPanel_.pendingAmbientVolume / 100.0f);
         }
         if (auto* ui = activeRenderer->getUiSoundManager()) {
-            ui->setVolumeScale(pendingUiVolume / 100.0f);
+            ui->setVolumeScale(settingsPanel_.pendingUiVolume / 100.0f);
         }
         if (auto* combat = activeRenderer->getCombatSoundManager()) {
-            combat->setVolumeScale(pendingCombatVolume / 100.0f);
+            combat->setVolumeScale(settingsPanel_.pendingCombatVolume / 100.0f);
         }
         if (auto* spell = activeRenderer->getSpellSoundManager()) {
-            spell->setVolumeScale(pendingSpellVolume / 100.0f);
+            spell->setVolumeScale(settingsPanel_.pendingSpellVolume / 100.0f);
         }
         if (auto* movement = activeRenderer->getMovementSoundManager()) {
-            movement->setVolumeScale(pendingMovementVolume / 100.0f);
+            movement->setVolumeScale(settingsPanel_.pendingMovementVolume / 100.0f);
         }
         if (auto* footstep = activeRenderer->getFootstepManager()) {
-            footstep->setVolumeScale(pendingFootstepVolume / 100.0f);
+            footstep->setVolumeScale(settingsPanel_.pendingFootstepVolume / 100.0f);
         }
         if (auto* npcVoice = activeRenderer->getNpcVoiceManager()) {
-            npcVoice->setVolumeScale(pendingNpcVoiceVolume / 100.0f);
+            npcVoice->setVolumeScale(settingsPanel_.pendingNpcVoiceVolume / 100.0f);
         }
         if (auto* mount = activeRenderer->getMountSoundManager()) {
-            mount->setVolumeScale(pendingMountVolume / 100.0f);
+            mount->setVolumeScale(settingsPanel_.pendingMountVolume / 100.0f);
         }
         if (auto* activity = activeRenderer->getActivitySoundManager()) {
-            activity->setVolumeScale(pendingActivityVolume / 100.0f);
+            activity->setVolumeScale(settingsPanel_.pendingActivityVolume / 100.0f);
         }
     };
 
@@ -15641,16 +13402,16 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
         ImVec2 p = ImGui::GetCursorScreenPos();
         ImVec2 size(20.0f, 20.0f);
         if (ImGui::InvisibleButton("##MinimapMuteButton", size)) {
-            soundMuted_ = !soundMuted_;
-            if (soundMuted_) {
-                preMuteVolume_ = audio::AudioEngine::instance().getMasterVolume();
+            settingsPanel_.soundMuted_ = !settingsPanel_.soundMuted_;
+            if (settingsPanel_.soundMuted_) {
+                settingsPanel_.preMuteVolume_ = audio::AudioEngine::instance().getMasterVolume();
             }
             applyMuteState();
             saveSettings();
         }
         bool hovered = ImGui::IsItemHovered();
-        ImU32 bg = soundMuted_ ? IM_COL32(135, 42, 42, 230) : IM_COL32(38, 38, 38, 210);
-        if (hovered) bg = soundMuted_ ? IM_COL32(160, 58, 58, 230) : IM_COL32(65, 65, 65, 220);
+        ImU32 bg = settingsPanel_.soundMuted_ ? IM_COL32(135, 42, 42, 230) : IM_COL32(38, 38, 38, 210);
+        if (hovered) bg = settingsPanel_.soundMuted_ ? IM_COL32(160, 58, 58, 230) : IM_COL32(65, 65, 65, 220);
         ImU32 fg = IM_COL32(255, 255, 255, 245);
         draw->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), bg, 4.0f);
         draw->AddRect(ImVec2(p.x + 0.5f, p.y + 0.5f), ImVec2(p.x + size.x - 0.5f, p.y + size.y - 0.5f),
@@ -15659,7 +13420,7 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
         draw->AddTriangleFilled(ImVec2(p.x + 7.0f, p.y + 7.0f),
                                 ImVec2(p.x + 7.0f, p.y + 13.0f),
                                 ImVec2(p.x + 11.8f, p.y + 10.0f), fg);
-        if (soundMuted_) {
+        if (settingsPanel_.soundMuted_) {
             draw->AddLine(ImVec2(p.x + 13.5f, p.y + 6.2f), ImVec2(p.x + 17.2f, p.y + 13.8f), fg, 1.8f);
             draw->AddLine(ImVec2(p.x + 17.2f, p.y + 6.2f), ImVec2(p.x + 13.5f, p.y + 13.8f), fg, 1.8f);
         } else {
@@ -15668,7 +13429,7 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
             draw->PathArcTo(ImVec2(p.x + 11.8f, p.y + 10.0f), 5.5f, -0.7f, 0.7f, 12);
             draw->PathStroke(fg, 0, 1.2f);
         }
-        if (hovered) ImGui::SetTooltip(soundMuted_ ? "Unmute" : "Mute");
+        if (hovered) ImGui::SetTooltip(settingsPanel_.soundMuted_ ? "Unmute" : "Mute");
     }
     ImGui::End();
 
@@ -15918,7 +13679,7 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
 
     // Latency + FPS indicator — centered at top of screen
     uint32_t latMs = gameHandler.getLatencyMs();
-    if (showLatencyMeter_ && gameHandler.getState() == game::WorldState::IN_WORLD) {
+    if (settingsPanel_.showLatencyMeter_ && gameHandler.getState() == game::WorldState::IN_WORLD) {
         float currentFps = ImGui::GetIO().Framerate;
         ImVec4 latColor;
         if      (latMs < 100) latColor = ImVec4(0.3f, 1.0f, 0.3f, 0.9f);
@@ -16020,46 +13781,8 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     }
 }
 
-std::string GameScreen::getSettingsPath() {
-    std::string dir;
-#ifdef _WIN32
-    const char* appdata = std::getenv("APPDATA");
-    dir = appdata ? std::string(appdata) + "\\wowee" : ".";
-#else
-    const char* home = std::getenv("HOME");
-    dir = home ? std::string(home) + "/.wowee" : ".";
-#endif
-    return dir + "/settings.cfg";
-}
-
-void GameScreen::applyAudioVolumes(rendering::Renderer* renderer) {
-    if (!renderer) return;
-    float masterScale = soundMuted_ ? 0.0f : static_cast<float>(pendingMasterVolume) / 100.0f;
-    audio::AudioEngine::instance().setMasterVolume(masterScale);
-    if (auto* music = renderer->getMusicManager())
-        music->setVolume(pendingMusicVolume);
-    if (auto* ambient = renderer->getAmbientSoundManager())
-        ambient->setVolumeScale(pendingAmbientVolume / 100.0f);
-    if (auto* ui = renderer->getUiSoundManager())
-        ui->setVolumeScale(pendingUiVolume / 100.0f);
-    if (auto* combat = renderer->getCombatSoundManager())
-        combat->setVolumeScale(pendingCombatVolume / 100.0f);
-    if (auto* spell = renderer->getSpellSoundManager())
-        spell->setVolumeScale(pendingSpellVolume / 100.0f);
-    if (auto* movement = renderer->getMovementSoundManager())
-        movement->setVolumeScale(pendingMovementVolume / 100.0f);
-    if (auto* footstep = renderer->getFootstepManager())
-        footstep->setVolumeScale(pendingFootstepVolume / 100.0f);
-    if (auto* npcVoice = renderer->getNpcVoiceManager())
-        npcVoice->setVolumeScale(pendingNpcVoiceVolume / 100.0f);
-    if (auto* mount = renderer->getMountSoundManager())
-        mount->setVolumeScale(pendingMountVolume / 100.0f);
-    if (auto* activity = renderer->getActivitySoundManager())
-        activity->setVolumeScale(pendingActivityVolume / 100.0f);
-}
-
 void GameScreen::saveSettings() {
-    std::string path = getSettingsPath();
+    std::string path = SettingsPanel::getSettingsPath();
     std::filesystem::path dir = std::filesystem::path(path).parent_path();
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
@@ -16071,75 +13794,75 @@ void GameScreen::saveSettings() {
     }
 
     // Interface
-    out << "ui_opacity=" << pendingUiOpacity << "\n";
-    out << "minimap_rotate=" << (pendingMinimapRotate ? 1 : 0) << "\n";
-    out << "minimap_square=" << (pendingMinimapSquare ? 1 : 0) << "\n";
-    out << "minimap_npc_dots=" << (pendingMinimapNpcDots ? 1 : 0) << "\n";
-    out << "show_latency_meter=" << (pendingShowLatencyMeter ? 1 : 0) << "\n";
-    out << "show_dps_meter=" << (showDPSMeter_ ? 1 : 0) << "\n";
-    out << "show_cooldown_tracker=" << (showCooldownTracker_ ? 1 : 0) << "\n";
-    out << "separate_bags=" << (pendingSeparateBags ? 1 : 0) << "\n";
-    out << "show_keyring=" << (pendingShowKeyring ? 1 : 0) << "\n";
-    out << "action_bar_scale=" << pendingActionBarScale << "\n";
-    out << "nameplate_scale=" << nameplateScale_ << "\n";
-    out << "show_friendly_nameplates=" << (showFriendlyNameplates_ ? 1 : 0) << "\n";
-    out << "show_action_bar2=" << (pendingShowActionBar2 ? 1 : 0) << "\n";
-    out << "action_bar2_offset_x=" << pendingActionBar2OffsetX << "\n";
-    out << "action_bar2_offset_y=" << pendingActionBar2OffsetY << "\n";
-    out << "show_right_bar=" << (pendingShowRightBar ? 1 : 0) << "\n";
-    out << "show_left_bar=" << (pendingShowLeftBar ? 1 : 0) << "\n";
-    out << "right_bar_offset_y=" << pendingRightBarOffsetY << "\n";
-    out << "left_bar_offset_y=" << pendingLeftBarOffsetY << "\n";
-    out << "damage_flash=" << (damageFlashEnabled_ ? 1 : 0) << "\n";
-    out << "low_health_vignette=" << (lowHealthVignetteEnabled_ ? 1 : 0) << "\n";
+    out << "ui_opacity=" << settingsPanel_.pendingUiOpacity << "\n";
+    out << "minimap_rotate=" << (settingsPanel_.pendingMinimapRotate ? 1 : 0) << "\n";
+    out << "minimap_square=" << (settingsPanel_.pendingMinimapSquare ? 1 : 0) << "\n";
+    out << "minimap_npc_dots=" << (settingsPanel_.pendingMinimapNpcDots ? 1 : 0) << "\n";
+    out << "show_latency_meter=" << (settingsPanel_.pendingShowLatencyMeter ? 1 : 0) << "\n";
+    out << "show_dps_meter=" << (settingsPanel_.showDPSMeter_ ? 1 : 0) << "\n";
+    out << "show_cooldown_tracker=" << (settingsPanel_.showCooldownTracker_ ? 1 : 0) << "\n";
+    out << "separate_bags=" << (settingsPanel_.pendingSeparateBags ? 1 : 0) << "\n";
+    out << "show_keyring=" << (settingsPanel_.pendingShowKeyring ? 1 : 0) << "\n";
+    out << "action_bar_scale=" << settingsPanel_.pendingActionBarScale << "\n";
+    out << "nameplate_scale=" << settingsPanel_.nameplateScale_ << "\n";
+    out << "show_friendly_nameplates=" << (settingsPanel_.showFriendlyNameplates_ ? 1 : 0) << "\n";
+    out << "show_action_bar2=" << (settingsPanel_.pendingShowActionBar2 ? 1 : 0) << "\n";
+    out << "action_bar2_offset_x=" << settingsPanel_.pendingActionBar2OffsetX << "\n";
+    out << "action_bar2_offset_y=" << settingsPanel_.pendingActionBar2OffsetY << "\n";
+    out << "show_right_bar=" << (settingsPanel_.pendingShowRightBar ? 1 : 0) << "\n";
+    out << "show_left_bar=" << (settingsPanel_.pendingShowLeftBar ? 1 : 0) << "\n";
+    out << "right_bar_offset_y=" << settingsPanel_.pendingRightBarOffsetY << "\n";
+    out << "left_bar_offset_y=" << settingsPanel_.pendingLeftBarOffsetY << "\n";
+    out << "damage_flash=" << (settingsPanel_.damageFlashEnabled_ ? 1 : 0) << "\n";
+    out << "low_health_vignette=" << (settingsPanel_.lowHealthVignetteEnabled_ ? 1 : 0) << "\n";
 
     // Audio
-    out << "sound_muted=" << (soundMuted_ ? 1 : 0) << "\n";
-    out << "use_original_soundtrack=" << (pendingUseOriginalSoundtrack ? 1 : 0) << "\n";
-    out << "master_volume=" << pendingMasterVolume << "\n";
-    out << "music_volume=" << pendingMusicVolume << "\n";
-    out << "ambient_volume=" << pendingAmbientVolume << "\n";
-    out << "ui_volume=" << pendingUiVolume << "\n";
-    out << "combat_volume=" << pendingCombatVolume << "\n";
-    out << "spell_volume=" << pendingSpellVolume << "\n";
-    out << "movement_volume=" << pendingMovementVolume << "\n";
-    out << "footstep_volume=" << pendingFootstepVolume << "\n";
-    out << "npc_voice_volume=" << pendingNpcVoiceVolume << "\n";
-    out << "mount_volume=" << pendingMountVolume << "\n";
-    out << "activity_volume=" << pendingActivityVolume << "\n";
+    out << "sound_muted=" << (settingsPanel_.soundMuted_ ? 1 : 0) << "\n";
+    out << "use_original_soundtrack=" << (settingsPanel_.pendingUseOriginalSoundtrack ? 1 : 0) << "\n";
+    out << "master_volume=" << settingsPanel_.pendingMasterVolume << "\n";
+    out << "music_volume=" << settingsPanel_.pendingMusicVolume << "\n";
+    out << "ambient_volume=" << settingsPanel_.pendingAmbientVolume << "\n";
+    out << "ui_volume=" << settingsPanel_.pendingUiVolume << "\n";
+    out << "combat_volume=" << settingsPanel_.pendingCombatVolume << "\n";
+    out << "spell_volume=" << settingsPanel_.pendingSpellVolume << "\n";
+    out << "movement_volume=" << settingsPanel_.pendingMovementVolume << "\n";
+    out << "footstep_volume=" << settingsPanel_.pendingFootstepVolume << "\n";
+    out << "npc_voice_volume=" << settingsPanel_.pendingNpcVoiceVolume << "\n";
+    out << "mount_volume=" << settingsPanel_.pendingMountVolume << "\n";
+    out << "activity_volume=" << settingsPanel_.pendingActivityVolume << "\n";
 
     // Gameplay
-    out << "auto_loot=" << (pendingAutoLoot ? 1 : 0) << "\n";
-    out << "auto_sell_grey=" << (pendingAutoSellGrey ? 1 : 0) << "\n";
-    out << "auto_repair=" << (pendingAutoRepair ? 1 : 0) << "\n";
-    out << "graphics_preset=" << static_cast<int>(currentGraphicsPreset) << "\n";
-    out << "ground_clutter_density=" << pendingGroundClutterDensity << "\n";
-    out << "shadows=" << (pendingShadows ? 1 : 0) << "\n";
-    out << "shadow_distance=" << pendingShadowDistance << "\n";
-    out << "brightness=" << pendingBrightness << "\n";
-    out << "water_refraction=" << (pendingWaterRefraction ? 1 : 0) << "\n";
-    out << "antialiasing=" << pendingAntiAliasing << "\n";
-    out << "fxaa=" << (pendingFXAA ? 1 : 0) << "\n";
-    out << "normal_mapping=" << (pendingNormalMapping ? 1 : 0) << "\n";
-    out << "normal_map_strength=" << pendingNormalMapStrength << "\n";
-    out << "pom=" << (pendingPOM ? 1 : 0) << "\n";
-    out << "pom_quality=" << pendingPOMQuality << "\n";
-    out << "upscaling_mode=" << pendingUpscalingMode << "\n";
-    out << "fsr=" << (pendingFSR ? 1 : 0) << "\n";
-    out << "fsr_quality=" << pendingFSRQuality << "\n";
-    out << "fsr_sharpness=" << pendingFSRSharpness << "\n";
-    out << "fsr2_jitter_sign=" << pendingFSR2JitterSign << "\n";
-    out << "fsr2_mv_scale_x=" << pendingFSR2MotionVecScaleX << "\n";
-    out << "fsr2_mv_scale_y=" << pendingFSR2MotionVecScaleY << "\n";
-    out << "amd_fsr3_framegen=" << (pendingAMDFramegen ? 1 : 0) << "\n";
+    out << "auto_loot=" << (settingsPanel_.pendingAutoLoot ? 1 : 0) << "\n";
+    out << "auto_sell_grey=" << (settingsPanel_.pendingAutoSellGrey ? 1 : 0) << "\n";
+    out << "auto_repair=" << (settingsPanel_.pendingAutoRepair ? 1 : 0) << "\n";
+    out << "graphics_preset=" << static_cast<int>(settingsPanel_.currentGraphicsPreset) << "\n";
+    out << "ground_clutter_density=" << settingsPanel_.pendingGroundClutterDensity << "\n";
+    out << "shadows=" << (settingsPanel_.pendingShadows ? 1 : 0) << "\n";
+    out << "shadow_distance=" << settingsPanel_.pendingShadowDistance << "\n";
+    out << "brightness=" << settingsPanel_.pendingBrightness << "\n";
+    out << "water_refraction=" << (settingsPanel_.pendingWaterRefraction ? 1 : 0) << "\n";
+    out << "antialiasing=" << settingsPanel_.pendingAntiAliasing << "\n";
+    out << "fxaa=" << (settingsPanel_.pendingFXAA ? 1 : 0) << "\n";
+    out << "normal_mapping=" << (settingsPanel_.pendingNormalMapping ? 1 : 0) << "\n";
+    out << "normal_map_strength=" << settingsPanel_.pendingNormalMapStrength << "\n";
+    out << "pom=" << (settingsPanel_.pendingPOM ? 1 : 0) << "\n";
+    out << "pom_quality=" << settingsPanel_.pendingPOMQuality << "\n";
+    out << "upscaling_mode=" << settingsPanel_.pendingUpscalingMode << "\n";
+    out << "fsr=" << (settingsPanel_.pendingFSR ? 1 : 0) << "\n";
+    out << "fsr_quality=" << settingsPanel_.pendingFSRQuality << "\n";
+    out << "fsr_sharpness=" << settingsPanel_.pendingFSRSharpness << "\n";
+    out << "fsr2_jitter_sign=" << settingsPanel_.pendingFSR2JitterSign << "\n";
+    out << "fsr2_mv_scale_x=" << settingsPanel_.pendingFSR2MotionVecScaleX << "\n";
+    out << "fsr2_mv_scale_y=" << settingsPanel_.pendingFSR2MotionVecScaleY << "\n";
+    out << "amd_fsr3_framegen=" << (settingsPanel_.pendingAMDFramegen ? 1 : 0) << "\n";
 
     // Controls
-    out << "mouse_sensitivity=" << pendingMouseSensitivity << "\n";
-    out << "invert_mouse=" << (pendingInvertMouse ? 1 : 0) << "\n";
-    out << "extended_zoom=" << (pendingExtendedZoom ? 1 : 0) << "\n";
-    out << "camera_stiffness=" << pendingCameraStiffness << "\n";
-    out << "camera_pivot_height=" << pendingPivotHeight << "\n";
-    out << "fov=" << pendingFov << "\n";
+    out << "mouse_sensitivity=" << settingsPanel_.pendingMouseSensitivity << "\n";
+    out << "invert_mouse=" << (settingsPanel_.pendingInvertMouse ? 1 : 0) << "\n";
+    out << "extended_zoom=" << (settingsPanel_.pendingExtendedZoom ? 1 : 0) << "\n";
+    out << "camera_stiffness=" << settingsPanel_.pendingCameraStiffness << "\n";
+    out << "camera_pivot_height=" << settingsPanel_.pendingPivotHeight << "\n";
+    out << "fov=" << settingsPanel_.pendingFov << "\n";
 
     // Quest tracker position/size
     out << "quest_tracker_right_offset=" << questTrackerRightOffset_ << "\n";
@@ -16166,7 +13889,7 @@ void GameScreen::saveSettings() {
 }
 
 void GameScreen::loadSettings() {
-    std::string path = getSettingsPath();
+    std::string path = SettingsPanel::getSettingsPath();
     std::ifstream in(path);
     if (!in.is_open()) return;
 
@@ -16182,127 +13905,127 @@ void GameScreen::loadSettings() {
             if (key == "ui_opacity") {
                 int v = std::stoi(val);
                 if (v >= 20 && v <= 100) {
-                    pendingUiOpacity = v;
-                    uiOpacity_ = static_cast<float>(v) / 100.0f;
+                    settingsPanel_.pendingUiOpacity = v;
+                    settingsPanel_.uiOpacity_ = static_cast<float>(v) / 100.0f;
                 }
             } else if (key == "minimap_rotate") {
                 // Ignore persisted rotate state; keep north-up.
-                minimapRotate_ = false;
-                pendingMinimapRotate = false;
+                settingsPanel_.minimapRotate_ = false;
+                settingsPanel_.pendingMinimapRotate = false;
             } else if (key == "minimap_square") {
                 int v = std::stoi(val);
-                minimapSquare_ = (v != 0);
-                pendingMinimapSquare = minimapSquare_;
+                settingsPanel_.minimapSquare_ = (v != 0);
+                settingsPanel_.pendingMinimapSquare = settingsPanel_.minimapSquare_;
             } else if (key == "minimap_npc_dots") {
                 int v = std::stoi(val);
-                minimapNpcDots_ = (v != 0);
-                pendingMinimapNpcDots = minimapNpcDots_;
+                settingsPanel_.minimapNpcDots_ = (v != 0);
+                settingsPanel_.pendingMinimapNpcDots = settingsPanel_.minimapNpcDots_;
             } else if (key == "show_latency_meter") {
-                showLatencyMeter_ = (std::stoi(val) != 0);
-                pendingShowLatencyMeter = showLatencyMeter_;
+                settingsPanel_.showLatencyMeter_ = (std::stoi(val) != 0);
+                settingsPanel_.pendingShowLatencyMeter = settingsPanel_.showLatencyMeter_;
             } else if (key == "show_dps_meter") {
-                showDPSMeter_ = (std::stoi(val) != 0);
+                settingsPanel_.showDPSMeter_ = (std::stoi(val) != 0);
             } else if (key == "show_cooldown_tracker") {
-                showCooldownTracker_ = (std::stoi(val) != 0);
+                settingsPanel_.showCooldownTracker_ = (std::stoi(val) != 0);
             } else if (key == "separate_bags") {
-                pendingSeparateBags = (std::stoi(val) != 0);
-                inventoryScreen.setSeparateBags(pendingSeparateBags);
+                settingsPanel_.pendingSeparateBags = (std::stoi(val) != 0);
+                inventoryScreen.setSeparateBags(settingsPanel_.pendingSeparateBags);
             } else if (key == "show_keyring") {
-                pendingShowKeyring = (std::stoi(val) != 0);
-                inventoryScreen.setShowKeyring(pendingShowKeyring);
+                settingsPanel_.pendingShowKeyring = (std::stoi(val) != 0);
+                inventoryScreen.setShowKeyring(settingsPanel_.pendingShowKeyring);
             } else if (key == "action_bar_scale") {
-                pendingActionBarScale = std::clamp(std::stof(val), 0.5f, 1.5f);
+                settingsPanel_.pendingActionBarScale = std::clamp(std::stof(val), 0.5f, 1.5f);
             } else if (key == "nameplate_scale") {
-                nameplateScale_ = std::clamp(std::stof(val), 0.5f, 2.0f);
+                settingsPanel_.nameplateScale_ = std::clamp(std::stof(val), 0.5f, 2.0f);
             } else if (key == "show_friendly_nameplates") {
-                showFriendlyNameplates_ = (std::stoi(val) != 0);
+                settingsPanel_.showFriendlyNameplates_ = (std::stoi(val) != 0);
             } else if (key == "show_action_bar2") {
-                pendingShowActionBar2 = (std::stoi(val) != 0);
+                settingsPanel_.pendingShowActionBar2 = (std::stoi(val) != 0);
             } else if (key == "action_bar2_offset_x") {
-                pendingActionBar2OffsetX = std::clamp(std::stof(val), -600.0f, 600.0f);
+                settingsPanel_.pendingActionBar2OffsetX = std::clamp(std::stof(val), -600.0f, 600.0f);
             } else if (key == "action_bar2_offset_y") {
-                pendingActionBar2OffsetY = std::clamp(std::stof(val), -400.0f, 400.0f);
+                settingsPanel_.pendingActionBar2OffsetY = std::clamp(std::stof(val), -400.0f, 400.0f);
             } else if (key == "show_right_bar") {
-                pendingShowRightBar = (std::stoi(val) != 0);
+                settingsPanel_.pendingShowRightBar = (std::stoi(val) != 0);
             } else if (key == "show_left_bar") {
-                pendingShowLeftBar = (std::stoi(val) != 0);
+                settingsPanel_.pendingShowLeftBar = (std::stoi(val) != 0);
             } else if (key == "right_bar_offset_y") {
-                pendingRightBarOffsetY = std::clamp(std::stof(val), -400.0f, 400.0f);
+                settingsPanel_.pendingRightBarOffsetY = std::clamp(std::stof(val), -400.0f, 400.0f);
             } else if (key == "left_bar_offset_y") {
-                pendingLeftBarOffsetY = std::clamp(std::stof(val), -400.0f, 400.0f);
+                settingsPanel_.pendingLeftBarOffsetY = std::clamp(std::stof(val), -400.0f, 400.0f);
             } else if (key == "damage_flash") {
-                damageFlashEnabled_ = (std::stoi(val) != 0);
+                settingsPanel_.damageFlashEnabled_ = (std::stoi(val) != 0);
             } else if (key == "low_health_vignette") {
-                lowHealthVignetteEnabled_ = (std::stoi(val) != 0);
+                settingsPanel_.lowHealthVignetteEnabled_ = (std::stoi(val) != 0);
             }
             // Audio
             else if (key == "sound_muted") {
-                soundMuted_ = (std::stoi(val) != 0);
-                if (soundMuted_) {
-                    // Apply mute on load; preMuteVolume_ will be set when AudioEngine is available
+                settingsPanel_.soundMuted_ = (std::stoi(val) != 0);
+                if (settingsPanel_.soundMuted_) {
+                    // Apply mute on load; settingsPanel_.preMuteVolume_ will be set when AudioEngine is available
                     audio::AudioEngine::instance().setMasterVolume(0.0f);
                 }
             }
-            else if (key == "use_original_soundtrack") pendingUseOriginalSoundtrack = (std::stoi(val) != 0);
-            else if (key == "master_volume") pendingMasterVolume = std::clamp(std::stoi(val), 0, 100);
-            else if (key == "music_volume") pendingMusicVolume = std::clamp(std::stoi(val), 0, 100);
-            else if (key == "ambient_volume") pendingAmbientVolume = std::clamp(std::stoi(val), 0, 100);
-            else if (key == "ui_volume") pendingUiVolume = std::clamp(std::stoi(val), 0, 100);
-            else if (key == "combat_volume") pendingCombatVolume = std::clamp(std::stoi(val), 0, 100);
-            else if (key == "spell_volume") pendingSpellVolume = std::clamp(std::stoi(val), 0, 100);
-            else if (key == "movement_volume") pendingMovementVolume = std::clamp(std::stoi(val), 0, 100);
-            else if (key == "footstep_volume") pendingFootstepVolume = std::clamp(std::stoi(val), 0, 100);
-            else if (key == "npc_voice_volume") pendingNpcVoiceVolume = std::clamp(std::stoi(val), 0, 100);
-            else if (key == "mount_volume") pendingMountVolume = std::clamp(std::stoi(val), 0, 100);
-            else if (key == "activity_volume") pendingActivityVolume = std::clamp(std::stoi(val), 0, 100);
+            else if (key == "use_original_soundtrack") settingsPanel_.pendingUseOriginalSoundtrack = (std::stoi(val) != 0);
+            else if (key == "master_volume") settingsPanel_.pendingMasterVolume = std::clamp(std::stoi(val), 0, 100);
+            else if (key == "music_volume") settingsPanel_.pendingMusicVolume = std::clamp(std::stoi(val), 0, 100);
+            else if (key == "ambient_volume") settingsPanel_.pendingAmbientVolume = std::clamp(std::stoi(val), 0, 100);
+            else if (key == "ui_volume") settingsPanel_.pendingUiVolume = std::clamp(std::stoi(val), 0, 100);
+            else if (key == "combat_volume") settingsPanel_.pendingCombatVolume = std::clamp(std::stoi(val), 0, 100);
+            else if (key == "spell_volume") settingsPanel_.pendingSpellVolume = std::clamp(std::stoi(val), 0, 100);
+            else if (key == "movement_volume") settingsPanel_.pendingMovementVolume = std::clamp(std::stoi(val), 0, 100);
+            else if (key == "footstep_volume") settingsPanel_.pendingFootstepVolume = std::clamp(std::stoi(val), 0, 100);
+            else if (key == "npc_voice_volume") settingsPanel_.pendingNpcVoiceVolume = std::clamp(std::stoi(val), 0, 100);
+            else if (key == "mount_volume") settingsPanel_.pendingMountVolume = std::clamp(std::stoi(val), 0, 100);
+            else if (key == "activity_volume") settingsPanel_.pendingActivityVolume = std::clamp(std::stoi(val), 0, 100);
             // Gameplay
-            else if (key == "auto_loot") pendingAutoLoot = (std::stoi(val) != 0);
-            else if (key == "auto_sell_grey") pendingAutoSellGrey = (std::stoi(val) != 0);
-            else if (key == "auto_repair") pendingAutoRepair = (std::stoi(val) != 0);
+            else if (key == "auto_loot") settingsPanel_.pendingAutoLoot = (std::stoi(val) != 0);
+            else if (key == "auto_sell_grey") settingsPanel_.pendingAutoSellGrey = (std::stoi(val) != 0);
+            else if (key == "auto_repair") settingsPanel_.pendingAutoRepair = (std::stoi(val) != 0);
             else if (key == "graphics_preset") {
                 int presetVal = std::clamp(std::stoi(val), 0, 4);
-                currentGraphicsPreset = static_cast<GraphicsPreset>(presetVal);
-                pendingGraphicsPreset = currentGraphicsPreset;
+                settingsPanel_.currentGraphicsPreset = static_cast<SettingsPanel::GraphicsPreset>(presetVal);
+                settingsPanel_.pendingGraphicsPreset = settingsPanel_.currentGraphicsPreset;
             }
-            else if (key == "ground_clutter_density") pendingGroundClutterDensity = std::clamp(std::stoi(val), 0, 150);
-            else if (key == "shadows") pendingShadows = (std::stoi(val) != 0);
-            else if (key == "shadow_distance") pendingShadowDistance = std::clamp(std::stof(val), 40.0f, 500.0f);
+            else if (key == "ground_clutter_density") settingsPanel_.pendingGroundClutterDensity = std::clamp(std::stoi(val), 0, 150);
+            else if (key == "shadows") settingsPanel_.pendingShadows = (std::stoi(val) != 0);
+            else if (key == "shadow_distance") settingsPanel_.pendingShadowDistance = std::clamp(std::stof(val), 40.0f, 500.0f);
             else if (key == "brightness") {
-                pendingBrightness = std::clamp(std::stoi(val), 0, 100);
+                settingsPanel_.pendingBrightness = std::clamp(std::stoi(val), 0, 100);
                 if (auto* r = core::Application::getInstance().getRenderer())
-                    r->setBrightness(static_cast<float>(pendingBrightness) / 50.0f);
+                    r->setBrightness(static_cast<float>(settingsPanel_.pendingBrightness) / 50.0f);
             }
-            else if (key == "water_refraction") pendingWaterRefraction = (std::stoi(val) != 0);
-            else if (key == "antialiasing") pendingAntiAliasing = std::clamp(std::stoi(val), 0, 3);
-            else if (key == "fxaa") pendingFXAA = (std::stoi(val) != 0);
-            else if (key == "normal_mapping") pendingNormalMapping = (std::stoi(val) != 0);
-            else if (key == "normal_map_strength") pendingNormalMapStrength = std::clamp(std::stof(val), 0.0f, 2.0f);
-            else if (key == "pom") pendingPOM = (std::stoi(val) != 0);
-            else if (key == "pom_quality") pendingPOMQuality = std::clamp(std::stoi(val), 0, 2);
+            else if (key == "water_refraction") settingsPanel_.pendingWaterRefraction = (std::stoi(val) != 0);
+            else if (key == "antialiasing") settingsPanel_.pendingAntiAliasing = std::clamp(std::stoi(val), 0, 3);
+            else if (key == "fxaa") settingsPanel_.pendingFXAA = (std::stoi(val) != 0);
+            else if (key == "normal_mapping") settingsPanel_.pendingNormalMapping = (std::stoi(val) != 0);
+            else if (key == "normal_map_strength") settingsPanel_.pendingNormalMapStrength = std::clamp(std::stof(val), 0.0f, 2.0f);
+            else if (key == "pom") settingsPanel_.pendingPOM = (std::stoi(val) != 0);
+            else if (key == "pom_quality") settingsPanel_.pendingPOMQuality = std::clamp(std::stoi(val), 0, 2);
             else if (key == "upscaling_mode") {
-                pendingUpscalingMode = std::clamp(std::stoi(val), 0, 2);
-                pendingFSR = (pendingUpscalingMode == 1);
+                settingsPanel_.pendingUpscalingMode = std::clamp(std::stoi(val), 0, 2);
+                settingsPanel_.pendingFSR = (settingsPanel_.pendingUpscalingMode == 1);
             } else if (key == "fsr") {
-                pendingFSR = (std::stoi(val) != 0);
+                settingsPanel_.pendingFSR = (std::stoi(val) != 0);
                 // Backward compatibility: old configs only had fsr=0/1.
-                if (pendingUpscalingMode == 0 && pendingFSR) pendingUpscalingMode = 1;
+                if (settingsPanel_.pendingUpscalingMode == 0 && settingsPanel_.pendingFSR) settingsPanel_.pendingUpscalingMode = 1;
             }
-            else if (key == "fsr_quality") pendingFSRQuality = std::clamp(std::stoi(val), 0, 3);
-            else if (key == "fsr_sharpness") pendingFSRSharpness = std::clamp(std::stof(val), 0.0f, 2.0f);
-            else if (key == "fsr2_jitter_sign") pendingFSR2JitterSign = std::clamp(std::stof(val), -2.0f, 2.0f);
-            else if (key == "fsr2_mv_scale_x") pendingFSR2MotionVecScaleX = std::clamp(std::stof(val), -2.0f, 2.0f);
-            else if (key == "fsr2_mv_scale_y") pendingFSR2MotionVecScaleY = std::clamp(std::stof(val), -2.0f, 2.0f);
-            else if (key == "amd_fsr3_framegen") pendingAMDFramegen = (std::stoi(val) != 0);
+            else if (key == "fsr_quality") settingsPanel_.pendingFSRQuality = std::clamp(std::stoi(val), 0, 3);
+            else if (key == "fsr_sharpness") settingsPanel_.pendingFSRSharpness = std::clamp(std::stof(val), 0.0f, 2.0f);
+            else if (key == "fsr2_jitter_sign") settingsPanel_.pendingFSR2JitterSign = std::clamp(std::stof(val), -2.0f, 2.0f);
+            else if (key == "fsr2_mv_scale_x") settingsPanel_.pendingFSR2MotionVecScaleX = std::clamp(std::stof(val), -2.0f, 2.0f);
+            else if (key == "fsr2_mv_scale_y") settingsPanel_.pendingFSR2MotionVecScaleY = std::clamp(std::stof(val), -2.0f, 2.0f);
+            else if (key == "amd_fsr3_framegen") settingsPanel_.pendingAMDFramegen = (std::stoi(val) != 0);
             // Controls
-            else if (key == "mouse_sensitivity") pendingMouseSensitivity = std::clamp(std::stof(val), 0.05f, 1.0f);
-            else if (key == "invert_mouse") pendingInvertMouse = (std::stoi(val) != 0);
-            else if (key == "extended_zoom") pendingExtendedZoom = (std::stoi(val) != 0);
-            else if (key == "camera_stiffness") pendingCameraStiffness = std::clamp(std::stof(val), 5.0f, 100.0f);
-            else if (key == "camera_pivot_height") pendingPivotHeight = std::clamp(std::stof(val), 0.0f, 3.0f);
+            else if (key == "mouse_sensitivity") settingsPanel_.pendingMouseSensitivity = std::clamp(std::stof(val), 0.05f, 1.0f);
+            else if (key == "invert_mouse") settingsPanel_.pendingInvertMouse = (std::stoi(val) != 0);
+            else if (key == "extended_zoom") settingsPanel_.pendingExtendedZoom = (std::stoi(val) != 0);
+            else if (key == "camera_stiffness") settingsPanel_.pendingCameraStiffness = std::clamp(std::stof(val), 5.0f, 100.0f);
+            else if (key == "camera_pivot_height") settingsPanel_.pendingPivotHeight = std::clamp(std::stof(val), 0.0f, 3.0f);
             else if (key == "fov") {
-                pendingFov = std::clamp(std::stof(val), 45.0f, 110.0f);
+                settingsPanel_.pendingFov = std::clamp(std::stof(val), 45.0f, 110.0f);
                 if (auto* renderer = core::Application::getInstance().getRenderer()) {
-                    if (auto* camera = renderer->getCamera()) camera->setFov(pendingFov);
+                    if (auto* camera = renderer->getCamera()) camera->setFov(settingsPanel_.pendingFov);
                 }
             }
             // Quest tracker position/size

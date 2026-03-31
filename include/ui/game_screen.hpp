@@ -11,6 +11,8 @@
 #include "ui/keybinding_manager.hpp"
 #include "ui/chat_panel.hpp"
 #include "ui/toast_manager.hpp"
+#include "ui/dialog_manager.hpp"
+#include "ui/settings_panel.hpp"
 #include <vulkan/vulkan.h>
 #include <imgui.h>
 #include <string>
@@ -43,7 +45,6 @@ public:
 
     void saveSettings();
     void loadSettings();
-    void applyAudioVolumes(rendering::Renderer* renderer);
 
 private:
     // Chat panel (extracted from GameScreen — owns all chat state and rendering)
@@ -51,6 +52,12 @@ private:
 
     // Toast manager (extracted from GameScreen — owns all toast/notification state and rendering)
     ToastManager toastManager_;
+
+    // Dialog manager (extracted from GameScreen — owns all popup/dialog rendering)
+    DialogManager dialogManager_;
+
+    // Settings panel (extracted from GameScreen — owns all settings UI and config state)
+    SettingsPanel settingsPanel_;
 
     // Action bar error-flash: spellId → wall-clock time (seconds) when the flash ends.
     // Populated by the SpellCastFailedCallback; queried during action bar button rendering.
@@ -61,14 +68,10 @@ private:
     bool showChatWindow = true;
     bool showMinimap_ = true;  // M key toggles minimap
     bool showNameplates_ = true;  // V key toggles enemy/NPC nameplates
-    bool showFriendlyNameplates_ = true;  // Shift+V toggles friendly player nameplates
-    float nameplateScale_ = 1.0f; // Scale multiplier for nameplate bar dimensions
     uint64_t nameplateCtxGuid_ = 0; // GUID of nameplate right-clicked (0 = none)
     ImVec2 nameplateCtxPos_{};      // Screen position of nameplate right-click
     uint32_t lastPlayerHp_ = 0;   // Previous frame HP for damage flash detection
     float damageFlashAlpha_ = 0.0f; // Screen edge flash intensity (fades to 0)
-    bool  damageFlashEnabled_ = true;
-    bool  lowHealthVignetteEnabled_ = true; // Persistent pulsing red vignette below 20% HP
 
 
     // Raid Warning / Boss Emote big-text overlay (center-screen, fades after 5s)
@@ -119,104 +122,11 @@ private:
     float questTrackerRightOffset_ = -1.0f;            // pixels from right edge; <0 = use default
     bool questTrackerPosInit_ = false;
     bool showEscapeMenu = false;
-    bool showEscapeSettingsNotice = false;
-    bool showSettingsWindow = false;
-    bool settingsInit = false;
-    bool pendingFullscreen = false;
-    bool pendingVsync = false;
-    int pendingResIndex = 0;
-    bool pendingShadows = true;
-    float pendingShadowDistance = 300.0f;
-    bool pendingWaterRefraction = true;
-    int pendingBrightness = 50; // 0-100, maps to 0.0-2.0 (50 = 1.0 default)
-    int pendingMasterVolume = 100;
-    int pendingMusicVolume = 30;
-    int pendingAmbientVolume = 100;
-    int pendingUiVolume = 100;
-    int pendingCombatVolume = 100;
-    int pendingSpellVolume = 100;
-    int pendingMovementVolume = 100;
-    int pendingFootstepVolume = 100;
-    int pendingNpcVoiceVolume = 100;
-    int pendingMountVolume = 100;
-    int pendingActivityVolume = 100;
-    float pendingMouseSensitivity = 0.2f;
-    bool pendingInvertMouse = false;
-    bool pendingExtendedZoom = false;
-    float pendingCameraStiffness = 30.0f;  // Camera smooth speed (higher = tighter, less sway)
-    float pendingPivotHeight = 1.6f;       // Camera pivot height above feet (lower = less detached feel)
-    float pendingFov = 70.0f;  // degrees, default matches WoW's ~70° horizontal FOV
-    int pendingUiOpacity = 65;
-    bool pendingMinimapRotate = false;
-    bool pendingMinimapSquare = false;
-    bool pendingMinimapNpcDots = false;
-    bool pendingShowLatencyMeter = true;
-    bool pendingSeparateBags = true;
-    bool pendingShowKeyring = true;
-    bool pendingAutoLoot = false;
-    bool pendingAutoSellGrey = false;
-    bool pendingAutoRepair = false;
 
-    // Keybinding customization
-    int pendingRebindAction = -1;  // -1 = not rebinding, otherwise action index
-    bool awaitingKeyPress = false;
     // Macro editor popup state
     uint32_t macroEditorId_   = 0;        // macro index being edited
     bool     macroEditorOpen_ = false;    // deferred OpenPopup flag
     char     macroEditorBuf_[256] = {};   // edit buffer
-    bool pendingUseOriginalSoundtrack = true;
-    bool pendingShowActionBar2 = true;   // Show second action bar above main bar
-    float pendingActionBarScale = 1.0f;  // Multiplier for action bar slot size (0.5–1.5)
-    float pendingActionBar2OffsetX = 0.0f;  // Horizontal offset from default center position
-    float pendingActionBar2OffsetY = 0.0f;  // Vertical offset from default (above bar 1)
-    bool pendingShowRightBar = false;   // Right-edge vertical action bar (bar 3, slots 24-35)
-    bool pendingShowLeftBar  = false;   // Left-edge vertical action bar (bar 4, slots 36-47)
-    float pendingRightBarOffsetY = 0.0f;  // Vertical offset from screen center
-    float pendingLeftBarOffsetY  = 0.0f;  // Vertical offset from screen center
-    int pendingGroundClutterDensity = 100;
-    int pendingAntiAliasing = 0;  // 0=Off, 1=2x, 2=4x, 3=8x
-    bool pendingFXAA = false;     // FXAA post-process (combinable with MSAA)
-    bool pendingNormalMapping = true;   // on by default
-    float pendingNormalMapStrength = 0.8f;  // 0.0-2.0
-    bool pendingPOM = true;             // on by default
-    int pendingPOMQuality = 1;          // 0=Low(16), 1=Medium(32), 2=High(64)
-    bool pendingFSR = false;
-    int pendingUpscalingMode = 0;       // 0=Off, 1=FSR1, 2=FSR3
-    int pendingFSRQuality = 3;          // 0=UltraQuality, 1=Quality, 2=Balanced, 3=Native(100%)
-    float pendingFSRSharpness = 1.6f;
-    float pendingFSR2JitterSign = 0.38f;
-    float pendingFSR2MotionVecScaleX = 1.0f;
-    float pendingFSR2MotionVecScaleY = 1.0f;
-    bool pendingAMDFramegen = false;
-    bool fsrSettingsApplied_ = false;
-
-    // Graphics quality presets
-    enum class GraphicsPreset : int {
-        CUSTOM = 0,
-        LOW = 1,
-        MEDIUM = 2,
-        HIGH = 3,
-        ULTRA = 4
-    };
-    GraphicsPreset currentGraphicsPreset = GraphicsPreset::CUSTOM;
-    GraphicsPreset pendingGraphicsPreset = GraphicsPreset::CUSTOM;
-
-    // UI element transparency (0.0 = fully transparent, 1.0 = fully opaque)
-    float uiOpacity_ = 0.65f;
-    bool minimapRotate_ = false;
-    bool minimapSquare_ = false;
-    bool minimapNpcDots_ = false;
-    bool showLatencyMeter_ = true;           // Show server latency indicator
-    bool minimapSettingsApplied_ = false;
-    bool volumeSettingsApplied_ = false;  // True once saved volume settings applied to audio managers
-    bool msaaSettingsApplied_ = false;   // True once saved MSAA setting applied to renderer
-    bool fxaaSettingsApplied_ = false;   // True once saved FXAA setting applied to renderer
-    bool waterRefractionApplied_ = false;
-    bool normalMapSettingsApplied_ = false;  // True once saved normal map/POM settings applied
-
-    // Mute state: mute bypasses master volume without touching slider values
-    bool soundMuted_ = false;
-    float preMuteVolume_ = 1.0f;  // AudioEngine master volume before muting
 
     /**
      * Render player info window
@@ -275,15 +185,6 @@ private:
     void renderBossFrames(game::GameHandler& gameHandler);
     void renderUIErrors(game::GameHandler& gameHandler, float deltaTime);
 
-    void renderGroupInvitePopup(game::GameHandler& gameHandler);
-    void renderDuelRequestPopup(game::GameHandler& gameHandler);
-    void renderDuelCountdown(game::GameHandler& gameHandler);
-    void renderLootRollPopup(game::GameHandler& gameHandler);
-    void renderTradeRequestPopup(game::GameHandler& gameHandler);
-    void renderTradeWindow(game::GameHandler& gameHandler);
-    void renderSummonRequestPopup(game::GameHandler& gameHandler);
-    void renderSharedQuestPopup(game::GameHandler& gameHandler);
-    void renderItemTextWindow(game::GameHandler& gameHandler);
     void renderBuffBar(game::GameHandler& gameHandler);
     void renderSocialFrame(game::GameHandler& gameHandler);
     void renderLootWindow(game::GameHandler& gameHandler);
@@ -299,28 +200,11 @@ private:
     void renderLogoutCountdown(game::GameHandler& gameHandler);
     void renderDeathScreen(game::GameHandler& gameHandler);
     void renderReclaimCorpseButton(game::GameHandler& gameHandler);
-    void renderResurrectDialog(game::GameHandler& gameHandler);
-    void renderTalentWipeConfirmDialog(game::GameHandler& gameHandler);
-    void renderPetUnlearnConfirmDialog(game::GameHandler& gameHandler);
     void renderEscapeMenu();
-    void renderSettingsWindow();
-    void renderSettingsAudioTab();
-    void renderSettingsAboutTab();
-    void renderSettingsInterfaceTab();
-    void renderSettingsGameplayTab();
-    void renderSettingsControlsTab();
-    void applyGraphicsPreset(GraphicsPreset preset);
-    void updateGraphicsPresetFromCurrentSettings();
     void renderQuestMarkers(game::GameHandler& gameHandler);
     void renderMinimapMarkers(game::GameHandler& gameHandler);
     void renderQuestObjectiveTracker(game::GameHandler& gameHandler);
     void renderGuildRoster(game::GameHandler& gameHandler);
-    void renderGuildInvitePopup(game::GameHandler& gameHandler);
-    void renderReadyCheckPopup(game::GameHandler& gameHandler);
-    void renderBgInvitePopup(game::GameHandler& gameHandler);
-    void renderBfMgrInvitePopup(game::GameHandler& gameHandler);
-    void renderLfgProposalPopup(game::GameHandler& gameHandler);
-    void renderLfgRoleCheckPopup(game::GameHandler& gameHandler);
     void renderMailWindow(game::GameHandler& gameHandler);
     void renderMailComposeWindow(game::GameHandler& gameHandler);
     void renderBankWindow(game::GameHandler& gameHandler);
@@ -445,10 +329,6 @@ private:
     uint8_t lfgRoles_ = 0x08;  // default: DPS (0x02=tank, 0x04=healer, 0x08=dps)
     uint32_t lfgSelectedDungeon_ = 861;  // default: random dungeon (entry 861 = Random Dungeon WotLK)
 
-    static std::string getSettingsPath();
-
-
-
     // Mail compose state
     char mailRecipientBuffer_[256] = "";
     char mailSubjectBuffer_[256] = "";
@@ -510,11 +390,7 @@ private:
 
     void renderWeatherOverlay(game::GameHandler& gameHandler);
 
-    // Cooldown tracker
-    bool showCooldownTracker_ = false;
-
     // DPS / HPS meter
-    bool showDPSMeter_ = false;
     float dpsCombatAge_ = 0.0f;   // seconds in current combat (for accurate early-combat DPS)
     bool dpsWasInCombat_ = false;
     float dpsEncounterDamage_ = 0.0f;  // total player damage this combat
