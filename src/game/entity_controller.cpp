@@ -1266,14 +1266,14 @@ struct EntityController::GameObjectTypeHandler : EntityController::IObjectTypeHa
 struct EntityController::ItemTypeHandler : EntityController::IObjectTypeHandler {
     EntityController& ctl_;
     explicit ItemTypeHandler(EntityController& c) : ctl_(c) {}
-    void onCreate(const UpdateBlock& block, std::shared_ptr<Entity>& entity, bool& newItemCreated) override { ctl_.onCreateItem(block, newItemCreated); }
+    void onCreate(const UpdateBlock& block, std::shared_ptr<Entity>& /*entity*/, bool& newItemCreated) override { ctl_.onCreateItem(block, newItemCreated); }
     void onValuesUpdate(const UpdateBlock& block, std::shared_ptr<Entity>& entity) override { ctl_.onValuesUpdateItem(block, entity); }
 };
 
 struct EntityController::CorpseTypeHandler : EntityController::IObjectTypeHandler {
     EntityController& ctl_;
     explicit CorpseTypeHandler(EntityController& c) : ctl_(c) {}
-    void onCreate(const UpdateBlock& block, std::shared_ptr<Entity>& entity, bool&) override { ctl_.onCreateCorpse(block); }
+    void onCreate(const UpdateBlock& block, std::shared_ptr<Entity>& /*entity*/, bool&) override { ctl_.onCreateCorpse(block); }
 };
 
 // ============================================================
