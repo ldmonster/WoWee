@@ -7,6 +7,7 @@ WoWee supports three World of Warcraft expansions in a unified codebase using an
 - **Vanilla (Classic) 1.12** - Original World of Warcraft
 - **The Burning Crusade (TBC) 2.4.3** - First expansion
 - **Wrath of the Lich King (WotLK) 3.3.5a** - Second expansion
+- **Turtle WoW 1.17** - Custom Vanilla-based server with extended content
 
 ## Architecture Overview
 
@@ -17,9 +18,9 @@ The multi-expansion support is built on the **Expansion Profile** system:
    - Specifies which packet parsers to use
 
 2. **Packet Parsers** - Expansion-specific message handling
-   - `packet_parsers_classic.cpp` - Vanilla 1.12 message parsing
+   - `packet_parsers_classic.cpp` - Vanilla 1.12 / Turtle WoW message parsing
    - `packet_parsers_tbc.cpp` - TBC 2.4.3 message parsing
-   - `packet_parsers_wotlk.cpp` (default) - WotLK 3.3.5a message parsing
+   - Default (WotLK 3.3.5a) parsers in `game_handler.cpp` and domain handlers
 
 3. **Update Fields** - Expansion-specific entity data layout
    - Loaded from `update_fields.json` in expansion data directory
@@ -78,17 +79,19 @@ WOWEE_EXPANSION=classic ./wowee # Force Classic
 ### Checking Current Expansion
 
 ```cpp
-#include "game/expansion_profile.hpp"
+#include "game/game_utils.hpp"
 
-// Global helper
-bool isClassicLikeExpansion() {
-    auto profile = ExpansionProfile::getActive();
-    return profile && (profile->name == "Classic" || profile->name == "Vanilla");
+// Shared helpers (defined in game_utils.hpp)
+if (isActiveExpansion("tbc")) {
+    // TBC-specific code
 }
 
-// Specific check
-if (GameHandler::getInstance().isActiveExpansion("tbc")) {
-    // TBC-specific code
+if (isClassicLikeExpansion()) {
+    // Classic or Turtle WoW
+}
+
+if (isPreWotlk()) {
+    // Classic, Turtle, or TBC (not WotLK)
 }
 ```
 
@@ -96,7 +99,7 @@ if (GameHandler::getInstance().isActiveExpansion("tbc")) {
 
 ```cpp
 // In packet_parsers_*.cpp, implement expansion-specific logic
-bool parseXxxPacket(BitStream& data, ...) {
+bool TbcPacketParsers::parseXxx(network::Packet& packet, XxxData& data) {
     // Custom logic for this expansion's packet format
 }
 ```
@@ -121,6 +124,7 @@ bool parseXxxPacket(BitStream& data, ...) {
 ## References
 
 - `include/game/expansion_profile.hpp` - Expansion metadata
-- `docs/status.md` - Current feature support by expansion
-- `src/game/packet_parsers_*.cpp` - Format-specific parsing logic
+- `include/game/game_utils.hpp` - `isActiveExpansion()`, `isClassicLikeExpansion()`, `isPreWotlk()`
+- `src/game/packet_parsers_classic.cpp` / `packet_parsers_tbc.cpp` - Expansion-specific parsing
+- `docs/status.md` - Current feature support
 - `docs/` directory - Additional protocol documentation
