@@ -236,10 +236,9 @@ private:
     // Allows extending object-type handling without modifying handler dispatch.
     struct IObjectTypeHandler {
         virtual ~IObjectTypeHandler() = default;
-        virtual void onCreate(const UpdateBlock& /*block*/, std::shared_ptr<Entity>& /*entity*/,
-                              bool& /*newItemCreated*/) {}
-        virtual void onValuesUpdate(const UpdateBlock& /*block*/, std::shared_ptr<Entity>& /*entity*/) {}
-        virtual void onMovementUpdate(const UpdateBlock& /*block*/, std::shared_ptr<Entity>& /*entity*/) {}
+        virtual void onCreate(const UpdateBlock&, std::shared_ptr<Entity>&, bool&) {}
+        virtual void onValuesUpdate(const UpdateBlock&, std::shared_ptr<Entity>&) {}
+        virtual void onMovementUpdate(const UpdateBlock&, std::shared_ptr<Entity>&) {}
     };
     struct UnitTypeHandler;
     struct PlayerTypeHandler;
