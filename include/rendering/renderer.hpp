@@ -30,7 +30,6 @@ namespace rendering {
 
 class Camera;
 class CameraController;
-class Scene;
 class TerrainRenderer;
 class TerrainManager;
 class PerformanceHUD;
@@ -54,7 +53,6 @@ class Minimap;
 class WorldMap;
 class QuestMarkerRenderer;
 class CharacterPreview;
-class Shader;
 class AmdFsr3Runtime;
 
 class Renderer {
@@ -119,7 +117,6 @@ public:
 
     Camera* getCamera() { return camera.get(); }
     CameraController* getCameraController() { return cameraController.get(); }
-    Scene* getScene() { return scene.get(); }
     TerrainRenderer* getTerrainRenderer() const { return terrainRenderer.get(); }
     TerrainManager* getTerrainManager() const { return terrainManager.get(); }
     PerformanceHUD* getPerformanceHUD() { return performanceHUD.get(); }
@@ -219,7 +216,6 @@ private:
     core::Window* window = nullptr;
     std::unique_ptr<Camera> camera;
     std::unique_ptr<CameraController> cameraController;
-    std::unique_ptr<Scene> scene;
     std::unique_ptr<TerrainRenderer> terrainRenderer;
     std::unique_ptr<TerrainManager> terrainManager;
     std::unique_ptr<PerformanceHUD> performanceHUD;

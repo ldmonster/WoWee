@@ -3,9 +3,15 @@
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 
 namespace wowee {
 namespace pipeline {
+
+// MCVT height grid: 9 outer + 8 inner vertices per row, 9 rows = 145 total.
+// Each row is 17 entries: 9 outer corner vertices then 8 inner midpoints.
+static constexpr int kMCVTVertexCount = 145;
+static constexpr int kMCVTRowStride   = 17;  // 9 outer + 8 inner per row
 
 // HeightMap implementation
 float HeightMap::getHeight(int x, int y) const {
@@ -13,13 +19,9 @@ float HeightMap::getHeight(int x, int y) const {
         return 0.0f;
     }
 
-    // MCVT heights are stored in interleaved 9x17 row-major layout:
-    //   Row 0: 9 outer (indices 0-8), then 8 inner (indices 9-16)
-    //   Row 1: 9 outer (indices 17-25), then 8 inner (indices 26-33)
-    //   ...
-    // Outer vertex (x, y) is at index: y * 17 + x
-    int index = y * 17 + x;
-    if (index < 0 || index >= 145) return 0.0f;
+    // Outer vertex (x, y) in the interleaved grid
+    int index = y * kMCVTRowStride + x;
+    if (index < 0 || index >= kMCVTVertexCount) return 0.0f;
 
     return heights[index];
 }
@@ -355,16 +357,15 @@ void ADTLoader::parseMCNK(const uint8_t* data, size_t size, int chunkIndex, ADTT
 }
 
 void ADTLoader::parseMCVT(const uint8_t* data, size_t size, MapChunk& chunk) {
-    // MCVT contains 145 height values (floats)
-    if (size < 145 * sizeof(float)) {
+    if (size < kMCVTVertexCount * sizeof(float)) {
         LOG_WARNING("MCVT chunk too small: ", size, " bytes");
         return;
     }
 
-    float minHeight = 999999.0f;
-    float maxHeight = -999999.0f;
+    float minHeight = std::numeric_limits<float>::max();
+    float maxHeight = std::numeric_limits<float>::lowest();
 
-    for (int i = 0; i < 145; i++) {
+    for (int i = 0; i < kMCVTVertexCount; i++) {
         float height = readFloat(data, i * sizeof(float));
         chunk.heightMap.heights[i] = height;
 
@@ -386,13 +387,13 @@ void ADTLoader::parseMCVT(const uint8_t* data, size_t size, MapChunk& chunk) {
 }
 
 void ADTLoader::parseMCNR(const uint8_t* data, size_t size, MapChunk& chunk) {
-    // MCNR contains 145 normals (3 bytes each, signed)
-    if (size < 145 * 3) {
+    // MCNR: one signed XYZ normal per vertex (3 bytes each)
+    if (size < kMCVTVertexCount * 3) {
         LOG_WARNING("MCNR chunk too small: ", size, " bytes");
         return;
     }
 
-    for (int i = 0; i < 145 * 3; i++) {
+    for (int i = 0; i < kMCVTVertexCount * 3; i++) {
         chunk.normals[i] = static_cast<int8_t>(data[i]);
     }
 }

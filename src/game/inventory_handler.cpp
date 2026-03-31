@@ -70,7 +70,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         }
         if (!alreadyAnnounced) {
             owner_.addSystemChatMessage("Looted: " + formatCopperAmount(amount));
-            auto* renderer = core::Application::getInstance().getRenderer();
+            auto* renderer = owner_.services().renderer;
             if (renderer) {
                 if (auto* sfx = renderer->getUiSoundManager()) {
                     if (amount >= 10000) sfx->playLootCoinLarge();
@@ -222,7 +222,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
         std::string msg = "Received item: " + link;
         if (count > 1) msg += " x" + std::to_string(count);
         owner_.addSystemChatMessage(msg);
-        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+        if (auto* renderer = owner_.services().renderer) {
             if (auto* sfx = renderer->getUiSoundManager())
                 sfx->playLootItem();
         }
@@ -253,7 +253,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                      " result=", static_cast<int>(result));
             if (result == 0) {
                 pendingSellToBuyback_.erase(itemGuid);
-                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* renderer = owner_.services().renderer) {
                     if (auto* sfx = renderer->getUiSoundManager())
                         sfx->playDropOnGround();
                 }
@@ -295,7 +295,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                 const char* msg = (result < 7) ? sellErrors[result] : "Unknown sell error";
                 owner_.addUIError(std::string("Sell failed: ") + msg);
                 owner_.addSystemChatMessage(std::string("Sell failed: ") + msg);
-                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* renderer = owner_.services().renderer) {
                     if (auto* sfx = renderer->getUiSoundManager())
                         sfx->playError();
                 }
@@ -392,7 +392,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                 std::string msg = errMsg ? errMsg : "Inventory error (" + std::to_string(error) + ").";
                 owner_.addUIError(msg);
                 owner_.addSystemChatMessage(msg);
-                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* renderer = owner_.services().renderer) {
                     if (auto* sfx = renderer->getUiSoundManager())
                         sfx->playError();
                 }
@@ -450,7 +450,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
             }
             owner_.addUIError(msg);
             owner_.addSystemChatMessage(msg);
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* renderer = owner_.services().renderer) {
                 if (auto* sfx = renderer->getUiSoundManager())
                     sfx->playError();
             }
@@ -474,7 +474,7 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                 std::string msg = "Purchased: " + buildItemLink(pendingBuyItemId_, buyQuality, itemLabel);
                 if (itemCount > 1) msg += " x" + std::to_string(itemCount);
                 owner_.addSystemChatMessage(msg);
-                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* renderer = owner_.services().renderer) {
                     if (auto* sfx = renderer->getUiSoundManager())
                         sfx->playPickupBag();
                 }
@@ -695,6 +695,9 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
     const bool wotlkLoot = isActiveExpansion("wotlk");
     if (!LootResponseParser::parse(packet, currentLoot_, wotlkLoot)) return;
     const bool hasLoot = !currentLoot_.items.empty() || currentLoot_.gold > 0;
+    LOG_WARNING("[GO-DIAG] SMSG_LOOT_RESPONSE: guid=0x", std::hex, currentLoot_.lootGuid, std::dec,
+                " items=", currentLoot_.items.size(), " gold=", currentLoot_.gold,
+                " hasLoot=", hasLoot);
     if (!hasLoot && owner_.isCasting() && owner_.getCurrentCastSpellId() != 0 && lastInteractedGoGuid_ != 0) {
         LOG_DEBUG("Ignoring empty SMSG_LOOT_RESPONSE during gather cast");
         return;
@@ -763,7 +766,7 @@ void InventoryHandler::handleLootRemoved(network::Packet& packet) {
             std::string msgStr = "Looted: " + link;
             if (it->count > 1) msgStr += " x" + std::to_string(it->count);
             owner_.addSystemChatMessage(msgStr);
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* renderer = owner_.services().renderer) {
                 if (auto* sfx = renderer->getUiSoundManager())
                     sfx->playLootItem();
             }
@@ -978,7 +981,7 @@ void InventoryHandler::sellItemInBag(int bagIndex, int slotIndex) {
     }
 
     uint64_t itemGuid = 0;
-    uint64_t bagGuid = owner_.equipSlotGuids_[19 + bagIndex];
+    uint64_t bagGuid = owner_.equipSlotGuids_[Inventory::FIRST_BAG_EQUIP_SLOT + bagIndex];
     if (bagGuid != 0) {
         auto it = owner_.containerContents_.find(bagGuid);
         if (it != owner_.containerContents_.end() && slotIndex < static_cast<int>(it->second.numSlots)) {
@@ -1044,7 +1047,7 @@ void InventoryHandler::autoEquipItemBySlot(int backpackIndex) {
     if (slot.empty()) return;
 
     if (owner_.state == WorldState::IN_WORLD && owner_.socket) {
-        auto packet = AutoEquipItemPacket::build(0xFF, static_cast<uint8_t>(23 + backpackIndex));
+        auto packet = AutoEquipItemPacket::build(0xFF, static_cast<uint8_t>(Inventory::NUM_EQUIP_SLOTS + backpackIndex));
         owner_.socket->send(packet);
     }
 }
@@ -1055,7 +1058,7 @@ void InventoryHandler::autoEquipItemInBag(int bagIndex, int slotIndex) {
 
     if (owner_.state == WorldState::IN_WORLD && owner_.socket) {
         auto packet = AutoEquipItemPacket::build(
-            static_cast<uint8_t>(19 + bagIndex), static_cast<uint8_t>(slotIndex));
+            static_cast<uint8_t>(Inventory::FIRST_BAG_EQUIP_SLOT + bagIndex), static_cast<uint8_t>(slotIndex));
         owner_.socket->send(packet);
     }
 }
@@ -1084,8 +1087,8 @@ void InventoryHandler::useItemBySlot(int backpackIndex) {
                         " spellId=", useSpellId, " spellCount=", info->spells.size());
         }
         auto packet = owner_.packetParsers_
-            ? owner_.packetParsers_->buildUseItem(0xFF, static_cast<uint8_t>(23 + backpackIndex), itemGuid, useSpellId)
-            : UseItemPacket::build(0xFF, static_cast<uint8_t>(23 + backpackIndex), itemGuid, useSpellId);
+            ? owner_.packetParsers_->buildUseItem(0xFF, static_cast<uint8_t>(Inventory::NUM_EQUIP_SLOTS + backpackIndex), itemGuid, useSpellId)
+            : UseItemPacket::build(0xFF, static_cast<uint8_t>(Inventory::NUM_EQUIP_SLOTS + backpackIndex), itemGuid, useSpellId);
         owner_.socket->send(packet);
     } else if (itemGuid == 0) {
         LOG_WARNING("useItemBySlot: itemGuid=0 for item='", slot.item.name,
@@ -1101,7 +1104,7 @@ void InventoryHandler::useItemInBag(int bagIndex, int slotIndex) {
     if (slot.empty()) return;
 
     uint64_t itemGuid = 0;
-    uint64_t bagGuid = owner_.equipSlotGuids_[19 + bagIndex];
+    uint64_t bagGuid = owner_.equipSlotGuids_[Inventory::FIRST_BAG_EQUIP_SLOT + bagIndex];
     if (bagGuid != 0) {
         auto it = owner_.containerContents_.find(bagGuid);
         if (it != owner_.containerContents_.end() && slotIndex < static_cast<int>(it->second.numSlots)) {
@@ -1125,7 +1128,7 @@ void InventoryHandler::useItemInBag(int bagIndex, int slotIndex) {
                 }
             }
         }
-        uint8_t wowBag = static_cast<uint8_t>(19 + bagIndex);
+        uint8_t wowBag = static_cast<uint8_t>(Inventory::FIRST_BAG_EQUIP_SLOT + bagIndex);
         auto packet = owner_.packetParsers_
             ? owner_.packetParsers_->buildUseItem(wowBag, static_cast<uint8_t>(slotIndex), itemGuid, useSpellId)
             : UseItemPacket::build(wowBag, static_cast<uint8_t>(slotIndex), itemGuid, useSpellId);
@@ -1142,8 +1145,8 @@ void InventoryHandler::openItemBySlot(int backpackIndex) {
     if (backpackIndex < 0 || backpackIndex >= owner_.inventory.getBackpackSize()) return;
     if (owner_.inventory.getBackpackSlot(backpackIndex).empty()) return;
     if (owner_.state != WorldState::IN_WORLD || !owner_.socket) return;
-    auto packet = OpenItemPacket::build(0xFF, static_cast<uint8_t>(23 + backpackIndex));
-    LOG_INFO("openItemBySlot: CMSG_OPEN_ITEM bag=0xFF slot=", (23 + backpackIndex));
+    auto packet = OpenItemPacket::build(0xFF, static_cast<uint8_t>(Inventory::NUM_EQUIP_SLOTS + backpackIndex));
+    LOG_INFO("openItemBySlot: CMSG_OPEN_ITEM bag=0xFF slot=", (Inventory::NUM_EQUIP_SLOTS + backpackIndex));
     owner_.socket->send(packet);
 }
 
@@ -1152,7 +1155,7 @@ void InventoryHandler::openItemInBag(int bagIndex, int slotIndex) {
     if (slotIndex < 0 || slotIndex >= owner_.inventory.getBagSize(bagIndex)) return;
     if (owner_.inventory.getBagSlot(bagIndex, slotIndex).empty()) return;
     if (owner_.state != WorldState::IN_WORLD || !owner_.socket) return;
-    uint8_t wowBag = static_cast<uint8_t>(19 + bagIndex);
+    uint8_t wowBag = static_cast<uint8_t>(Inventory::FIRST_BAG_EQUIP_SLOT + bagIndex);
     auto packet = OpenItemPacket::build(wowBag, static_cast<uint8_t>(slotIndex));
     LOG_INFO("openItemInBag: CMSG_OPEN_ITEM bag=", (int)wowBag, " slot=", slotIndex);
     owner_.socket->send(packet);
@@ -1178,7 +1181,7 @@ void InventoryHandler::splitItem(uint8_t srcBag, uint8_t srcSlot, uint8_t count)
     int freeBp = owner_.inventory.findFreeBackpackSlot();
     if (freeBp >= 0) {
         uint8_t dstBag = 0xFF;
-        uint8_t dstSlot = static_cast<uint8_t>(23 + freeBp);
+        uint8_t dstSlot = static_cast<uint8_t>(Inventory::NUM_EQUIP_SLOTS + freeBp);
         LOG_INFO("splitItem: src(bag=", (int)srcBag, " slot=", (int)srcSlot,
                  ") count=", (int)count, " -> dst(bag=0xFF slot=", (int)dstSlot, ")");
         auto packet = SplitItemPacket::build(srcBag, srcSlot, dstBag, dstSlot, count);
@@ -1189,7 +1192,7 @@ void InventoryHandler::splitItem(uint8_t srcBag, uint8_t srcSlot, uint8_t count)
         int bagSize = owner_.inventory.getBagSize(b);
         for (int s = 0; s < bagSize; s++) {
             if (owner_.inventory.getBagSlot(b, s).empty()) {
-                uint8_t dstBag = static_cast<uint8_t>(19 + b);
+                uint8_t dstBag = static_cast<uint8_t>(Inventory::FIRST_BAG_EQUIP_SLOT + b);
                 uint8_t dstSlot = static_cast<uint8_t>(s);
                 LOG_INFO("splitItem: src(bag=", (int)srcBag, " slot=", (int)srcSlot,
                          ") count=", (int)count, " -> dst(bag=", (int)dstBag,
@@ -1224,8 +1227,8 @@ void InventoryHandler::swapBagSlots(int srcBagIndex, int dstBagIndex) {
     owner_.inventory.swapBagContents(srcBagIndex, dstBagIndex);
 
     if (owner_.socket && owner_.socket->isConnected()) {
-        uint8_t srcSlot = static_cast<uint8_t>(19 + srcBagIndex);
-        uint8_t dstSlot = static_cast<uint8_t>(19 + dstBagIndex);
+        uint8_t srcSlot = static_cast<uint8_t>(Inventory::FIRST_BAG_EQUIP_SLOT + srcBagIndex);
+        uint8_t dstSlot = static_cast<uint8_t>(Inventory::FIRST_BAG_EQUIP_SLOT + dstBagIndex);
         LOG_INFO("swapBagSlots: bag ", srcBagIndex, " (slot ", (int)srcSlot,
                  ") <-> bag ", dstBagIndex, " (slot ", (int)dstSlot, ")");
         auto packet = SwapItemPacket::build(255, dstSlot, 255, srcSlot);
@@ -1245,7 +1248,7 @@ void InventoryHandler::unequipToBackpack(EquipSlot equipSlot) {
     uint8_t srcBag = 0xFF;
     uint8_t srcSlot = static_cast<uint8_t>(equipSlot);
     uint8_t dstBag = 0xFF;
-    uint8_t dstSlot = static_cast<uint8_t>(23 + freeSlot);
+    uint8_t dstSlot = static_cast<uint8_t>(Inventory::NUM_EQUIP_SLOTS + freeSlot);
 
     LOG_INFO("UnequipToBackpack: equipSlot=", (int)srcSlot,
              " -> backpackIndex=", freeSlot, " (dstSlot=", (int)dstSlot, ")");
@@ -1535,7 +1538,7 @@ bool InventoryHandler::attachItemFromBackpack(int backpackIndex) {
             mailAttachments_[i].itemGuid = itemGuid;
             mailAttachments_[i].item = slot.item;
             mailAttachments_[i].srcBag = 0xFF;
-            mailAttachments_[i].srcSlot = static_cast<uint8_t>(23 + backpackIndex);
+            mailAttachments_[i].srcSlot = static_cast<uint8_t>(Inventory::NUM_EQUIP_SLOTS + backpackIndex);
             return true;
         }
     }
@@ -1547,7 +1550,7 @@ bool InventoryHandler::attachItemFromBag(int bagIndex, int slotIndex) {
     if (slotIndex < 0 || slotIndex >= owner_.inventory.getBagSize(bagIndex)) return false;
     const auto& slot = owner_.inventory.getBagSlot(bagIndex, slotIndex);
     if (slot.empty()) return false;
-    uint64_t bagGuid = owner_.equipSlotGuids_[19 + bagIndex];
+    uint64_t bagGuid = owner_.equipSlotGuids_[Inventory::FIRST_BAG_EQUIP_SLOT + bagIndex];
     if (bagGuid == 0) return false;
     auto it = owner_.containerContents_.find(bagGuid);
     if (it == owner_.containerContents_.end()) return false;
@@ -1558,7 +1561,7 @@ bool InventoryHandler::attachItemFromBag(int bagIndex, int slotIndex) {
         if (!mailAttachments_[i].occupied()) {
             mailAttachments_[i].itemGuid = itemGuid;
             mailAttachments_[i].item = slot.item;
-            mailAttachments_[i].srcBag = static_cast<uint8_t>(19 + bagIndex);
+            mailAttachments_[i].srcBag = static_cast<uint8_t>(Inventory::FIRST_BAG_EQUIP_SLOT + bagIndex);
             mailAttachments_[i].srcSlot = static_cast<uint8_t>(slotIndex);
             return true;
         }
@@ -1727,7 +1730,7 @@ void InventoryHandler::withdrawItem(uint8_t srcBag, uint8_t srcSlot) {
         owner_.addSystemChatMessage("Inventory is full.");
         return;
     }
-    uint8_t dstSlot = static_cast<uint8_t>(23 + freeSlot);
+    uint8_t dstSlot = static_cast<uint8_t>(Inventory::NUM_EQUIP_SLOTS + freeSlot);
     auto packet = SwapItemPacket::build(0xFF, dstSlot, srcBag, srcSlot);
     owner_.socket->send(packet);
 }
@@ -2222,7 +2225,7 @@ void InventoryHandler::useEquipmentSet(uint32_t setId) {
             for (int bp = 0; bp < 16 && !found; ++bp) {
                 if (owner_.getBackpackItemGuid(bp) == itemGuid) {
                     srcBag = 0xFF;
-                    srcSlot = static_cast<uint8_t>(23 + bp);
+                    srcSlot = static_cast<uint8_t>(Inventory::NUM_EQUIP_SLOTS + bp);
                     found = true;
                 }
             }
@@ -2230,7 +2233,7 @@ void InventoryHandler::useEquipmentSet(uint32_t setId) {
                 int bagSize = owner_.inventory.getBagSize(bag);
                 for (int s = 0; s < bagSize && !found; ++s) {
                     if (owner_.getBagItemGuid(bag, s) == itemGuid) {
-                        srcBag = static_cast<uint8_t>(19 + bag);
+                        srcBag = static_cast<uint8_t>(Inventory::FIRST_BAG_EQUIP_SLOT + bag);
                         srcSlot = static_cast<uint8_t>(s);
                         found = true;
                     }
@@ -2352,6 +2355,8 @@ void InventoryHandler::handleItemQueryResponse(network::Packet& packet) {
         // Without this, the entry stays in pendingItemQueries_ forever, blocking retries.
         if (packet.getSize() >= 4) {
             packet.setReadPos(0);
+            // High bit indicates a negative (invalid/missing) item entry response;
+            // mask it off so we can still clear the pending query by entry ID.
             uint32_t rawEntry = packet.readUInt32() & ~0x80000000u;
             owner_.pendingItemQueries_.erase(rawEntry);
         }
@@ -2377,7 +2382,7 @@ void InventoryHandler::handleItemQueryResponse(network::Packet& packet) {
                 std::string msg = "Received: " + link;
                 if (it->count > 1) msg += " x" + std::to_string(it->count);
                 owner_.addSystemChatMessage(msg);
-                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* renderer = owner_.services().renderer) {
                     if (auto* sfx = renderer->getUiSoundManager()) sfx->playLootItem();
                 }
                 if (owner_.itemLootCallback_) owner_.itemLootCallback_(data.entry, it->count, data.quality, itemName);
@@ -2707,7 +2712,7 @@ void InventoryHandler::rebuildOnlineInventory() {
 
     // Bag contents (BAG1-BAG4 are equip slots 19-22)
     for (int bagIdx = 0; bagIdx < 4; bagIdx++) {
-        uint64_t bagGuid = owner_.equipSlotGuids_[19 + bagIdx];
+        uint64_t bagGuid = owner_.equipSlotGuids_[Inventory::FIRST_BAG_EQUIP_SLOT + bagIdx];
         if (bagGuid == 0) continue;
 
         // Determine bag size from container fields or item template
@@ -2731,11 +2736,11 @@ void InventoryHandler::rebuildOnlineInventory() {
         owner_.inventory.setBagSize(bagIdx, numSlots);
 
         // Also set bagSlots on the equipped bag item (for UI display)
-        auto& bagEquipSlot = owner_.inventory.getEquipSlot(static_cast<EquipSlot>(19 + bagIdx));
+        auto& bagEquipSlot = owner_.inventory.getEquipSlot(static_cast<EquipSlot>(Inventory::FIRST_BAG_EQUIP_SLOT + bagIdx));
         if (!bagEquipSlot.empty()) {
             ItemDef bagDef = bagEquipSlot.item;
             bagDef.bagSlots = numSlots;
-            owner_.inventory.setEquipSlot(static_cast<EquipSlot>(19 + bagIdx), bagDef);
+            owner_.inventory.setEquipSlot(static_cast<EquipSlot>(Inventory::FIRST_BAG_EQUIP_SLOT + bagIdx), bagDef);
         }
 
         // Populate bag slot items
@@ -3144,7 +3149,7 @@ void InventoryHandler::handleTrainerBuySucceeded(network::Packet& packet) {
         owner_.addSystemChatMessage("You have learned " + name + ".");
     else
         owner_.addSystemChatMessage("Spell learned.");
-    if (auto* renderer = core::Application::getInstance().getRenderer())
+    if (auto* renderer = owner_.services().renderer)
         if (auto* sfx = renderer->getUiSoundManager()) sfx->playQuestActivate();
     owner_.fireAddonEvent("TRAINER_UPDATE", {});
     owner_.fireAddonEvent("SPELLS_CHANGED", {});
@@ -3166,7 +3171,7 @@ void InventoryHandler::handleTrainerBuyFailed(network::Packet& packet) {
     else if (errorCode != 0) msg += " (error " + std::to_string(errorCode) + ")";
     owner_.addUIError(msg);
     owner_.addSystemChatMessage(msg);
-    if (auto* renderer = core::Application::getInstance().getRenderer())
+    if (auto* renderer = owner_.services().renderer)
         if (auto* sfx = renderer->getUiSoundManager()) sfx->playError();
 }
 

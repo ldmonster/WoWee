@@ -63,7 +63,9 @@ static std::vector<uint8_t> randomizePinDigits(const std::string& pinDigits,
         if (idx == 0xFF) {
             throw std::runtime_error("PIN digit not found in remapped grid");
         }
-        out.push_back(static_cast<uint8_t>(idx + 0x30)); // ASCII '0'+idx
+        // PIN grid encodes each digit as its ASCII character ('0'..'9') for the
+        // server-side HMAC computation — this matches Blizzard's auth protocol.
+        out.push_back(static_cast<uint8_t>(idx + '0'));
     }
 
     return out;

@@ -19,14 +19,15 @@ Protocol Compatible with **Vanilla (Classic) 1.12 + TBC 2.4.3 + WotLK 3.3.5a**.
 
 > **Legal Disclaimer**: This is an educational/research project. It does not include any Blizzard Entertainment assets, data files, or proprietary code. World of Warcraft and all related assets are the property of Blizzard Entertainment, Inc. This project is not affiliated with or endorsed by Blizzard Entertainment. Users are responsible for supplying their own legally obtained game data files and for ensuring compliance with all applicable laws in their jurisdiction.
 
-## Status & Direction (2026-03-24)
+## Status & Direction (2026-03-30)
 
 - **Compatibility**: **Vanilla (Classic) 1.12 + TBC 2.4.3 + WotLK 3.3.5a** are all supported via expansion profiles and per-expansion packet parsers. All three expansions are roughly on par.
 - **Tested against**: AzerothCore/ChromieCraft, TrinityCore, Mangos, and Turtle WoW (1.17).
-- **Current focus**: gameplay correctness (quest/GO interaction, NPC visibility), rendering stability, and multi-expansion coverage.
+- **Current focus**: code quality (SOLID decomposition, documentation), rendering stability, and multi-expansion coverage.
 - **Warden**: Full module execution via Unicorn Engine CPU emulation. Decrypts (RC4→RSA→zlib), parses and relocates the PE module, executes via x86 emulation with Windows API interception. Module cache at `~/.local/share/wowee/warden_cache/`.
 - **CI**: GitHub Actions builds for Linux (x86-64, ARM64), Windows (MSYS2 x86-64 + ARM64), and macOS (ARM64). Security scans via CodeQL, Semgrep, and sanitizers.
-- **Release**: v1.8.2-preview — 530+ WoW API functions, 140+ events, 664 opcode handlers.
+- **Container builds**: Multi-platform Docker build system for Linux, macOS (arm64/x86_64 via osxcross), and Windows (LLVM-MinGW) cross-compilation.
+- **Release**: v1.8.9-preview — 530+ WoW API functions, 140+ events, 664 opcode handlers.
 
 ## Features
 

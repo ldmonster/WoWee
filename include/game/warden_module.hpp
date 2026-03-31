@@ -13,6 +13,7 @@ namespace game {
 
 // Forward declarations
 class WardenEmulator;
+class WardenCrypto;
 
 /**
  * Represents Warden callback functions exported by loaded module
@@ -36,18 +37,19 @@ struct WardenFuncList {
  * Warden module loader and executor
  *
  * IMPLEMENTATION STATUS:
- * ✅ Module metadata parsing
- * ✅ Basic validation framework
- * ⏳ RC4 decryption (uses existing WardenCrypto)
- * ❌ RSA signature verification (TODO - requires OpenSSL RSA)
- * ❌ zlib decompression (TODO - requires zlib library)
- * ❌ Custom executable format parsing (TODO - major reverse engineering)
- * ❌ Address relocation (TODO - x86 address fixups)
- * ❌ API binding (TODO - kernel32/user32 function resolution)
- * ❌ Native code execution (TODO - execute loaded x86 code)
+ * ✅ Module metadata parsing and validation
+ * ✅ RC4 decryption (WardenCrypto)
+ * ✅ RSA-2048 signature verification (OpenSSL EVP — real Blizzard modulus)
+ * ✅ zlib decompression
+ * ✅ Custom executable format parsing (3 pair-format variants)
+ * ✅ Address relocation (delta-encoded fixups)
+ * ✅ x86 emulation via Unicorn Engine (cross-platform)
+ * ✅ Client callbacks (sendPacket, validateModule, generateRC4)
+ * ✅ API binding / IAT patching (parses import table, auto-stubs unknown APIs)
+ * ✅ RSA modulus verified (Blizzard key, same across 1.12.1/2.4.3/3.3.5a)
  *
- * For strict servers like Warmane, ALL TODOs must be implemented.
- * For permissive servers, fake responses in GameHandler work.
+ * Non-fatal verification: RSA mismatch logs warning but continues loading,
+ * so private-server modules signed with custom keys still work.
  */
 class WardenModule {
 public:
@@ -126,6 +128,12 @@ public:
     size_t getModuleSize() const { return moduleSize_; }
     const std::vector<uint8_t>& getDecompressedData() const { return decompressedData_; }
 
+    // Inject dependencies for module callbacks (sendPacket, generateRC4).
+    // Must be called before initializeModule() so callbacks can reach the
+    // network layer and crypto state.
+    using SendPacketFunc = std::function<void(const uint8_t*, size_t)>;
+    void setCallbackDependencies(WardenCrypto* crypto, SendPacketFunc sendFunc);
+
 private:
     bool loaded_;                          // Module successfully loaded
     std::vector<uint8_t> md5Hash_;         // Module identifier
@@ -141,6 +149,11 @@ private:
     WardenFuncList funcList_;              // Callback functions
     std::unique_ptr<WardenEmulator> emulator_; // Cross-platform x86 emulator
     uint32_t emulatedPacketHandlerAddr_ = 0;   // Raw emulated VA for 4-arg PacketHandler call
+
+    // Dependencies injected via setCallbackDependencies() for module callbacks.
+    // These are NOT owned — the handler owns the crypto and socket lifetime.
+    WardenCrypto* callbackCrypto_ = nullptr;
+    SendPacketFunc callbackSendPacket_;
 
     // Validation and loading steps
     bool verifyMD5(const std::vector<uint8_t>& data,

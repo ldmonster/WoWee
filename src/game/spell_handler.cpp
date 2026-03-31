@@ -446,6 +446,18 @@ void SpellHandler::confirmPetUnlearn() {
     petUnlearnCost_ = 0;
 }
 
+uint32_t SpellHandler::findOnUseSpellId(uint32_t itemId) const {
+    if (auto* info = owner_.getItemInfo(itemId)) {
+        for (const auto& sp : info->spells) {
+            // spellTrigger 0 = "Use", 5 = "No Delay" — both are player-activated on-use effects
+            if (sp.spellId != 0 && (sp.spellTrigger == 0 || sp.spellTrigger == 5)) {
+                return sp.spellId;
+            }
+        }
+    }
+    return 0;
+}
+
 void SpellHandler::useItemBySlot(int backpackIndex) {
     if (backpackIndex < 0 || backpackIndex >= owner_.inventory.getBackpackSize()) return;
     const auto& slot = owner_.inventory.getBackpackSlot(backpackIndex);
@@ -457,19 +469,10 @@ void SpellHandler::useItemBySlot(int backpackIndex) {
     }
 
     if (itemGuid != 0 && owner_.state == WorldState::IN_WORLD && owner_.socket) {
-        uint32_t useSpellId = 0;
-        if (auto* info = owner_.getItemInfo(slot.item.itemId)) {
-            for (const auto& sp : info->spells) {
-                if (sp.spellId != 0 && (sp.spellTrigger == 0 || sp.spellTrigger == 5)) {
-                    useSpellId = sp.spellId;
-                    break;
-                }
-            }
-        }
-
+        uint32_t useSpellId = findOnUseSpellId(slot.item.itemId);
         auto packet = owner_.packetParsers_
-            ? owner_.packetParsers_->buildUseItem(0xFF, static_cast<uint8_t>(23 + backpackIndex), itemGuid, useSpellId)
-            : UseItemPacket::build(0xFF, static_cast<uint8_t>(23 + backpackIndex), itemGuid, useSpellId);
+            ? owner_.packetParsers_->buildUseItem(0xFF, static_cast<uint8_t>(Inventory::NUM_EQUIP_SLOTS + backpackIndex), itemGuid, useSpellId)
+            : UseItemPacket::build(0xFF, static_cast<uint8_t>(Inventory::NUM_EQUIP_SLOTS + backpackIndex), itemGuid, useSpellId);
         owner_.socket->send(packet);
     } else if (itemGuid == 0) {
         owner_.addSystemChatMessage("Cannot use that item right now.");
@@ -483,7 +486,7 @@ void SpellHandler::useItemInBag(int bagIndex, int slotIndex) {
     if (slot.empty()) return;
 
     uint64_t itemGuid = 0;
-    uint64_t bagGuid = owner_.equipSlotGuids_[19 + bagIndex];
+    uint64_t bagGuid = owner_.equipSlotGuids_[Inventory::FIRST_BAG_EQUIP_SLOT + bagIndex];
     if (bagGuid != 0) {
         auto it = owner_.containerContents_.find(bagGuid);
         if (it != owner_.containerContents_.end() && slotIndex < static_cast<int>(it->second.numSlots)) {
@@ -498,17 +501,8 @@ void SpellHandler::useItemInBag(int bagIndex, int slotIndex) {
              " itemGuid=0x", std::hex, itemGuid, std::dec);
 
     if (itemGuid != 0 && owner_.state == WorldState::IN_WORLD && owner_.socket) {
-        uint32_t useSpellId = 0;
-        if (auto* info = owner_.getItemInfo(slot.item.itemId)) {
-            for (const auto& sp : info->spells) {
-                if (sp.spellId != 0 && (sp.spellTrigger == 0 || sp.spellTrigger == 5)) {
-                    useSpellId = sp.spellId;
-                    break;
-                }
-            }
-        }
-
-        uint8_t wowBag = static_cast<uint8_t>(19 + bagIndex);
+        uint32_t useSpellId = findOnUseSpellId(slot.item.itemId);
+        uint8_t wowBag = static_cast<uint8_t>(Inventory::FIRST_BAG_EQUIP_SLOT + bagIndex);
         auto packet = owner_.packetParsers_
             ? owner_.packetParsers_->buildUseItem(wowBag, static_cast<uint8_t>(slotIndex), itemGuid, useSpellId)
             : UseItemPacket::build(wowBag, static_cast<uint8_t>(slotIndex), itemGuid, useSpellId);
@@ -603,7 +597,7 @@ void SpellHandler::loadTalentDbc() {
     if (talentDbcLoaded_) return;
     talentDbcLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = owner_.services().assetManager;
     if (!am || !am->isInitialized()) return;
 
     // Load Talent.dbc
@@ -794,13 +788,14 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
     currentCastSpellId_ = 0;
     castTimeRemaining_ = 0.0f;
     owner_.lastInteractedGoGuid_ = 0;
+    owner_.pendingGameObjectInteractGuid_ = 0;
     craftQueueSpellId_ = 0;
     craftQueueRemaining_ = 0;
     queuedSpellId_ = 0;
     queuedSpellTarget_ = 0;
 
     // Stop precast sound
-    if (auto* renderer = core::Application::getInstance().getRenderer()) {
+    if (auto* renderer = owner_.services().renderer) {
         if (auto* ssm = renderer->getSpellSoundManager()) {
             ssm->stopPrecast();
         }
@@ -822,7 +817,7 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
     msg.message = errMsg;
     owner_.addLocalChatMessage(msg);
 
-    if (auto* renderer = core::Application::getInstance().getRenderer()) {
+    if (auto* renderer = owner_.services().renderer) {
         if (auto* sfx = renderer->getUiSoundManager())
             sfx->playError();
     }
@@ -874,7 +869,7 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
 
         // Play precast sound — skip profession/tradeskill spells
         if (!owner_.isProfessionSpell(data.spellId)) {
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* renderer = owner_.services().renderer) {
                 if (auto* ssm = renderer->getSpellSoundManager()) {
                     owner_.loadSpellNameCache();
                     auto it = owner_.spellNameCache_.find(data.spellId);
@@ -912,7 +907,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
     if (data.casterUnit == owner_.playerGuid) {
         // Play cast-complete sound
         if (!owner_.isProfessionSpell(data.spellId)) {
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* renderer = owner_.services().renderer) {
                 if (auto* ssm = renderer->getSpellSoundManager()) {
                     owner_.loadSpellNameCache();
                     auto it = owner_.spellNameCache_.find(data.spellId);
@@ -936,7 +931,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         }
         if (isMeleeAbility) {
             if (owner_.meleeSwingCallback_) owner_.meleeSwingCallback_();
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* renderer = owner_.services().renderer) {
                 if (auto* csm = renderer->getCombatSoundManager()) {
                     csm->playWeaponSwing(audio::CombatSoundManager::WeaponSize::MEDIUM, false);
                     csm->playImpact(audio::CombatSoundManager::WeaponSize::MEDIUM,
@@ -947,16 +942,28 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
 
         const bool wasInTimedCast = casting_ && (data.spellId == currentCastSpellId_);
 
+        LOG_WARNING("[GO-DIAG] SPELL_GO: spellId=", data.spellId,
+                    " casting=", casting_, " currentCast=", currentCastSpellId_,
+                    " wasInTimedCast=", wasInTimedCast,
+                    " lastGoGuid=0x", std::hex, owner_.lastInteractedGoGuid_,
+                    " pendingGoGuid=0x", owner_.pendingGameObjectInteractGuid_, std::dec);
+
         casting_ = false;
         castIsChannel_ = false;
         currentCastSpellId_ = 0;
         castTimeRemaining_ = 0.0f;
 
-        // Gather node looting
+        // Gather node looting: re-send CMSG_LOOT now that the cast completed.
         if (wasInTimedCast && owner_.lastInteractedGoGuid_ != 0) {
+            LOG_WARNING("[GO-DIAG] Sending CMSG_LOOT for GO 0x", std::hex,
+                        owner_.lastInteractedGoGuid_, std::dec);
             owner_.lootTarget(owner_.lastInteractedGoGuid_);
             owner_.lastInteractedGoGuid_ = 0;
         }
+        // Clear the GO interaction guard so future cancelCast() calls work
+        // normally. Without this, pendingGameObjectInteractGuid_ stays stale
+        // and suppresses CMSG_CANCEL_CAST for ALL subsequent spell casts.
+        owner_.pendingGameObjectInteractGuid_ = 0;
 
         if (owner_.spellCastAnimCallback_) {
             owner_.spellCastAnimCallback_(owner_.playerGuid, false, false);
@@ -983,7 +990,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
             if (tgt == owner_.playerGuid) { targetsPlayer = true; break; }
         }
         if (targetsPlayer) {
-            if (auto* renderer = core::Application::getInstance().getRenderer()) {
+            if (auto* renderer = owner_.services().renderer) {
                 if (auto* ssm = renderer->getSpellSoundManager()) {
                     owner_.loadSpellNameCache();
                     auto it = owner_.spellNameCache_.find(data.spellId);
@@ -1029,7 +1036,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
     }
 
     if (playerIsHit || playerHitEnemy) {
-        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+        if (auto* renderer = owner_.services().renderer) {
             if (auto* ssm = renderer->getSpellSoundManager()) {
                 owner_.loadSpellNameCache();
                 auto it = owner_.spellNameCache_.find(data.spellId);
@@ -1389,7 +1396,7 @@ void SpellHandler::handleAchievementEarned(network::Packet& packet) {
 
         owner_.earnedAchievements_.insert(achievementId);
         owner_.achievementDates_[achievementId] = earnDate;
-        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+        if (auto* renderer = owner_.services().renderer) {
             if (auto* sfx = renderer->getUiSoundManager())
                 sfx->playAchievementAlert();
         }
@@ -1456,21 +1463,22 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
         return;
     }
 
-    if (!packet.hasRemaining(4)) goto done;
-    /*uint16_t dur =*/ packet.readUInt16();
-    /*uint16_t timer =*/ packet.readUInt16();
+    // Parse optional pet fields — bail on truncated packets but always log+fire below.
+    do {
+        if (!packet.hasRemaining(4)) break;
+        /*uint16_t dur =*/ packet.readUInt16();
+        /*uint16_t timer =*/ packet.readUInt16();
 
-    if (!packet.hasRemaining(2)) goto done;
-    owner_.petReact_   = packet.readUInt8();
-    owner_.petCommand_ = packet.readUInt8();
+        if (!packet.hasRemaining(2)) break;
+        owner_.petReact_   = packet.readUInt8();
+        owner_.petCommand_ = packet.readUInt8();
 
-    if (!packet.hasRemaining(GameHandler::PET_ACTION_BAR_SLOTS * 4u)) goto done;
-    for (int i = 0; i < GameHandler::PET_ACTION_BAR_SLOTS; ++i) {
-        owner_.petActionSlots_[i] = packet.readUInt32();
-    }
+        if (!packet.hasRemaining(GameHandler::PET_ACTION_BAR_SLOTS * 4u)) break;
+        for (int i = 0; i < GameHandler::PET_ACTION_BAR_SLOTS; ++i) {
+            owner_.petActionSlots_[i] = packet.readUInt32();
+        }
 
-    if (!packet.hasRemaining(1)) goto done;
-    {
+        if (!packet.hasRemaining(1)) break;
         uint8_t spellCount = packet.readUInt8();
         owner_.petSpellList_.clear();
         owner_.petAutocastSpells_.clear();
@@ -1483,14 +1491,13 @@ void SpellHandler::handlePetSpells(network::Packet& packet) {
                 owner_.petAutocastSpells_.insert(spellId);
             }
         }
-    }
+    } while (false);
 
-done:
     LOG_INFO("SMSG_PET_SPELLS: petGuid=0x", std::hex, owner_.petGuid_, std::dec,
              " react=", static_cast<int>(owner_.petReact_), " command=", static_cast<int>(owner_.petCommand_),
              " spells=", owner_.petSpellList_.size());
-        owner_.fireAddonEvent("UNIT_PET", {"player"});
-        owner_.fireAddonEvent("PET_BAR_UPDATE", {});
+    owner_.fireAddonEvent("UNIT_PET", {"player"});
+    owner_.fireAddonEvent("PET_BAR_UPDATE", {});
 }
 
 void SpellHandler::sendPetAction(uint32_t action, uint64_t targetGuid) {
@@ -1614,7 +1621,11 @@ void SpellHandler::resetCastState() {
     queuedSpellId_ = 0;
     queuedSpellTarget_ = 0;
     owner_.pendingGameObjectInteractGuid_ = 0;
-    owner_.lastInteractedGoGuid_ = 0;
+    // lastInteractedGoGuid_ is intentionally NOT cleared here — it must survive
+    // until handleSpellGo sends CMSG_LOOT after the server-side cast completes.
+    // handleSpellGo clears it after use (line 958). Previously this was cleared
+    // here, which meant the client-side timer fallback destroyed the guid before
+    // SMSG_SPELL_GO arrived, preventing loot from opening on quest chests.
 }
 
 void SpellHandler::resetAllState() {
@@ -1667,7 +1678,7 @@ void SpellHandler::loadSpellNameCache() const {
     if (owner_.spellNameCacheLoaded_) return;
     owner_.spellNameCacheLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = owner_.services().assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto dbc = am->loadDBC("Spell.dbc");
@@ -1779,7 +1790,7 @@ void SpellHandler::loadSkillLineAbilityDbc() {
     if (owner_.skillLineAbilityLoaded_) return;
     owner_.skillLineAbilityLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = owner_.services().assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto slaDbc = am->loadDBC("SkillLineAbility.dbc");
@@ -1880,7 +1891,7 @@ const std::string& SpellHandler::getSpellDescription(uint32_t spellId) const {
 
 std::string SpellHandler::getEnchantName(uint32_t enchantId) const {
     if (enchantId == 0) return {};
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = owner_.services().assetManager;
     if (!am || !am->isInitialized()) return {};
     auto dbc = am->loadDBC("SpellItemEnchantment.dbc");
     if (!dbc || !dbc->isLoaded()) return {};
@@ -1928,7 +1939,7 @@ void SpellHandler::loadSkillLineDbc() {
     if (owner_.skillLineDbcLoaded_) return;
     owner_.skillLineDbcLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = owner_.services().assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto dbc = am->loadDBC("SkillLine.dbc");
@@ -2141,7 +2152,7 @@ void SpellHandler::handlePlaySpellVisual(network::Packet& packet) {
     uint64_t casterGuid = packet.readUInt64();
     uint32_t visualId   = packet.readUInt32();
     if (visualId == 0) return;
-    auto* renderer = core::Application::getInstance().getRenderer();
+    auto* renderer = owner_.services().renderer;
     if (!renderer) return;
     glm::vec3 spawnPos;
     if (casterGuid == owner_.playerGuid) {
@@ -2339,7 +2350,7 @@ void SpellHandler::handleSpellFailure(network::Packet& packet) {
         craftQueueRemaining_ = 0;
         queuedSpellId_ = 0;
         queuedSpellTarget_ = 0;
-        if (auto* renderer = core::Application::getInstance().getRenderer()) {
+        if (auto* renderer = owner_.services().renderer) {
             if (auto* ssm = renderer->getSpellSoundManager()) {
                 ssm->stopPrecast();
             }

@@ -64,7 +64,10 @@ void Frustum::extractFromMatrix(const glm::mat4& vp) {
 
 void Frustum::normalizePlane(Plane& plane) {
     float lenSq = glm::dot(plane.normal, plane.normal);
-    if (lenSq > 0.00000001f) {
+    // Skip normalization for degenerate planes (near-zero normal) to avoid
+    // division by zero or amplifying floating-point noise into huge normals.
+    constexpr float kMinNormalLenSq = 1e-8f;
+    if (lenSq > kMinNormalLenSq) {
         float invLen = glm::inversesqrt(lenSq);
         plane.normal *= invLen;
         plane.distance *= invLen;

@@ -116,6 +116,9 @@ bool hmacSha1Matches(const uint8_t seedBytes[4], const std::string& text, const 
     return outLen == SHA_DIGEST_LENGTH && std::memcmp(out, expected, SHA_DIGEST_LENGTH) == 0;
 }
 
+// Pre-computed HMAC-SHA1 hashes of known door M2 models that Warden checks
+// to verify the client hasn't modified collision geometry (wall-hack detection).
+// These hashes match the unmodified 3.3.5a client data files.
 const std::unordered_map<std::string, std::array<uint8_t, 20>>& knownDoorHashes() {
     static const std::unordered_map<std::string, std::array<uint8_t, 20>> k = {
         {"world\\lordaeron\\stratholme\\activedoodads\\doors\\nox_door_plague.m2",
@@ -437,8 +440,21 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
                     }
                 }
 
-                // Load the module (decrypt, decompress, parse, relocate)
+                // Load the module (decrypt, decompress, parse, relocate, init)
                 wardenLoadedModule_ = std::make_shared<WardenModule>();
+                // Inject crypto and socket so module callbacks (sendPacket, generateRC4)
+                // can reach the network layer during initializeModule().
+                wardenLoadedModule_->setCallbackDependencies(
+                    wardenCrypto_.get(),
+                    [this](const uint8_t* data, size_t len) {
+                        if (!wardenCrypto_ || !owner_.socket) return;
+                        std::vector<uint8_t> plaintext(data, data + len);
+                        auto encrypted = wardenCrypto_->encrypt(plaintext);
+                        network::Packet pkt(wireOpcode(Opcode::CMSG_WARDEN_DATA));
+                        for (uint8_t b : encrypted) pkt.writeUInt8(b);
+                        owner_.socket->send(pkt);
+                        LOG_DEBUG("Warden: Module sendPacket callback sent ", len, " bytes");
+                    });
                 if (wardenLoadedModule_->load(wardenModuleData_, wardenModuleHash_, wardenModuleKey_)) { // codeql[cpp/weak-cryptographic-algorithm]
                     LOG_INFO("Warden: Module loaded successfully (image size=",
                              wardenLoadedModule_->getModuleSize(), " bytes)");
@@ -781,7 +797,7 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
                                         std::replace(np.begin(), np.end(), '/', '\\');
                                         auto knownIt = knownDoorHashes().find(np);
                                         if (knownIt != knownDoorHashes().end()) { found = true; hash.assign(knownIt->second.begin(), knownIt->second.end()); }
-                                        auto* am = core::Application::getInstance().getAssetManager();
+                                        auto* am = owner_.services().assetManager;
                                         if (am && am->isInitialized() && !found) {
                                             std::vector<uint8_t> fd;
                                             std::string rp = resolveCaseInsensitiveDataPath(am->getDataPath(), filePath);
@@ -1194,7 +1210,7 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
                                 hash.assign(knownIt->second.begin(), knownIt->second.end());
                             }
 
-                            auto* am = core::Application::getInstance().getAssetManager();
+                            auto* am = owner_.services().assetManager;
                             if (am && am->isInitialized() && !found) {
                                 std::vector<uint8_t> fileData;
                                 std::string resolvedFsPath =

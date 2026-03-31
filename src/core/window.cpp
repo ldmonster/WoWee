@@ -103,6 +103,8 @@ bool Window::initialize() {
     return true;
 }
 
+// Shutdown progress uses LOG_WARNING so these messages are always visible even at
+// default log levels — useful for diagnosing hangs or crashes during teardown.
 void Window::shutdown() {
     LOG_WARNING("Window::shutdown - vkContext...");
     if (vkContext) {

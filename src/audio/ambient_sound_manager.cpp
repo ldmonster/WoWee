@@ -921,7 +921,8 @@ void AmbientSoundManager::updateBellTolls(float deltaTime) {
                  static_cast<int>(currentCity_));
     }
 
-    // Play remaining tolls with 1.5 second delay between each
+    // Play remaining tolls with 1.5s spacing — matches retail WoW bell cadence
+    // (long enough for each toll to ring out before the next begins)
     if (remainingTolls_ > 0) {
         bellTollDelay_ += deltaTime;
 

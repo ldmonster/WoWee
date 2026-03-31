@@ -70,7 +70,12 @@ class Inventory {
 public:
     static constexpr int BACKPACK_SLOTS = 16;
     static constexpr int KEYRING_SLOTS = 32;
+    // WoW slot layout: 0-22 are equipment (head, neck, ... tabard, mainhand, offhand, ranged, ammo).
+    // Backpack inventory starts at slot 23 in bag 0xFF, so packet slot = NUM_EQUIP_SLOTS + backpackIndex.
     static constexpr int NUM_EQUIP_SLOTS = 23;
+    // Bag containers occupy equipment slots 19-22 (bag1, bag2, bag3, bag4).
+    // Packet bag byte = FIRST_BAG_EQUIP_SLOT + bagIndex.
+    static constexpr int FIRST_BAG_EQUIP_SLOT = 19;
     static constexpr int NUM_BAG_SLOTS = 4;
     static constexpr int MAX_BAG_SIZE = 36;
     static constexpr int BANK_SLOTS = 28;

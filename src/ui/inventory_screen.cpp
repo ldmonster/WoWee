@@ -38,6 +38,45 @@ constexpr const char* kResistNames[6] = {
     "Frost Resistance", "Shadow Resistance", "Arcane Resistance"
 };
 
+// Render "Classes: Warrior, Paladin" or "Races: Human, Orc" restriction text.
+// Shared between quest info and item info tooltips — both use the same WoW
+// allowableClass/allowableRace bitmask format with identical display logic.
+void renderClassRestriction(uint32_t allowableMask, uint8_t playerClass) {
+    const auto& entries = ui::kClassMasks;
+    int mc = 0;
+    for (const auto& e : entries) if (allowableMask & e.mask) ++mc;
+    if (mc <= 0 || mc >= 10) return;  // all classes allowed or none matched
+    char buf[128] = "Classes: "; bool first = true;
+    for (const auto& e : entries) {
+        if (!(allowableMask & e.mask)) continue;
+        if (!first) strncat(buf, ", ", sizeof(buf) - strlen(buf) - 1);
+        strncat(buf, e.name, sizeof(buf) - strlen(buf) - 1);
+        first = false;
+    }
+    uint32_t pm = (playerClass > 0 && playerClass <= 10) ? (1u << (playerClass - 1)) : 0;
+    bool ok = (pm == 0 || (allowableMask & pm));
+    ImGui::TextColored(ok ? ImVec4(1,1,1,0.75f) : colors::kPaleRed, "%s", buf);
+}
+
+void renderRaceRestriction(uint32_t allowableMask, uint8_t playerRace) {
+    constexpr uint32_t kAllPlayable = 1|2|4|8|16|32|64|128|512|1024;
+    if ((allowableMask & kAllPlayable) == kAllPlayable) return;
+    const auto& entries = ui::kRaceMasks;
+    int mc = 0;
+    for (const auto& e : entries) if (allowableMask & e.mask) ++mc;
+    if (mc <= 0) return;
+    char buf[160] = "Races: "; bool first = true;
+    for (const auto& e : entries) {
+        if (!(allowableMask & e.mask)) continue;
+        if (!first) strncat(buf, ", ", sizeof(buf) - strlen(buf) - 1);
+        strncat(buf, e.name, sizeof(buf) - strlen(buf) - 1);
+        first = false;
+    }
+    uint32_t pm = (playerRace > 0 && playerRace <= 11) ? (1u << (playerRace - 1)) : 0;
+    bool ok = (pm == 0 || (allowableMask & pm));
+    ImGui::TextColored(ok ? ImVec4(1,1,1,0.75f) : colors::kPaleRed, "%s", buf);
+}
+
 // Socket types from shared ui_colors.hpp (ui::kSocketTypes)
 
 const game::ItemSlot* findComparableEquipped(const game::Inventory& inventory, uint8_t inventoryType) {
@@ -2847,47 +2886,10 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
                     rankName,
                     fIt != s_factionNamesB.end() ? fIt->second.c_str() : "Unknown Faction");
             }
-            // Class restriction
-            if (qInfo->allowableClass != 0) {
-                const auto& kClassesB = ui::kClassMasks;
-                int mc = 0;
-                for (const auto& kc : kClassesB) if (qInfo->allowableClass & kc.mask) ++mc;
-                if (mc > 0 && mc < 10) {
-                    char buf[128] = "Classes: "; bool first = true;
-                    for (const auto& kc : kClassesB) {
-                        if (!(qInfo->allowableClass & kc.mask)) continue;
-                        if (!first) strncat(buf, ", ", sizeof(buf)-strlen(buf)-1);
-                        strncat(buf, kc.name, sizeof(buf)-strlen(buf)-1);
-                        first = false;
-                    }
-                    uint8_t pc = gameHandler_->getPlayerClass();
-                    uint32_t pm = (pc > 0 && pc <= 10) ? (1u << (pc-1)) : 0;
-                    bool ok = (pm == 0 || (qInfo->allowableClass & pm));
-                    ImGui::TextColored(ok ? ImVec4(1,1,1,0.75f) : ImVec4(1,0.5f,0.5f,1), "%s", buf);
-                }
-            }
-            // Race restriction
-            if (qInfo->allowableRace != 0) {
-                const auto& kRacesB = ui::kRaceMasks;
-                constexpr uint32_t kAll = 1|2|4|8|16|32|64|128|512|1024;
-                if ((qInfo->allowableRace & kAll) != kAll) {
-                    int mc = 0;
-                    for (const auto& kr : kRacesB) if (qInfo->allowableRace & kr.mask) ++mc;
-                    if (mc > 0) {
-                        char buf[160] = "Races: "; bool first = true;
-                        for (const auto& kr : kRacesB) {
-                            if (!(qInfo->allowableRace & kr.mask)) continue;
-                            if (!first) strncat(buf, ", ", sizeof(buf)-strlen(buf)-1);
-                            strncat(buf, kr.name, sizeof(buf)-strlen(buf)-1);
-                            first = false;
-                        }
-                        uint8_t pr = gameHandler_->getPlayerRace();
-                        uint32_t pm = (pr > 0 && pr <= 11) ? (1u << (pr-1)) : 0;
-                        bool ok = (pm == 0 || (qInfo->allowableRace & pm));
-                        ImGui::TextColored(ok ? ImVec4(1,1,1,0.75f) : ImVec4(1,0.5f,0.5f,1), "%s", buf);
-                    }
-                }
-            }
+            if (qInfo->allowableClass != 0)
+                renderClassRestriction(qInfo->allowableClass, gameHandler_->getPlayerClass());
+            if (qInfo->allowableRace != 0)
+                renderRaceRestriction(qInfo->allowableRace, gameHandler_->getPlayerRace());
         }
     }
 
@@ -3361,64 +3363,10 @@ void InventoryScreen::renderItemTooltip(const game::ItemQueryResponseData& info,
             fIt != s_factionNames.end() ? fIt->second.c_str() : "Unknown Faction");
     }
 
-    // Class restriction (e.g. "Classes: Paladin, Warrior")
-    if (info.allowableClass != 0) {
-        const auto& kClasses = ui::kClassMasks;
-        // Count matching classes
-        int matchCount = 0;
-        for (const auto& kc : kClasses)
-            if (info.allowableClass & kc.mask) ++matchCount;
-        // Only show if restricted to a subset (not all classes)
-        if (matchCount > 0 && matchCount < 10) {
-            char classBuf[128] = "Classes: ";
-            bool first = true;
-            for (const auto& kc : kClasses) {
-                if (!(info.allowableClass & kc.mask)) continue;
-                if (!first) strncat(classBuf, ", ", sizeof(classBuf) - strlen(classBuf) - 1);
-                strncat(classBuf, kc.name, sizeof(classBuf) - strlen(classBuf) - 1);
-                first = false;
-            }
-            // Check if player's class is allowed
-            bool playerAllowed = true;
-            if (gameHandler_) {
-                uint8_t pc = gameHandler_->getPlayerClass();
-                uint32_t pmask = (pc > 0 && pc <= 10) ? (1u << (pc - 1)) : 0;
-                playerAllowed = (pmask == 0 || (info.allowableClass & pmask));
-            }
-            ImVec4 clColor = playerAllowed ? ImVec4(1.0f, 1.0f, 1.0f, 0.75f) : ui::colors::kPaleRed;
-            ImGui::TextColored(clColor, "%s", classBuf);
-        }
-    }
-
-    // Race restriction (e.g. "Races: Night Elf, Human")
-    if (info.allowableRace != 0) {
-        const auto& kRaces = ui::kRaceMasks;
-        constexpr uint32_t kAllPlayable = 1|2|4|8|16|32|64|128|512|1024;
-        // Only show if not all playable races are allowed
-        if ((info.allowableRace & kAllPlayable) != kAllPlayable) {
-            int matchCount = 0;
-            for (const auto& kr : kRaces)
-                if (info.allowableRace & kr.mask) ++matchCount;
-            if (matchCount > 0) {
-                char raceBuf[160] = "Races: ";
-                bool first = true;
-                for (const auto& kr : kRaces) {
-                    if (!(info.allowableRace & kr.mask)) continue;
-                    if (!first) strncat(raceBuf, ", ", sizeof(raceBuf) - strlen(raceBuf) - 1);
-                    strncat(raceBuf, kr.name, sizeof(raceBuf) - strlen(raceBuf) - 1);
-                    first = false;
-                }
-                bool playerAllowed = true;
-                if (gameHandler_) {
-                    uint8_t pr = gameHandler_->getPlayerRace();
-                    uint32_t pmask = (pr > 0 && pr <= 11) ? (1u << (pr - 1)) : 0;
-                    playerAllowed = (pmask == 0 || (info.allowableRace & pmask));
-                }
-                ImVec4 rColor = playerAllowed ? ImVec4(1.0f, 1.0f, 1.0f, 0.75f) : ui::colors::kPaleRed;
-                ImGui::TextColored(rColor, "%s", raceBuf);
-            }
-        }
-    }
+    if (info.allowableClass != 0 && gameHandler_)
+        renderClassRestriction(info.allowableClass, gameHandler_->getPlayerClass());
+    if (info.allowableRace != 0 && gameHandler_)
+        renderRaceRestriction(info.allowableRace, gameHandler_->getPlayerRace());
 
     // Spell effects
     for (const auto& sp : info.spells) {

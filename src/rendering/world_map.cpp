@@ -281,8 +281,11 @@ void WorldMap::loadZonesFromDBC() {
         }
     }
 
+    // Use expansion-aware DBC layout when available; fall back to WotLK stock field
+    // indices (ID=0, ParentAreaNum=2, ExploreFlag=3) when layout metadata is missing.
+    // Incorrect field indices silently return wrong data, so these defaults must match
+    // the most common AreaTable.dbc layout to minimize breakage.
     const auto* atL = activeLayout ? activeLayout->getLayout("AreaTable") : nullptr;
-    // Map areaID → its own AreaBit, and parentAreaID → list of child AreaBits
     std::unordered_map<uint32_t, uint32_t> exploreFlagByAreaId;
     std::unordered_map<uint32_t, std::vector<uint32_t>> childBitsByParent;
     auto areaDbc = assetManager->loadDBC("AreaTable.dbc");

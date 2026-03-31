@@ -1,4 +1,5 @@
 #include "rendering/lighting_manager.hpp"
+#include <glm/gtc/constants.hpp>
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/dbc_layout.hpp"
@@ -12,6 +13,10 @@ namespace rendering {
 
 // Light coordinate scaling (test with 1.0f first, then try 36.0f if distances seem off)
 constexpr float LIGHT_COORD_SCALE = 1.0f;
+
+// WoW's Light.dbc stores time-of-day as half-minutes (0..2879).
+// 24 hours × 60 minutes × 2 = 2880 half-minute ticks per day cycle.
+constexpr uint16_t kHalfMinutesPerDay = 2880;
 
 // Maximum volumes to blend (top 2-4)
 constexpr size_t MAX_BLEND_VOLUMES = 2;
@@ -171,7 +176,7 @@ bool LightingManager::loadLightBandDbcs(pipeline::AssetManager* assetManager) {
                 uint32_t timeKeyBase = libL ? (*libL)["TimeKey0"] : 3;
                 for (uint8_t k = 0; k < band.numKeyframes && k < 16; ++k) {
                     uint32_t timeValue = dbc->getUInt32(i, timeKeyBase + k);
-                    band.times[k] = static_cast<uint16_t>(timeValue % 2880);  // Clamp to valid range
+                    band.times[k] = static_cast<uint16_t>(timeValue % kHalfMinutesPerDay);  // Clamp to valid range
                 }
 
                 // Read color values (field 19-34) - stored as BGRA packed uint32
@@ -213,7 +218,7 @@ bool LightingManager::loadLightBandDbcs(pipeline::AssetManager* assetManager) {
                 uint32_t timeKeyBase = lfbL ? (*lfbL)["TimeKey0"] : 3;
                 for (uint8_t k = 0; k < band.numKeyframes && k < 16; ++k) {
                     uint32_t timeValue = dbc->getUInt32(i, timeKeyBase + k);
-                    band.times[k] = static_cast<uint16_t>(timeValue % 2880);  // Clamp to valid range
+                    band.times[k] = static_cast<uint16_t>(timeValue % kHalfMinutesPerDay);  // Clamp to valid range
                 }
 
                 // Read float values (field 19-34)
@@ -253,7 +258,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId,
     // else: manualTime_ is set, use timeOfDay_ as-is
 
     // Convert time to half-minutes (WoW DBC format: 0-2879)
-    uint16_t timeHalfMinutes = static_cast<uint16_t>(timeOfDay_ * 2880.0f) % 2880;
+    uint16_t timeHalfMinutes = static_cast<uint16_t>(timeOfDay_ * static_cast<float>(kHalfMinutesPerDay)) % kHalfMinutesPerDay;
 
     // Update player position and map
     currentPlayerPos_ = playerPos;
@@ -317,7 +322,7 @@ void LightingManager::update(const glm::vec3& playerPos, uint32_t mapId,
         newParams = fallbackParams_;
 
         // Animate sun direction
-        float angle = timeOfDay_ * 2.0f * 3.14159f;
+        float angle = timeOfDay_ * glm::two_pi<float>();
         newParams.directionalDir = glm::normalize(glm::vec3(
             std::sin(angle) * 0.6f,
             -0.6f + std::cos(angle) * 0.4f,
@@ -477,7 +482,7 @@ LightingParams LightingManager::sampleLightParams(const LightParamsProfile* prof
     }
 
     // Compute sun direction from time
-    float angle = (timeHalfMinutes / 2880.0f) * 2.0f * 3.14159f;
+    float angle = (timeHalfMinutes / static_cast<float>(kHalfMinutesPerDay)) * glm::two_pi<float>();
     params.directionalDir = glm::normalize(glm::vec3(
         std::sin(angle) * 0.6f,
         -0.6f + std::cos(angle) * 0.4f,
@@ -514,8 +519,8 @@ glm::vec3 LightingManager::sampleColorBand(const ColorBand& band, uint16_t timeH
     uint16_t t2 = band.times[idx2];
 
     // Handle midnight wrap
-    uint16_t timeSpan = (t2 > t1) ? (t2 - t1) : (2880 - t1 + t2);
-    uint16_t elapsed = (timeHalfMinutes >= t1) ? (timeHalfMinutes - t1) : (2880 - t1 + timeHalfMinutes);
+    uint16_t timeSpan = (t2 > t1) ? (t2 - t1) : (kHalfMinutesPerDay - t1 + t2);
+    uint16_t elapsed = (timeHalfMinutes >= t1) ? (timeHalfMinutes - t1) : (kHalfMinutesPerDay - t1 + timeHalfMinutes);
 
     float t = (timeSpan > 0) ? (static_cast<float>(elapsed) / static_cast<float>(timeSpan)) : 0.0f;
     t = glm::clamp(t, 0.0f, 1.0f);
@@ -549,8 +554,8 @@ float LightingManager::sampleFloatBand(const FloatBand& band, uint16_t timeHalfM
     uint16_t t1 = band.times[idx1];
     uint16_t t2 = band.times[idx2];
 
-    uint16_t timeSpan = (t2 > t1) ? (t2 - t1) : (2880 - t1 + t2);
-    uint16_t elapsed = (timeHalfMinutes >= t1) ? (timeHalfMinutes - t1) : (2880 - t1 + timeHalfMinutes);
+    uint16_t timeSpan = (t2 > t1) ? (t2 - t1) : (kHalfMinutesPerDay - t1 + t2);
+    uint16_t elapsed = (timeHalfMinutes >= t1) ? (timeHalfMinutes - t1) : (kHalfMinutesPerDay - t1 + timeHalfMinutes);
 
     float t = (timeSpan > 0) ? (static_cast<float>(elapsed) / static_cast<float>(timeSpan)) : 0.0f;
     t = glm::clamp(t, 0.0f, 1.0f);

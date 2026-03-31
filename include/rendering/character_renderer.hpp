@@ -251,6 +251,10 @@ public:
 
 
 private:
+    // Create 1×1 fallback textures used when real textures are missing or still loading.
+    // Called during both init and clear to ensure valid descriptor bindings at all times.
+    void createFallbackTextures(VkDevice device);
+
     VkContext* vkCtx_ = nullptr;
     VkRenderPass renderPassOverride_ = VK_NULL_HANDLE;
     VkSampleCountFlagBits msaaSamplesOverride_ = VK_SAMPLE_COUNT_1_BIT;

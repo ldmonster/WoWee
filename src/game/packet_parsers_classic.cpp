@@ -282,6 +282,7 @@ bool ClassicPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlo
             /*uint32_t splineId =*/ packet.readUInt32();
 
             uint32_t pointCount = packet.readUInt32();
+            // Cap waypoints to prevent DoS from malformed packets allocating huge arrays
             if (pointCount > 256) return false;
 
             // points + endPoint (no splineMode in Classic)
@@ -362,7 +363,9 @@ void ClassicPacketParsers::writeMovementPayload(network::Packet& packet, const M
 
     // Transport data (Classic ONTRANSPORT = 0x02000000, no timestamp)
     if (wireFlags & ClassicMoveFlags::ONTRANSPORT) {
-        // Packed transport GUID
+        // Packed GUID compression: only transmit non-zero bytes of the 8-byte GUID.
+        // The mask byte indicates which positions are present (bit N = byte N included).
+        // This is the standard WoW packed GUID wire format across all expansions.
         uint8_t transMask = 0;
         uint8_t transGuidBytes[8];
         int transGuidByteCount = 0;

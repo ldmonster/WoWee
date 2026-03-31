@@ -13,6 +13,12 @@
 namespace wowee {
 namespace auth {
 
+// WoW login security flags (CMD_AUTH_LOGON_CHALLENGE response, securityFlags byte).
+// Multiple flags can be set simultaneously; the client must satisfy all of them.
+constexpr uint8_t kSecurityFlagPin           = 0x01;  // PIN grid challenge
+constexpr uint8_t kSecurityFlagMatrixCard    = 0x02;  // Matrix card (unused by most servers)
+constexpr uint8_t kSecurityFlagAuthenticator = 0x04;  // TOTP authenticator token
+
 AuthHandler::AuthHandler() {
     LOG_DEBUG("AuthHandler created");
 }
@@ -196,9 +202,9 @@ void AuthHandler::handleLogonChallengeResponse(network::Packet& packet) {
 
     if (response.securityFlags != 0) {
         LOG_WARNING("Server sent security flags: 0x", std::hex, static_cast<int>(response.securityFlags), std::dec);
-        if (response.securityFlags & 0x01) LOG_WARNING("  PIN required");
-        if (response.securityFlags & 0x02) LOG_WARNING("  Matrix card required (not supported)");
-        if (response.securityFlags & 0x04) LOG_WARNING("  Authenticator required (not supported)");
+        if (response.securityFlags & kSecurityFlagPin) LOG_WARNING("  PIN required");
+        if (response.securityFlags & kSecurityFlagMatrixCard) LOG_WARNING("  Matrix card required (not supported)");
+        if (response.securityFlags & kSecurityFlagAuthenticator) LOG_WARNING("  Authenticator required (not supported)");
     }
 
     LOG_INFO("Challenge: N=", response.N.size(), "B g=", response.g.size(), "B salt=",
@@ -209,7 +215,7 @@ void AuthHandler::handleLogonChallengeResponse(network::Packet& packet) {
 
     securityFlags_ = response.securityFlags;
     checksumSalt_ = response.checksumSalt;
-    if (securityFlags_ & 0x01) {
+    if (securityFlags_ & kSecurityFlagPin) {
         pinGridSeed_ = response.pinGridSeed;
         pinServerSalt_ = response.pinSalt;
     }
@@ -217,8 +223,8 @@ void AuthHandler::handleLogonChallengeResponse(network::Packet& packet) {
     setState(AuthState::CHALLENGE_RECEIVED);
 
     // If a security code is required, wait for user input.
-    if (((securityFlags_ & 0x04) || (securityFlags_ & 0x01)) && pendingSecurityCode_.empty()) {
-        setState((securityFlags_ & 0x04) ? AuthState::AUTHENTICATOR_REQUIRED : AuthState::PIN_REQUIRED);
+    if (((securityFlags_ & kSecurityFlagAuthenticator) || (securityFlags_ & kSecurityFlagPin)) && pendingSecurityCode_.empty()) {
+        setState((securityFlags_ & kSecurityFlagAuthenticator) ? AuthState::AUTHENTICATOR_REQUIRED : AuthState::PIN_REQUIRED);
         return;
     }
 
@@ -238,7 +244,7 @@ void AuthHandler::sendLogonProof() {
     std::array<uint8_t, 20> crcHash{};
     const std::array<uint8_t, 20>* crcHashPtr = nullptr;
 
-    if (securityFlags_ & 0x01) {
+    if (securityFlags_ & kSecurityFlagPin) {
         try {
             PinProof proof = computePinProof(pendingSecurityCode_, pinGridSeed_, pinServerSalt_);
             pinClientSalt = proof.clientSalt;
@@ -299,7 +305,7 @@ void AuthHandler::sendLogonProof() {
         auto packet = LogonProofPacket::build(A, M1, securityFlags_, crcHashPtr, pinClientSaltPtr, pinHashPtr);
         socket->send(packet);
 
-        if (securityFlags_ & 0x04) {
+        if (securityFlags_ & kSecurityFlagAuthenticator) {
             // TrinityCore-style Google Authenticator token: send immediately after proof.
             const std::string token = pendingSecurityCode_;
             auto tokPkt = AuthenticatorTokenPacket::build(token);

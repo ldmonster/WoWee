@@ -12,7 +12,7 @@ This document provides platform-specific build instructions for WoWee.
 sudo apt update
 sudo apt install -y \
   build-essential cmake pkg-config git \
-  libsdl2-dev libglew-dev libglm-dev \
+  libsdl2-dev libglm-dev \
   libssl-dev zlib1g-dev \
   libvulkan-dev vulkan-tools glslc \
   libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
@@ -28,7 +28,7 @@ sudo apt install -y \
 ```bash
 sudo pacman -S --needed \
   base-devel cmake pkgconf git \
-  sdl2 glew glm openssl zlib \
+  sdl2 glm openssl zlib \
   vulkan-headers vulkan-icd-loader vulkan-tools shaderc \
   ffmpeg unicorn stormlib
 ```
@@ -83,7 +83,7 @@ Vulkan on macOS is provided via MoltenVK (a Vulkan-to-Metal translation layer),
 which is included in the `vulkan-loader` Homebrew package.
 
 ```bash
-brew install cmake pkg-config sdl2 glew glm openssl@3 zlib ffmpeg unicorn \
+brew install cmake pkg-config sdl2 glm openssl@3 zlib ffmpeg unicorn \
   stormlib vulkan-loader vulkan-headers shaderc
 ```
 
@@ -137,7 +137,6 @@ pacman -S --needed \
   mingw-w64-x86_64-ninja \
   mingw-w64-x86_64-pkgconf \
   mingw-w64-x86_64-SDL2 \
-  mingw-w64-x86_64-glew \
   mingw-w64-x86_64-glm \
   mingw-w64-x86_64-openssl \
   mingw-w64-x86_64-zlib \
@@ -174,7 +173,7 @@ For users who prefer Visual Studio over MSYS2.
 ### vcpkg Dependencies
 
 ```powershell
-vcpkg install sdl2 glew glm openssl zlib ffmpeg stormlib --triplet x64-windows
+vcpkg install sdl2 glm openssl zlib ffmpeg stormlib --triplet x64-windows
 ```
 
 ### Clone

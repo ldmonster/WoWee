@@ -609,6 +609,6 @@ Once you have a working local server connection:
 ---
 
 **Status**: Ready for local server testing
-**Last Updated**: 2026-01-27
-**Client Version**: 1.0.3
-**Server Compatibility**: WoW 3.3.5a (12340)
+**Last Updated**: 2026-03-30
+**Client Version**: v1.8.9-preview
+**Server Compatibility**: Vanilla 1.12, TBC 2.4.3, WotLK 3.3.5a (12340), Turtle WoW 1.17

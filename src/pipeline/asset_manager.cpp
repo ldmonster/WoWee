@@ -233,6 +233,7 @@ BLPImage AssetManager::tryLoadPngOverride(const std::string& normalizedPath) con
     if (fsPath.empty()) return BLPImage();
 
     // Replace .blp/.BLP extension with .png
+    if (fsPath.size() < 4) return BLPImage();
     std::string pngPath = fsPath.substr(0, fsPath.size() - 4) + ".png";
     if (!LooseFileReader::fileExists(pngPath)) {
         return BLPImage();

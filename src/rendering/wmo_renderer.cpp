@@ -363,12 +363,16 @@ bool WMORenderer::loadModel(const pipeline::WMOModel& model, uint32_t id) {
                     break;
                 }
             }
+            // Track which WMO models have been force-reloaded after resolving only to
+            // fallback textures. Cap the set to avoid unbounded memory growth in worlds
+            // with many unique WMO groups (e.g. Dalaran has 2000+).
+            static constexpr size_t kMaxRetryTracked = 8192;
             static std::unordered_set<uint32_t> retryReloadedModels;
             static bool retryReloadedModelsCapped = false;
-            if (retryReloadedModels.size() > 8192) {
+            if (retryReloadedModels.size() > kMaxRetryTracked) {
                 retryReloadedModels.clear();
                 if (!retryReloadedModelsCapped) {
-                    core::Logger::getInstance().warning("WMO fallback-retry set exceeded 8192 entries; reset");
+                    core::Logger::getInstance().warning("WMO fallback-retry set exceeded ", kMaxRetryTracked, " entries; reset");
                     retryReloadedModelsCapped = true;
                 }
             }

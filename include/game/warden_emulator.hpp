@@ -138,6 +138,10 @@ public:
      */
     std::vector<uint8_t> readData(uint32_t address, size_t size);
 
+    // Look up an already-registered API stub address by DLL and function name.
+    // Returns 0 if not found. Used by WardenModule::bindAPIs() for IAT patching.
+    uint32_t getAPIAddress(const std::string& dllName, const std::string& funcName) const;
+
 private:
     uc_engine* uc_;                  // Unicorn engine instance
     uint32_t moduleBase_;            // Module base address

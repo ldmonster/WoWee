@@ -15,6 +15,9 @@
 
 namespace {
 constexpr size_t kMaxReceiveBufferBytes = 8 * 1024 * 1024;
+// Per-frame packet budgets prevent a burst of server data from starving the
+// render loop. Tunable via env vars for debugging heavy-traffic scenarios
+// (e.g. SMSG_UPDATE_OBJECT floods on login to crowded zones).
 constexpr int kDefaultMaxParsedPacketsPerUpdate = 64;
 constexpr int kAbsoluteMaxParsedPacketsPerUpdate = 220;
 constexpr int kMinParsedPacketsPerUpdate = 8;

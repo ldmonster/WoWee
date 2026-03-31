@@ -19,17 +19,11 @@ For a more honest snapshot of gaps and current direction, see `docs/status.md`.
 ### 1. Clone
 
 ```bash
-git clone https://github.com/Kelsidavis/WoWee.git
-cd wowee
+git clone --recurse-submodules https://github.com/Kelsidavis/WoWee.git
+cd WoWee
 ```
 
-### 2. Install ImGui
-
-```bash
-git clone https://github.com/ocornut/imgui.git extern/imgui
-```
-
-### 3. Build
+### 2. Build
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -96,7 +90,7 @@ Use `BUILD_INSTRUCTIONS.md` for distro-specific package lists.
 
 - Verify auth/world server is running
 - Check host/port settings
-- Check server logs and client logs in `build/bin/logs/`
+- Check server logs and client logs in `logs/wowee.log`
 
 ### Missing assets (models/textures/terrain)
 

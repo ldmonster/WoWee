@@ -1015,11 +1015,14 @@ bool EntityController::applyPlayerStatFields(const std::map<uint16_t, uint32_t>&
             owner_.playerSpellDmgBonus_[key - pfi.spDmg1] = static_cast<int32_t>(val);
         }
         else if (pfi.healBonus != 0xFFFF && key == pfi.healBonus) { owner_.playerHealBonus_ = static_cast<int32_t>(val); }
-        else if (pfi.blockPct != 0xFFFF && key == pfi.blockPct) { std::memcpy(&owner_.playerBlockPct_, &val, 4); }
-        else if (pfi.dodgePct != 0xFFFF && key == pfi.dodgePct) { std::memcpy(&owner_.playerDodgePct_, &val, 4); }
-        else if (pfi.parryPct != 0xFFFF && key == pfi.parryPct) { std::memcpy(&owner_.playerParryPct_, &val, 4); }
-        else if (pfi.critPct  != 0xFFFF && key == pfi.critPct)  { std::memcpy(&owner_.playerCritPct_,  &val, 4); }
-        else if (pfi.rangedCritPct != 0xFFFF && key == pfi.rangedCritPct) { std::memcpy(&owner_.playerRangedCritPct_, &val, 4); }
+        // Percentage stats are stored as IEEE 754 floats packed into uint32 update fields.
+        // memcpy reinterprets the bits; clamp to [0..100] to guard against NaN/Inf from
+        // corrupted packets reaching the UI (display-only, no gameplay logic depends on these).
+        else if (pfi.blockPct != 0xFFFF && key == pfi.blockPct) { std::memcpy(&owner_.playerBlockPct_, &val, 4); owner_.playerBlockPct_ = std::clamp(owner_.playerBlockPct_, 0.0f, 100.0f); }
+        else if (pfi.dodgePct != 0xFFFF && key == pfi.dodgePct) { std::memcpy(&owner_.playerDodgePct_, &val, 4); owner_.playerDodgePct_ = std::clamp(owner_.playerDodgePct_, 0.0f, 100.0f); }
+        else if (pfi.parryPct != 0xFFFF && key == pfi.parryPct) { std::memcpy(&owner_.playerParryPct_, &val, 4); owner_.playerParryPct_ = std::clamp(owner_.playerParryPct_, 0.0f, 100.0f); }
+        else if (pfi.critPct  != 0xFFFF && key == pfi.critPct)  { std::memcpy(&owner_.playerCritPct_,  &val, 4); owner_.playerCritPct_  = std::clamp(owner_.playerCritPct_,  0.0f, 100.0f); }
+        else if (pfi.rangedCritPct != 0xFFFF && key == pfi.rangedCritPct) { std::memcpy(&owner_.playerRangedCritPct_, &val, 4); owner_.playerRangedCritPct_ = std::clamp(owner_.playerRangedCritPct_, 0.0f, 100.0f); }
         else if (pfi.sCrit1   != 0xFFFF && key >= pfi.sCrit1 && key < pfi.sCrit1 + 7) {
             std::memcpy(&owner_.playerSpellCritPct_[key - pfi.sCrit1], &val, 4);
         }
@@ -1072,6 +1075,8 @@ void EntityController::dispatchEntitySpawn(uint64_t guid, ObjectType objectType,
         float unitScale = 1.0f;
         uint16_t scaleIdx = fieldIndex(UF::OBJECT_FIELD_SCALE_X);
         if (scaleIdx != 0xFFFF) {
+            // raw == 0 means the field was never populated (IEEE 754 0.0f is all-zero bits).
+            // Keep the default 1.0f rather than setting scale to 0 and making the entity invisible.
             uint32_t raw = entity->getField(scaleIdx);
             if (raw != 0) {
                 std::memcpy(&unitScale, &raw, sizeof(float));

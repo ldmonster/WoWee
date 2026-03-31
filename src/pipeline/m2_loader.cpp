@@ -384,11 +384,15 @@ std::string readString(const std::vector<uint8_t>& data, uint32_t offset, uint32
 
 enum class TrackType { VEC3, QUAT_COMPRESSED, FLOAT };
 
+// M2 sequence flag: when set, keyframe data is embedded in the M2 file.
+// When clear, data lives in an external .anim file and the M2 offsets are
+// .anim-relative — reading them from the M2 produces garbage.
+constexpr uint32_t kM2SeqFlagEmbeddedData = 0x20;
+
 // Parse an M2 animation track from the binary data.
 // The track uses an "array of arrays" layout: nTimestamps pairs of {count, offset}.
-// sequenceFlags: per-sequence flags; sequences WITHOUT flag 0x20 store their keyframe
-// data in external .anim files, so their sub-array offsets are .anim-relative and must
-// be skipped when reading from the M2 file.
+// sequenceFlags: per-sequence flags; sequences without kM2SeqFlagEmbeddedData store
+// their keyframe data in external .anim files, so their sub-array offsets must be skipped.
 void parseAnimTrack(const std::vector<uint8_t>& data,
                     const M2TrackDisk& disk,
                     M2AnimationTrack& track,
@@ -408,7 +412,7 @@ void parseAnimTrack(const std::vector<uint8_t>& data,
         // Sequences without flag 0x20 have their animation data in external .anim files.
         // Their sub-array offsets are .anim-file-relative, not M2-relative, so reading
         // from the M2 file would produce garbage data.
-        if (i < sequenceFlags.size() && !(sequenceFlags[i] & 0x20)) continue;
+        if (i < sequenceFlags.size() && !(sequenceFlags[i] & kM2SeqFlagEmbeddedData)) continue;
         // Each sub-array header is {uint32_t count, uint32_t offset} = 8 bytes
         uint32_t tsHeaderOfs = disk.ofsTimestamps + i * 8;
         uint32_t keyHeaderOfs = disk.ofsKeys + i * 8;
@@ -1328,7 +1332,7 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                     if (nSeqs > 0 && nSeqs <= 4096) {
                         track.sequences.resize(nSeqs);
                         for (uint32_t s = 0; s < nSeqs; s++) {
-                            if (s < ribSeqFlags.size() && !(ribSeqFlags[s] & 0x20)) continue;
+                            if (s < ribSeqFlags.size() && !(ribSeqFlags[s] & kM2SeqFlagEmbeddedData)) continue;
                             uint32_t tsHdr  = disk.ofsTimestamps + s * 8;
                             uint32_t keyHdr = disk.ofsKeys + s * 8;
                             if (tsHdr + 8 > m2Data.size() || keyHdr + 8 > m2Data.size()) continue;

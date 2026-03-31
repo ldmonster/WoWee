@@ -1,6 +1,38 @@
 # Changelog
 
-## [Unreleased] — changes since v1.8.1-preview (2026-03-23)
+## [Unreleased] — changes since v1.8.9-preview
+
+### Architecture
+- Break Application::getInstance() singleton from GameHandler via GameServices struct
+- EntityController refactoring (SOLID decomposition)
+- Extract 8 domain handler classes from GameHandler
+- Replace 3,300-line switch with dispatch table
+- Multi-platform Docker build system (Linux, macOS arm64/x86_64, Windows cross-compilation)
+
+### Bug Fixes (v1.8.2–v1.8.9)
+- Fix VkTexture ownsSampler_ flag after move/destroy (prevented double-free)
+- Fix unsigned underflow in Warden PE section loading (buffer overflow on malformed modules)
+- Add bounds checks to Warden readLE32/readLE16 (out-of-bounds on untrusted PE data)
+- Fix undefined behavior: SDL_BUTTON(0) computed 1 << -1 (negative shift)
+- Fix BigNum::toHex/toDecimal null dereference on OpenSSL allocation failure
+- Remove duplicate zone weather entry silently overwriting Dustwallow Marsh
+- Fix LLVM apt repo codename (jammy→noble) in macOS Docker build
+- Add missing mkdir in Linux Docker build script
+- Clamp player percentage stats (block/dodge/parry/crit) to prevent NaN from corrupted packets
+- Guard fsPath underflow in tryLoadPngOverride
+
+### Code Quality (v1.8.2–v1.8.9)
+- 30+ named constants replacing magic numbers across game, rendering, and pipeline code
+- 55+ why-comments documenting WoW protocol quirks, format specifics, and design rationale
+- 8 DRY extractions (findOnUseSpellId, createFallbackTextures, finalizeSampler,
+  renderClassRestriction/renderRaceRestriction, and more)
+- Scope macOS -undefined dynamic_lookup linker flag to wowee target only
+- Replace goto patterns with structured control flow (do/while(false), lambdas)
+- Zero out GameServices in Application::shutdown to prevent dangling pointers
+
+---
+
+## [v1.8.1-preview] — 2026-03-23
 
 ### Performance
 - Eliminate ~70 unnecessary sqrt ops per frame; constexpr reciprocals and cache optimizations

@@ -48,7 +48,10 @@ glm::vec3 Camera::getUp() const {
 }
 
 void Camera::setJitter(float jx, float jy) {
-    // Remove old jitter, apply new
+    // Sub-pixel jitter for temporal anti-aliasing (TAA / FSR2).
+    // Column 2 of the projection matrix holds the NDC x/y offset — modifying
+    // [2][0] and [2][1] shifts the entire rendered image by a sub-pixel amount
+    // each frame, giving the upscaler different sample positions to reconstruct.
     projectionMatrix[2][0] -= jitterOffset.x;
     projectionMatrix[2][1] -= jitterOffset.y;
     jitterOffset = glm::vec2(jx, jy);

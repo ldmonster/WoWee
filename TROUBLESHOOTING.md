@@ -151,9 +151,7 @@ Graphics Preset: HIGH or ULTRA
 ## Getting Help
 
 ### Check Logs
-Detailed logs are saved to:
-- **Linux/macOS**: `~/.wowee/logs/`
-- **Windows**: `%APPDATA%\wowee\logs\`
+Detailed logs are saved to `logs/wowee.log` in the working directory (typically `build/bin/`).
 
 Include relevant log entries when reporting issues.
 

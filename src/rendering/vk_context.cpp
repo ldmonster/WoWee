@@ -16,13 +16,16 @@ namespace rendering {
 VkContext* VkContext::sInstance_ = nullptr;
 
 // Hash a VkSamplerCreateInfo into a 64-bit key for the sampler cache.
+// FNV-1a chosen for speed and low collision rate on small structured data.
+// Constants from: http://www.isthe.com/chongo/tech/comp/fnv/
+static constexpr uint64_t kFnv1aOffsetBasis = 14695981039346656037ULL;
+static constexpr uint64_t kFnv1aPrime       = 1099511628211ULL;
+
 static uint64_t hashSamplerCreateInfo(const VkSamplerCreateInfo& s) {
-    // Pack the relevant fields into a deterministic hash.
-    // FNV-1a 64-bit on the raw config values.
-    uint64_t h = 14695981039346656037ULL;
+    uint64_t h = kFnv1aOffsetBasis;
     auto mix = [&](uint64_t v) {
         h ^= v;
-        h *= 1099511628211ULL;
+        h *= kFnv1aPrime;
     };
     mix(static_cast<uint64_t>(s.minFilter));
     mix(static_cast<uint64_t>(s.magFilter));

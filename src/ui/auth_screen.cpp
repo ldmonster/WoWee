@@ -216,7 +216,9 @@ void AuthScreen::render(auth::AuthHandler& authHandler) {
         if (music) {
             if (!loginMusicVolumeAdjusted_) {
                 savedMusicVolume_ = music->getVolume();
-                int loginVolume = (savedMusicVolume_ * 80) / 100; // reduce auth music by 20%
+                // Reduce music to 80% during login so UI button clicks and error sounds
+                // remain audible over the background track
+                int loginVolume = (savedMusicVolume_ * 80) / 100;
                 if (loginVolume < 0) loginVolume = 0;
                 if (loginVolume > 100) loginVolume = 100;
                 music->setVolume(loginVolume);

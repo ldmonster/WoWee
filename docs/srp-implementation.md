@@ -351,13 +351,13 @@ The expensive operation (session key computation) only happens once per login.
 2. **No Plaintext Storage:** Password is immediately hashed, never stored
 3. **Forward Secrecy:** Ephemeral keys (a, A) are generated per session
 4. **Mutual Authentication:** Both client and server prove knowledge of password
-5. **Secure Channel:** Session key K can be used for encryption (not implemented yet)
+5. **Secure Channel:** Session key K is used for RC4 header encryption after auth completes
 
 ## References
 
 - [SRP Protocol](http://srp.stanford.edu/)
 - [WoWDev Wiki - SRP](https://wowdev.wiki/SRP)
-- Original wowee: `/wowee/src/lib/crypto/srp.js`
+- Implementation: `src/auth/srp.cpp`, `include/auth/srp.hpp`
 - OpenSSL BIGNUM: https://www.openssl.org/docs/man1.1.1/man3/BN_new.html
 
 ---

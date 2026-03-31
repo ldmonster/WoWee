@@ -3,6 +3,7 @@
 #include "core/window.hpp"
 #include "core/input.hpp"
 #include "game/character.hpp"
+#include "game/game_services.hpp"
 #include "pipeline/blp_loader.hpp"
 #include <memory>
 #include <string>
@@ -126,6 +127,7 @@ private:
 
     static Application* instance;
 
+    game::GameServices gameServices_;
     std::unique_ptr<Window> window;
     std::unique_ptr<rendering::Renderer> renderer;
     std::unique_ptr<ui::UIManager> uiManager;

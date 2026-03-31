@@ -93,13 +93,16 @@ The RSA public modulus is extracted from WoW.exe (`.rdata` section at offset 0x0
 ## Key Files
 
 ```
+include/game/warden_handler.hpp      - Packet handler interface
+src/game/warden_handler.cpp          - handleWardenData + module manager init
 include/game/warden_module.hpp       - Module loader interface
 src/game/warden_module.cpp           - 8-step pipeline
 include/game/warden_emulator.hpp     - Emulator interface
 src/game/warden_emulator.cpp         - Unicorn Engine executor + API hooks
 include/game/warden_crypto.hpp       - Crypto interface
 src/game/warden_crypto.cpp           - RC4 / key derivation
-src/game/game_handler.cpp            - Packet handler (handleWardenData)
+include/game/warden_memory.hpp       - PE image + memory patch interface
+src/game/warden_memory.cpp           - PE loader, runtime globals patching
 ```
 
 ---

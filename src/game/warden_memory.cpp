@@ -14,12 +14,16 @@
 namespace wowee {
 namespace game {
 
+// Bounds-checked little-endian reads for PE parsing — malformed Warden modules
+// must not cause out-of-bounds access.
 static inline uint32_t readLE32(const std::vector<uint8_t>& data, size_t offset) {
+    if (offset + 4 > data.size()) return 0;
     return data[offset] | (uint32_t(data[offset+1]) << 8)
          | (uint32_t(data[offset+2]) << 16) | (uint32_t(data[offset+3]) << 24);
 }
 
 static inline uint16_t readLE16(const std::vector<uint8_t>& data, size_t offset) {
+    if (offset + 2 > data.size()) return 0;
     return data[offset] | (uint16_t(data[offset+1]) << 8);
 }
 
@@ -95,12 +99,14 @@ bool WardenMemory::parsePE(const std::vector<uint8_t>& fileData) {
 
         if (rawDataSize == 0 || rawDataOffset == 0) continue;
 
-        // Clamp copy size to file and image bounds
+        // Clamp copy size to file and image bounds.
+        // Guard against underflow: if offset exceeds buffer size, skip the section
+        // entirely rather than wrapping to a huge uint32_t in the subtraction.
+        if (rawDataOffset >= fileData.size() || virtualAddr >= imageSize_) continue;
         uint32_t copySize = std::min(rawDataSize, virtualSize);
-        if (rawDataOffset + copySize > fileData.size())
-            copySize = static_cast<uint32_t>(fileData.size()) - rawDataOffset;
-        if (virtualAddr + copySize > imageSize_)
-            copySize = imageSize_ - virtualAddr;
+        uint32_t maxFromFile  = static_cast<uint32_t>(fileData.size()) - rawDataOffset;
+        uint32_t maxFromImage = imageSize_ - virtualAddr;
+        copySize = std::min({copySize, maxFromFile, maxFromImage});
 
         std::memcpy(image_.data() + virtualAddr, fileData.data() + rawDataOffset, copySize);
 

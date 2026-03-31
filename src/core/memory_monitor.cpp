@@ -23,9 +23,10 @@ size_t readMemAvailableBytesFromProc() {
 
     std::string line;
     while (std::getline(meminfo, line)) {
-        // Format: "MemAvailable:  123456789 kB"
+        // /proc/meminfo format: "MemAvailable:  123456789 kB"
+        static constexpr size_t kFieldPrefixLen = 13; // strlen("MemAvailable:")
         if (line.rfind("MemAvailable:", 0) != 0) continue;
-        std::istringstream iss(line.substr(13));
+        std::istringstream iss(line.substr(kFieldPrefixLen));
         size_t kb = 0;
         iss >> kb;
         if (kb > 0) return kb * 1024ull;
@@ -42,13 +43,18 @@ MemoryMonitor& MemoryMonitor::getInstance() {
 }
 
 void MemoryMonitor::initialize() {
+    constexpr size_t kOneGB = 1024ull * 1024 * 1024;
+    // Fallback if OS API unavailable — 16 GB is a safe conservative estimate
+    // that prevents over-aggressive asset caching on unknown hardware.
+    constexpr size_t kFallbackRAM = 16 * kOneGB;
+
 #ifdef _WIN32
     ULONGLONG totalKB = 0;
     if (GetPhysicallyInstalledSystemMemory(&totalKB)) {
         totalRAM_ = static_cast<size_t>(totalKB) * 1024ull;
-        LOG_INFO("System RAM detected: ", totalRAM_ / (1024 * 1024 * 1024), " GB");
+        LOG_INFO("System RAM detected: ", totalRAM_ / kOneGB, " GB");
     } else {
-        totalRAM_ = 16ull * 1024 * 1024 * 1024;
+        totalRAM_ = kFallbackRAM;
         LOG_WARNING("Could not detect system RAM, assuming 16GB");
     }
 #elif defined(__APPLE__)
@@ -56,19 +62,18 @@ void MemoryMonitor::initialize() {
     size_t len = sizeof(physmem);
     if (sysctlbyname("hw.memsize", &physmem, &len, nullptr, 0) == 0) {
         totalRAM_ = static_cast<size_t>(physmem);
-        LOG_INFO("System RAM detected: ", totalRAM_ / (1024 * 1024 * 1024), " GB");
+        LOG_INFO("System RAM detected: ", totalRAM_ / kOneGB, " GB");
     } else {
-        totalRAM_ = 16ull * 1024 * 1024 * 1024;
+        totalRAM_ = kFallbackRAM;
         LOG_WARNING("Could not detect system RAM, assuming 16GB");
     }
 #else
     struct sysinfo info;
     if (sysinfo(&info) == 0) {
         totalRAM_ = static_cast<size_t>(info.totalram) * info.mem_unit;
-        LOG_INFO("System RAM detected: ", totalRAM_ / (1024 * 1024 * 1024), " GB");
+        LOG_INFO("System RAM detected: ", totalRAM_ / kOneGB, " GB");
     } else {
-        // Fallback: assume 16GB
-        totalRAM_ = 16ull * 1024 * 1024 * 1024;
+        totalRAM_ = kFallbackRAM;
         LOG_WARNING("Could not detect system RAM, assuming 16GB");
     }
 #endif

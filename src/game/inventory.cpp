@@ -239,13 +239,13 @@ std::vector<Inventory::SwapOp> Inventory::computeSortSwaps() const {
     entries.reserve(BACKPACK_SLOTS + NUM_BAG_SLOTS * MAX_BAG_SIZE);
 
     for (int i = 0; i < BACKPACK_SLOTS; ++i) {
-        entries.push_back({0xFF, static_cast<uint8_t>(23 + i),
+        entries.push_back({0xFF, static_cast<uint8_t>(NUM_EQUIP_SLOTS + i),
                            backpack[i].item.itemId, backpack[i].item.quality,
                            backpack[i].item.stackCount});
     }
     for (int b = 0; b < NUM_BAG_SLOTS; ++b) {
         for (int s = 0; s < bags[b].size; ++s) {
-            entries.push_back({static_cast<uint8_t>(19 + b), static_cast<uint8_t>(s),
+            entries.push_back({static_cast<uint8_t>(FIRST_BAG_EQUIP_SLOT + b), static_cast<uint8_t>(s),
                                bags[b].slots[s].item.itemId, bags[b].slots[s].item.quality,
                                bags[b].slots[s].item.stackCount});
         }

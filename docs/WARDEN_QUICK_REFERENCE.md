@@ -58,10 +58,11 @@ strict Warden enforcement in that mode.
 ## Key Files
 
 ```
-src/game/warden_module.hpp/cpp     - Module loader (8-step pipeline)
-src/game/warden_emulator.hpp/cpp   - Unicorn Engine executor
-src/game/warden_crypto.hpp/cpp     - RC4/MD5/SHA1/RSA crypto
-src/game/game_handler.cpp          - Packet handler (handleWardenData)
+include/game/warden_handler.hpp + src/game/warden_handler.cpp   - Packet handler
+include/game/warden_module.hpp  + src/game/warden_module.cpp    - Module loader (8-step pipeline)
+include/game/warden_emulator.hpp + src/game/warden_emulator.cpp - Unicorn Engine executor
+include/game/warden_crypto.hpp  + src/game/warden_crypto.cpp    - RC4/MD5/SHA1/RSA crypto
+include/game/warden_memory.hpp  + src/game/warden_memory.cpp    - PE image + memory patching
 ```
 
 ---

@@ -122,8 +122,11 @@ public:
     };
 
     const std::unordered_map<uint32_t, TaxiNode>& getTaxiNodes() const { return taxiNodes_; }
+    // WotLK 3.3.5a TaxiNodes.dbc has 384 entries; the known-taxi bitmask
+    // is 12 × uint32 = 384 bits. Node IDs outside this range are invalid.
+    static constexpr uint32_t kMaxTaxiNodeId = 384;
     bool isKnownTaxiNode(uint32_t nodeId) const {
-        if (nodeId == 0 || nodeId > 384) return false;
+        if (nodeId == 0 || nodeId > kMaxTaxiNodeId) return false;
         uint32_t idx = nodeId - 1;
         return (knownTaxiMask_[idx / 32] & (1u << (idx % 32))) != 0;
     }

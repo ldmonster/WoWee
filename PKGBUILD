@@ -9,28 +9,27 @@ arch=('x86_64')
 url="https://github.com/Kelsidavis/WoWee"
 license=('MIT')
 depends=(
-  'sdl2'
-  'vulkan-icd-loader'
-  'openssl'
-  'zlib'
-  'ffmpeg'
-  'unicorn'
-  'glew'
-  'libx11'
-  'stormlib'  # AUR — required at runtime by wowee-extract-assets (libstorm.so)
+  'sdl2'              # Windowing and event loop
+  'vulkan-icd-loader' # Vulkan runtime (GPU driver communication)
+  'openssl'           # SRP6a auth protocol (key exchange + RC4 encryption)
+  'zlib'              # Network packet decompression and Warden module inflate
+  'ffmpeg'            # Video playback (login cinematics)
+  'unicorn'           # Warden anti-cheat x86 emulation (cross-platform, no Wine)
+  'libx11'            # X11 windowing support
+  'stormlib'          # AUR — MPQ extraction (wowee-extract-assets uses libstorm.so)
 )
 makedepends=(
-  'git'
-  'cmake'
-  'pkgconf'
-  'glm'
-  'vulkan-headers'
-  'shaderc'
-  'python'
+  'git'               # Clone submodules (imgui, vk-bootstrap)
+  'cmake'             # Build system
+  'pkgconf'           # Dependency detection
+  'glm'               # Header-only math library (vectors, matrices, quaternions)
+  'vulkan-headers'    # Vulkan API definitions (build-time only)
+  'shaderc'           # GLSL → SPIR-V shader compilation
+  'python'            # Opcode registry generation and DBC validation scripts
 )
 provides=('wowee')
 conflicts=('wowee')
-source=("${pkgname}::git+https://github.com/Kelsidavis/WoWee.git#branch=main"
+source=("${pkgname}::git+https://github.com/Kelsidavis/WoWee.git#branch=master"
         "git+https://github.com/ocornut/imgui.git"
         "git+https://github.com/charles-lunarg/vk-bootstrap.git")
 sha256sums=('SKIP' 'SKIP' 'SKIP')

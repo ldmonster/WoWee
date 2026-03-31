@@ -301,7 +301,8 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
 
     auto model = pipeline::M2Loader::load(m2Data);
 
-    // Load skin file (only for WotLK M2s - vanilla has embedded skin)
+    // M2 version 264+ (WotLK) stores submesh/bone data in external .skin files.
+    // Earlier versions (Classic ≤256, TBC ≤263) have skin data embedded in the M2.
     std::string skinPath = modelDir + baseName + "00.skin";
     auto skinData = assetManager_->readFile(skinPath);
     if (!skinData.empty() && model.version >= 264) {
@@ -398,6 +399,8 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
         auto& tex = model.textures[ti];
         LOG_INFO("  Model texture[", ti, "]: type=", tex.type,
                  " filename='", tex.filename, "'");
+        // M2 texture types: 1=character skin, 6=hair/scalp. Empty filename means
+        // the texture is resolved at runtime via CharSections.dbc lookup.
         if (tex.type == 1 && tex.filename.empty() && !bodySkinPath_.empty()) {
             tex.filename = bodySkinPath_;
         } else if (tex.type == 6 && tex.filename.empty() && !hairScalpPath.empty()) {
@@ -405,7 +408,8 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
         }
     }
 
-    // Load external .anim files
+    // Load external .anim files for sequences that store keyframes outside the M2.
+    // Flag 0x20 = embedded data; when clear, animation lives in {ModelName}{SeqID}-{Var}.anim
     for (uint32_t si = 0; si < model.sequences.size(); si++) {
         if (!(model.sequences[si].flags & 0x20)) {
             char animFileName[256];
@@ -582,6 +586,9 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
     };
 
     // --- Geosets ---
+    // M2 geoset IDs encode body part group × 100 + variant (e.g., 801 = group 8
+    // (sleeves) variant 1, 1301 = group 13 (pants) variant 1). ItemDisplayInfo.dbc
+    // provides the variant offset per equipped item; base IDs are per-group constants.
     std::unordered_set<uint16_t> geosets;
     for (uint16_t i = 0; i <= 99; i++) geosets.insert(i);
     geosets.insert(static_cast<uint16_t>(100 + hairStyle_ + 1));    // Hair style

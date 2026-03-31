@@ -202,18 +202,22 @@ VkPipeline PipelineBuilder::build(VkDevice device, VkPipelineCache cache) const 
     return pipeline;
 }
 
+// All RGBA channels enabled — used by every blend mode since we never need to
+// mask individual channels (WoW's fixed-function pipeline always writes all four).
+static constexpr VkColorComponentFlags kColorWriteAll =
+    VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+    VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
 VkPipelineColorBlendAttachmentState PipelineBuilder::blendDisabled() {
     VkPipelineColorBlendAttachmentState state{};
-    state.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    state.colorWriteMask = kColorWriteAll;
     state.blendEnable = VK_FALSE;
     return state;
 }
 
 VkPipelineColorBlendAttachmentState PipelineBuilder::blendAlpha() {
     VkPipelineColorBlendAttachmentState state{};
-    state.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    state.colorWriteMask = kColorWriteAll;
     state.blendEnable = VK_TRUE;
     state.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
     state.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -226,8 +230,7 @@ VkPipelineColorBlendAttachmentState PipelineBuilder::blendAlpha() {
 
 VkPipelineColorBlendAttachmentState PipelineBuilder::blendPremultiplied() {
     VkPipelineColorBlendAttachmentState state{};
-    state.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    state.colorWriteMask = kColorWriteAll;
     state.blendEnable = VK_TRUE;
     state.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
     state.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -240,8 +243,7 @@ VkPipelineColorBlendAttachmentState PipelineBuilder::blendPremultiplied() {
 
 VkPipelineColorBlendAttachmentState PipelineBuilder::blendAdditive() {
     VkPipelineColorBlendAttachmentState state{};
-    state.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    state.colorWriteMask = kColorWriteAll;
     state.blendEnable = VK_TRUE;
     state.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
     state.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;

@@ -76,7 +76,9 @@ void TalentScreen::renderTalentTrees(game::GameHandler& gameHandler) {
         return;
     }
 
-    // Get talent tabs for this class, sorted by orderIndex
+    // Get talent tabs for this class, sorted by orderIndex.
+    // WoW class IDs are 1-indexed (Warrior=1..Druid=11); convert to bitmask for
+    // TalentTab.classMask matching (Warrior=0x1, Paladin=0x2, Hunter=0x4, etc.)
     uint32_t classMask = 1u << (playerClass - 1);
     std::vector<const game::GameHandler::TalentTabEntry*> classTabs;
     for (const auto& [tabId, tab] : gameHandler.getAllTalentTabs()) {

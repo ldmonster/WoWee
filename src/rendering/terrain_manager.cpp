@@ -45,8 +45,12 @@ namespace {
 // Alpha map format constants
 constexpr size_t  ALPHA_MAP_SIZE    = 4096;  // 64×64 uncompressed alpha bytes
 constexpr size_t  ALPHA_MAP_PACKED  = 2048;  // 64×64 packed 4-bit alpha (half size)
+static_assert(ALPHA_MAP_PACKED * 2 == ALPHA_MAP_SIZE, "packed alpha must unpack to full size");
 constexpr uint8_t ALPHA_FILL_FLAG   = 0x80;  // RLE command: fill vs. copy
 constexpr uint8_t ALPHA_COUNT_MASK  = 0x7F;  // RLE command: count bits
+
+// Random float normalization: mask to 16-bit then divide by max value to get [0..1]
+constexpr float kRand16Max = 65535.0f;
 
 // Placement transform constants
 constexpr float kDegToRad = 3.14159f / 180.0f;
@@ -1897,8 +1901,8 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
                 };
 
                 for (uint32_t a = 0; a < attempts; ++a) {
-                    float fracX = (nextRand() & 0xFFFFu) / 65535.0f * 8.0f;
-                    float fracY = (nextRand() & 0xFFFFu) / 65535.0f * 8.0f;
+                    float fracX = (nextRand() & 0xFFFFu) / kRand16Max * 8.0f;
+                    float fracY = (nextRand() & 0xFFFFu) / kRand16Max * 8.0f;
 
                     if (hasAlpha && !alphaScratch.empty()) {
                         int alphaX = glm::clamp(static_cast<int>((fracX / 8.0f) * 63.0f), 0, 63);
@@ -1965,8 +1969,8 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
                     p.uniqueId = 0;
                     // MCNK chunk.position is already in terrain/render world space.
                     // Do not convert via ADT placement mapping (that is for MDDF/MODF records).
-                    p.rotation = glm::vec3(0.0f, 0.0f, (nextRand() & 0xFFFFu) / 65535.0f * (2.0f * pi));
-                    p.scale = 0.80f + ((nextRand() & 0xFFFFu) / 65535.0f) * 0.35f;
+                    p.rotation = glm::vec3(0.0f, 0.0f, (nextRand() & 0xFFFFu) / kRand16Max * (2.0f * pi));
+                    p.scale = 0.80f + ((nextRand() & 0xFFFFu) / kRand16Max) * 0.35f;
                     // Snap directly to sampled terrain height.
                     p.position = glm::vec3(worldX, worldY, worldZ + 0.01f);
                     pending->m2Placements.push_back(p);
@@ -2005,8 +2009,8 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
                             return seed;
                         };
 
-                        float fracX = (nextRand() & 0xFFFFu) / 65535.0f * 8.0f;
-                        float fracY = (nextRand() & 0xFFFFu) / 65535.0f * 8.0f;
+                        float fracX = (nextRand() & 0xFFFFu) / kRand16Max * 8.0f;
+                        float fracY = (nextRand() & 0xFFFFu) / kRand16Max * 8.0f;
                         if (hasRoadLikeTextureAt(chunk, fracX, fracY)) {
                             roadRejected++;
                             continue;
@@ -2033,8 +2037,8 @@ void TerrainManager::generateGroundClutterPlacements(std::shared_ptr<PendingTile
                         PendingTile::M2Placement p;
                         p.modelId = proxyModelId;
                         p.uniqueId = 0;
-                        p.rotation = glm::vec3(0.0f, 0.0f, (nextRand() & 0xFFFFu) / 65535.0f * (2.0f * pi));
-                        p.scale = 0.75f + ((nextRand() & 0xFFFFu) / 65535.0f) * 0.40f;
+                        p.rotation = glm::vec3(0.0f, 0.0f, (nextRand() & 0xFFFFu) / kRand16Max * (2.0f * pi));
+                        p.scale = 0.75f + ((nextRand() & 0xFFFFu) / kRand16Max) * 0.40f;
                         p.position = glm::vec3(worldX, worldY, worldZ + 0.01f);
                         pending->m2Placements.push_back(p);
                         fallbackAdded++;

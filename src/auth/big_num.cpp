@@ -136,6 +136,8 @@ std::vector<uint8_t> BigNum::toArray(bool littleEndian, int minSize) const {
 
 std::string BigNum::toHex() const {
     char* hex = BN_bn2hex(bn);
+    // BN_bn2hex returns nullptr on allocation failure
+    if (!hex) return "(null)";
     std::string result(hex);
     OPENSSL_free(hex);
     return result;
@@ -143,6 +145,7 @@ std::string BigNum::toHex() const {
 
 std::string BigNum::toDecimal() const {
     char* dec = BN_bn2dec(bn);
+    if (!dec) return "(null)";
     std::string result(dec);
     OPENSSL_free(dec);
     return result;

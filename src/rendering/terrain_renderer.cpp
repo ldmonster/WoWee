@@ -727,7 +727,7 @@ void TerrainRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, c
         glm::vec3 cam = camera.getPosition();
         // Find chunk nearest to camera
         const TerrainChunkGPU* nearest = nullptr;
-        float nearestDist = 1e30f;
+        float nearestDist = std::numeric_limits<float>::max();
         for (const auto& ch : chunks) {
             float dx = ch.boundingSphereCenter.x - cam.x;
             float dy = ch.boundingSphereCenter.y - cam.y;
@@ -765,7 +765,10 @@ void TerrainRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, c
     }
 
     glm::vec3 camPos = camera.getPosition();
-    const float maxTerrainDistSq = 1200.0f * 1200.0f;
+    // Terrain chunks beyond this distance are culled. 1200 world units ≈ 9 ADT tiles,
+    // matching the asset loading radius (8 tiles) plus a buffer for pop-in avoidance.
+    constexpr float kMaxTerrainViewDist = 1200.0f;
+    const float maxTerrainDistSq = kMaxTerrainViewDist * kMaxTerrainViewDist;
 
     renderedChunks = 0;
     culledChunks = 0;

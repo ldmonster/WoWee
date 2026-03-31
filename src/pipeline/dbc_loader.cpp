@@ -64,7 +64,8 @@ bool DBCFile::load(const std::vector<uint8_t>& dbcData) {
         return false;
     }
 
-    // Validate record size matches field count
+    // DBC fields are fixed-width uint32 (4 bytes each); record size must match.
+    // Mismatches indicate a corrupted header or unsupported DBC variant.
     if (recordSize != fieldCount * 4) {
         LOG_WARNING("DBC record size mismatch: recordSize=", recordSize,
                     " but fieldCount*4=", fieldCount * 4);

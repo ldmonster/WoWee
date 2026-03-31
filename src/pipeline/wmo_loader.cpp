@@ -291,9 +291,11 @@ WMOModel WMOLoader::load(const std::vector<uint8_t>& wmoData) {
                 for (uint32_t i = 0; i < nDoodads; i++) {
                     WMODoodad doodad;
 
-                    // Name index (3 bytes) + flags (1 byte)
+                    // WMO doodad placement: name index packed in lower 24 bits, flags in upper 8.
+                    // The name index is an offset into the MODN string table (doodad names).
+                    constexpr uint32_t kDoodadNameIndexMask = 0x00FFFFFF;
                     uint32_t nameAndFlags = read<uint32_t>(wmoData, offset);
-                    doodad.nameIndex = nameAndFlags & 0x00FFFFFF;
+                    doodad.nameIndex = nameAndFlags & kDoodadNameIndexMask;
 
                     doodad.position.x = read<float>(wmoData, offset);
                     doodad.position.y = read<float>(wmoData, offset);

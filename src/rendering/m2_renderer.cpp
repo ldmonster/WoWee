@@ -1974,12 +1974,13 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
 
     // --- Spin instance portals ---
     static constexpr float PORTAL_SPIN_SPEED = 1.2f; // radians/sec
+    static constexpr float kTwoPi = 6.2831853f;
     for (size_t idx : portalInstanceIndices_) {
         if (idx >= instances.size()) continue;
         auto& inst = instances[idx];
         inst.portalSpinAngle += PORTAL_SPIN_SPEED * deltaTime;
-        if (inst.portalSpinAngle > 6.2831853f)
-            inst.portalSpinAngle -= 6.2831853f;
+        if (inst.portalSpinAngle > kTwoPi)
+            inst.portalSpinAngle -= kTwoPi;
         inst.rotation.z = inst.portalSpinAngle;
         inst.updateModelMatrix();
     }
@@ -1990,13 +1991,17 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
     for (auto& instance : instances) {
         instance.animTime += dtMs;
     }
-    // Wrap animTime for particle-only instances so emission rate tracks keep looping
+    // Wrap animTime for particle-only instances so emission rate tracks keep looping.
+    // 3333ms chosen as a safe wrap period: long enough to cover the longest known M2
+    // particle emission cycle (~3s for torch/campfire effects) while preventing float
+    // precision loss that accumulates over hours of runtime.
+    static constexpr float kParticleWrapMs = 3333.0f;
     for (size_t idx : particleOnlyInstanceIndices_) {
         if (idx >= instances.size()) continue;
         auto& instance = instances[idx];
         // Use iterative subtraction instead of fmod() to preserve precision
-        while (instance.animTime > 3333.0f) {
-            instance.animTime -= 3333.0f;
+        while (instance.animTime > kParticleWrapMs) {
+            instance.animTime -= kParticleWrapMs;
         }
     }
 
@@ -3155,11 +3160,14 @@ float M2Renderer::interpFloat(const pipeline::M2AnimationTrack& track, float ani
     return glm::mix(keys.floatValues[i0], keys.floatValues[i1], frac);
 }
 
+// Interpolate an M2 FBlock (particle lifetime curve) at a given life ratio [0..1].
+// FBlocks store per-lifetime keyframes for particle color, alpha, and scale.
+// NOTE: interpFBlockFloat and interpFBlockVec3 share identical interpolation logic —
+// if you fix a bug in one, update the other to match.
 float M2Renderer::interpFBlockFloat(const pipeline::M2FBlock& fb, float lifeRatio) {
     if (fb.floatValues.empty()) return 1.0f;
     if (fb.floatValues.size() == 1 || fb.timestamps.empty()) return fb.floatValues[0];
     lifeRatio = glm::clamp(lifeRatio, 0.0f, 1.0f);
-    // Find surrounding timestamps
     for (size_t i = 0; i < fb.timestamps.size() - 1; i++) {
         if (lifeRatio <= fb.timestamps[i + 1]) {
             float t0 = fb.timestamps[i];

@@ -191,8 +191,11 @@ void CameraController::update(float deltaTime) {
 
             // Compute camera position
             glm::vec3 actualCam;
-            if (actualDist < MIN_DISTANCE + 0.1f) {
-                actualCam = pivot + forward3D * 0.1f;
+            // Small offset prevents the camera from clipping into the character
+            // model when collision pushes it to near-minimum distance.
+            constexpr float kCameraClipEpsilon = 0.1f;
+            if (actualDist < MIN_DISTANCE + kCameraClipEpsilon) {
+                actualCam = pivot + forward3D * kCameraClipEpsilon;
             } else {
                 actualCam = pivot + camDir * actualDist;
             }

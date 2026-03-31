@@ -474,11 +474,13 @@ void ChargeEffect::emit(const glm::vec3& position, const glm::vec3& direction) {
     // Spawn dust puffs at feet
     glm::vec3 horizDir = glm::vec3(direction.x, direction.y, 0.0f);
     float horizLenSq = glm::dot(horizDir, horizDir);
+    // Skip dust when character is nearly stationary — prevents NaN from inversesqrt(0)
     if (horizLenSq < 1e-6f) return;
     float invHorizLen = glm::inversesqrt(horizLenSq);
     glm::vec3 backDir = -horizDir * invHorizLen;
     glm::vec3 sideDir = glm::vec3(-backDir.y, backDir.x, 0.0f);
 
+    // Accumulate ~0.48 per frame at 60fps (30 particles/sec * 16ms); emit when >= 1.0
     dustAccum_ += 30.0f * 0.016f;
     while (dustAccum_ >= 1.0f && dustPuffs_.size() < MAX_DUST) {
         dustAccum_ -= 1.0f;

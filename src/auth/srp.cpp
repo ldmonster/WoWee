@@ -129,11 +129,15 @@ std::vector<uint8_t> SRP::computeAuthHash(const std::string& username,
 void SRP::computeClientEphemeral() {
     LOG_DEBUG("Computing client ephemeral");
 
-    // Generate random private ephemeral a (19 bytes = 152 bits)
-    // Keep trying until we get a valid A
+    // Generate random private ephemeral a (19 bytes = 152 bits).
+    // WoW SRP-6a requires A != 0 mod N; in practice this almost never fails
+    // (probability ≈ 2^-152), but we retry to be safe. 100 attempts is far more
+    // than needed — if it fails, the RNG is broken.
+    static constexpr int kMaxEphemeralAttempts = 100;
+    static constexpr int kEphemeralBytes = 19; // 152 bits — matches Blizzard client
     int attempts = 0;
-    while (attempts < 100) {
-        a = BigNum::fromRandom(19);
+    while (attempts < kMaxEphemeralAttempts) {
+        a = BigNum::fromRandom(kEphemeralBytes);
 
         // A = g^a mod N
         A = g.modPow(a, N);
@@ -146,8 +150,8 @@ void SRP::computeClientEphemeral() {
         attempts++;
     }
 
-    if (attempts >= 100) {
-        LOG_ERROR("Failed to generate valid client ephemeral after 100 attempts!");
+    if (attempts >= kMaxEphemeralAttempts) {
+        LOG_ERROR("Failed to generate valid client ephemeral after ", kMaxEphemeralAttempts, " attempts!");
     }
 }
 

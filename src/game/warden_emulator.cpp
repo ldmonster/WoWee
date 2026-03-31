@@ -216,6 +216,13 @@ uint32_t WardenEmulator::hookAPI(const std::string& dllName,
     return stubAddr;
 }
 
+uint32_t WardenEmulator::getAPIAddress(const std::string& dllName, const std::string& funcName) const {
+    auto libIt = apiAddresses_.find(dllName);
+    if (libIt == apiAddresses_.end()) return 0;
+    auto funcIt = libIt->second.find(funcName);
+    return (funcIt != libIt->second.end()) ? funcIt->second : 0;
+}
+
 void WardenEmulator::setupCommonAPIHooks() {
     LOG_INFO("WardenEmulator: Setting up common Windows API hooks...");
 
@@ -614,6 +621,7 @@ bool WardenEmulator::freeMemory(uint32_t) { return false; }
 uint32_t WardenEmulator::getRegister(int) { return 0; }
 void WardenEmulator::setRegister(int, uint32_t) {}
 void WardenEmulator::setupCommonAPIHooks() {}
+uint32_t WardenEmulator::getAPIAddress(const std::string&, const std::string&) const { return 0; }
 uint32_t WardenEmulator::writeData(const void*, size_t) { return 0; }
 std::vector<uint8_t> WardenEmulator::readData(uint32_t, size_t) { return {}; }
 void WardenEmulator::hookCode(uc_engine*, uint64_t, uint32_t, void*) {}

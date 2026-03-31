@@ -58,7 +58,14 @@ std::string jsonValue(const std::string& json, const std::string& key) {
 int jsonInt(const std::string& json, const std::string& key, int def = 0) {
     std::string v = jsonValue(json, key);
     if (v.empty()) return def;
-    try { return std::stoi(v); } catch (...) { return def; }
+    try {
+        return std::stoi(v);
+    } catch (...) {
+        // Non-numeric value for an integer field — fall back to default rather than
+        // crashing, but log it so malformed expansion.json files are diagnosable.
+        wowee::core::Logger::getInstance().warning("jsonInt: failed to parse '", key, "' value '", v, "', using default ", def);
+        return def;
+    }
 }
 
 std::vector<uint32_t> jsonUintArray(const std::string& json, const std::string& key) {

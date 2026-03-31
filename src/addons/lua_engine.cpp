@@ -696,10 +696,14 @@ static int lua_UnitGroupRolesAssigned(lua_State* L) {
     const auto& pd = gh->getPartyData();
     for (const auto& m : pd.members) {
         if (m.guid == guid) {
-            // WotLK roles bitmask: 0x02=Tank, 0x04=Healer, 0x08=DPS
-            if (m.roles & 0x02) { lua_pushstring(L, "TANK"); return 1; }
-            if (m.roles & 0x04) { lua_pushstring(L, "HEALER"); return 1; }
-            if (m.roles & 0x08) { lua_pushstring(L, "DAMAGER"); return 1; }
+            // WotLK LFG roles bitmask (from SMSG_GROUP_LIST / SMSG_LFG_ROLE_CHECK_UPDATE).
+            // Bit 0x01 = Leader (not a combat role), 0x02 = Tank, 0x04 = Healer, 0x08 = DPS.
+            constexpr uint8_t kRoleTank    = 0x02;
+            constexpr uint8_t kRoleHealer  = 0x04;
+            constexpr uint8_t kRoleDamager = 0x08;
+            if (m.roles & kRoleTank)    { lua_pushstring(L, "TANK"); return 1; }
+            if (m.roles & kRoleHealer)  { lua_pushstring(L, "HEALER"); return 1; }
+            if (m.roles & kRoleDamager) { lua_pushstring(L, "DAMAGER"); return 1; }
             break;
         }
     }

@@ -278,29 +278,7 @@ bool CharacterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFram
     charVert.destroy();
     charFrag.destroy();
 
-    // --- Create white fallback texture ---
-    {
-        uint8_t white[] = {255, 255, 255, 255};
-        whiteTexture_ = std::make_unique<VkTexture>();
-        whiteTexture_->upload(*vkCtx_, white, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, false);
-        whiteTexture_->createSampler(device, VK_FILTER_NEAREST, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
-    }
-
-    // --- Create transparent fallback texture ---
-    {
-        uint8_t transparent[] = {0, 0, 0, 0};
-        transparentTexture_ = std::make_unique<VkTexture>();
-        transparentTexture_->upload(*vkCtx_, transparent, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, false);
-        transparentTexture_->createSampler(device, VK_FILTER_NEAREST, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
-    }
-
-    // --- Create flat normal placeholder texture (128,128,255,128) = neutral normal, 0.5 height ---
-    {
-        uint8_t flatNormal[] = {128, 128, 255, 128};
-        flatNormalTexture_ = std::make_unique<VkTexture>();
-        flatNormalTexture_->upload(*vkCtx_, flatNormal, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, false);
-        flatNormalTexture_->createSampler(device, VK_FILTER_NEAREST, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
-    }
+    createFallbackTextures(device);
 
     // Diagnostics-only: cache lifetime is currently tied to renderer lifetime.
     textureCacheBudgetBytes_ = envSizeMBOrDefault("WOWEE_CHARACTER_TEX_CACHE_MB", 4096) * 1024ull * 1024ull;
@@ -449,24 +427,7 @@ void CharacterRenderer::clear() {
     whiteTexture_.reset();
     transparentTexture_.reset();
     flatNormalTexture_.reset();
-    {
-        uint8_t white[] = {255, 255, 255, 255};
-        whiteTexture_ = std::make_unique<VkTexture>();
-        whiteTexture_->upload(*vkCtx_, white, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, false);
-        whiteTexture_->createSampler(device, VK_FILTER_NEAREST, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
-    }
-    {
-        uint8_t transparent[] = {0, 0, 0, 0};
-        transparentTexture_ = std::make_unique<VkTexture>();
-        transparentTexture_->upload(*vkCtx_, transparent, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, false);
-        transparentTexture_->createSampler(device, VK_FILTER_NEAREST, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
-    }
-    {
-        uint8_t flatNormal[] = {128, 128, 255, 128};
-        flatNormalTexture_ = std::make_unique<VkTexture>();
-        flatNormalTexture_->upload(*vkCtx_, flatNormal, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, false);
-        flatNormalTexture_->createSampler(device, VK_FILTER_NEAREST, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
-    }
+    createFallbackTextures(device);
 
     models.clear();
     instances.clear();
@@ -484,6 +445,30 @@ void CharacterRenderer::clear() {
     }
     if (boneDescPool_) {
         vkResetDescriptorPool(device, boneDescPool_, 0);
+    }
+}
+
+void CharacterRenderer::createFallbackTextures(VkDevice device) {
+    // White: default diffuse when no texture is assigned
+    {
+        uint8_t white[] = {255, 255, 255, 255};
+        whiteTexture_ = std::make_unique<VkTexture>();
+        whiteTexture_->upload(*vkCtx_, white, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, false);
+        whiteTexture_->createSampler(device, VK_FILTER_NEAREST, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+    }
+    // Transparent: placeholder for optional overlay layers (e.g. hair highlights)
+    {
+        uint8_t transparent[] = {0, 0, 0, 0};
+        transparentTexture_ = std::make_unique<VkTexture>();
+        transparentTexture_->upload(*vkCtx_, transparent, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, false);
+        transparentTexture_->createSampler(device, VK_FILTER_NEAREST, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+    }
+    // Flat normal: neutral normal map (128,128,255) + 0.5 height in alpha channel
+    {
+        uint8_t flatNormal[] = {128, 128, 255, 128};
+        flatNormalTexture_ = std::make_unique<VkTexture>();
+        flatNormalTexture_->upload(*vkCtx_, flatNormal, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, false);
+        flatNormalTexture_->createSampler(device, VK_FILTER_NEAREST, VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
     }
 }
 

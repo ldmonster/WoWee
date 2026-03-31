@@ -203,16 +203,17 @@ void TransportManager::loadPathFromNodes(uint32_t pathId, const std::vector<glm:
         path.points.push_back({cumulativeMs, waypoints[i]});
     }
 
-    // Add explicit wrap segment (last → first) for looping paths
+    // Add explicit wrap segment (last → first) for looping paths.
+    // By duplicating the first point at the end with cumulative time, the path
+    // becomes time-closed and evalTimedCatmullRom handles wrap via modular time
+    // instead of index wrapping — so looping is always false after construction.
     if (looping) {
         float wrapDist = glm::distance(waypoints.back(), waypoints.front());
         uint32_t wrapMs = glm::max(1u, segMsFromDist(wrapDist));
         cumulativeMs += wrapMs;
-        path.points.push_back({cumulativeMs, waypoints.front()});  // Duplicate first point
-        path.looping = false;  // Time-closed path, no need for index wrapping
-    } else {
-        path.looping = false;
+        path.points.push_back({cumulativeMs, waypoints.front()});
     }
+    path.looping = false;
 
     path.durationMs = cumulativeMs;
     paths_[pathId] = path;
@@ -301,14 +302,16 @@ void TransportManager::updateTransportMovement(ActiveTransport& transport, float
     // Guard against bad fallback Z curves on some remapped transport paths (notably icebreakers),
     // where path offsets can sink far below sea level when we only have spawn-time data.
     // Skip Z clamping for world-coordinate paths (TaxiPathNode) where values are absolute positions.
+    // Clamp fallback Z offsets for non-world-coordinate paths to prevent transport
+    // models from sinking below sea level on paths derived only from spawn-time data
+    // (notably icebreaker routes where the DBC path has steep vertical curves).
+    constexpr float kMinFallbackZOffset = -2.0f;
+    constexpr float kMaxFallbackZOffset =  8.0f;
     if (!path.worldCoords) {
         if (transport.useClientAnimation && transport.serverUpdateCount <= 1) {
-            constexpr float kMinFallbackZOffset = -2.0f;
             pathOffset.z = glm::max(pathOffset.z, kMinFallbackZOffset);
         }
         if (!transport.useClientAnimation && !transport.hasServerClock) {
-            constexpr float kMinFallbackZOffset = -2.0f;
-            constexpr float kMaxFallbackZOffset = 8.0f;
             pathOffset.z = glm::clamp(pathOffset.z, kMinFallbackZOffset, kMaxFallbackZOffset);
         }
     }

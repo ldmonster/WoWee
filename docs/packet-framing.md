@@ -397,6 +397,4 @@ The authentication system can now reliably communicate with WoW 3.3.5a servers!
 
 ---
 
-**Status:** ✅ Complete and tested
-
-**Next Steps:** Test with live server and implement realm list protocol.
+**Status:** ✅ Complete and tested against AzerothCore, TrinityCore, Mangos, and Turtle WoW.

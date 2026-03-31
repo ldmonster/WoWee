@@ -8,7 +8,7 @@ Wowee follows a modular architecture with clear separation of concerns:
 ┌─────────────────────────────────────────────┐
 │           Application (main loop)            │
 │  - State management (auth/realms/game)      │
-│  - Update cycle (60 FPS)                    │
+│  - Update cycle                             │
 │  - Event dispatch                           │
 └──────────────┬──────────────────────────────┘
                │
@@ -16,8 +16,8 @@ Wowee follows a modular architecture with clear separation of concerns:
        │                │
 ┌──────▼──────┐  ┌─────▼──────┐
 │   Window    │  │   Input    │
-│  (SDL2)     │  │ (Keyboard/ │
-│             │  │   Mouse)   │
+│  (SDL2 +    │  │ (Keyboard/ │
+│   Vulkan)   │  │   Mouse)   │
 └──────┬──────┘  └─────┬──────┘
        │                │
        └───────┬────────┘
@@ -26,517 +26,294 @@ Wowee follows a modular architecture with clear separation of concerns:
     │                     │
 ┌───▼────────┐   ┌───────▼──────┐
 │  Renderer  │   │  UI Manager  │
-│ (OpenGL)   │   │   (ImGui)    │
+│  (Vulkan)  │   │   (ImGui)    │
 └───┬────────┘   └──────────────┘
     │
-    ├─ Camera
-    ├─ Scene Graph
-    ├─ Shaders
-    ├─ Meshes
-    └─ Textures
+    ├─ Camera + CameraController
+    ├─ TerrainRenderer (ADT streaming)
+    ├─ WMORenderer (buildings, collision)
+    ├─ M2Renderer (models, particles, ribbons)
+    ├─ CharacterRenderer (skeletal animation)
+    ├─ WaterRenderer (refraction, lava, slime)
+    ├─ SkyBox + StarField + Weather
+    ├─ LightingManager (Light.dbc volumes)
+    └─ SwimEffects, ChargeEffect, Lightning
 ```
 
 ## Core Systems
 
 ### 1. Application Layer (`src/core/`)
 
-**Application** - Main controller
-- Owns all subsystems
-- Manages application state
+**Application** (`application.hpp/cpp`) - Main controller
+- Owns all subsystems (renderer, game handler, asset manager, UI)
+- Manages application state (AUTH → REALM_SELECT → CHAR_SELECT → IN_WORLD)
 - Runs update/render loop
-- Handles lifecycle (init/shutdown)
+- Populates `GameServices` struct and passes to `GameHandler` at construction
 
-**Window** - SDL2 wrapper
-- Creates window and OpenGL context
+**Window** (`window.hpp/cpp`) - SDL2 + Vulkan wrapper
+- Creates SDL2 window with Vulkan surface
+- Owns `VkContext` (Vulkan device, swapchain, render passes)
 - Handles resize events
-- Manages VSync and fullscreen
 
-**Input** - Input management
-- Keyboard state tracking
-- Mouse position and buttons
-- Mouse locking for camera control
+**Input** (`input.hpp/cpp`) - Input management
+- Keyboard state tracking (SDL scancodes)
+- Mouse position, buttons (1-based SDL indices), wheel delta
+- Per-frame delta calculation
 
-**Logger** - Logging system
-- Thread-safe logging
+**Logger** (`logger.hpp/cpp`) - Thread-safe logging
 - Multiple log levels (DEBUG, INFO, WARNING, ERROR, FATAL)
-- Timestamp formatting
+- File output to `logs/wowee.log`
+- Configurable via `WOWEE_LOG_LEVEL` env var
 
 ### 2. Rendering System (`src/rendering/`)
 
-**Renderer** - Main rendering coordinator
-- Manages OpenGL state
-- Coordinates frame rendering
-- Owns camera and scene
+**Renderer** (`renderer.hpp/cpp`) - Main rendering coordinator
+- Manages Vulkan pipeline state
+- Coordinates frame rendering across all sub-renderers
+- Owns camera, sky, weather, lighting, and all sub-renderers
+- Shadow mapping with PCF filtering
 
-**Camera** - View/projection matrices
+**VkContext** (`vk_context.hpp/cpp`) - Vulkan infrastructure
+- Device selection, queue families, swapchain
+- Render passes, framebuffers, command pools
+- Sampler cache (FNV-1a hashed dedup)
+- Pipeline cache persistence for fast startup
+
+**Camera** (`camera.hpp/cpp`) - View/projection matrices
 - Position and orientation
-- FOV and aspect ratio
-- View frustum (for culling)
+- FOV, aspect ratio, near/far planes
+- Sub-pixel jitter for TAA/FSR2 (column 2 NDC offset)
+- Frustum extraction for culling
 
-**Scene** - Scene graph
-- Mesh collection
-- Spatial organization
-- Visibility determination
+**TerrainRenderer** - ADT terrain streaming
+- Async chunk loading within configurable radius
+- 4-layer texture splatting with alpha blending
+- Frustum + distance culling
+- Vegetation/foliage placement via deterministic RNG
 
-**Shader** - GLSL program wrapper
-- Loads vertex/fragment shaders
-- Uniform management
-- Compilation and linking
+**WMORenderer** - World Map Objects (buildings)
+- Multi-material batch rendering
+- Portal-based visibility culling
+- Floor/wall collision (normal-based classification)
+- Interior glass transparency, doodad placement
 
-**Mesh** - Geometry container
-- Vertex buffer (position, normal, texcoord)
-- Index buffer
-- VAO/VBO/EBO management
+**M2Renderer** - Models (creatures, doodads, spell effects)
+- Skeletal animation with GPU bone transforms
+- Particle emitters (WotLK FBlock format)
+- Ribbon emitters (charge trails, enchant glows)
+- Portal spin effects, foliage wind displacement
+- Per-instance animation state
 
-**Texture** - Texture management
-- Loading (BLP via `AssetManager`, optional PNG overrides for development)
-- OpenGL texture object
-- Mipmap generation
+**CharacterRenderer** - Player/NPC character models
+- GPU vertex skinning (256 bones)
+- Race/gender-aware textures via CharSections.dbc
+- Equipment rendering (geoset visibility per slot)
+- Fallback textures (white/transparent/flat-normal) for missing assets
 
-**Material** - Surface properties
-- Shader assignment
-- Texture binding
-- Color/properties
+**WaterRenderer** - Terrain and WMO water
+- Refraction/reflection rendering
+- Magma/slime with multi-octave FBM noise flow
+- Beer-Lambert absorption
+
+**Skybox + StarField + Weather**
+- Procedural sky dome with time-of-day lighting
+- Star field with day/night fade (dusk 18:00–20:00, dawn 04:00–06:00)
+- Rain/snow particle systems per zone (via zone weather table)
+
+**LightingManager** - Light.dbc volume sampling
+- Time-of-day color bands (half-minutes, 0–2879)
+- Distance-weighted light volume blending
+- Fog color/distance parameters
 
 ### 3. Networking (`src/network/`)
 
-**Socket** (Abstract base class)
-- Connection interface
-- Packet send/receive
-- Callback system
+**TCPSocket** (`tcp_socket.hpp/cpp`) - Platform TCP
+- Non-blocking I/O with per-frame recv budgets
+- 4 KB recv buffer per call
+- Portable across Linux/macOS/Windows
 
-**TCPSocket** - Linux TCP sockets
-- Non-blocking I/O
-- Raw TCP (replaces WebSocket)
-- Packet framing
+**WorldSocket** (`world_socket.hpp/cpp`) - WoW world connection
+- RC4 header encryption (derived from SRP session key)
+- Packet parsing with configurable per-frame budgets
+- Compressed move packet handling
 
-**Packet** - Binary data container
-- Read/write primitives
-- Byte order handling
-- Opcode management
+**Packet** (`packet.hpp/cpp`) - Binary data container
+- Read/write primitives (uint8–uint64, float, string, packed GUID)
+- Bounds-checked reads (return 0 past end)
 
 ### 4. Authentication (`src/auth/`)
 
-**AuthHandler** - Auth server protocol
-- Connects to port 3724
-- SRP authentication flow
-- Session key generation
+**AuthHandler** - Auth server protocol (port 3724)
+- SRP6a challenge/proof flow
+- Security flags: PIN (0x01), Matrix (0x02), Authenticator (0x04)
+- Realm list retrieval
 
-**SRP** - Secure Remote Password
-- SRP6a algorithm
-- Big integer math
-- Salt and verifier generation
+**SRP** (`srp.hpp/cpp`) - Secure Remote Password
+- SRP6a with 19-byte (152-bit) ephemeral
+- OpenSSL BIGNUM math
+- Session key generation (40 bytes)
 
-**Crypto** - Cryptographic functions
-- SHA1 hashing (OpenSSL)
-- Random number generation
-- Encryption helpers
+**Integrity** - Client integrity verification
+- Checksum computation for Warden compatibility
 
 ### 5. Game Logic (`src/game/`)
 
-**GameHandler** - World server protocol
-- Connects to port 8085 (configurable)
-- Packet handlers for 100+ opcodes
-- Session management with RC4 encryption
-- Character enumeration and login flow
+**GameHandler** (`game_handler.hpp/cpp`) - Central game state
+- Dispatch table routing 664+ opcodes to domain handlers
+- Owns all domain handlers via composition
+- Receives dependencies via `GameServices` struct (no singleton access)
 
-**World** - Game world state
-- Map loading with async terrain streaming
-- Entity management (players, NPCs, creatures)
-- Zone management and exploration
-- Time-of-day synchronization
+**Domain Handlers** (SOLID decomposition from GameHandler):
+- `EntityController` - UPDATE_OBJECT parsing, entity spawn/despawn
+- `MovementHandler` - Movement packets, speed, taxi, swimming, flying
+- `CombatHandler` - Damage, healing, death, auto-attack, threat
+- `SpellHandler` - Spell casting, cooldowns, auras, talents, pet spells
+- `InventoryHandler` - Equipment, bags, bank, mail, auction, vendors
+- `QuestHandler` - Quest accept/complete, objectives, progress tracking
+- `SocialHandler` - Party, guild, LFG, friends, who, duel, trade
+- `ChatHandler` - Chat messages, channels, emotes, system messages
+- `WardenHandler` - Anti-cheat module management
 
-**Player** - Player character
-- Position and movement (WASD + spline movement)
-- Stats tracking (health, mana, XP, level)
-- Equipment and inventory (23 + 16 slots)
-- Action queue and spell casting
-- Death and resurrection handling
+**OpcodeTable** - Expansion-agnostic opcode mapping
+- `LogicalOpcode` enum → wire opcode via JSON config per expansion
+- Runtime remapping for Classic/TBC/WotLK/Turtle protocol differences
 
-**Character** - Character data
-- Race, class, gender, appearance
-- Creation and customization
-- 3D model preview
-- Online character lifecycle and state synchronization
+**Entity / EntityManager** - Entity lifecycle
+- Shared entity base class with update fields (uint32 array)
+- Player, Unit, GameObject subtypes
+- GUID-based lookup, field extraction (health, level, display ID, etc.)
 
-**Entity** - Game entities
-- NPCs and creatures with display info
-- Animation state (idle, combat, walk, run)
-- GUID management (player, creature, item, gameobject)
-- Targeting and selection
+**TransportManager** - Transport path evaluation
+- Catmull-Rom spline interpolation from TransportAnimation.dbc
+- Clock-based motion with server time synchronization
+- Time-closed looping paths (wrap point duplicated, no index wrapping)
 
-**Inventory** - Item management
-- Equipment slots (head, shoulders, chest, etc.)
-- Backpack storage (16 slots)
-- Item metadata (icons, stats, durability)
-- Drag-drop system
-- Auto-equip and unequip
-
-**NPC Interactions** - handled through `GameHandler`
-- Gossip system
-- Quest givers with markers (! and ?)
-- Vendors (buy/sell)
-- Trainers (placeholder)
-- Combat animations
-
-**ZoneManager** - Zone and area tracking
-- Map exploration
-- Area discovery
-- Zone change detection
-
-**Opcodes** - Protocol definitions
-- 100+ Client→Server opcodes (CMSG_*)
-- 100+ Server→Client opcodes (SMSG_*)
-- WoW 3.3.5a (build 12340) specific
+**Expansion Helpers** (`game_utils.hpp`):
+- `isActiveExpansion("classic")` / `isActiveExpansion("tbc")` / `isActiveExpansion("wotlk")`
+- `isClassicLikeExpansion()` (Classic or Turtle WoW)
+- `isPreWotlk()` (Classic, Turtle, or TBC)
 
 ### 6. Asset Pipeline (`src/pipeline/`)
 
 **AssetManager** - Runtime asset access
-- Loads an extracted loose-file tree indexed by `Data/manifest.json`
+- Extracted loose-file tree indexed by `Data/manifest.json`
 - Layered resolution via optional overlay manifests (multi-expansion dedup)
-- File cache + path normalization
+- File cache with configurable budget (256 MB min, 12 GB max)
+- PNG override support (checks for .png before .blp)
 
 **asset_extract (tool)** - MPQ extraction
 - Uses StormLib to extract MPQs into `Data/` and generate `manifest.json`
-- Driven by `extract_assets.sh`
+- Driven by `extract_assets.sh` / `extract_assets.ps1`
 
-**BLPLoader** - Texture parser
-- BLP format (Blizzard texture format)
-- DXT1/3/5 compression support
-- Mipmap extraction and generation
-- OpenGL texture object creation
+**BLPLoader** - Texture decompression
+- DXT1/3/5 block compression (RGB565 color endpoints)
+- Palette mode with 1/4/8-bit alpha
+- Mipmap extraction
 
-**M2Loader** - Model parser
-- Character/creature models with materials
-- Skeletal animation data (256 bones max)
-- Bone hierarchies and transforms
-- Animation sequences (idle, walk, run, attack, etc.)
-- Particle emitters (WotLK FBlock format)
-- Attachment points (weapons, mounts, etc.)
-- Geoset support (hide/show body parts)
-- Multiple texture units and render batches
+**M2Loader** - Model binary parsing
+- Version-aware header (Classic v256 vs WotLK v264)
+- Skeletal animation tracks (embedded vs external .anim files, flag 0x20)
+- Compressed quaternions (int16 offset mapping)
+- Particle emitters, ribbon emitters, attachment points
+- Geoset support (group × 100 + variant encoding)
 
-**WMOLoader** - World object parser
-- Buildings and structures
-- Multi-material batches
-- Portal system (visibility culling)
-- Doodad placement (decorations)
-- Group-based rendering
-- Liquid data (indoor water)
+**WMOLoader** - World object parsing
+- Multi-group rendering with portal visibility
+- Doodad placement (24-bit name index + 8-bit flags packing)
+- Liquid data, collision geometry
 
-**ADTLoader** - Terrain parser
-- 64x64 tiles per map (map_XX_YY.adt)
-- 16x16 chunks per tile (MCNK)
-- Height map data (9x9 outer + 8x8 inner vertices)
-- Texture layers (up to 4 per chunk with alpha blending)
-- Liquid data (water/lava/slime with height and flags)
-- Object placement (M2 and WMO references)
-- Terrain holes
+**ADTLoader** - Terrain parsing
+- 64×64 tiles per map, 16×16 chunks per tile (MCNK)
+- MCVT height grid (145 vertices: 9 outer + 8 inner per row × 9 rows)
+- Texture layers (up to 4 with alpha blending, RLE-compressed alpha maps)
 - Async loading to prevent frame stalls
 
-**DBCLoader** - Database parser
-- 20+ DBC files loaded (Spell, Item, Creature, SkillLine, Faction, etc.)
-- Type-safe record access
-- String block parsing
-- Memory-efficient caching
-- Used for:
-  - Spell icons and tooltips (Spell.dbc, SpellIcon.dbc)
-  - Item data (Item.dbc, ItemDisplayInfo.dbc)
-  - Creature display info (CreatureDisplayInfo.dbc, CreatureModelData.dbc)
-  - Class and race info (ChrClasses.dbc, ChrRaces.dbc)
-  - Skill lines (SkillLine.dbc, SkillLineAbility.dbc)
-  - Faction and reputation (Faction.dbc)
-  - Map and area names (Map.dbc, AreaTable.dbc)
+**DBCLoader** - Database table parsing
+- Binary DBC format (fixed 4-byte uint32 fields + string block)
+- CSV fallback for pre-extracted data
+- Expansion-aware field layout via `dbc_layouts.json`
+- 20+ DBC files: Spell, Item, Creature, Faction, Map, AreaTable, etc.
 
 ### 7. UI System (`src/ui/`)
 
 **UIManager** - ImGui coordinator
-- ImGui initialization with SDL2/OpenGL backend
+- ImGui initialization with SDL2/Vulkan backend
+- Screen state management and transitions
 - Event handling and input routing
-- Render dispatch with opacity control
-- Screen state management
 
-**AuthScreen** - Login interface
-- Username/password input fields
-- Server address configuration
-- Connection status and error messages
+**Screens:**
+- `AuthScreen` - Login with username/password, server address, security code
+- `RealmScreen` - Realm list with population and type indicators
+- `CharacterScreen` - Character selection with 3D animated preview
+- `CharacterCreateScreen` - Race/class/gender/appearance customization
+- `GameScreen` - Main HUD: chat, action bar, target frame, minimap, nameplates, combat text, tooltips
+- `InventoryScreen` - Equipment paper doll, backpack, bag windows, item tooltips with stats
+- `SpellbookScreen` - Tabbed spell list with icons, drag-drop to action bar
+- `QuestLogScreen` - Quest list with objectives, details, and rewards
+- `TalentScreen` - Talent tree UI with point allocation
+- `SettingsScreen` - Graphics presets (LOW/MEDIUM/HIGH/ULTRA), audio, keybindings
 
-**RealmScreen** - Server selection
-- Realm list display with names and types
-- Population info (Low/Medium/High/Full)
-- Realm type indicators (PvP/PvE/RP/RPPvP)
-- Auto-select for single realm
+### 8. Audio System (`src/audio/`)
 
-**CharacterScreen** - Character selection
-- Character list with 3D animated preview
-- Stats panel (level, race, class, location)
-- Create/delete character buttons
-- Enter world button
-- Auto-select for single character
+**AudioEngine** - miniaudio-based playback
+- WAV decode cache (256 entries, LRU eviction)
+- 2D and 3D positional audio
+- Sample rate preservation (explicit to avoid miniaudio pitch distortion)
 
-**CharacterCreateScreen** - Character creation
-- Race selection (all Alliance and Horde races)
-- Class selection (class availability by race)
-- Gender selection
-- Appearance customization (face, skin, hair, color, features)
-- Name input with validation
-- 3D character preview
+**Sound Managers:**
+- `AmbientSoundManager` - Wind, water, fire, birds, crickets, city ambience, bell tolls
+- `ActivitySoundManager` - Swimming strokes, jumping, landing
+- `MovementSoundManager` - Footsteps (terrain-aware), mount movement
+- `MountSoundManager` - Mount-specific movement audio
+- `MusicManager` - Zone music with day/night variants
 
-**GameScreen** - In-game HUD
-- Chat window with message history and formatting
-- Action bar (12 slots with icons, cooldowns, keybindings)
-- Target frame (name, level, health, hostile/friendly coloring)
-- Player stats (health, mana/rage/energy)
-- Minimap with quest markers
-- Experience bar
+### 9. Warden Anti-Cheat (`src/game/`)
 
-**InventoryScreen** - Inventory management
-- Equipment paper doll (23 slots: head, shoulders, chest, etc.)
-- Backpack grid (16 slots)
-- Item icons with tooltips
-- Drag-drop to equip/unequip
-- Item stats and durability
-- Gold display
-
-**SpellbookScreen** - Spells and abilities
-- Tabbed interface (class specialties + General)
-- Spell icons organized by SkillLine
-- Spell tooltips (name, rank, cost, cooldown, description)
-- Drag-drop to action bar
-- Known spell tracking
-
-**QuestLogScreen** - Quest tracking
-- Active quest list
-- Quest objectives and progress
-- Quest details (description, objectives, rewards)
-- Abandon quest button
-- Quest level and recommended party size
-
-**TalentScreen** - Talent trees
-- Placeholder for talent system
-- Tree visualization (TODO)
-- Talent point allocation (TODO)
-
-**Settings Window** - Configuration
-- UI opacity slider
-- Graphics options (TODO)
-- Audio controls (TODO)
-- Keybinding customization (TODO)
-
-**Loading Screen** - Map loading progress
-- Progress bar with percentage
-- Background image (map-specific, TODO)
-- Loading tips (TODO)
-- Shown during world entry and map transitions
-
-## Data Flow Examples
-
-### Authentication Flow
-```
-User Input (username/password)
-    ↓
-AuthHandler::authenticate()
-    ↓
-SRP::calculateVerifier()
-    ↓
-TCPSocket::send(LOGON_CHALLENGE)
-    ↓
-Server Response (LOGON_CHALLENGE)
-    ↓
-AuthHandler receives packet
-    ↓
-SRP::calculateProof()
-    ↓
-TCPSocket::send(LOGON_PROOF)
-    ↓
-Server Response (LOGON_PROOF) → Success
-    ↓
-Application::setState(REALM_SELECTION)
-```
-
-### Rendering Flow
-```
-Application::render()
-    ↓
-Renderer::beginFrame()
-    ├─ glClearColor() - Clear screen
-    └─ glClear() - Clear buffers
-    ↓
-Renderer::renderWorld(world)
-    ├─ Update camera matrices
-    ├─ Frustum culling
-    ├─ For each visible chunk:
-    │   ├─ Bind shader
-    │   ├─ Set uniforms (matrices, lighting)
-    │   ├─ Bind textures
-    │   └─ Mesh::draw() → glDrawElements()
-    └─ For each entity:
-        ├─ Calculate bone transforms
-        └─ Render skinned mesh
-    ↓
-UIManager::render()
-    ├─ ImGui::NewFrame()
-    ├─ Render current UI screen
-    └─ ImGui::Render()
-    ↓
-Renderer::endFrame()
-    ↓
-Window::swapBuffers()
-```
-
-### Asset Loading Flow
-```
-World::loadMap(mapId)
-    ↓
-AssetManager::readFile("World/Maps/{map}/map.adt")
-    ↓
-ADTLoader::load(adtData)
-    ├─ Parse MCNK chunks (terrain)
-    ├─ Parse MCLY chunks (textures)
-    ├─ Parse MCVT chunks (vertices)
-    └─ Parse MCNR chunks (normals)
-    ↓
-For each texture reference:
-    AssetManager::readFile(texturePath)
-    ↓
-    BLPLoader::load(blpData)
-    ↓
-    Texture::loadFromMemory(imageData)
-    ↓
-Create Mesh from vertices/normals/texcoords
-    ↓
-Add to Scene
-    ↓
-Renderer draws in next frame
-```
+4-layer architecture:
+- `WardenHandler` - Packet handling (SMSG/CMSG_WARDEN_DATA)
+- `WardenModuleManager` - Module lifecycle and caching
+- `WardenModule` - 8-step pipeline: decrypt (RC4), strip RSA-2048 signature, decompress (zlib), parse PE headers, relocate, resolve imports, execute
+- `WardenEmulator` - Unicorn Engine x86 CPU emulation with Windows API interception
+- `WardenMemory` - PE image loading with bounds-checked reads, runtime global patching
 
 ## Threading Model
 
-Currently **single-threaded** with async operations:
-- Main thread: Window events, update, render
-- Network I/O: Non-blocking in main thread (event-driven)
-- Asset loading: Async terrain streaming (non-blocking chunk loads)
-
-**Async Systems Implemented:**
-- Terrain streaming loads ADT chunks asynchronously to prevent frame stalls
-- Network packets processed in batches per frame
-- UI rendering deferred until after world rendering
-
-**Future multi-threading opportunities:**
-- Asset loading thread pool (background texture/model decompression)
-- Network thread (dedicated for socket I/O)
-- Physics thread (if collision detection is added)
-- Audio streaming thread
+- **Main thread**: Window events, game logic update, rendering
+- **Async terrain**: Non-blocking chunk loading (std::async)
+- **Network I/O**: Non-blocking recv in main thread with per-frame budgets
+- **Normal maps**: Background CPU generation with mutex-protected result queue
+- **GPU uploads**: Second Vulkan queue for parallel texture/buffer transfers
 
 ## Memory Management
 
-- **Smart pointers:** Used throughout (std::unique_ptr, std::shared_ptr)
-- **RAII:** All resources (OpenGL, SDL) cleaned up automatically
-- **No manual memory management:** No raw new/delete
-- **OpenGL resources:** Wrapped in classes with proper destructors
-
-## Performance Considerations
-
-### Rendering
-- **Frustum culling:** Only render visible chunks (terrain and WMO groups)
-- **Distance culling:** WMO groups culled beyond 160 units
-- **Batching:** Group draw calls by material and shader
-- **LOD:** Distance-based level of detail (TODO)
-- **Occlusion:** Portal-based visibility (WMO system)
-- **GPU skinning:** Character animation computed on GPU (256 bones)
-- **Instancing:** Future optimization for repeated models
-
-### Asset Streaming
-- **Async loading:** Terrain chunks load asynchronously (prevents frame stalls)
-- **Lazy loading:** Load chunks as player moves within streaming radius
-- **Unloading:** Free distant chunks automatically
-- **Caching:** Keep frequently used assets in memory (textures, models)
-- **Priority queue:** Load visible chunks first
-
-### Network
-- **Non-blocking I/O:** Never stall main thread
-- **Packet buffering:** Handle multiple packets per frame
-- **Batch processing:** Process received packets in batches
-- **RC4 encryption:** Efficient header encryption (minimal overhead)
-- **Compression:** Some packets are compressed (TODO)
-
-### Memory Management
-- **Smart pointers:** Automatic cleanup, no memory leaks
-- **Object pooling:** Reuse particle objects (weather system)
-- **DBC caching:** Load once, access fast
-- **Texture sharing:** Same texture used by multiple models
-
-## Error Handling
-
-- **Logging:** All errors logged with context
-- **Graceful degradation:** Missing assets show placeholder
-- **State recovery:** Network disconnect → back to auth screen
-- **No crashes:** Exceptions caught at application level
-
-## Configuration
-
-Currently hardcoded, future config system:
-- Window size and fullscreen
-- Graphics quality settings
-- Server addresses
-- Keybindings
-- Audio volume
-
-## Testing Strategy
-
-**Unit Testing** (TODO):
-- Packet serialization/deserialization
-- SRP math functions
-- Asset parsers with sample files
-- DBC record parsing
-- Inventory slot calculations
-
-**Integration Testing** (TODO):
-- Full auth flow against test server
-- Realm list retrieval
-- Character creation and selection
-- Quest turn-in flow
-- Vendor transactions
-
-**Manual Testing:**
-- Visual verification of rendering (terrain, water, models, particles)
-- Performance profiling (F1 performance HUD)
-- Memory leak checking (valgrind)
-- Online gameplay against AzerothCore/TrinityCore/MaNGOS servers
-- UI interactions (drag-drop, click events)
-
-**Current Test Coverage:**
-- Full authentication flow tested against live servers
-- Character creation and selection verified
-- Quest system tested (accept, track, turn-in)
-- Vendor system tested (buy, sell)
-- Combat system tested (targeting, auto-attack, spells)
-- Inventory system tested (equip, unequip, drag-drop)
+- **Smart pointers**: `std::unique_ptr` / `std::shared_ptr` throughout
+- **RAII**: All Vulkan resources wrapped with proper destructors
+- **VMA**: Vulkan Memory Allocator for GPU memory
+- **Object pooling**: Weather particles, combat text entries
+- **DBC caching**: Lazy-loaded mutable caches in const getters
 
 ## Build System
 
-**CMake:**
-- Modular target structure
-- Automatic dependency discovery
-- Cross-platform (Linux focus, but portable)
-- Out-of-source builds
+**CMake** with modular targets:
+- `wowee` - Main executable
+- `asset_extract` - MPQ extraction tool (requires StormLib)
+- `dbc_to_csv` / `auth_probe` / `blp_convert` - Utility tools
 
 **Dependencies:**
-- SDL2 (system)
-- OpenGL/GLEW (system)
-- OpenSSL (system)
-- GLM (system or header-only)
+- SDL2, Vulkan SDK, OpenSSL, GLM, zlib (system)
 - ImGui (submodule in extern/)
-- StormLib (system, optional)
+- VMA, vk-bootstrap, stb_image (vendored in extern/)
+- StormLib (system, optional — only for asset_extract)
+- Unicorn Engine (system, optional — only for Warden emulation)
+- FFmpeg (system, optional — for video playback)
+
+**CI**: GitHub Actions for Linux (x86-64, ARM64), Windows (MSYS2), macOS (ARM64)
+**Container builds**: Docker cross-compilation for Linux, macOS (osxcross), Windows (LLVM-MinGW)
 
 ## Code Style
 
 - **C++20 standard**
-- **Namespaces:** wowee::core, wowee::rendering, etc.
-- **Naming:** PascalCase for classes, camelCase for functions/variables
-- **Headers:** .hpp extension
-- **Includes:** Relative to project root
-
----
-
-This architecture provides a solid foundation for a full-featured native WoW client!
+- **Namespaces**: `wowee::core`, `wowee::rendering`, `wowee::game`, `wowee::ui`, `wowee::network`, `wowee::auth`, `wowee::audio`, `wowee::pipeline`
+- **Naming**: PascalCase for classes, camelCase for functions/variables, kPascalCase for constants
+- **Headers**: `.hpp` extension, `#pragma once`
+- **Commits**: Conventional style (`feat:`, `fix:`, `refactor:`, `docs:`, `perf:`)

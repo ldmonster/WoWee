@@ -435,11 +435,7 @@ void ChatHandler::handleChannelNotify(network::Packet& packet) {
 
     switch (data.notifyType) {
         case ChannelNotifyType::YOU_JOINED: {
-            bool found = false;
-            for (const auto& ch : joinedChannels_) {
-                if (ch == data.channelName) { found = true; break; }
-            }
-            if (!found) {
+            if (std::find(joinedChannels_.begin(), joinedChannels_.end(), data.channelName) == joinedChannels_.end()) {
                 joinedChannels_.push_back(data.channelName);
             }
             MessageChatData msg;
@@ -461,11 +457,9 @@ void ChatHandler::handleChannelNotify(network::Packet& packet) {
             break;
         }
         case ChannelNotifyType::PLAYER_ALREADY_MEMBER: {
-            bool found = false;
-            for (const auto& ch : joinedChannels_) {
-                if (ch == data.channelName) { found = true; break; }
-            }
-            if (!found) {
+            // Server confirms we're in this channel but our local list doesn't have it yet —
+            // can happen after reconnect or if the join notification was missed.
+            if (std::find(joinedChannels_.begin(), joinedChannels_.end(), data.channelName) == joinedChannels_.end()) {
                 joinedChannels_.push_back(data.channelName);
                 LOG_INFO("Already in channel: ", data.channelName);
             }

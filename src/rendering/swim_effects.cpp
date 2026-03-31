@@ -175,6 +175,8 @@ bool SwimEffects::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
             return false;
         }
 
+        // Depth test disabled — insects are screen-space sprites that must always
+        // render above the water surface regardless of scene geometry.
         insectPipeline = PipelineBuilder()
             .setShaders(vertStage, fragStage)
             .setVertexInput({binding}, attrs)

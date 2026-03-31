@@ -93,7 +93,9 @@ public:
         float impliedVX = (destX - fromX) / durationSec;
         float impliedVY = (destY - fromY) / durationSec;
         float impliedVZ = (destZ - fromZ) / durationSec;
-        // Exponentially smooth velocity so jittery packet timing doesn't snap speed.
+        // Exponential moving average on velocity — 65% new sample, 35% previous.
+        // Smooths out jitter from irregular server update intervals (~200-600ms)
+        // without introducing visible lag on direction changes.
         const float alpha = 0.65f;
         velX_ = alpha * impliedVX + (1.0f - alpha) * velX_;
         velY_ = alpha * impliedVY + (1.0f - alpha) * velY_;

@@ -296,7 +296,12 @@ void ZoneManager::initialize() {
     };
     zones[1657] = darnassus;
 
-    // Tile-to-zone mappings for Azeroth (Eastern Kingdoms)
+    // Tile-to-zone fallback mappings for Azeroth (Eastern Kingdoms).
+    // WoW's world is a grid of 64×64 ADT tiles per continent. We encode (tileX, tileY)
+    // into a single key as tileX * 100 + tileY (safe because tileY < 64 < 100).
+    // These ranges are empirically determined from the retail map layout and provide
+    // zone identification when AreaTable.dbc data is unavailable.
+    //
     // Elwynn Forest tiles
     for (int tx = 31; tx <= 34; tx++) {
         for (int ty = 48; ty <= 51; ty++) {

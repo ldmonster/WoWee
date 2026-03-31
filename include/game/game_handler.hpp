@@ -13,6 +13,7 @@
 #include "game/quest_handler.hpp"
 #include "game/movement_handler.hpp"
 #include "game/entity_controller.hpp"
+#include "game/game_services.hpp"
 #include "network/packet.hpp"
 #include <glm/glm.hpp>
 #include <memory>
@@ -130,8 +131,10 @@ public:
     using TalentEntry = game::TalentEntry;
     using TalentTabEntry = game::TalentTabEntry;
 
-    GameHandler();
+    explicit GameHandler(GameServices& services);
     ~GameHandler();
+
+    const GameServices& services() const { return services_; }
 
     /** Access the active opcode table (wire ↔ logical mapping). */
     const OpcodeTable& getOpcodeTable() const { return opcodeTable_; }
@@ -2297,6 +2300,9 @@ private:
                                 const glm::vec3& localOffset, bool hasLocalOrientation,
                                 float localOrientation);
     void clearTransportAttachment(uint64_t childGuid);
+
+    // Explicit service dependencies (owned by Application)
+    GameServices& services_;
 
     // Domain handlers — each manages a specific concern extracted from GameHandler
     std::unique_ptr<ChatHandler>      chatHandler_;

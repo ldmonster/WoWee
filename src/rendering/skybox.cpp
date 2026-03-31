@@ -202,10 +202,9 @@ void Skybox::update(float deltaTime) {
 }
 
 void Skybox::setTimeOfDay(float time) {
-    // Clamp to 0-24 range
-    while (time < 0.0f) time += 24.0f;
-    while (time >= 24.0f) time -= 24.0f;
-
+    // Wrap to [0, 24) range using fmod instead of iterative subtraction
+    time = std::fmod(time, 24.0f);
+    if (time < 0.0f) time += 24.0f;
     timeOfDay = time;
 }
 

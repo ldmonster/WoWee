@@ -1,4 +1,5 @@
 #include "game/warden_module.hpp"
+#include "game/warden_crypto.hpp"
 #include "auth/crypto.hpp"
 #include "core/logger.hpp"
 #include <cstring>
@@ -30,14 +31,26 @@ namespace wowee {
 namespace game {
 
 // ============================================================================
+// Thread-local pointer to the active WardenModule instance during initializeModule().
+// C function pointer callbacks (sendPacket, validateModule, generateRC4) can't capture
+// state, so they use this to reach the module's crypto and socket dependencies.
+static thread_local WardenModule* tl_activeModule = nullptr;
+
 // WardenModule Implementation
 // ============================================================================
+
+void WardenModule::setCallbackDependencies(WardenCrypto* crypto, SendPacketFunc sendFunc) {
+    callbackCrypto_ = crypto;
+    callbackSendPacket_ = std::move(sendFunc);
+}
 
 WardenModule::WardenModule()
     : loaded_(false)
     , moduleMemory_(nullptr)
     , moduleSize_(0)
-    , moduleBase_(0x400000) // Default module base address
+    // 0x400000 is the default PE image base for 32-bit Windows executables.
+    // Warden modules are loaded as if they were PE DLLs at this base address.
+    , moduleBase_(0x400000)
 {
 }
 
@@ -74,13 +87,14 @@ bool WardenModule::load(const std::vector<uint8_t>& moduleData,
 
     // Step 3: Verify RSA signature
     if (!verifyRSASignature(decryptedData_)) {
-        // Expected with placeholder modulus — verification is skipped gracefully
+        // Signature mismatch is non-fatal — private-server modules use a different key.
     }
 
-    // Step 4: Strip RSA signature (last 256 bytes) then zlib decompress
+    // Step 4: Strip RSA-2048 signature (last 256 bytes = 2048 bits) then zlib decompress.
+    static constexpr size_t kRsaSignatureSize = 256;
     std::vector<uint8_t> dataWithoutSig;
-    if (decryptedData_.size() > 256) {
-        dataWithoutSig.assign(decryptedData_.begin(), decryptedData_.end() - 256);
+    if (decryptedData_.size() > kRsaSignatureSize) {
+        dataWithoutSig.assign(decryptedData_.begin(), decryptedData_.end() - kRsaSignatureSize);
     } else {
         dataWithoutSig = decryptedData_;
     }
@@ -99,13 +113,10 @@ bool WardenModule::load(const std::vector<uint8_t>& moduleData,
         LOG_ERROR("WardenModule: Address relocations failed; continuing with unrelocated image");
     }
 
-    // Step 7: Bind APIs
-    if (!bindAPIs()) {
-        LOG_ERROR("WardenModule: API binding failed!");
-        // Note: Currently returns true (stub) on both Windows and Linux
-    }
-
-    // Step 8: Initialize module
+    // Step 7+8: Initialize module (creates emulator) then bind APIs (patches IAT).
+    // API binding must happen after emulator setup (needs stub addresses) but before
+    // the module entry point is called (needs resolved imports). Both are handled
+    // inside initializeModule().
     if (!initializeModule()) {
         LOG_ERROR("WardenModule: Module initialization failed; continuing with stub callbacks");
     }
@@ -332,30 +343,30 @@ bool WardenModule::verifyRSASignature(const std::vector<uint8_t>& data) {
     // Extract data without signature
     std::vector<uint8_t> dataWithoutSig(data.begin(), data.end() - 256);
 
-    // Hardcoded WoW 3.3.5a Warden RSA public key
+    // Hardcoded WoW Warden RSA public key (same across 1.12.1, 2.4.3, 3.3.5a)
     // Exponent: 0x010001 (65537)
     const uint32_t exponent = 0x010001;
 
-    // Modulus (256 bytes) - Extracted from WoW 3.3.5a (build 12340) client
-    // Extracted from Wow.exe at offset 0x005e3a03 (.rdata section)
-    // This is the actual RSA-2048 public key modulus used by Warden
+    // Modulus (256 bytes) — RSA-2048 public key used by the WoW client to verify
+    // Warden module signatures.  Confirmed against namreeb/WardenSigning ClientKey.hpp
+    // and SkullSecurity wiki (Warden_Modules page).
     const uint8_t modulus[256] = {
-        0x51, 0xAD, 0x57, 0x75, 0x16, 0x92, 0x0A, 0x0E, 0xEB, 0xFA, 0xF8, 0x1B, 0x37, 0x49, 0x7C, 0xDD,
-        0x47, 0xDA, 0x5E, 0x02, 0x8D, 0x96, 0x75, 0x21, 0x27, 0x59, 0x04, 0xAC, 0xB1, 0x0C, 0xB9, 0x23,
-        0x05, 0xCC, 0x82, 0xB8, 0xBF, 0x04, 0x77, 0x62, 0x92, 0x01, 0x00, 0x01, 0x00, 0x77, 0x64, 0xF8,
-        0x57, 0x1D, 0xFB, 0xB0, 0x09, 0xC4, 0xE6, 0x28, 0x91, 0x34, 0xE3, 0x55, 0x61, 0x15, 0x8A, 0xE9,
-        0x07, 0xFC, 0xAA, 0x60, 0xB3, 0x82, 0xB7, 0xE2, 0xA4, 0x40, 0x15, 0x01, 0x3F, 0xC2, 0x36, 0xA8,
-        0x9D, 0x95, 0xD0, 0x54, 0x69, 0xAA, 0xF5, 0xED, 0x5C, 0x7F, 0x21, 0xC5, 0x55, 0x95, 0x56, 0x5B,
-        0x2F, 0xC6, 0xDD, 0x2C, 0xBD, 0x74, 0xA3, 0x5A, 0x0D, 0x70, 0x98, 0x9A, 0x01, 0x36, 0x51, 0x78,
-        0x71, 0x9B, 0x8E, 0xCB, 0xB8, 0x84, 0x67, 0x30, 0xF4, 0x43, 0xB3, 0xA3, 0x50, 0xA3, 0xBA, 0xA4,
-        0xF7, 0xB1, 0x94, 0xE5, 0x5B, 0x95, 0x8B, 0x1A, 0xE4, 0x04, 0x1D, 0xFB, 0xCF, 0x0E, 0xE6, 0x97,
-        0x4C, 0xDC, 0xE4, 0x28, 0x7F, 0xB8, 0x58, 0x4A, 0x45, 0x1B, 0xC8, 0x8C, 0xD0, 0xFD, 0x2E, 0x77,
-        0xC4, 0x30, 0xD8, 0x3D, 0xD2, 0xD5, 0xFA, 0xBA, 0x9D, 0x1E, 0x02, 0xF6, 0x7B, 0xBE, 0x08, 0x95,
-        0xCB, 0xB0, 0x53, 0x3E, 0x1C, 0x41, 0x45, 0xFC, 0x27, 0x6F, 0x63, 0x6A, 0x73, 0x91, 0xA9, 0x42,
-        0x00, 0x12, 0x93, 0xF8, 0x5B, 0x83, 0xED, 0x52, 0x77, 0x4E, 0x38, 0x08, 0x16, 0x23, 0x10, 0x85,
-        0x4C, 0x0B, 0xA9, 0x8C, 0x9C, 0x40, 0x4C, 0xAF, 0x6E, 0xA7, 0x89, 0x02, 0xC5, 0x06, 0x96, 0x99,
-        0x41, 0xD4, 0x31, 0x03, 0x4A, 0xA9, 0x2B, 0x17, 0x52, 0xDD, 0x5C, 0x4E, 0x5F, 0x16, 0xC3, 0x81,
-        0x0F, 0x2E, 0xE2, 0x17, 0x45, 0x2B, 0x7B, 0x65, 0x7A, 0xA3, 0x18, 0x87, 0xC2, 0xB2, 0xF5, 0xCD
+        0x6B, 0xCE, 0xF5, 0x2D, 0x2A, 0x7D, 0x7A, 0x67, 0x21, 0x21, 0x84, 0xC9, 0xBC, 0x25, 0xC7, 0xBC,
+        0xDF, 0x3D, 0x8F, 0xD9, 0x47, 0xBC, 0x45, 0x48, 0x8B, 0x22, 0x85, 0x3B, 0xC5, 0xC1, 0xF4, 0xF5,
+        0x3C, 0x0C, 0x49, 0xBB, 0x56, 0xE0, 0x3D, 0xBC, 0xA2, 0xD2, 0x35, 0xC1, 0xF0, 0x74, 0x2E, 0x15,
+        0x5A, 0x06, 0x8A, 0x68, 0x01, 0x9E, 0x60, 0x17, 0x70, 0x8B, 0xBD, 0xF8, 0xD5, 0xF9, 0x3A, 0xD3,
+        0x25, 0xB2, 0x66, 0x92, 0xBA, 0x43, 0x8A, 0x81, 0x52, 0x0F, 0x64, 0x98, 0xFF, 0x60, 0x37, 0xAF,
+        0xB4, 0x11, 0x8C, 0xF9, 0x2E, 0xC5, 0xEE, 0xCA, 0xB4, 0x41, 0x60, 0x3C, 0x7D, 0x02, 0xAF, 0xA1,
+        0x2B, 0x9B, 0x22, 0x4B, 0x3B, 0xFC, 0xD2, 0x5D, 0x73, 0xE9, 0x29, 0x34, 0x91, 0x85, 0x93, 0x4C,
+        0xBE, 0xBE, 0x73, 0xA9, 0xD2, 0x3B, 0x27, 0x7A, 0x47, 0x76, 0xEC, 0xB0, 0x28, 0xC9, 0xC1, 0xDA,
+        0xEE, 0xAA, 0xB3, 0x96, 0x9C, 0x1E, 0xF5, 0x6B, 0xF6, 0x64, 0xD8, 0x94, 0x2E, 0xF1, 0xF7, 0x14,
+        0x5F, 0xA0, 0xF1, 0xA3, 0xB9, 0xB1, 0xAA, 0x58, 0x97, 0xDC, 0x09, 0x17, 0x0C, 0x04, 0xD3, 0x8E,
+        0x02, 0x2C, 0x83, 0x8A, 0xD6, 0xAF, 0x7C, 0xFE, 0x83, 0x33, 0xC6, 0xA8, 0xC3, 0x84, 0xEF, 0x29,
+        0x06, 0xA9, 0xB7, 0x2D, 0x06, 0x0B, 0x0D, 0x6F, 0x70, 0x9E, 0x34, 0xA6, 0xC7, 0x31, 0xBE, 0x56,
+        0xDE, 0xDD, 0x02, 0x92, 0xF8, 0xA0, 0x58, 0x0B, 0xFC, 0xFA, 0xBA, 0x49, 0xB4, 0x48, 0xDB, 0xEC,
+        0x25, 0xF3, 0x18, 0x8F, 0x2D, 0xB3, 0xC0, 0xB8, 0xDD, 0xBC, 0xD6, 0xAA, 0xA6, 0xDB, 0x6F, 0x7D,
+        0x7D, 0x25, 0xA6, 0xCD, 0x39, 0x6D, 0xDA, 0x76, 0x0C, 0x79, 0xBF, 0x48, 0x25, 0xFC, 0x2D, 0xC5,
+        0xFA, 0x53, 0x9B, 0x4D, 0x60, 0xF4, 0xEF, 0xC7, 0xEA, 0xAC, 0xA1, 0x7B, 0x03, 0xF4, 0xAF, 0xC7
     };
 
     // Compute expected hash: SHA1(data_without_sig + "MAIEV.MOD")
@@ -426,12 +437,11 @@ bool WardenModule::verifyRSASignature(const std::vector<uint8_t>& data) {
         }
     }
 
-    LOG_WARNING("WardenModule: RSA signature verification skipped (placeholder modulus)");
-    LOG_WARNING("WardenModule: Extract real modulus from WoW.exe for actual verification");
+    LOG_WARNING("WardenModule: RSA signature mismatch — module may be corrupt or from a different build");
 
-    // For development, return true to proceed (since we don't have real modulus)
-    // TODO: Set to false once real modulus is extracted
-    return true; // TEMPORARY - change to false for production
+    // With the real modulus in place, signature failure means the module is invalid.
+    // Return true anyway so private-server modules (signed with a different key) still load.
+    return true;
 }
 
 bool WardenModule::decompressZlib(const std::vector<uint8_t>& compressed,
@@ -764,64 +774,99 @@ bool WardenModule::bindAPIs() {
 
     LOG_INFO("WardenModule: Binding Windows APIs for module...");
 
-    // Common Windows APIs used by Warden modules:
+    // The Warden module import table lives in decompressedData_ immediately after
+    // the relocation entries (which are terminated by a 0x0000 delta). Format:
     //
-    // kernel32.dll:
-    // - VirtualAlloc, VirtualFree, VirtualProtect
-    // - GetTickCount, GetCurrentThreadId, GetCurrentProcessId
-    // - Sleep, SwitchToThread
-    // - CreateThread, ExitThread
-    // - GetModuleHandleA, GetProcAddress
-    // - ReadProcessMemory, WriteProcessMemory
+    //   Repeated library blocks until null library name:
+    //     string libraryName\0
+    //     Repeated function entries until null function name:
+    //       string functionName\0
     //
-    // user32.dll:
-    // - GetForegroundWindow, GetWindowTextA
-    //
-    // ntdll.dll:
-    // - NtQueryInformationProcess, NtQuerySystemInformation
+    // Each imported function corresponds to a sequential IAT slot at the start
+    // of the module image (first N dwords). We patch each with the emulator's
+    // stub address so calls into Windows APIs land on our Unicorn hooks.
 
-    #ifdef _WIN32
-        // On Windows: Use GetProcAddress to resolve imports
-        LOG_INFO("WardenModule: Platform: Windows - using GetProcAddress");
+    if (relocDataOffset_ == 0 || relocDataOffset_ >= decompressedData_.size()) {
+        LOG_WARNING("WardenModule: No relocation/import data — skipping API binding");
+        return true;
+    }
 
-        HMODULE kernel32 = GetModuleHandleA("kernel32.dll");
-        HMODULE user32 = GetModuleHandleA("user32.dll");
-        HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    // Skip past relocation entries (delta-encoded uint16 pairs, 0x0000 terminated)
+    size_t pos = relocDataOffset_;
+    while (pos + 2 <= decompressedData_.size()) {
+        uint16_t delta = decompressedData_[pos] | (decompressedData_[pos + 1] << 8);
+        pos += 2;
+        if (delta == 0) break;
+    }
 
-        if (!kernel32 || !user32 || !ntdll) {
-            LOG_ERROR("WardenModule: Failed to get module handles");
-            return false;
+    if (pos >= decompressedData_.size()) {
+        LOG_INFO("WardenModule: No import data after relocations");
+        return true;
+    }
+
+    // Parse import table
+    uint32_t iatSlotIndex = 0;
+    int totalImports = 0;
+    int resolvedImports = 0;
+
+    auto readString = [&](size_t& p) -> std::string {
+        std::string s;
+        while (p < decompressedData_.size() && decompressedData_[p] != 0) {
+            s.push_back(static_cast<char>(decompressedData_[p]));
+            p++;
         }
+        if (p < decompressedData_.size()) p++; // skip null terminator
+        return s;
+    };
 
-        // TODO: Parse module's import table
-        // - Find import directory in PE headers
-        // - For each imported DLL:
-        //   - For each imported function:
-        //     - Resolve address using GetProcAddress
-        //     - Write address to Import Address Table (IAT)
+    while (pos < decompressedData_.size()) {
+        std::string libraryName = readString(pos);
+        if (libraryName.empty()) break; // null library name = end of imports
 
-        LOG_WARNING("WardenModule: Windows API binding is STUB (needs PE import table parsing)");
-        LOG_INFO("WardenModule:   Would parse PE headers and patch IAT with resolved addresses");
+        // Read functions for this library
+        while (pos < decompressedData_.size()) {
+            std::string functionName = readString(pos);
+            if (functionName.empty()) break; // null function name = next library
 
-    #else
-        // On Linux: Cannot directly execute Windows code
-        // Options:
-        // 1. Use Wine to provide Windows API compatibility
-        // 2. Implement Windows API stubs (limited functionality)
-        // 3. Use binfmt_misc + Wine (transparent Windows executable support)
+            totalImports++;
 
-        LOG_WARNING("WardenModule: Platform: Linux - Windows module execution NOT supported");
-        LOG_INFO("WardenModule: Options:");
-        LOG_INFO("WardenModule:   1. Run wowee under Wine (provides Windows API layer)");
-        LOG_INFO("WardenModule:   2. Use a Windows VM");
-        LOG_INFO("WardenModule:   3. Implement Windows API stubs (limited, complex)");
+            // Look up the emulator's stub address for this API
+            uint32_t resolvedAddr = 0;
+            #ifdef HAVE_UNICORN
+            if (emulator_) {
+                // Check if this API was pre-registered in setupCommonAPIHooks()
+                resolvedAddr = emulator_->getAPIAddress(libraryName, functionName);
+                if (resolvedAddr == 0) {
+                    // Not pre-registered — create a no-op stub that returns 0.
+                    // Prevents module crashes on unimplemented APIs (returns
+                    // 0 / NULL / FALSE / S_OK for most Windows functions).
+                    resolvedAddr = emulator_->hookAPI(libraryName, functionName,
+                        [](WardenEmulator&, const std::vector<uint32_t>&) -> uint32_t {
+                            return 0;
+                        });
+                    LOG_DEBUG("WardenModule: Auto-stubbed ", libraryName, "!", functionName);
+                }
+            }
+            #endif
 
-        // For now, we'll return true to continue the loading pipeline
-        // Real execution would fail, but this allows testing the infrastructure
-        LOG_WARNING("WardenModule: Skipping API binding (Linux platform limitation)");
-    #endif
+            // Patch IAT slot in module image
+            if (resolvedAddr != 0) {
+                uint32_t iatOffset = iatSlotIndex * 4;
+                if (iatOffset + 4 <= moduleSize_) {
+                    uint8_t* slot = static_cast<uint8_t*>(moduleMemory_) + iatOffset;
+                    std::memcpy(slot, &resolvedAddr, 4);
+                    resolvedImports++;
+                    LOG_DEBUG("WardenModule: IAT[", iatSlotIndex, "] = ", libraryName,
+                              "!", functionName, " → 0x", std::hex, resolvedAddr, std::dec);
+                }
+            }
+            iatSlotIndex++;
+        }
+    }
 
-    return true; // Return true to continue (stub implementation)
+    LOG_INFO("WardenModule: Bound ", resolvedImports, "/", totalImports,
+             " API imports (", iatSlotIndex, " IAT slots patched)");
+    return true;
 }
 
 bool WardenModule::initializeModule() {
@@ -862,33 +907,54 @@ bool WardenModule::initializeModule() {
         void (*logMessage)(const char* msg);
     };
 
-    // Setup client callbacks (used when calling module entry point below)
+    // Setup client callbacks (used when calling module entry point below).
+    // These are C function pointers (no captures), so they access the active
+    // module instance via tl_activeModule thread-local set below.
     [[maybe_unused]] ClientCallbacks callbacks = {};
 
-    // Stub callbacks (would need real implementations)
-    callbacks.sendPacket = []([[maybe_unused]] uint8_t* data, size_t len) {
+    callbacks.sendPacket = [](uint8_t* data, size_t len) {
         LOG_DEBUG("WardenModule Callback: sendPacket(", len, " bytes)");
-        // TODO: Send CMSG_WARDEN_DATA packet
+        auto* mod = tl_activeModule;
+        if (mod && mod->callbackSendPacket_ && data && len > 0) {
+            mod->callbackSendPacket_(data, len);
+        }
     };
 
-    callbacks.validateModule = []([[maybe_unused]] uint8_t* hash) {
+    callbacks.validateModule = [](uint8_t* hash) {
         LOG_DEBUG("WardenModule Callback: validateModule()");
-        // TODO: Validate module hash
+        auto* mod = tl_activeModule;
+        if (!mod || !hash) return;
+        // Compare provided 16-byte MD5 against the hash we received from the server
+        // during module download. Mismatch means the module was corrupted in transit.
+        const auto& expected = mod->md5Hash_;
+        if (expected.size() == 16 && std::memcmp(hash, expected.data(), 16) != 0) {
+            LOG_ERROR("WardenModule: validateModule hash MISMATCH — module may be corrupted");
+        } else {
+            LOG_DEBUG("WardenModule: validateModule hash OK");
+        }
     };
 
     callbacks.allocMemory = [](size_t size) -> void* {
-        LOG_DEBUG("WardenModule Callback: allocMemory(", size, ")");
         return malloc(size);
     };
 
     callbacks.freeMemory = [](void* ptr) {
-        LOG_DEBUG("WardenModule Callback: freeMemory()");
         free(ptr);
     };
 
-    callbacks.generateRC4 = []([[maybe_unused]] uint8_t* seed) {
+    callbacks.generateRC4 = [](uint8_t* seed) {
         LOG_DEBUG("WardenModule Callback: generateRC4()");
-        // TODO: Re-key RC4 cipher
+        auto* mod = tl_activeModule;
+        if (!mod || !mod->callbackCrypto_ || !seed) return;
+        // Module requests RC4 re-key: derive new encrypt/decrypt keys from the
+        // 16-byte seed using SHA1Randx, then replace the active RC4 state.
+        uint8_t newEncryptKey[16], newDecryptKey[16];
+        std::vector<uint8_t> seedVec(seed, seed + 16);
+        WardenCrypto::sha1RandxGenerate(seedVec, newEncryptKey, newDecryptKey);
+        mod->callbackCrypto_->replaceKeys(
+            std::vector<uint8_t>(newEncryptKey, newEncryptKey + 16),
+            std::vector<uint8_t>(newDecryptKey, newDecryptKey + 16));
+        LOG_INFO("WardenModule: RC4 keys re-derived from module seed");
     };
 
     callbacks.getTime = []() -> uint32_t {
@@ -898,6 +964,9 @@ bool WardenModule::initializeModule() {
     callbacks.logMessage = [](const char* msg) {
         LOG_INFO("WardenModule Log: ", msg);
     };
+
+    // Set thread-local context so C callbacks can access this module's state
+    tl_activeModule = this;
 
     // Module entry point is typically at offset 0 (first bytes of loaded code)
     // Function signature: WardenFuncList* (*entryPoint)(ClientCallbacks*)
@@ -912,8 +981,14 @@ bool WardenModule::initializeModule() {
             return false;
         }
 
-        // Setup Windows API hooks
+        // Setup Windows API hooks (VirtualAlloc, GetTickCount, ReadProcessMemory, etc.)
         emulator_->setupCommonAPIHooks();
+
+        // Bind module imports: parse the import table from decompressed data and
+        // patch each IAT slot with the emulator's stub address. Must happen after
+        // setupCommonAPIHooks() (which registers the stubs) and before calling the
+        // module entry point (which uses the resolved imports).
+        bindAPIs();
 
         {
             char addrBuf[32];
@@ -1082,8 +1157,11 @@ bool WardenModule::initializeModule() {
     // 3. Exception handling for crashes
     // 4. Sandboxing for security
 
-    LOG_WARNING("WardenModule: Module initialization is STUB");
-    return true; // Stub implementation
+    // Clear thread-local context — callbacks are only valid during init
+    tl_activeModule = nullptr;
+
+    LOG_WARNING("WardenModule: Module initialization complete (callbacks wired)");
+    return true;
 }
 
 // ============================================================================

@@ -1344,6 +1344,8 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
         if (gameHandler.hasTarget()) {
             auto target = gameHandler.getTarget();
             if (target && target->getType() == game::ObjectType::GAMEOBJECT) {
+                LOG_WARNING("[GO-DIAG] Right-click: re-interacting with targeted GO 0x",
+                            std::hex, target->getGuid(), std::dec);
                 gameHandler.setTarget(target->getGuid());
                 gameHandler.interactWithGameObject(target->getGuid());
                 return;
@@ -1416,6 +1418,18 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
                         hitCenter = core::coords::canonicalToRender(
                             glm::vec3(entity->getX(), entity->getY(), entity->getZ()));
                         hitCenter.z += heightOffset;
+                        // Log each unique GO's raypick position once
+                        if (t == game::ObjectType::GAMEOBJECT) {
+                            static std::unordered_set<uint64_t> goPickLog;
+                            if (goPickLog.insert(guid).second) {
+                                auto go = std::static_pointer_cast<game::GameObject>(entity);
+                                LOG_WARNING("[GO-DIAG] Raypick GO: guid=0x", std::hex, guid, std::dec,
+                                            " entry=", go->getEntry(), " name='", go->getName(),
+                                            "' pos=(", entity->getX(), ",", entity->getY(), ",", entity->getZ(),
+                                            ") center=(", hitCenter.x, ",", hitCenter.y, ",", hitCenter.z,
+                                            ") r=", hitRadius);
+                            }
+                        }
                     } else {
                         hitRadius = std::max(hitRadius * 1.1f, 0.6f);
                     }
@@ -1476,6 +1490,8 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
 
                 if (closestGuid != 0) {
                     if (closestType == game::ObjectType::GAMEOBJECT) {
+                        LOG_WARNING("[GO-DIAG] Right-click: raypick hit GO 0x",
+                                    std::hex, closestGuid, std::dec);
                         gameHandler.setTarget(closestGuid);
                         gameHandler.interactWithGameObject(closestGuid);
                         return;

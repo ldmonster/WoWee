@@ -1816,7 +1816,7 @@ void MovementHandler::loadTaxiDbc() {
     if (taxiDbcLoaded_) return;
     taxiDbcLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = owner_.services().assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto nodesDbc = am->loadDBC("TaxiNodes.dbc");
@@ -2005,9 +2005,8 @@ void MovementHandler::applyTaxiMountForCurrentNode() {
         if (mountId == 541) mountId = 0;
     }
     if (mountId == 0) {
-        auto& app = core::Application::getInstance();
-        uint32_t gryphonId = app.getGryphonDisplayId();
-        uint32_t wyvernId = app.getWyvernDisplayId();
+        uint32_t gryphonId = owner_.services().gryphonDisplayId;
+        uint32_t wyvernId = owner_.services().wyvernDisplayId;
         if (isAlliance && gryphonId != 0) mountId = gryphonId;
         if (!isAlliance && wyvernId != 0) mountId = wyvernId;
         if (mountId == 0) {
@@ -2496,7 +2495,7 @@ void MovementHandler::loadAreaTriggerDbc() {
     if (owner_.areaTriggerDbcLoaded_) return;
     owner_.areaTriggerDbcLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = owner_.services().assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto dbc = am->loadDBC("AreaTrigger.dbc");

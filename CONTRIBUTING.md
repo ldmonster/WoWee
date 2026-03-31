@@ -12,7 +12,7 @@ make -C build -j$(nproc)
 
 ## Code Style
 
-- **C++17**. Use `#pragma once` for include guards.
+- **C++20**. Use `#pragma once` for include guards.
 - Namespaces: `wowee::game`, `wowee::rendering`, `wowee::ui`, `wowee::core`, `wowee::network`.
 - Conventional commit messages in imperative mood:
   - `feat:` new feature

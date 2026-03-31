@@ -1579,10 +1579,17 @@ bool MessageChatParser::parse(network::Packet& packet, MessageChatData& data) {
             // Read receiver GUID (NamedGuid: guid + optional name for non-player targets)
             data.receiverGuid = packet.readUInt64();
             if (data.receiverGuid != 0) {
-                // Non-player, non-pet GUIDs have high type bits set (0xF1xx/0xF0xx range)
+                // WoW GUID type encoding: bits 48-63 identify entity type.
+                // Players have highGuid=0x0000. Pets use 0xF040 (active pet) or
+                // 0xF014 (creature treated as pet). Mask 0xF0FF isolates the type
+                // nibbles while ignoring the server-specific middle bits.
+                constexpr uint16_t kGuidTypeMask   = 0xF0FF;
+                constexpr uint16_t kGuidTypePet     = 0xF040;
+                constexpr uint16_t kGuidTypeVehicle = 0xF014;
                 uint16_t highGuid = static_cast<uint16_t>(data.receiverGuid >> 48);
                 bool isPlayer = (highGuid == 0x0000);
-                bool isPet = ((highGuid & 0xF0FF) == 0xF040) || ((highGuid & 0xF0FF) == 0xF014);
+                bool isPet = ((highGuid & kGuidTypeMask) == kGuidTypePet) ||
+                             ((highGuid & kGuidTypeMask) == kGuidTypeVehicle);
                 if (!isPlayer && !isPet) {
                     // Read receiver name (SizedCString)
                     uint32_t recvNameLen = packet.readUInt32();

@@ -68,6 +68,8 @@ public:
 
 private:
     void generateMipmaps(VkContext& ctx, VkFormat format, uint32_t width, uint32_t height);
+    // Shared sampler finalization: prefer the global cache, fall back to direct creation
+    bool finalizeSampler(VkDevice device, const VkSamplerCreateInfo& samplerInfo);
 
     AllocatedImage image_{};
     VkSampler sampler_ = VK_NULL_HANDLE;

@@ -47,12 +47,16 @@ layout(location = 0) out vec4 outColor;
 // Dual-scroll detail normals (multi-octave ripple overlay)
 // ============================================================
 vec3 dualScrollWaveNormal(vec2 p, float time) {
-    vec2 d1 = normalize(vec2(0.86, 0.51));
-    vec2 d2 = normalize(vec2(-0.47, 0.88));
-    vec2 d3 = normalize(vec2(0.32, -0.95));
-    float f1 = 0.19, f2 = 0.43, f3 = 0.72;
-    float s1 = 0.95, s2 = 1.73, s3 = 2.40;
-    float a1 = 0.22, a2 = 0.10, a3 = 0.05;
+    // Three wave octaves at different angles, frequencies, and speeds.
+    // Directions are non-axis-aligned to prevent visible tiling patterns.
+    // Frequency increases and amplitude decreases per octave (standard
+    // multi-octave noise layering for natural water appearance).
+    vec2 d1 = normalize(vec2(0.86, 0.51));   // ~30° from +X
+    vec2 d2 = normalize(vec2(-0.47, 0.88));  // ~118° (opposing cross-wave)
+    vec2 d3 = normalize(vec2(0.32, -0.95));  // ~-71° (third axis for variety)
+    float f1 = 0.19, f2 = 0.43, f3 = 0.72;  // spatial frequency (higher = tighter ripples)
+    float s1 = 0.95, s2 = 1.73, s3 = 2.40;  // scroll speed (higher octaves move faster)
+    float a1 = 0.22, a2 = 0.10, a3 = 0.05;  // amplitude (decreasing for natural falloff)
 
     vec2 p1 = p + d1 * (time * s1 * 4.0);
     vec2 p2 = p + d2 * (time * s2 * 4.0);

@@ -25,7 +25,10 @@ void Input::update() {
     Uint32 mouseState = SDL_GetMouseState(&mouseX, &mouseY);
     mousePosition = glm::vec2(static_cast<float>(mouseX), static_cast<float>(mouseY));
 
-    for (int i = 0; i < NUM_MOUSE_BUTTONS; ++i) {
+    // SDL_BUTTON(x) is defined as (1 << (x-1)), so button indices are 1-based.
+    // SDL_BUTTON(0) is undefined behavior (negative shift). Start at 1.
+    currentMouseState[0] = false;
+    for (int i = 1; i < NUM_MOUSE_BUTTONS; ++i) {
         currentMouseState[i] = (mouseState & SDL_BUTTON(i)) != 0;
     }
 

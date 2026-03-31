@@ -1,4 +1,5 @@
 #include "game/game_handler.hpp"
+#include "game/game_utils.hpp"
 #include "game/chat_handler.hpp"
 #include "game/movement_handler.hpp"
 #include "game/combat_handler.hpp"
@@ -91,23 +92,6 @@ bool isAuthCharPipelineOpcode(LogicalOpcode op) {
 } // end anonymous namespace
 
 namespace {
-
-bool isActiveExpansion(const char* expansionId) {
-    auto& app = core::Application::getInstance();
-    auto* registry = app.getExpansionRegistry();
-    if (!registry) return false;
-    auto* profile = registry->getActive();
-    if (!profile) return false;
-    return profile->id == expansionId;
-}
-
-bool isClassicLikeExpansion() {
-    return isActiveExpansion("classic") || isActiveExpansion("turtle");
-}
-
-bool isPreWotlk() {
-    return isClassicLikeExpansion() || isActiveExpansion("tbc");
-}
 
 bool envFlagEnabled(const char* key, bool defaultValue = false) {
     const char* raw = std::getenv(key);
@@ -615,7 +599,7 @@ static QuestQueryRewards tryParseQuestRewards(const std::vector<uint8_t>& data,
 
 template<typename ManagerGetter, typename Callback>
 void GameHandler::withSoundManager(ManagerGetter getter, Callback cb) {
-    if (auto* renderer = core::Application::getInstance().getRenderer()) {
+    if (auto* renderer = services_.renderer) {
         if (auto* mgr = (renderer->*getter)()) cb(mgr);
     }
 }
@@ -639,7 +623,8 @@ void GameHandler::registerWorldHandler(LogicalOpcode op, void (GameHandler::*han
     };
 }
 
-GameHandler::GameHandler() {
+GameHandler::GameHandler(GameServices& services)
+    : services_(services) {
     LOG_DEBUG("GameHandler created");
 
     setActiveOpcodeTable(&opcodeTable_);
@@ -819,7 +804,7 @@ void GameHandler::resetDbcCaches() {
     // Clear the AssetManager DBC file cache so that expansion-specific DBCs
     // (CharSections, ItemDisplayInfo, etc.) are reloaded from the new expansion's
     // MPQ files instead of returning stale data from a previous session/expansion.
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = services_.assetManager;
     if (am) {
         am->clearDBCCache();
     }
@@ -1213,7 +1198,7 @@ void GameHandler::updateTimers(float deltaTime) {
             }
             if (!alreadyAnnounced && pendingLootMoneyAmount_ > 0) {
                 addSystemChatMessage("Looted: " + formatCopperAmount(pendingLootMoneyAmount_));
-                auto* renderer = core::Application::getInstance().getRenderer();
+                auto* renderer = services_.renderer;
                 if (renderer) {
                     if (auto* sfx = renderer->getUiSoundManager()) {
                         if (pendingLootMoneyAmount_ >= 10000) {
@@ -1362,15 +1347,21 @@ void GameHandler::update(float deltaTime) {
             addSystemChatMessage("Interrupted.");
         }
         // Check if client-side cast timer expired (tick-down is in SpellHandler::updateTimers).
-        // SMSG_SPELL_GO normally clears casting, but GO interaction casts are client-timed
-        // and need this fallback to trigger the loot/use action.
+        // Two paths depending on whether this is a GO interaction cast:
         if (spellHandler_ && spellHandler_->casting_ && spellHandler_->castTimeRemaining_ <= 0.0f) {
             if (pendingGameObjectInteractGuid_ != 0) {
-                uint64_t interactGuid = pendingGameObjectInteractGuid_;
+                // GO interaction cast: do NOT call resetCastState() here. The server
+                // sends SMSG_SPELL_GO when the cast completes server-side (~50-200ms
+                // after the client timer expires due to float precision/frame timing).
+                // handleSpellGo checks `wasInTimedCast = casting_ && spellId == currentCastSpellId_`
+                // — if we clear those fields now, wasInTimedCast is false and the loot
+                // path (CMSG_LOOT via lastInteractedGoGuid_) never fires.
+                // Let the cast bar sit at 100% until SMSG_SPELL_GO arrives to clean up.
                 pendingGameObjectInteractGuid_ = 0;
-                performGameObjectInteractionNow(interactGuid);
+            } else {
+                // Regular cast with no GO pending: clean up immediately.
+                spellHandler_->resetCastState();
             }
-            spellHandler_->resetCastState();
         }
 
         // Unit cast states and spell cooldowns are ticked by SpellHandler::updateTimers()
@@ -3099,7 +3090,7 @@ void GameHandler::registerOpcodeHandlers() {
         uint64_t impTargetGuid = packet.readUInt64();
         uint32_t impVisualId   = packet.readUInt32();
         if (impVisualId == 0) return;
-        auto* renderer = core::Application::getInstance().getRenderer();
+        auto* renderer = services_.renderer;
         if (!renderer) return;
         glm::vec3 spawnPos;
         if (impTargetGuid == playerGuid) {
@@ -6108,14 +6099,24 @@ void GameHandler::interactWithNpc(uint64_t guid) {
 }
 
 void GameHandler::interactWithGameObject(uint64_t guid) {
-    if (guid == 0) return;
-    if (!isInWorld()) return;
+    LOG_WARNING("[GO-DIAG] interactWithGameObject called: guid=0x", std::hex, guid, std::dec);
+    if (guid == 0) { LOG_WARNING("[GO-DIAG] BLOCKED: guid==0"); return; }
+    if (!isInWorld()) { LOG_WARNING("[GO-DIAG] BLOCKED: not in world"); return; }
     // Do not overlap an actual spell cast.
-    if (spellHandler_ && spellHandler_->casting_ && spellHandler_->currentCastSpellId_ != 0) return;
+    if (spellHandler_ && spellHandler_->casting_ && spellHandler_->currentCastSpellId_ != 0) {
+        LOG_WARNING("[GO-DIAG] BLOCKED: already casting spellId=", spellHandler_->currentCastSpellId_);
+        return;
+    }
     // Always clear melee intent before GO interactions.
     stopAutoAttack();
-    // Interact immediately; server drives any real cast/channel feedback.
-    pendingGameObjectInteractGuid_ = 0;
+    // Set the pending GO guid so that:
+    // 1. cancelCast() won't send CMSG_CANCEL_CAST for GO-triggered casts
+    //    (e.g., "Opening" on a quest chest) — without this, any movement
+    //    during the cast cancels it server-side and quest credit is lost.
+    // 2. The cast-completion fallback in update() can call
+    //    performGameObjectInteractionNow after the cast timer expires.
+    // 3. isGameObjectInteractionCasting() returns true during GO casts.
+    pendingGameObjectInteractGuid_ = guid;
     performGameObjectInteractionNow(guid);
 }
 
@@ -6220,10 +6221,13 @@ void GameHandler::performGameObjectInteractionNow(uint64_t guid) {
     lastInteractedGoGuid_ = guid;
 
     if (chestLike) {
-        // Chest-like GOs also need a CMSG_LOOT to open the loot window.
-        // Sent in the same frame: USE transitions the GO to lootable state,
-        // then LOOT requests the contents.
-        lootTarget(guid);
+        // Don't send CMSG_LOOT immediately — the server may start a timed cast
+        // (e.g., "Opening") and the GO isn't lootable until the cast finishes.
+        // Sending LOOT prematurely gets an empty response or is silently dropped,
+        // which can interfere with the server's loot state machine.
+        // Instead, handleSpellGo will send LOOT after the cast completes
+        // (using lastInteractedGoGuid_ set above). For instant-open chests
+        // (no cast), the server sends SMSG_LOOT_RESPONSE directly after USE.
     } else if (isMailbox) {
         LOG_INFO("Mailbox interaction: opening mail UI and requesting mail list");
         mailboxGuid_ = guid;
@@ -6367,7 +6371,7 @@ void GameHandler::offerQuestFromItem(uint64_t itemGuid, uint32_t questId) {
 uint64_t GameHandler::getBagItemGuid(int bagIndex, int slotIndex) const {
     if (bagIndex < 0 || bagIndex >= inventory.NUM_BAG_SLOTS) return 0;
     if (slotIndex < 0) return 0;
-    uint64_t bagGuid = equipSlotGuids_[19 + bagIndex];
+    uint64_t bagGuid = equipSlotGuids_[Inventory::FIRST_BAG_EQUIP_SLOT + bagIndex];
     if (bagGuid == 0) return 0;
     auto it = containerContents_.find(bagGuid);
     if (it == containerContents_.end()) return 0;
@@ -7249,7 +7253,7 @@ void GameHandler::loadTitleNameCache() const {
     if (titleNameCacheLoaded_) return;
     titleNameCacheLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = services_.assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto dbc = am->loadDBC("CharTitles.dbc");
@@ -7301,7 +7305,7 @@ void GameHandler::loadAchievementNameCache() {
     if (achievementNameCacheLoaded_) return;
     achievementNameCacheLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = services_.assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto dbc = am->loadDBC("Achievement.dbc");
@@ -7386,7 +7390,7 @@ void GameHandler::loadFactionNameCache() const {
     if (factionNameCacheLoaded_) return;
     factionNameCacheLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = services_.assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto dbc = am->loadDBC("Faction.dbc");
@@ -7487,7 +7491,7 @@ void GameHandler::loadAreaNameCache() const {
     if (areaNameCacheLoaded_) return;
     areaNameCacheLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = services_.assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto dbc = am->loadDBC("WorldMapArea.dbc");
@@ -7522,7 +7526,7 @@ void GameHandler::loadMapNameCache() const {
     if (mapNameCacheLoaded_) return;
     mapNameCacheLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = services_.assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto dbc = am->loadDBC("Map.dbc");
@@ -7555,7 +7559,7 @@ void GameHandler::loadLfgDungeonDbc() const {
     if (lfgDungeonNameCacheLoaded_) return;
     lfgDungeonNameCacheLoaded_ = true;
 
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = services_.assetManager;
     if (!am || !am->isInitialized()) return;
 
     auto dbc = am->loadDBC("LFGDungeons.dbc");
