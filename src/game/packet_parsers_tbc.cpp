@@ -155,6 +155,7 @@ bool TbcPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlock& 
             /*uint32_t splineId =*/ packet.readUInt32();
 
             uint32_t pointCount = packet.readUInt32();
+            // Cap waypoints to prevent DoS from malformed packets allocating huge arrays
             if (pointCount > 256) return false;
 
             // points + endPoint (no splineMode in TBC)
@@ -690,6 +691,8 @@ bool TbcPacketParsers::parseMonsterMove(network::Packet& packet, MonsterMoveData
     if (pointCount == 0) return true;
     if (pointCount > 16384) return false;
 
+    // Spline points are stored uncompressed when Catmull-Rom interpolation (0x80000)
+    // or linear movement (0x2000) flags are set; otherwise they use packed delta format
     bool uncompressed = (data.splineFlags & (0x00080000 | 0x00002000)) != 0;
     if (uncompressed) {
         for (uint32_t i = 0; i < pointCount - 1; i++) {
@@ -1359,6 +1362,8 @@ bool TbcPacketParsers::parseSpellGo(network::Packet& packet, SpellGoData& data) 
         return false;
     }
 
+    // Cap hit targets to prevent oversized allocations from malformed spell packets.
+    // 128 is well above any real WoW AOE spell target count (max ~20 in practice).
     const uint8_t rawHitCount = packet.readUInt8();
     if (rawHitCount > 128) {
         LOG_WARNING("[TBC] Spell go: hitCount capped (requested=", static_cast<int>(rawHitCount), ")");
@@ -1819,6 +1824,8 @@ bool TbcPacketParsers::parseGuildRoster(network::Packet& packet, GuildRosterData
     }
     uint32_t numMembers = packet.readUInt32();
 
+    // Safety cap — guilds rarely exceed 500 members; 1000 prevents excessive
+    // memory allocation from malformed packets while covering all real cases
     const uint32_t MAX_GUILD_MEMBERS = 1000;
     if (numMembers > MAX_GUILD_MEMBERS) {
         LOG_WARNING("TBC GuildRoster: numMembers capped (requested=", numMembers, ")");

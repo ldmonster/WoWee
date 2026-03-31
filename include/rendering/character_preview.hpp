@@ -81,6 +81,8 @@ private:
     // ImGui texture handle for displaying the preview (VkDescriptorSet in Vulkan backend)
     VkDescriptorSet imguiTextureId_ = VK_NULL_HANDLE;
 
+    // 4:5 portrait aspect ratio — taller than wide to show full character body
+    // from head to feet in the character creation/selection screen
     static constexpr int fboWidth_ = 400;
     static constexpr int fboHeight_ = 500;
 
