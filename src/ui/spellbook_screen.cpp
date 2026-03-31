@@ -175,9 +175,11 @@ void SpellbookScreen::loadSpellDBC(pipeline::AssetManager* assetManager) {
                 "expansion layout");
     }
 
+    // If dbc_layouts.json was missing or its field names didn't match, retry with
+    // hard-coded WotLK field indices as a safety net. fieldCount >= 200 distinguishes
+    // WotLK (234 fields) from Classic (148) to avoid misreading shorter DBCs.
     if (spellData.empty() && fieldCount >= 200) {
         LOG_INFO("Spellbook: Retrying with WotLK field indices (DBC has ", fieldCount, " fields)");
-        // WotLK Spell.dbc field indices (verified against 3.3.5a schema); SchoolMask at field 225
         schoolField_  = 225;
         isSchoolEnum_ = false;
         tryLoad(0, 4, 133, 136, 153, 139, 14, 39, 47, 49, "WotLK fallback");
@@ -441,7 +443,9 @@ VkDescriptorSet SpellbookScreen::getSpellIcon(uint32_t iconId, pipeline::AssetMa
     static int lastImGuiFrame = -1;
     int curFrame = ImGui::GetFrameCount();
     if (curFrame != lastImGuiFrame) { loadsThisFrame = 0; lastImGuiFrame = curFrame; }
-    if (loadsThisFrame >= 4) return VK_NULL_HANDLE;  // defer — do NOT cache null here
+    // Defer without caching — returning null here allows retry next frame when
+    // the budget resets, rather than permanently blacklisting the icon as missing
+    if (loadsThisFrame >= 4) return VK_NULL_HANDLE;
 
     auto pit = spellIconPaths.find(iconId);
     if (pit == spellIconPaths.end()) {
