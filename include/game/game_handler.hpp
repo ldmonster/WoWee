@@ -627,7 +627,6 @@ public:
     void resetWardenState();     // clear all warden module/crypto state for connect/disconnect
     void clearUnitCaches();      // clear per-unit cast states and aura caches
 
-    // ---- Phase 1: Name queries (delegated to EntityController) ----
     void queryPlayerName(uint64_t guid);
     void queryCreatureInfo(uint32_t entry, uint64_t guid);
     void queryGameObjectInfo(uint32_t entry, uint64_t guid);
@@ -661,7 +660,6 @@ public:
         return entityController_->getCreatureFamily(entry);
     }
 
-    // ---- Phase 2: Combat (delegated to CombatHandler) ----
     void startAutoAttack(uint64_t targetGuid);
     void stopAutoAttack();
     bool isAutoAttacking() const;
@@ -696,7 +694,6 @@ public:
     const std::vector<ThreatEntry>* getThreatList(uint64_t unitGuid) const;
     const std::vector<ThreatEntry>* getTargetThreatList() const;
 
-    // ---- Phase 3: Spells ----
     void castSpell(uint32_t spellId, uint64_t targetGuid = 0);
     void cancelCast();
     void cancelAura(uint32_t spellId);
@@ -1239,7 +1236,7 @@ public:
     void acceptResurrect();
     void declineResurrect();
 
-    // ---- Phase 4: Group ----
+    // ---- Group ----
     void inviteToGroup(const std::string& playerName);
     void acceptGroupInvite();
     void declineGroupInvite();
@@ -1396,7 +1393,7 @@ public:
         return nullptr;
     }
 
-    // ---- Phase 5: Loot ----
+    // ---- Loot ----
     void lootTarget(uint64_t guid);
     void lootItem(uint8_t slotIndex);
     void closeLoot();
@@ -2177,7 +2174,6 @@ private:
      */
     void handlePong(network::Packet& packet);
 
-    // ---- Phase 1 handlers (entity queries delegated to EntityController) ----
     void handleItemQueryResponse(network::Packet& packet);
     void queryItemInfo(uint32_t entry, uint64_t guid);
     void rebuildOnlineInventory();
@@ -2190,19 +2186,12 @@ private:
     void extractContainerFields(uint64_t containerGuid, const std::map<uint16_t, uint32_t>& fields);
     uint64_t resolveOnlineItemGuid(uint32_t itemId) const;
 
-    // ---- Phase 2 handlers (dead — dispatched via CombatHandler) ----
     // handleAttackStart, handleAttackStop, handleAttackerStateUpdate,
     // handleSpellDamageLog, handleSpellHealLog removed
 
     // ---- Equipment set handler ----
     void handleUpdateAuraDuration(uint8_t slot, uint32_t durationMs);
     // handleSetForcedReactions — dispatched via CombatHandler
-
-    // ---- Phase 3 handlers ----
-
-    // ---- Talent handlers ----
-
-    // ---- Phase 4 handlers ----
 
     // ---- Guild handlers ----
     void handlePetSpells(network::Packet& packet);
@@ -2217,7 +2206,6 @@ private:
 
     // ---- Other player movement (MSG_MOVE_* from server) ----
 
-    // ---- Phase 5 handlers ----
     void clearPendingQuestAccept(uint32_t questId);
     void triggerQuestAcceptResync(uint32_t questId, uint64_t npcGuid, const char* reason);
     bool hasQuestInLog(uint32_t questId) const;
@@ -2411,7 +2399,6 @@ private:
     uint32_t homeBindZoneId_ = 0;
     glm::vec3 homeBindPos_{0.0f};
 
-    // ---- Phase 1: Name caches (moved to EntityController) ----
 
     // ---- Friend/contact list cache ----
     std::unordered_map<std::string, uint64_t> friendsCache;  // name -> guid
@@ -2510,11 +2497,10 @@ private:
     std::unordered_set<uint64_t> pendingAutoInspect_;
     float inspectRateLimit_ = 0.0f;
 
-    // ---- Phase 2: Combat (state moved to CombatHandler) ----
+    // ---- Combat ----
     bool wasCombat_ = false;  // Previous frame combat state for PLAYER_REGEN edge detection
     std::deque<std::string>    areaTriggerMsgs_;
 
-    // ---- Phase 3: Spells ----
     WorldEntryCallback worldEntryCallback_;
     KnockBackCallback knockBackCallback_;
     CameraShakeCallback cameraShakeCallback_;
@@ -2674,7 +2660,7 @@ private:
     void loadFactionNameCache() const;
     std::string getFactionName(uint32_t factionId) const;
 
-    // ---- Phase 4: Group ----
+    // ---- Group ----
     GroupListData partyData;
     bool pendingGroupInvite = false;
     std::string pendingInviterName;
@@ -2745,7 +2731,7 @@ private:
     // Barber shop
     bool barberShopOpen_ = false;
 
-    // ---- Phase 5: Loot ----
+    // ---- Loot ----
     bool lootWindowOpen = false;
     bool autoLoot_ = false;
     bool autoSellGrey_ = false;

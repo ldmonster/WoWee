@@ -1,0 +1,76 @@
+#pragma once
+
+#include <imgui.h>
+#include <vulkan/vulkan.h>
+#include <string>
+#include <vector>
+#include <cstdint>
+#include <functional>
+
+namespace wowee {
+namespace game { class GameHandler; }
+namespace pipeline { class AssetManager; }
+namespace ui {
+
+class SettingsPanel;
+class SpellbookScreen;
+
+/**
+ * Combat UI overlay manager (extracted from GameScreen)
+ *
+ * Owns all combat-related rendering:
+ *   cast bar, cooldown tracker, raid warning overlay, floating combat text,
+ *   DPS/HPS meter, buff bar, battleground score HUD, combat log,
+ *   threat window, BG scoreboard.
+ */
+class CombatUI {
+public:
+    CombatUI() = default;
+
+    // ---- Callback type for spell icon lookup (stays in GameScreen) ----
+    using SpellIconFn = std::function<VkDescriptorSet(uint32_t spellId, pipeline::AssetManager*)>;
+
+    // ---- Toggle booleans (written by slash commands / escape handler / settings) ----
+    bool showCombatLog_ = false;
+    bool showThreatWindow_ = false;
+    bool showBgScoreboard_ = false;
+
+    // ---- Raid Warning / Boss Emote big-text overlay ----
+    struct RaidWarnEntry {
+        std::string text;
+        float age = 0.0f;
+        bool isBossEmote = false;
+        static constexpr float LIFETIME = 5.0f;
+    };
+    std::vector<RaidWarnEntry> raidWarnEntries_;
+    bool raidWarnCallbackSet_ = false;
+    size_t raidWarnChatSeenCount_ = 0;
+
+    // ---- DPS meter state ----
+    float dpsCombatAge_ = 0.0f;
+    bool dpsWasInCombat_ = false;
+    float dpsEncounterDamage_ = 0.0f;
+    float dpsEncounterHeal_   = 0.0f;
+    size_t dpsLogSeenCount_   = 0;
+
+    // ---- Public render methods ----
+    void renderCastBar(game::GameHandler& gameHandler, SpellIconFn getSpellIcon);
+    void renderCooldownTracker(game::GameHandler& gameHandler,
+                               const SettingsPanel& settings,
+                               SpellIconFn getSpellIcon);
+    void renderRaidWarningOverlay(game::GameHandler& gameHandler);
+    void renderCombatText(game::GameHandler& gameHandler);
+    void renderDPSMeter(game::GameHandler& gameHandler,
+                        const SettingsPanel& settings);
+    void renderBuffBar(game::GameHandler& gameHandler,
+                       SpellbookScreen& spellbookScreen,
+                       SpellIconFn getSpellIcon);
+    void renderBattlegroundScore(game::GameHandler& gameHandler);
+    void renderCombatLog(game::GameHandler& gameHandler,
+                         SpellbookScreen& spellbookScreen);
+    void renderThreatWindow(game::GameHandler& gameHandler);
+    void renderBgScoreboard(game::GameHandler& gameHandler);
+};
+
+} // namespace ui
+} // namespace wowee

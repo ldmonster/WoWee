@@ -616,6 +616,14 @@ set(WOWEE_SOURCES
     src/ui/character_create_screen.cpp
     src/ui/character_screen.cpp
     src/ui/game_screen.cpp
+    src/ui/chat_panel.cpp
+    src/ui/toast_manager.cpp
+    src/ui/dialog_manager.cpp
+    src/ui/settings_panel.cpp
+    src/ui/combat_ui.cpp
+    src/ui/social_panel.cpp
+    src/ui/action_bar_panel.cpp
+    src/ui/window_manager.cpp
     src/ui/inventory_screen.cpp
     src/ui/quest_log_screen.cpp
     src/ui/spellbook_screen.cpp

@@ -143,28 +143,25 @@ private:
     void applyUpdateObjectBlock(const UpdateBlock& block, bool& newItemCreated);
     void finalizeUpdateObjectBatch(bool newItemCreated);
 
-    // --- Phase 1: Extracted helper methods ---
     bool extractPlayerAppearance(const std::map<uint16_t, uint32_t>& fields,
                                  uint8_t& outRace, uint8_t& outGender,
                                  uint32_t& outAppearanceBytes, uint8_t& outFacial) const;
     void maybeDetectCoinageIndex(const std::map<uint16_t, uint32_t>& oldFields,
                                  const std::map<uint16_t, uint32_t>& newFields);
 
-    // --- Phase 2: Update type handlers ---
     void handleCreateObject(const UpdateBlock& block, bool& newItemCreated);
     void handleValuesUpdate(const UpdateBlock& block);
     void handleMovementUpdate(const UpdateBlock& block);
 
-    // --- Phase 3: Concern-specific helpers ---
-    // 3i: Update transport-relative child attachment (non-player entities).
+    // Update transport-relative child attachment (non-player entities).
     //     Consolidates identical logic from CREATE/VALUES/MOVEMENT handlers.
     void updateNonPlayerTransportAttachment(const UpdateBlock& block,
                                             const std::shared_ptr<Entity>& entity,
                                             ObjectType entityType);
-    // 3f: Rebuild playerAuras_ from UNIT_FIELD_AURAS (Classic/vanilla only).
+    // Rebuild playerAuras_ from UNIT_FIELD_AURAS (Classic/vanilla only).
     //     Consolidates identical logic from CREATE and VALUES handlers.
     void syncClassicAurasFromFields(const std::shared_ptr<Entity>& entity);
-    // 3h: Detect mount/dismount from UNIT_FIELD_MOUNTDISPLAYID changes (self-player only).
+    // Detect mount/dismount from UNIT_FIELD_MOUNTDISPLAYID changes (self-player only).
     //     Consolidates identical logic from CREATE and VALUES handlers.
     void detectPlayerMountChange(uint32_t newMountDisplayId,
                                  const std::map<uint16_t, uint32_t>& blockFields);
@@ -172,7 +169,6 @@ private:
     // Shared player-death handler: caches corpse position, sets death state.
     void markPlayerDead(const char* source);
 
-    // --- Phase 4: Field index cache structs ---
     // Cached field indices resolved once per handler call to avoid repeated lookups.
     struct UnitFieldIndices {
         uint16_t health, maxHealth, powerBase, maxPowerBase;
@@ -202,43 +198,42 @@ private:
         uint32_t oldDisplayId = 0;
     };
 
-    // --- Phase 3: Extracted concern-specific helpers (continued) ---
-    // 3a: Entity factory — creates the correct Entity subclass for the given block.
+    // Entity factory — creates the correct Entity subclass for the given block.
     std::shared_ptr<Entity> createEntityFromBlock(const UpdateBlock& block);
-    // 3b: Track player-on-transport state from movement blocks.
+    // Track player-on-transport state from movement blocks.
     void applyPlayerTransportState(const UpdateBlock& block,
                                     const std::shared_ptr<Entity>& entity,
                                     const glm::vec3& canonicalPos, float oCanonical,
                                     bool updateMovementInfoPos);
-    // 3c: Apply unit fields during CREATE — returns true if entity is initially dead.
+    // Apply unit fields during CREATE — returns true if entity is initially dead.
     bool applyUnitFieldsOnCreate(const UpdateBlock& block,
                                   std::shared_ptr<Unit>& unit,
                                   const UnitFieldIndices& ufi);
-    // 3c: Apply unit fields during VALUES — returns change tracking result.
+    // Apply unit fields during VALUES — returns change tracking result.
     UnitFieldUpdateResult applyUnitFieldsOnUpdate(const UpdateBlock& block,
                                                     const std::shared_ptr<Entity>& entity,
                                                     std::shared_ptr<Unit>& unit,
                                                     const UnitFieldIndices& ufi);
-    // 3d: Apply player stat fields (XP, inventory, skills, etc.). isCreate=true for CREATE path.
+    // Apply player stat fields (XP, inventory, skills, etc.). isCreate=true for CREATE path.
     bool applyPlayerStatFields(const std::map<uint16_t, uint32_t>& fields,
                                 const PlayerFieldIndices& pfi, bool isCreate);
-    // 3e: Dispatch spawn callbacks (creature/player) — deduplicates CREATE and VALUES paths.
+    // Dispatch spawn callbacks (creature/player) — deduplicates CREATE and VALUES paths.
     void dispatchEntitySpawn(uint64_t guid, ObjectType objectType,
                               const std::shared_ptr<Entity>& entity,
                               const std::shared_ptr<Unit>& unit, bool isDead);
-    // 3g: Track item/container on CREATE.
+    // Track item/container on CREATE.
     void trackItemOnCreate(const UpdateBlock& block, bool& newItemCreated);
-    // 3g: Update item fields on VALUES update.
+    // Update item fields on VALUES update.
     void updateItemOnValuesUpdate(const UpdateBlock& block,
                                    const std::shared_ptr<Entity>& entity);
 
-    // --- Phase 5: Strategy pattern — object-type handler interface ---
     // Allows extending object-type handling without modifying handler dispatch.
     struct IObjectTypeHandler {
         virtual ~IObjectTypeHandler() = default;
-        virtual void onCreate(const UpdateBlock&, std::shared_ptr<Entity>&, bool&) {}
-        virtual void onValuesUpdate(const UpdateBlock&, std::shared_ptr<Entity>&) {}
-        virtual void onMovementUpdate(const UpdateBlock&, std::shared_ptr<Entity>&) {}
+        virtual void onCreate(const UpdateBlock& /*block*/, std::shared_ptr<Entity>& /*entity*/,
+                              bool& /*newItemCreated*/) {}
+        virtual void onValuesUpdate(const UpdateBlock& /*block*/, std::shared_ptr<Entity>& /*entity*/) {}
+        virtual void onMovementUpdate(const UpdateBlock& /*block*/, std::shared_ptr<Entity>& /*entity*/) {}
     };
     struct UnitTypeHandler;
     struct PlayerTypeHandler;
@@ -249,7 +244,6 @@ private:
     void initTypeHandlers();
     IObjectTypeHandler* getTypeHandler(ObjectType type) const;
 
-    // --- Phase 5: Type-specific handler implementations (trampolined from handlers) ---
     void onCreateUnit(const UpdateBlock& block, std::shared_ptr<Entity>& entity);
     void onCreatePlayer(const UpdateBlock& block, std::shared_ptr<Entity>& entity);
     void onCreateGameObject(const UpdateBlock& block, std::shared_ptr<Entity>& entity);
@@ -264,7 +258,6 @@ private:
     void onValuesUpdateItem(const UpdateBlock& block, std::shared_ptr<Entity>& entity);
     void onValuesUpdateGameObject(const UpdateBlock& block, std::shared_ptr<Entity>& entity);
 
-    // --- Phase 6: Deferred event bus ---
     // Collects addon events during block processing, flushes at the end.
     struct PendingEvents {
         std::vector<std::pair<std::string, std::vector<std::string>>> events;
