@@ -4,6 +4,7 @@
 #include "core/input.hpp"
 #include "core/entity_spawner.hpp"
 #include "core/appearance_composer.hpp"
+#include "core/world_loader.hpp"
 #include "game/character.hpp"
 #include "game/game_services.hpp"
 #include "pipeline/blp_loader.hpp"
@@ -43,6 +44,8 @@ enum class AppState {
 };
 
 class Application {
+    friend class WorldLoader;
+
 public:
     Application();
     ~Application();
@@ -98,14 +101,14 @@ public:
     // Appearance composer access
     AppearanceComposer* getAppearanceComposer() { return appearanceComposer_.get(); }
 
+    // World loader access
+    WorldLoader* getWorldLoader() { return worldLoader_.get(); }
+
 private:
     void update(float deltaTime);
     void render();
     void setupUICallbacks();
     void spawnPlayerCharacter();
-    static const char* mapIdToName(uint32_t mapId);
-    static const char* mapDisplayName(uint32_t mapId);
-    void loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float z);
     void buildFactionHostilityMap(uint8_t playerRace);
     void setupTestTransport();  // Test transport boat for development
 
@@ -125,6 +128,7 @@ private:
     std::unique_ptr<pipeline::DBCLayout> dbcLayout_;
     std::unique_ptr<EntitySpawner> entitySpawner_;
     std::unique_ptr<AppearanceComposer> appearanceComposer_;
+    std::unique_ptr<WorldLoader> worldLoader_;
 
     AppState state = AppState::AUTHENTICATION;
     bool running = false;
@@ -147,13 +151,6 @@ private:
     static inline const std::vector<std::string> emptyStringVec_;
 
     bool lastTaxiFlight_ = false;
-    uint32_t loadedMapId_ = 0xFFFFFFFF;  // Map ID of currently loaded terrain (0xFFFFFFFF = none)
-    uint32_t worldLoadGeneration_ = 0;   // Incremented on each world entry to detect re-entrant loads
-    bool loadingWorld_ = false;          // True while loadOnlineWorldTerrain is running
-    struct PendingWorldEntry {
-        uint32_t mapId; float x, y, z;
-    };
-    std::optional<PendingWorldEntry> pendingWorldEntry_;  // Deferred world entry during loading
     float taxiLandingClampTimer_ = 0.0f;
     float worldEntryMovementGraceTimer_ = 0.0f;
 
@@ -175,29 +172,10 @@ private:
     uint64_t chargeTargetGuid_ = 0;
 
     bool wasAutoAttacking_ = false;
-    bool mapNameCacheLoaded_ = false;
-    std::unordered_map<uint32_t, std::string> mapNameById_;
 
     // Quest marker billboard sprites (above NPCs)
     void loadQuestMarkerModels();  // Now loads BLP textures
     void updateQuestMarkers();     // Updates billboard positions
-
-    // Background world preloader — warms AssetManager file cache for the
-    // expected world before the user clicks Enter World.
-    struct WorldPreload {
-        uint32_t mapId = 0;
-        std::string mapName;
-        int centerTileX = 0;
-        int centerTileY = 0;
-        std::atomic<bool> cancel{false};
-        std::vector<std::thread> workers;
-    };
-    std::unique_ptr<WorldPreload> worldPreload_;
-    void startWorldPreload(uint32_t mapId, const std::string& mapName, float serverX, float serverY);
-    void cancelWorldPreload();
-    void saveLastWorldInfo(uint32_t mapId, const std::string& mapName, float serverX, float serverY);
-    struct LastWorldInfo { uint32_t mapId = 0; std::string mapName; float x = 0, y = 0; bool valid = false; };
-    LastWorldInfo loadLastWorldInfo() const;
 };
 
 } // namespace core
