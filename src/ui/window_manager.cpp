@@ -83,7 +83,7 @@ void WindowManager::renderLootWindow(game::GameHandler& gameHandler,
                               ChatPanel& chatPanel) {
     if (!gameHandler.isLootWindowOpen()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 150, 200), ImGuiCond_Appearing);
@@ -273,7 +273,7 @@ void WindowManager::renderGossipWindow(game::GameHandler& gameHandler,
                                ChatPanel& chatPanel) {
     if (!gameHandler.isGossipWindowOpen()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 200, 150), ImGuiCond_Appearing);
@@ -445,7 +445,7 @@ void WindowManager::renderQuestDetailsWindow(game::GameHandler& gameHandler,
                                           InventoryScreen& inventoryScreen) {
     if (!gameHandler.isQuestDetailsOpen()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -569,7 +569,7 @@ void WindowManager::renderQuestRequestItemsWindow(game::GameHandler& gameHandler
                                                InventoryScreen& inventoryScreen) {
     if (!gameHandler.isQuestRequestItemsOpen()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -672,7 +672,7 @@ void WindowManager::renderQuestOfferRewardWindow(game::GameHandler& gameHandler,
                                               InventoryScreen& inventoryScreen) {
     if (!gameHandler.isQuestOfferRewardOpen()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -845,7 +845,7 @@ void WindowManager::renderQuestOfferRewardWindow(game::GameHandler& gameHandler,
 void WindowManager::loadExtendedCostDBC() {
     if (extendedCostDbLoaded_) return;
     extendedCostDbLoaded_ = true;
-    auto* am = core::Application::getInstance().getAssetManager();
+    auto* am = services_.assetManager;
     if (!am || !am->isInitialized()) return;
     auto dbc = am->loadDBC("ItemExtendedCost.dbc");
     if (!dbc || !dbc->isLoaded()) return;
@@ -898,7 +898,7 @@ void WindowManager::renderVendorWindow(game::GameHandler& gameHandler,
                                ChatPanel& chatPanel) {
     if (!gameHandler.isVendorWindowOpen()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 200, 100), ImGuiCond_Appearing);
@@ -1236,9 +1236,9 @@ void WindowManager::renderTrainerWindow(game::GameHandler& gameHandler,
                                 SpellIconFn getSpellIcon) {
     if (!gameHandler.isTrainerWindowOpen()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
-    auto* assetMgr = core::Application::getInstance().getAssetManager();
+    auto* assetMgr = services_.assetManager;
 
     ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 225, 100), ImGuiCond_Appearing);
     ImGui::SetNextWindowSize(ImVec2(500, 450), ImGuiCond_Appearing);
@@ -1701,7 +1701,7 @@ void WindowManager::renderEscapeMenu(SettingsPanel& settingsPanel) {
             settingsPanel.showEscapeSettingsNotice = false;
         }
         if (ImGui::Button("Quit", ImVec2(-1, 0))) {
-            auto* renderer = core::Application::getInstance().getRenderer();
+            auto* renderer = services_.renderer;
             if (renderer) {
                 if (auto* music = renderer->getMusicManager()) {
                     music->stopMusic(0.0f);
@@ -1763,7 +1763,7 @@ void WindowManager::renderBarberShopWindow(game::GameHandler& gameHandler) {
     int maxHairColor = static_cast<int>(game::getMaxHairColor(raceEnum, gender));
     int maxFacialHair = static_cast<int>(game::getMaxFacialFeature(raceEnum, gender));
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
     float winW = 300.0f;
@@ -1847,7 +1847,7 @@ void WindowManager::renderBarberShopWindow(game::GameHandler& gameHandler) {
 void WindowManager::renderStableWindow(game::GameHandler& gameHandler) {
     if (!gameHandler.isStableWindowOpen()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth())  : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -1960,7 +1960,7 @@ void WindowManager::renderStableWindow(game::GameHandler& gameHandler) {
 void WindowManager::renderTaxiWindow(game::GameHandler& gameHandler) {
     if (!gameHandler.isTaxiWindowOpen()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 200, 150), ImGuiCond_Appearing);
@@ -2058,7 +2058,7 @@ void WindowManager::renderTaxiWindow(game::GameHandler& gameHandler) {
 void WindowManager::renderLogoutCountdown(game::GameHandler& gameHandler) {
     if (!gameHandler.isLoggingOut()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth())  : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -2127,7 +2127,7 @@ void WindowManager::renderDeathScreen(game::GameHandler& gameHandler) {
         deathElapsed_ += dt;
     }
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -2216,7 +2216,7 @@ void WindowManager::renderDeathScreen(game::GameHandler& gameHandler) {
 void WindowManager::renderReclaimCorpseButton(game::GameHandler& gameHandler) {
     if (!gameHandler.isPlayerGhost() || !gameHandler.canReclaimCorpse()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -2274,7 +2274,7 @@ void WindowManager::renderMailWindow(game::GameHandler& gameHandler,
                              ChatPanel& chatPanel) {
     if (!gameHandler.isMailboxOpen()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 250, 80), ImGuiCond_Appearing);
@@ -2553,7 +2553,7 @@ void WindowManager::renderMailComposeWindow(game::GameHandler& gameHandler,
                                    InventoryScreen& inventoryScreen) {
     if (!gameHandler.isMailComposeOpen()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -3769,7 +3769,7 @@ void WindowManager::renderAchievementWindow(game::GameHandler& gameHandler) {
             static bool s_criteriaDataLoaded = false;
             if (!s_criteriaDataLoaded) {
                 s_criteriaDataLoaded = true;
-                auto* am = core::Application::getInstance().getAssetManager();
+                auto* am = services_.assetManager;
                 if (am && am->isInitialized()) {
                     auto dbc = am->loadDBC("AchievementCriteria.dbc");
                     if (dbc && dbc->isLoaded() && dbc->getFieldCount() >= 10) {

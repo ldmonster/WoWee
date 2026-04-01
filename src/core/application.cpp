@@ -39,6 +39,7 @@
 #include "pipeline/wdt_loader.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "ui/ui_manager.hpp"
+#include "ui/ui_services.hpp"
 #include "auth/auth_handler.hpp"
 #include "game/game_handler.hpp"
 #include "game/transport_manager.hpp"
@@ -227,6 +228,20 @@ bool Application::initialize() {
         // Wire AppearanceComposer to UI components (Phase A singleton breaking)
         if (uiManager) {
             uiManager->setAppearanceComposer(appearanceComposer_.get());
+            
+            // Wire all services to UI components (Phase B singleton breaking)
+            ui::UIServices uiServices;
+            uiServices.window = window.get();
+            uiServices.renderer = renderer.get();
+            uiServices.assetManager = assetManager.get();
+            uiServices.gameHandler = gameHandler.get();
+            uiServices.expansionRegistry = expansionRegistry_.get();
+            uiServices.addonManager = addonManager_.get();  // May be nullptr here, re-wire later
+            uiServices.audioCoordinator = audioCoordinator_.get();
+            uiServices.entitySpawner = entitySpawner_.get();
+            uiServices.appearanceComposer = appearanceComposer_.get();
+            uiServices.worldLoader = worldLoader_.get();
+            uiManager->setServices(uiServices);
         }
 
         // Ensure the main in-world CharacterRenderer can load textures immediately.
@@ -504,6 +519,22 @@ bool Application::initialize() {
             *this, renderer.get(), assetManager.get(), gameHandler.get(),
             entitySpawner_.get(), appearanceComposer_.get(), window.get(),
             world.get(), addonManager_.get());
+
+        // Re-wire UIServices now that all services (addonManager_, worldLoader_) are available
+        if (uiManager) {
+            ui::UIServices uiServices;
+            uiServices.window = window.get();
+            uiServices.renderer = renderer.get();
+            uiServices.assetManager = assetManager.get();
+            uiServices.gameHandler = gameHandler.get();
+            uiServices.expansionRegistry = expansionRegistry_.get();
+            uiServices.addonManager = addonManager_.get();
+            uiServices.audioCoordinator = audioCoordinator_.get();
+            uiServices.entitySpawner = entitySpawner_.get();
+            uiServices.appearanceComposer = appearanceComposer_.get();
+            uiServices.worldLoader = worldLoader_.get();
+            uiManager->setServices(uiServices);
+        }
 
         // Start background preload for last-played character's world.
         // Warms the file cache so terrain tile loading is faster at Enter World.

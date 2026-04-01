@@ -17,6 +17,7 @@
 #include "ui/social_panel.hpp"
 #include "ui/action_bar_panel.hpp"
 #include "ui/window_manager.hpp"
+#include "ui/ui_services.hpp"
 #include <vulkan/vulkan.h>
 #include <imgui.h>
 #include <string>
@@ -54,8 +55,13 @@ public:
     // Dependency injection for extracted classes (Phase A singleton breaking)
     void setAppearanceComposer(core::AppearanceComposer* ac) { appearanceComposer_ = ac; }
 
+    // Section 3.5: UIServices injection (Phase B singleton breaking)
+    void setServices(const UIServices& services);
+
 private:
-    // Injected dependencies (replaces getInstance() calls)
+    // Injected UI services (Section 3.5 Phase B - replaces getInstance() calls)
+    UIServices services_;
+    // Legacy pointer for Phase A compatibility (will be removed when all callsites migrate)
     core::AppearanceComposer* appearanceComposer_ = nullptr;
     // Chat panel (extracted from GameScreen — owns all chat state and rendering)
     ChatPanel chatPanel_;

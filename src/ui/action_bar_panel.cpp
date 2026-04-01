@@ -172,7 +172,7 @@ void ActionBarPanel::renderActionBar(game::GameHandler& gameHandler,
     ImVec2 displaySize = ImGui::GetIO().DisplaySize;
     float screenW = displaySize.x > 0.0f ? displaySize.x : 1280.0f;
     float screenH = displaySize.y > 0.0f ? displaySize.y : 720.0f;
-    auto* assetMgr = core::Application::getInstance().getAssetManager();
+    auto* assetMgr = services_.assetManager;
 
     float slotSize = 48.0f * settingsPanel.pendingActionBarScale;
     float spacing = 4.0f;
@@ -1107,7 +1107,7 @@ void ActionBarPanel::renderStanceBar(game::GameHandler& gameHandler,
     ImVec2 displaySize = ImGui::GetIO().DisplaySize;
     float screenW = displaySize.x > 0.0f ? displaySize.x : 1280.0f;
     float screenH = displaySize.y > 0.0f ? displaySize.y : 720.0f;
-    auto* assetMgr = core::Application::getInstance().getAssetManager();
+    auto* assetMgr = services_.assetManager;
 
     // Match the action bar slot size so they align neatly
     float slotSize = 38.0f;
@@ -1196,7 +1196,7 @@ void ActionBarPanel::renderBagBar(game::GameHandler& gameHandler,
     ImVec2 displaySize = ImGui::GetIO().DisplaySize;
     float screenW = displaySize.x > 0.0f ? displaySize.x : 1280.0f;
     float screenH = displaySize.y > 0.0f ? displaySize.y : 720.0f;
-    auto* assetMgr = core::Application::getInstance().getAssetManager();
+    auto* assetMgr = services_.assetManager;
 
     float slotSize = 42.0f;
     float spacing = 4.0f;
@@ -1232,7 +1232,7 @@ void ActionBarPanel::renderBagBar(game::GameHandler& gameHandler,
             if (!blpData.empty()) {
                 auto image = pipeline::BLPLoader::load(blpData);
                 if (image.isValid()) {
-                    auto* w = core::Application::getInstance().getWindow();
+                    auto* w = services_.window;
                     auto* vkCtx = w ? w->getVkContext() : nullptr;
                     if (vkCtx)
                         backpackIconTexture_ = vkCtx->uploadImGuiTexture(image.data.data(), image.width, image.height);
@@ -1483,7 +1483,7 @@ void ActionBarPanel::renderXpBar(game::GameHandler& gameHandler,
     ImVec2 displaySize = ImGui::GetIO().DisplaySize;
     float screenW = displaySize.x > 0.0f ? displaySize.x : 1280.0f;
     float screenH = displaySize.y > 0.0f ? displaySize.y : 720.0f;
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     (void)window;  // Not used for positioning; kept for AssetManager if needed
 
     // Position just above both action bars (bar1 at screenH-barH, bar2 above that)

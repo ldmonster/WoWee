@@ -69,7 +69,7 @@ void DialogManager::renderLateDialogs(game::GameHandler& gameHandler) {
 void DialogManager::renderGroupInvitePopup(game::GameHandler& gameHandler) {
     if (!gameHandler.hasPendingGroupInvite()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 150, 200), ImGuiCond_Always);
@@ -93,7 +93,7 @@ void DialogManager::renderGroupInvitePopup(game::GameHandler& gameHandler) {
 void DialogManager::renderDuelRequestPopup(game::GameHandler& gameHandler) {
     if (!gameHandler.hasPendingDuelRequest()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 150, 250), ImGuiCond_Always);
@@ -158,7 +158,7 @@ void DialogManager::renderDuelCountdown(game::GameHandler& gameHandler) {
 void DialogManager::renderItemTextWindow(game::GameHandler& gameHandler) {
     if (!gameHandler.isItemTextOpen()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) :  720.0f;
 
@@ -194,7 +194,7 @@ void DialogManager::renderItemTextWindow(game::GameHandler& gameHandler) {
 void DialogManager::renderSharedQuestPopup(game::GameHandler& gameHandler) {
     if (!gameHandler.hasPendingSharedQuest()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 175, 490), ImGuiCond_Always);
@@ -224,7 +224,7 @@ void DialogManager::renderSummonRequestPopup(game::GameHandler& gameHandler) {
     gameHandler.tickSummonTimeout(dt);
     if (!gameHandler.hasPendingSummonRequest()) return;  // expired
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 175, 430), ImGuiCond_Always);
@@ -252,7 +252,7 @@ void DialogManager::renderSummonRequestPopup(game::GameHandler& gameHandler) {
 void DialogManager::renderTradeRequestPopup(game::GameHandler& gameHandler) {
     if (!gameHandler.hasPendingTradeRequest()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 150, 370), ImGuiCond_Always);
@@ -284,7 +284,7 @@ void DialogManager::renderTradeWindow(game::GameHandler& gameHandler,
     const uint64_t peerGold = gameHandler.getPeerTradeGold();
     const auto& peerName = gameHandler.getTradePeerName();
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -443,7 +443,7 @@ void DialogManager::renderLootRollPopup(game::GameHandler& gameHandler,
 
     const auto& roll = gameHandler.getPendingLootRoll();
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 175, 310), ImGuiCond_Always);
@@ -584,7 +584,7 @@ void DialogManager::renderLootRollPopup(game::GameHandler& gameHandler,
 void DialogManager::renderGuildInvitePopup(game::GameHandler& gameHandler) {
     if (!gameHandler.hasPendingGuildInvite()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     ImGui::SetNextWindowPos(ImVec2(screenW / 2 - 175, 250), ImGuiCond_Always);
@@ -610,7 +610,7 @@ void DialogManager::renderGuildInvitePopup(game::GameHandler& gameHandler) {
 void DialogManager::renderReadyCheckPopup(game::GameHandler& gameHandler) {
     if (!gameHandler.hasPendingReadyCheck()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -684,7 +684,7 @@ void DialogManager::renderBgInvitePopup(game::GameHandler& gameHandler) {
         return;
     }
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -745,7 +745,7 @@ void DialogManager::renderBfMgrInvitePopup(game::GameHandler& gameHandler) {
     // Only shown on WotLK servers (outdoor battlefields like Wintergrasp use the BF Manager)
     if (!gameHandler.hasBfMgrInvite()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -802,7 +802,7 @@ void DialogManager::renderLfgProposalPopup(game::GameHandler& gameHandler) {
     using LfgState = game::GameHandler::LfgState;
     if (gameHandler.getLfgState() != LfgState::Proposal) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -851,7 +851,7 @@ void DialogManager::renderLfgRoleCheckPopup(game::GameHandler& gameHandler) {
     using LfgState = game::GameHandler::LfgState;
     if (gameHandler.getLfgState() != LfgState::RoleCheck) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -915,7 +915,7 @@ void DialogManager::renderLfgRoleCheckPopup(game::GameHandler& gameHandler) {
 void DialogManager::renderResurrectDialog(game::GameHandler& gameHandler) {
     if (!gameHandler.showResurrectDialog()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -976,7 +976,7 @@ void DialogManager::renderResurrectDialog(game::GameHandler& gameHandler) {
 void DialogManager::renderTalentWipeConfirmDialog(game::GameHandler& gameHandler) {
     if (!gameHandler.showTalentWipeConfirmDialog()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -1046,7 +1046,7 @@ void DialogManager::renderTalentWipeConfirmDialog(game::GameHandler& gameHandler
 void DialogManager::renderPetUnlearnConfirmDialog(game::GameHandler& gameHandler) {
     if (!gameHandler.showPetUnlearnDialog()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 

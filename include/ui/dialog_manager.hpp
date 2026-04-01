@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/ui_services.hpp"
 #include <imgui.h>
 #include <string>
 #include <cstdint>
@@ -34,7 +35,12 @@ public:
     /// called in render() after reclaim corpse button
     void renderLateDialogs(game::GameHandler& gameHandler);
 
+    // Section 3.5: UIServices injection (Phase B singleton breaking)
+    void setServices(const UIServices& services) { services_ = services; }
+
 private:
+    // Section 3.5: Injected UI services
+    UIServices services_;
     // Common ImGui window flags for popup dialogs
     static constexpr ImGuiWindowFlags kDialogFlags =
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize;

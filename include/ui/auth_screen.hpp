@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/ui_services.hpp"
 #include "auth/auth_handler.hpp"
 #include <vulkan/vulkan.h>
 #include <string>
@@ -30,6 +31,9 @@ public:
      */
     void setOnSuccess(std::function<void()> callback) { onSuccess = callback; }
 
+    /// Set services (dependency injection)
+    void setServices(const UIServices& services) { services_ = services; }
+
 
     /**
      * Check if authentication is in progress
@@ -44,6 +48,8 @@ public:
     const std::string& getStatusMessage() const { return statusMessage; }
 
 private:
+    UIServices services_;  // Injected service references
+
     struct ServerProfile {
         std::string hostname;
         int port = 3724;
