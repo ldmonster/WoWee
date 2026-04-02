@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/ui_services.hpp"
 #include <imgui.h>
 #include <vulkan/vulkan.h>
 #include <string>
@@ -70,6 +71,12 @@ public:
                          SpellbookScreen& spellbookScreen);
     void renderThreatWindow(game::GameHandler& gameHandler);
     void renderBgScoreboard(game::GameHandler& gameHandler);
+
+    // Section 3.5: UIServices injection (Phase B singleton breaking)
+    void setServices(const UIServices& services) { services_ = services; }
+
+private:
+    UIServices services_;
 };
 
 } // namespace ui

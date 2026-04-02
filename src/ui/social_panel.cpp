@@ -86,7 +86,7 @@ void SocialPanel::renderPartyFrames(game::GameHandler& gameHandler,
                                        SpellIconFn getSpellIcon) {
     if (!gameHandler.isInGroup()) return;
 
-    auto* assetMgr = core::Application::getInstance().getAssetManager();
+    auto* assetMgr = services_.assetManager;
     const auto& partyData = gameHandler.getPartyData();
     const bool isRaid = (partyData.groupType == 1);
     float frameY = 120.0f;
@@ -117,7 +117,7 @@ void SocialPanel::renderPartyFrames(game::GameHandler& gameHandler,
         float winW = activeSgs * (CELL_W + CELL_PAD) + CELL_PAD + 8.0f;
         float winH = MAX_PER_GROUP * (CELL_H + CELL_PAD) + CELL_PAD + 20.0f;
 
-        auto* window = core::Application::getInstance().getWindow();
+        auto* window = services_.window;
         float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
         float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
         float raidX = (screenW - winW) / 2.0f;
@@ -757,7 +757,7 @@ void SocialPanel::renderPartyFrames(game::GameHandler& gameHandler,
 void SocialPanel::renderBossFrames(game::GameHandler& gameHandler,
                                       SpellbookScreen& spellbookScreen,
                                       SpellIconFn getSpellIcon) {
-    auto* assetMgr = core::Application::getInstance().getAssetManager();
+    auto* assetMgr = services_.assetManager;
 
     // Collect active boss unit slots
     struct BossSlot { uint32_t slot; uint64_t guid; };
@@ -1143,11 +1143,11 @@ void SocialPanel::renderGuildRoster(game::GameHandler& gameHandler,
 
     // Get zone manager for name lookup
     game::ZoneManager* zoneManager = nullptr;
-    if (auto* renderer = core::Application::getInstance().getRenderer()) {
+    if (auto* renderer = services_.renderer) {
         zoneManager = renderer->getZoneManager();
     }
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -1683,7 +1683,7 @@ void SocialPanel::renderSocialFrame(game::GameHandler& gameHandler,
     for (const auto& c : contacts)
         if (c.isFriend() && c.isOnline()) ++onlineCount;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     ImGui::SetNextWindowPos(ImVec2(screenW - 230.0f, 240.0f), ImGuiCond_Once);
@@ -1705,7 +1705,7 @@ void SocialPanel::renderSocialFrame(game::GameHandler& gameHandler,
 
         // Get zone manager for area name lookups
         game::ZoneManager* socialZoneMgr = nullptr;
-        if (auto* rend = core::Application::getInstance().getRenderer())
+        if (auto* rend = services_.renderer)
             socialZoneMgr = rend->getZoneManager();
 
         if (ImGui::BeginTabBar("##SocialTabs")) {
@@ -2048,7 +2048,7 @@ void SocialPanel::renderDungeonFinderWindow(game::GameHandler& gameHandler,
 
     if (!showDungeonFinder_) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth())  : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) :  720.0f;
 
@@ -2423,7 +2423,7 @@ void SocialPanel::renderInspectWindow(game::GameHandler& gameHandler,
     // Lazy-load SpellItemEnchantment.dbc for enchant name lookup
     static std::unordered_map<uint32_t, std::string> s_enchantNames;
     static bool s_enchantDbLoaded = false;
-    auto* assetMgrEnchant = core::Application::getInstance().getAssetManager();
+    auto* assetMgrEnchant = services_.assetManager;
     if (!s_enchantDbLoaded && assetMgrEnchant && assetMgrEnchant->isInitialized()) {
         s_enchantDbLoaded = true;
         auto dbc = assetMgrEnchant->loadDBC("SpellItemEnchantment.dbc");

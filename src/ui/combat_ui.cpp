@@ -60,7 +60,7 @@ namespace ui {
 void CombatUI::renderCastBar(game::GameHandler& gameHandler, SpellIconFn getSpellIcon) {
     if (!gameHandler.isCasting()) return;
 
-    auto* assetMgr = core::Application::getInstance().getAssetManager();
+    auto* assetMgr = services_.assetManager;
 
     ImVec2 displaySize = ImGui::GetIO().DisplaySize;
     float screenW = displaySize.x > 0.0f ? displaySize.x : 1280.0f;
@@ -187,8 +187,8 @@ void CombatUI::renderCooldownTracker(game::GameHandler& gameHandler,
         return a.remaining > b.remaining;
     });
 
-    auto* assetMgr = core::Application::getInstance().getAssetManager();
-    auto* window = core::Application::getInstance().getWindow();
+    auto* assetMgr = services_.assetManager;
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -268,7 +268,7 @@ void CombatUI::renderRaidWarningOverlay(game::GameHandler& gameHandler) {
         // Walk only the new messages (deque — iterate from back by skipping old ones)
         size_t toScan = newCount - raidWarnChatSeenCount_;
         size_t startIdx = newCount > toScan ? newCount - toScan : 0;
-        auto* renderer = core::Application::getInstance().getRenderer();
+        auto* renderer = services_.renderer;
         for (size_t i = startIdx; i < newCount; ++i) {
             const auto& msg = chatHistory[i];
             if (msg.type == game::ChatType::RAID_WARNING ||
@@ -361,13 +361,13 @@ void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
     const auto& entries = gameHandler.getCombatText();
     if (entries.empty()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     if (!window) return;
     const float screenW = static_cast<float>(window->getWidth());
     const float screenH = static_cast<float>(window->getHeight());
 
     // Camera for world-space projection
-    auto* appRenderer = core::Application::getInstance().getRenderer();
+    auto* appRenderer = services_.renderer;
     rendering::Camera* camera = appRenderer ? appRenderer->getCamera() : nullptr;
     glm::mat4 viewProj;
     if (camera) viewProj = camera->getProjectionMatrix() * camera->getViewMatrix();
@@ -785,7 +785,7 @@ void CombatUI::renderDPSMeter(game::GameHandler& gameHandler,
     fmtNum(hps, hpsBuf, sizeof(hpsBuf));
 
     // Position: small floating label just above the action bar, right of center
-    auto* appWin = core::Application::getInstance().getWindow();
+    auto* appWin = services_.window;
     float screenW = appWin ? static_cast<float>(appWin->getWidth())  : 1280.0f;
     float screenH = appWin ? static_cast<float>(appWin->getHeight()) : 720.0f;
 
@@ -866,7 +866,7 @@ void CombatUI::renderBuffBar(game::GameHandler& gameHandler,
     }
     if (activeCount == 0 && !gameHandler.hasPet()) return;
 
-    auto* assetMgr = core::Application::getInstance().getAssetManager();
+    auto* assetMgr = services_.assetManager;
 
     // Position below the minimap (minimap: 200x200 at top-right, bottom edge at Y≈210)
     // Anchored to the right side to stay away from party frames on the left
@@ -1201,7 +1201,7 @@ void CombatUI::renderBattlegroundScore(game::GameHandler& gameHandler) {
         if (auto mv = gameHandler.getWorldState(def->maxKey)) maxScore = *mv;
     }
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth())  : 1280.0f;
 
     // Width scales with screen but stays reasonable
@@ -1598,7 +1598,7 @@ void CombatUI::renderCombatLog(game::GameHandler& gameHandler,
             ImGui::TextColored(color, "%s", desc);
             // Hover tooltip: show rich spell info for entries with a known spell
             if (e.spellId != 0 && ImGui::IsItemHovered()) {
-                auto* assetMgrLog = core::Application::getInstance().getAssetManager();
+                auto* assetMgrLog = services_.assetManager;
                 ImGui::BeginTooltip();
                 bool richOk = spellbookScreen.renderSpellInfoTooltip(e.spellId, gameHandler, assetMgrLog);
                 if (!richOk) {

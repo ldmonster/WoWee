@@ -7,6 +7,7 @@
 // equipment sets, skills.
 // ============================================================
 #pragma once
+#include "ui/ui_services.hpp"
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -173,7 +174,11 @@ public:
     std::unordered_map<uint32_t, ExtendedCostEntry> extendedCostCache_;
     bool extendedCostDbLoaded_ = false;
 
+    // Section 3.5: UIServices injection (Phase B singleton breaking)
+    void setServices(const UIServices& services) { services_ = services; }
+
 private:
+    UIServices services_;
     void loadExtendedCostDBC();
     std::string formatExtendedCost(uint32_t extendedCostId, game::GameHandler& gameHandler);
 };

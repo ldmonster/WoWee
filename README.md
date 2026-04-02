@@ -347,3 +347,13 @@ This project does not include any Blizzard Entertainment proprietary data, asset
 ## Known Issues
 
 MANY issues this is actively under development
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=Kelsidavis%2FWoWee&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=Kelsidavis/WoWee&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=Kelsidavis/WoWee&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=Kelsidavis/WoWee&type=date&legend=top-left" />
+ </picture>
+</a>

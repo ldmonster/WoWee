@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/ui_services.hpp"
 #include <imgui.h>
 #include <vulkan/vulkan.h>
 #include <string>
@@ -71,6 +72,12 @@ public:
                          ChatPanel& chatPanel);
     void renderInspectWindow(game::GameHandler& gameHandler,
                              InventoryScreen& inventoryScreen);
+
+    // Section 3.5: UIServices injection (Phase B singleton breaking)
+    void setServices(const UIServices& services) { services_ = services; }
+
+private:
+    UIServices services_;
 };
 
 } // namespace ui

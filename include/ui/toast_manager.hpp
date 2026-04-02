@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/ui_services.hpp"
 #include <vulkan/vulkan.h>
 #include <imgui.h>
 #include <string>
@@ -40,11 +41,17 @@ public:
     /// Fire achievement earned toast + sound
     void triggerAchievementToast(uint32_t achievementId, std::string name = {});
 
+    // Section 3.5: UIServices injection (Phase B singleton breaking)
+    void setServices(const UIServices& services) { services_ = services; }
+
     // --- public state consumed by GameScreen for the golden burst overlay ---
     float levelUpFlashAlpha = 0.0f;
     uint32_t levelUpDisplayLevel = 0;
 
 private:
+    // Section 3.5: Injected UI services
+    UIServices services_;
+
     // ---- Ding effect (own level-up) ----
     static constexpr float DING_DURATION = 4.0f;
     float dingTimer_ = 0.0f;

@@ -5,6 +5,7 @@
 #include "ui/character_create_screen.hpp"
 #include "ui/character_screen.hpp"
 #include "ui/game_screen.hpp"
+#include "ui/ui_services.hpp"
 #include <memory>
 
 // Forward declare SDL_Event
@@ -13,7 +14,7 @@ union SDL_Event;
 namespace wowee {
 
 // Forward declarations
-namespace core { class Window; enum class AppState; }
+namespace core { class Window; class AppearanceComposer; enum class AppState; }
 namespace auth { class AuthHandler; }
 namespace game { class GameHandler; }
 
@@ -69,8 +70,23 @@ public:
     CharacterScreen& getCharacterScreen() { return *characterScreen; }
     GameScreen& getGameScreen() { return *gameScreen; }
 
+    // Dependency injection forwarding (Phase A singleton breaking)
+    void setAppearanceComposer(core::AppearanceComposer* ac) {
+        if (gameScreen) gameScreen->setAppearanceComposer(ac);
+    }
+
+    // Section 3.5: UIServices injection (Phase B singleton breaking)
+    void setServices(const UIServices& services) {
+        services_ = services;
+        if (gameScreen) gameScreen->setServices(services);
+        if (authScreen) authScreen->setServices(services);
+        if (characterScreen) characterScreen->setServices(services);
+    }
+    const UIServices& getServices() const { return services_; }
+
 private:
     core::Window* window = nullptr;
+    UIServices services_;  // Section 3.5: Injected services
 
     // UI Screens
     std::unique_ptr<AuthScreen> authScreen;

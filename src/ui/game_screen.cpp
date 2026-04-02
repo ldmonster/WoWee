@@ -2,6 +2,7 @@
 #include "ui/ui_colors.hpp"
 #include "rendering/vk_context.hpp"
 #include "core/application.hpp"
+#include "core/appearance_composer.hpp"
 #include "addons/addon_manager.hpp"
 #include "core/coordinates.hpp"
 #include "core/input.hpp"
@@ -249,6 +250,22 @@ GameScreen::GameScreen() {
     loadSettings();
 }
 
+// Section 3.5: Set UI services and propagate to child components
+void GameScreen::setServices(const UIServices& services) {
+    services_ = services;
+    // Update legacy pointer for Phase A compatibility
+    appearanceComposer_ = services.appearanceComposer;
+    // Propagate to child panels
+    chatPanel_.setServices(services);
+    toastManager_.setServices(services);
+    dialogManager_.setServices(services);
+    settingsPanel_.setServices(services);
+    combatUI_.setServices(services);
+    socialPanel_.setServices(services);
+    actionBarPanel_.setServices(services);
+    windowManager_.setServices(services);
+}
+
 void GameScreen::render(game::GameHandler& gameHandler) {
     // Set up chat bubble callback (once) and cache game handler in ChatPanel
     chatPanel_.setupCallbacks(gameHandler);
@@ -268,7 +285,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
             uiErrors_.push_back({msg, 0.0f});
             if (uiErrors_.size() > 5) uiErrors_.erase(uiErrors_.begin());
             // Play error sound for each new error (rate-limited by deque cap of 5)
-            if (auto* r = core::Application::getInstance().getRenderer()) {
+            if (auto* r = services_.renderer) {
                 if (auto* sfx = r->getUiSoundManager()) sfx->playError();
             }
         });
@@ -291,7 +308,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
 
     // Sync minimap opacity with UI opacity
     {
-        auto* renderer = core::Application::getInstance().getRenderer();
+        auto* renderer = services_.renderer;
         if (renderer) {
             if (auto* minimap = renderer->getMinimap()) {
                 minimap->setOpacity(settingsPanel_.uiOpacity_);
@@ -301,7 +318,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
 
     // Apply initial settings when renderer becomes available
     if (!settingsPanel_.minimapSettingsApplied_) {
-        auto* renderer = core::Application::getInstance().getRenderer();
+        auto* renderer = services_.renderer;
         if (renderer) {
             if (auto* minimap = renderer->getMinimap()) {
                 settingsPanel_.minimapRotate_ = false;
@@ -328,7 +345,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
 
     // Apply saved volume settings once when audio managers first become available
     if (!settingsPanel_.volumeSettingsApplied_) {
-        auto* renderer = core::Application::getInstance().getRenderer();
+        auto* renderer = services_.renderer;
         if (renderer && renderer->getUiSoundManager()) {
             settingsPanel_.applyAudioVolumes(renderer);
             settingsPanel_.volumeSettingsApplied_ = true;
@@ -337,7 +354,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
 
     // Apply saved MSAA setting once when renderer is available
     if (!settingsPanel_.msaaSettingsApplied_ && settingsPanel_.pendingAntiAliasing > 0) {
-        auto* renderer = core::Application::getInstance().getRenderer();
+        auto* renderer = services_.renderer;
         if (renderer) {
             static const VkSampleCountFlagBits aaSamples[] = {
                 VK_SAMPLE_COUNT_1_BIT, VK_SAMPLE_COUNT_2_BIT,
@@ -352,7 +369,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
 
     // Apply saved FXAA setting once when renderer is available
     if (!settingsPanel_.fxaaSettingsApplied_) {
-        auto* renderer = core::Application::getInstance().getRenderer();
+        auto* renderer = services_.renderer;
         if (renderer) {
             renderer->setFXAAEnabled(settingsPanel_.pendingFXAA);
             settingsPanel_.fxaaSettingsApplied_ = true;
@@ -361,7 +378,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
 
     // Apply saved water refraction setting once when renderer is available
     if (!settingsPanel_.waterRefractionApplied_) {
-        auto* renderer = core::Application::getInstance().getRenderer();
+        auto* renderer = services_.renderer;
         if (renderer) {
             renderer->setWaterRefractionEnabled(settingsPanel_.pendingWaterRefraction);
             settingsPanel_.waterRefractionApplied_ = true;
@@ -370,7 +387,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
 
     // Apply saved normal mapping / POM settings once when WMO renderer is available
     if (!settingsPanel_.normalMapSettingsApplied_) {
-        auto* renderer = core::Application::getInstance().getRenderer();
+        auto* renderer = services_.renderer;
         if (renderer) {
             if (auto* wr = renderer->getWMORenderer()) {
                 wr->setNormalMappingEnabled(settingsPanel_.pendingNormalMapping);
@@ -390,7 +407,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
 
     // Apply saved upscaling setting once when renderer is available
     if (!settingsPanel_.fsrSettingsApplied_) {
-        auto* renderer = core::Application::getInstance().getRenderer();
+        auto* renderer = services_.renderer;
         if (renderer) {
             static constexpr float fsrScales[] = { 0.77f, 0.67f, 0.59f, 1.00f };
             settingsPanel_.pendingFSRQuality = std::clamp(settingsPanel_.pendingFSRQuality, 0, 3);
@@ -561,7 +578,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     questLogScreen.render(gameHandler, inventoryScreen);
 
     // Spellbook (P key toggle handled inside)
-    spellbookScreen.render(gameHandler, core::Application::getInstance().getAssetManager());
+    spellbookScreen.render(gameHandler, services_.assetManager);
 
     // Insert spell link into chat if player shift-clicked a spellbook entry
     {
@@ -578,7 +595,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     {
         uint64_t activeGuid = gameHandler.getActiveCharacterGuid();
         if (activeGuid != 0 && activeGuid != inventoryScreenCharGuid_) {
-            auto* am = core::Application::getInstance().getAssetManager();
+            auto* am = services_.assetManager;
             if (am) {
                 inventoryScreen.setAssetManager(am);
                 const auto* ch = gameHandler.getActiveCharacter();
@@ -631,10 +648,10 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     if (inventoryScreen.consumeEquipmentDirty() || gameHandler.consumeOnlineEquipmentDirty()) {
         updateCharacterGeosets(gameHandler.getInventory());
         updateCharacterTextures(gameHandler.getInventory());
-        core::Application::getInstance().loadEquippedWeapons();
+        if (appearanceComposer_) appearanceComposer_->loadEquippedWeapons();
         inventoryScreen.markPreviewDirty();
         // Update renderer weapon type for animation selection
-        auto* r = core::Application::getInstance().getRenderer();
+        auto* r = services_.renderer;
         if (r) {
             const auto& mh = gameHandler.getInventory().getEquipSlot(game::EquipSlot::MAIN_HAND);
             r->setEquippedWeaponType(mh.empty() ? 0 : mh.item.inventoryType);
@@ -642,7 +659,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     }
 
     // Update renderer face-target position and selection circle
-    auto* renderer = core::Application::getInstance().getRenderer();
+    auto* renderer = services_.renderer;
     if (renderer) {
         renderer->setInCombat(gameHandler.isInCombat() &&
                               !gameHandler.isPlayerDead() &&
@@ -1201,9 +1218,9 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
 
     // Cursor affordance: show hand cursor over interactable entities.
     if (!io.WantCaptureMouse) {
-        auto* renderer = core::Application::getInstance().getRenderer();
+        auto* renderer = services_.renderer;
         auto* camera = renderer ? renderer->getCamera() : nullptr;
-        auto* window = core::Application::getInstance().getWindow();
+        auto* window = services_.window;
         if (camera && window) {
             glm::vec2 mousePos = input.getMousePosition();
             float screenW = static_cast<float>(window->getWidth());
@@ -1257,9 +1274,9 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
         constexpr float CLICK_THRESHOLD = 5.0f;  // pixels
 
         if (dragDistSq < CLICK_THRESHOLD * CLICK_THRESHOLD) {
-            auto* renderer = core::Application::getInstance().getRenderer();
+            auto* renderer = services_.renderer;
             auto* camera = renderer ? renderer->getCamera() : nullptr;
-            auto* window = core::Application::getInstance().getWindow();
+            auto* window = services_.window;
 
             if (camera && window) {
                 float screenW = static_cast<float>(window->getWidth());
@@ -1354,9 +1371,9 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
 
         // If no target or right-clicking in world, try to pick one under cursor
         {
-            auto* renderer = core::Application::getInstance().getRenderer();
+            auto* renderer = services_.renderer;
             auto* camera = renderer ? renderer->getCamera() : nullptr;
-            auto* window = core::Application::getInstance().getWindow();
+            auto* window = services_.window;
             if (camera && window) {
                 // If a quest objective gameobject is under the cursor, prefer it over
                 // hostile units so quest pickups (e.g. "Bundle of Wood") are reliable.
@@ -1647,7 +1664,7 @@ void GameScreen::renderPlayerFrame(game::GameHandler& gameHandler) {
             ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.2f, 1.0f), "<DND>");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Do not disturb — /dnd to cancel");
         }
-        if (auto* ren = core::Application::getInstance().getRenderer()) {
+        if (auto* ren = services_.renderer) {
             if (auto* cam = ren->getCameraController()) {
                 if (cam->isAutoRunning()) {
                     ImGui::SameLine();
@@ -2175,7 +2192,7 @@ void GameScreen::renderPetFrame(game::GameHandler& gameHandler) {
             // Raw slot value layout (WotLK 3.3.5): low 24 bits = spell/action ID,
             // high byte = flag (0x80=autocast on, 0x40=can-autocast, 0x0C=type).
             // Built-in commands: id=2 follow, id=3 stay/move, id=5 attack.
-            auto* assetMgr = core::Application::getInstance().getAssetManager();
+            auto* assetMgr = services_.assetManager;
             const float iconSz = 20.0f;
             const float spacing = 2.0f;
             ImGui::Separator();
@@ -2278,7 +2295,7 @@ void GameScreen::renderPetFrame(game::GameHandler& gameHandler) {
                         else if (actionId == 6) tip = "Aggressive";
                         if (tip) ImGui::SetTooltip("%s", tip);
                     } else if (actionId > 6) {
-                        auto* spellAsset = core::Application::getInstance().getAssetManager();
+                        auto* spellAsset = services_.assetManager;
                         ImGui::BeginTooltip();
                         bool richOk = spellbookScreen.renderSpellInfoTooltip(actionId, gameHandler, spellAsset);
                         if (!richOk) {
@@ -2399,7 +2416,7 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
     auto target = gameHandler.getTarget();
     if (!target) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     float frameW = 250.0f;
@@ -2838,7 +2855,7 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
             else
                 snprintf(castLabel, sizeof(castLabel), "Casting... (%.1fs)", castLeft);
             {
-                auto* tcastAsset = core::Application::getInstance().getAssetManager();
+                auto* tcastAsset = services_.assetManager;
                 VkDescriptorSet tIcon = (tspell != 0 && tcastAsset)
                     ? getSpellIcon(tspell, tcastAsset) : VK_NULL_HANDLE;
                 if (tIcon) {
@@ -2935,7 +2952,7 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
             if (!a.isEmpty()) activeAuras++;
         }
         if (activeAuras > 0) {
-            auto* assetMgr = core::Application::getInstance().getAssetManager();
+            auto* assetMgr = services_.assetManager;
             constexpr float ICON_SIZE = 24.0f;
             constexpr int ICONS_PER_ROW = 8;
 
@@ -3233,7 +3250,7 @@ void GameScreen::renderTargetFrame(game::GameHandler& gameHandler) {
                                 int totActive = 0;
                                 for (const auto& a : *totAuras) if (!a.isEmpty()) totActive++;
                                 if (totActive > 0) {
-                                    auto* totAsset = core::Application::getInstance().getAssetManager();
+                                    auto* totAsset = services_.assetManager;
                                     constexpr float TA_ICON = 16.0f;
                                     constexpr int   TA_PER_ROW = 8;
 
@@ -3349,7 +3366,7 @@ void GameScreen::renderFocusFrame(game::GameHandler& gameHandler) {
     auto focus = gameHandler.getFocus();
     if (!focus) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     // Position: right side of screen, mirroring the target frame on the opposite side
@@ -3651,7 +3668,7 @@ void GameScreen::renderFocusFrame(game::GameHandler& gameHandler) {
                 else
                     snprintf(castBuf, sizeof(castBuf), "Casting... (%.1fs)", rem);
                 {
-                    auto* fcAsset = core::Application::getInstance().getAssetManager();
+                    auto* fcAsset = services_.assetManager;
                     VkDescriptorSet fcIcon = (focusCast->spellId != 0 && fcAsset)
                         ? getSpellIcon(focusCast->spellId, fcAsset) : VK_NULL_HANDLE;
                     if (fcIcon) {
@@ -3677,7 +3694,7 @@ void GameScreen::renderFocusFrame(game::GameHandler& gameHandler) {
                 int activeCount = 0;
                 for (const auto& a : *focusAuras) if (!a.isEmpty()) activeCount++;
                 if (activeCount > 0) {
-                    auto* focusAsset = core::Application::getInstance().getAssetManager();
+                    auto* focusAsset = services_.assetManager;
                     constexpr float FA_ICON = 20.0f;
                     constexpr int   FA_PER_ROW = 10;
 
@@ -4348,7 +4365,7 @@ VkDescriptorSet GameScreen::getSpellIcon(uint32_t spellId, pipeline::AssetManage
     }
 
     // Upload to Vulkan via VkContext
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     auto* vkCtx = window ? window->getVkContext() : nullptr;
     if (!vkCtx) {
         spellIconCache_[spellId] = VK_NULL_HANDLE;
@@ -4455,7 +4472,7 @@ void GameScreen::renderQuestObjectiveTracker(game::GameHandler& gameHandler) {
     const auto& questLog = gameHandler.getQuestLog();
     if (questLog.empty()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     constexpr float TRACKER_W = 220.0f;
@@ -4693,12 +4710,12 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
     // Reset mouseover each frame; we'll set it below when the cursor is over a nameplate
     gameHandler.setMouseoverGuid(0);
 
-    auto* appRenderer = core::Application::getInstance().getRenderer();
+    auto* appRenderer = services_.renderer;
     if (!appRenderer) return;
     rendering::Camera* camera = appRenderer->getCamera();
     if (!camera) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     if (!window) return;
     const float screenW = static_cast<float>(window->getWidth());
     const float screenH = static_cast<float>(window->getHeight());
@@ -4907,7 +4924,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
                 // Spell icon + name above the cast bar
                 const std::string& spellName = gameHandler.getSpellName(cs->spellId);
                 {
-                    auto* castAm = core::Application::getInstance().getAssetManager();
+                    auto* castAm = services_.assetManager;
                     VkDescriptorSet castIcon = (cs->spellId && castAm)
                         ? getSpellIcon(cs->spellId, castAm) : VK_NULL_HANDLE;
                     float iconSz = cbH + 8.0f;
@@ -5300,7 +5317,7 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 // ============================================================
 
 void GameScreen::takeScreenshot(game::GameHandler& /*gameHandler*/) {
-    auto* renderer = core::Application::getInstance().getRenderer();
+    auto* renderer = services_.renderer;
     if (!renderer) return;
 
     // Build path: ~/.wowee/screenshots/WoWee_YYYYMMDD_HHMMSS.png
@@ -5331,7 +5348,7 @@ void GameScreen::takeScreenshot(game::GameHandler& /*gameHandler*/) {
         sysMsg.type = game::ChatType::SYSTEM;
         sysMsg.language = game::ChatLanguage::UNIVERSAL;
         sysMsg.message = "Screenshot saved: " + path;
-        core::Application::getInstance().getGameHandler()->addLocalChatMessage(sysMsg);
+        services_.gameHandler->addLocalChatMessage(sysMsg);
     }
 }
 
@@ -5411,7 +5428,7 @@ void GameScreen::renderUIErrors(game::GameHandler& /*gameHandler*/, float deltaT
 
     if (uiErrors_.empty()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) :  720.0f;
 
@@ -5550,9 +5567,9 @@ void GameScreen::renderQuestMarkers(game::GameHandler& gameHandler) {
     const auto& statuses = gameHandler.getNpcQuestStatuses();
     if (statuses.empty()) return;
 
-    auto* renderer = core::Application::getInstance().getRenderer();
+    auto* renderer = services_.renderer;
     auto* camera = renderer ? renderer->getCamera() : nullptr;
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     if (!camera || !window) return;
 
     float screenW = static_cast<float>(window->getWidth());
@@ -5628,10 +5645,10 @@ void GameScreen::renderQuestMarkers(game::GameHandler& gameHandler) {
 
 void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     const auto& statuses = gameHandler.getNpcQuestStatuses();
-    auto* renderer = core::Application::getInstance().getRenderer();
+    auto* renderer = services_.renderer;
     auto* camera = renderer ? renderer->getCamera() : nullptr;
     auto* minimap = renderer ? renderer->getMinimap() : nullptr;
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     if (!camera || !minimap || !window) return;
 
     float screenW = static_cast<float>(window->getWidth());
@@ -6508,7 +6525,7 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
     }
 
     auto applyMuteState = [&]() {
-        auto* activeRenderer = core::Application::getInstance().getRenderer();
+        auto* activeRenderer = services_.renderer;
         float masterScale = settingsPanel_.soundMuted_ ? 0.0f : static_cast<float>(settingsPanel_.pendingMasterVolume) / 100.0f;
         audio::AudioEngine::instance().setMasterVolume(masterScale);
         if (!activeRenderer) return;
@@ -6842,7 +6859,7 @@ void GameScreen::renderMinimapMarkers(game::GameHandler& gameHandler) {
 
     // Calendar pending invites indicator (WotLK only)
     {
-        auto* expReg = core::Application::getInstance().getExpansionRegistry();
+        auto* expReg = services_.expansionRegistry;
         bool isWotLK = expReg && expReg->getActive() && expReg->getActive()->id == "wotlk";
         if (isWotLK) {
             uint32_t calPending = gameHandler.getCalendarPendingInvites();
@@ -7196,7 +7213,7 @@ void GameScreen::loadSettings() {
             else if (key == "shadow_distance") settingsPanel_.pendingShadowDistance = std::clamp(std::stof(val), 40.0f, 500.0f);
             else if (key == "brightness") {
                 settingsPanel_.pendingBrightness = std::clamp(std::stoi(val), 0, 100);
-                if (auto* r = core::Application::getInstance().getRenderer())
+                if (auto* r = services_.renderer)
                     r->setBrightness(static_cast<float>(settingsPanel_.pendingBrightness) / 50.0f);
             }
             else if (key == "water_refraction") settingsPanel_.pendingWaterRefraction = (std::stoi(val) != 0);
@@ -7228,7 +7245,7 @@ void GameScreen::loadSettings() {
             else if (key == "camera_pivot_height") settingsPanel_.pendingPivotHeight = std::clamp(std::stof(val), 0.0f, 3.0f);
             else if (key == "fov") {
                 settingsPanel_.pendingFov = std::clamp(std::stof(val), 45.0f, 110.0f);
-                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* renderer = services_.renderer) {
                     if (auto* camera = renderer->getCamera()) camera->setFov(settingsPanel_.pendingFov);
                 }
             }

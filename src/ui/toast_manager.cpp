@@ -128,7 +128,7 @@ void ToastManager::setupCallbacks(game::GameHandler& gameHandler) {
 // ---------------------------------------------------------------------------
 void ToastManager::renderEarlyToasts(float deltaTime, game::GameHandler& gameHandler) {
     // Zone entry detection — fire a toast when the renderer's zone name changes
-    if (auto* rend = core::Application::getInstance().getRenderer()) {
+    if (auto* rend = services_.renderer) {
         const std::string& curZone = rend->getCurrentZoneName();
         if (!curZone.empty() && curZone != lastKnownZone_) {
             if (!lastKnownZone_.empty()) {
@@ -175,7 +175,7 @@ void ToastManager::renderRepToasts(float deltaTime) {
 
     if (repToasts_.empty()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -254,7 +254,7 @@ void ToastManager::renderQuestCompleteToasts(float deltaTime) {
 
     if (questCompleteToasts_.empty()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 
@@ -329,7 +329,7 @@ void ToastManager::renderZoneToasts(float deltaTime) {
 
     if (zoneToasts_.empty()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
 
     ImDrawList* draw = ImGui::GetForegroundDrawList();
@@ -395,7 +395,7 @@ void ToastManager::renderAreaTriggerToasts(float deltaTime, game::GameHandler& g
         areaTriggerToasts_.end());
     if (areaTriggerToasts_.empty()) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth())  : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) :  720.0f;
 
@@ -461,7 +461,7 @@ void ToastManager::triggerDing(uint32_t newLevel, uint32_t hpDelta, uint32_t man
     dingStats_[3]  = intel;
     dingStats_[4]  = spi;
 
-    auto* renderer = core::Application::getInstance().getRenderer();
+    auto* renderer = services_.renderer;
     if (renderer) {
         if (auto* sfx = renderer->getUiSoundManager()) {
             sfx->playLevelUp();
@@ -550,7 +550,7 @@ void ToastManager::triggerAchievementToast(uint32_t achievementId, std::string n
     achievementToastTimer_ = ACHIEVEMENT_TOAST_DURATION;
 
     // Play a UI sound if available
-    auto* renderer = core::Application::getInstance().getRenderer();
+    auto* renderer = services_.renderer;
     if (renderer) {
         if (auto* sfx = renderer->getUiSoundManager()) {
             sfx->playAchievementAlert();
@@ -565,7 +565,7 @@ void ToastManager::renderAchievementToast() {
     achievementToastTimer_ -= dt;
     if (achievementToastTimer_ < 0.0f) achievementToastTimer_ = 0.0f;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth())  : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) :  720.0f;
 
@@ -641,7 +641,7 @@ void ToastManager::renderDiscoveryToast() {
         alpha = 1.0f;
     alpha = std::clamp(alpha, 0.0f, 1.0f);
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth())  : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) :  720.0f;
 
@@ -1183,7 +1183,7 @@ void ToastManager::renderZoneText(game::GameHandler& gameHandler) {
 
     // Also poll the renderer for zone name changes (covers map-level transitions
     // where worldStateZoneId may not change immediately).
-    auto* appRenderer = core::Application::getInstance().getRenderer();
+    auto* appRenderer = services_.renderer;
     if (appRenderer) {
         const std::string& zoneName = appRenderer->getCurrentZoneName();
         if (!zoneName.empty() && zoneName != lastKnownZoneName_) {
@@ -1202,7 +1202,7 @@ void ToastManager::renderZoneText(game::GameHandler& gameHandler) {
     zoneTextTimer_ -= dt;
     if (zoneTextTimer_ < 0.0f) zoneTextTimer_ = 0.0f;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth())  : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) :  720.0f;
 

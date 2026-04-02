@@ -197,8 +197,8 @@ void ChatPanel::render(game::GameHandler& gameHandler,
                        InventoryScreen& inventoryScreen,
                        SpellbookScreen& spellbookScreen,
                        QuestLogScreen& questLogScreen) {
-    auto* window = core::Application::getInstance().getWindow();
-    auto* assetMgr = core::Application::getInstance().getAssetManager();
+    auto* window = services_.window;
+    auto* assetMgr = services_.assetManager;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
     float chatW = std::min(500.0f, screenW * 0.4f);
@@ -1109,7 +1109,7 @@ void ChatPanel::render(game::GameHandler& gameHandler,
             std::string bodyLower = mMsg.message;
             for (auto& c : bodyLower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             if (bodyLower.find(selfNameLower) != std::string::npos) {
-                if (auto* renderer = core::Application::getInstance().getRenderer()) {
+                if (auto* renderer = services_.renderer) {
                     if (auto* ui = renderer->getUiSoundManager())
                         ui->playWhisperReceived();
                 }
@@ -2151,7 +2151,7 @@ void ChatPanel::sendChatMessage(game::GameHandler& gameHandler,
             // /run <lua code> — execute Lua script via addon system
             if ((cmdLower == "run" || cmdLower == "script") && spacePos != std::string::npos) {
                 std::string luaCode = command.substr(spacePos + 1);
-                auto* am = core::Application::getInstance().getAddonManager();
+                auto* am = services_.addonManager;
                 if (am) {
                     am->runScript(luaCode);
                 } else {
@@ -2164,7 +2164,7 @@ void ChatPanel::sendChatMessage(game::GameHandler& gameHandler,
             // /dump <expression> — evaluate Lua expression and print result
             if ((cmdLower == "dump" || cmdLower == "print") && spacePos != std::string::npos) {
                 std::string expr = command.substr(spacePos + 1);
-                auto* am = core::Application::getInstance().getAddonManager();
+                auto* am = services_.addonManager;
                 if (am && am->isInitialized()) {
                     // Wrap expression in print(tostring(...)) to display the value
                     std::string wrapped = "local __v = " + expr +
@@ -2187,7 +2187,7 @@ void ChatPanel::sendChatMessage(game::GameHandler& gameHandler,
 
             // Check addon slash commands (SlashCmdList) before built-in commands
             {
-                auto* am = core::Application::getInstance().getAddonManager();
+                auto* am = services_.addonManager;
                 if (am && am->isInitialized()) {
                     std::string slashCmd = "/" + cmdLower;
                     std::string slashArgs;
@@ -2214,7 +2214,7 @@ void ChatPanel::sendChatMessage(game::GameHandler& gameHandler,
 
             // /reload or /reloadui — reload all addons (save variables, re-init Lua, re-scan .toc files)
             if (cmdLower == "reload" || cmdLower == "reloadui" || cmdLower == "rl") {
-                auto* am = core::Application::getInstance().getAddonManager();
+                auto* am = services_.addonManager;
                 if (am) {
                     am->reload();
                     am->fireEvent("VARIABLES_LOADED");
@@ -2301,7 +2301,7 @@ void ChatPanel::sendChatMessage(game::GameHandler& gameHandler,
             if (cmdLower == "loc" || cmdLower == "coords" || cmdLower == "whereami") {
                 const auto& pmi = gameHandler.getMovementInfo();
                 std::string zoneName;
-                if (auto* rend = core::Application::getInstance().getRenderer())
+                if (auto* rend = services_.renderer)
                     zoneName = rend->getCurrentZoneName();
                 char buf[256];
                 snprintf(buf, sizeof(buf), "%.1f, %.1f, %.1f%s%s",
@@ -2327,7 +2327,7 @@ void ChatPanel::sendChatMessage(game::GameHandler& gameHandler,
             // /zone command — print current zone name
             if (cmdLower == "zone") {
                 std::string zoneName;
-                if (auto* rend = core::Application::getInstance().getRenderer())
+                if (auto* rend = services_.renderer)
                     zoneName = rend->getCurrentZoneName();
                 game::MessageChatData sysMsg;
                 sysMsg.type = game::ChatType::SYSTEM;
@@ -4323,7 +4323,7 @@ void ChatPanel::sendChatMessage(game::GameHandler& gameHandler,
                 std::string emoteText = rendering::Renderer::getEmoteText(cmdLower, targetNamePtr);
                 if (!emoteText.empty()) {
                     // Play the emote animation
-                    auto* renderer = core::Application::getInstance().getRenderer();
+                    auto* renderer = services_.renderer;
                     if (renderer) {
                         renderer->playEmote(cmdLower);
                     }
@@ -4697,11 +4697,11 @@ std::string ChatPanel::replaceGenderPlaceholders(const std::string& text, game::
 void ChatPanel::renderBubbles(game::GameHandler& gameHandler) {
     if (chatBubbles_.empty()) return;
 
-    auto* renderer = core::Application::getInstance().getRenderer();
+    auto* renderer = services_.renderer;
     auto* camera = renderer ? renderer->getCamera() : nullptr;
     if (!camera) return;
 
-    auto* window = core::Application::getInstance().getWindow();
+    auto* window = services_.window;
     float screenW = window ? static_cast<float>(window->getWidth()) : 1280.0f;
     float screenH = window ? static_cast<float>(window->getHeight()) : 720.0f;
 

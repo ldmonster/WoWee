@@ -487,6 +487,8 @@ set(WOWEE_SOURCES
     # Core
     src/core/application.cpp
     src/core/entity_spawner.cpp
+    src/core/appearance_composer.cpp
+    src/core/world_loader.cpp
     src/core/window.cpp
     src/core/input.cpp
     src/core/logger.cpp
@@ -542,6 +544,7 @@ set(WOWEE_SOURCES
 
     # Audio
     src/audio/audio_engine.cpp
+    src/audio/audio_coordinator.cpp
     src/audio/music_manager.cpp
     src/audio/footstep_manager.cpp
     src/audio/activity_sound_manager.cpp

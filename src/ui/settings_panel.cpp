@@ -152,7 +152,7 @@ ImGui::EndChild();
 
 void SettingsPanel::renderSettingsGameplayTab(InventoryScreen& inventoryScreen,
                                                   std::function<void()> saveCallback) {
-    auto* renderer = core::Application::getInstance().getRenderer();
+    auto* renderer = services_.renderer;
 ImGui::Spacing();
 
 ImGui::Text("Controls");
@@ -433,7 +433,7 @@ if (ImGui::Button("Reset to Defaults", ImVec2(-1, 0))) {
 }
 
 void SettingsPanel::renderSettingsAudioTab(std::function<void()> saveCallback) {
-    auto* renderer = core::Application::getInstance().getRenderer();
+    auto* renderer = services_.renderer;
 ImGui::Spacing();
 ImGui::BeginChild("AudioSettings", ImVec2(0, 360), true);
 
@@ -599,8 +599,8 @@ void SettingsPanel::renderSettingsWindow(InventoryScreen& inventoryScreen, ChatP
                                              std::function<void()> saveCallback) {
     if (!showSettingsWindow) return;
 
-    auto* window = core::Application::getInstance().getWindow();
-    auto* renderer = core::Application::getInstance().getRenderer();
+    auto* window = services_.window;
+    auto* renderer = services_.renderer;
     if (!window) return;
 
     static constexpr int kResolutions[][2] = {
@@ -1045,7 +1045,7 @@ void SettingsPanel::renderSettingsWindow(InventoryScreen& inventoryScreen, ChatP
 }
 
 void SettingsPanel::applyGraphicsPreset(GraphicsPreset preset) {
-    auto* renderer = core::Application::getInstance().getRenderer();
+    auto* renderer = services_.renderer;
 
     // Define preset values based on quality level
     switch (preset) {

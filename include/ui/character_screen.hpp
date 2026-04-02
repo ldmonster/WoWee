@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/ui_services.hpp"
 #include "game/game_handler.hpp"
 #include <imgui.h>
 #include <string>
@@ -48,6 +49,9 @@ public:
     void setOnBack(std::function<void()> cb) { onBack = std::move(cb); }
     void setOnDeleteCharacter(std::function<void(uint64_t)> cb) { onDeleteCharacter = std::move(cb); }
 
+    /// Set services (dependency injection)
+    void setServices(const UIServices& services) { services_ = services; }
+
     /**
      * Reset selection state (e.g., when switching servers)
      */
@@ -89,6 +93,8 @@ public:
     void selectCharacterByName(const std::string& name);
 
 private:
+    UIServices services_;  // Injected service references
+
     // UI state
     int selectedCharacterIndex = -1;
     bool characterSelected = false;

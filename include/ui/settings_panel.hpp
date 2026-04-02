@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/ui_services.hpp"
 #include <vulkan/vulkan.h>
 #include <string>
 #include <functional>
@@ -149,7 +150,12 @@ public:
     /// Return the platform-specific settings file path
     static std::string getSettingsPath();
 
+    /// Set services (dependency injection)
+    void setServices(const UIServices& services) { services_ = services; }
+
 private:
+    UIServices services_;  // Injected service references
+
     // Keybinding customization (private — only used in Controls tab)
     int pendingRebindAction_ = -1;  // -1 = not rebinding, otherwise action index
     bool awaitingKeyPress_ = false;

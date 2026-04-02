@@ -4,6 +4,7 @@
 // XP bar, reputation bar, macro resolution.
 // ============================================================
 #pragma once
+#include "ui/ui_services.hpp"
 #include <cstdint>
 #include <unordered_map>
 #include <functional>
@@ -70,7 +71,11 @@ public:
     std::unordered_map<uint32_t, uint32_t> macroPrimarySpellCache_;
     size_t macroCacheSpellCount_ = 0;
 
+    // Section 3.5: UIServices injection (Phase B singleton breaking)
+    void setServices(const UIServices& services) { services_ = services; }
+
 private:
+    UIServices services_;
     uint32_t resolveMacroPrimarySpellId(uint32_t macroId, game::GameHandler& gameHandler);
 };
 
