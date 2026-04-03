@@ -13,7 +13,7 @@ public:
     AddonManager();
     ~AddonManager();
 
-    bool initialize(game::GameHandler* gameHandler);
+    bool initialize(game::GameHandler* gameHandler, const LuaServices& services = {});
     void scanAddons(const std::string& addonsPath);
     void loadAllAddons();
     bool runScript(const std::string& code);
@@ -35,6 +35,7 @@ private:
     LuaEngine luaEngine_;
     std::vector<TocFile> addons_;
     game::GameHandler* gameHandler_ = nullptr;
+    LuaServices luaServices_;
     std::string addonsPath_;
 
     bool loadAddon(const TocFile& addon);

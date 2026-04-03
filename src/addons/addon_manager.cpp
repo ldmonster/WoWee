@@ -10,10 +10,12 @@ namespace wowee::addons {
 AddonManager::AddonManager() = default;
 AddonManager::~AddonManager() { shutdown(); }
 
-bool AddonManager::initialize(game::GameHandler* gameHandler) {
+bool AddonManager::initialize(game::GameHandler* gameHandler, const LuaServices& services) {
     gameHandler_ = gameHandler;
+    luaServices_ = services;
     if (!luaEngine_.initialize()) return false;
     luaEngine_.setGameHandler(gameHandler);
+    luaEngine_.setLuaServices(luaServices_);
     return true;
 }
 
@@ -155,6 +157,7 @@ bool AddonManager::reload() {
         return false;
     }
     luaEngine_.setGameHandler(gameHandler_);
+    luaEngine_.setLuaServices(luaServices_);
 
     if (!addonsPath_.empty()) {
         scanAddons(addonsPath_);

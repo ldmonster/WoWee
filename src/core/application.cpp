@@ -265,7 +265,11 @@ bool Application::initialize() {
 
         // Initialize addon system
         addonManager_ = std::make_unique<addons::AddonManager>();
-        if (addonManager_->initialize(gameHandler.get())) {
+        addons::LuaServices luaSvc;
+        luaSvc.window            = window.get();
+        luaSvc.audioCoordinator  = audioCoordinator_.get();
+        luaSvc.expansionRegistry = expansionRegistry_.get();
+        if (addonManager_->initialize(gameHandler.get(), luaSvc)) {
             std::string addonsDir = assetPath + "/interface/AddOns";
             addonManager_->scanAddons(addonsDir);
             // Wire Lua errors to UI error display

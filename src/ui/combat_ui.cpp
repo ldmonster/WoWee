@@ -32,13 +32,6 @@ namespace {
     constexpr auto& kColorBrightGreen = kBrightGreen;
     constexpr auto& kColorYellow      = kYellow;
 
-    // Format a duration in seconds as compact text: "2h", "3:05", "42"
-    void fmtDurationCompact(char* buf, size_t sz, int secs) {
-        if (secs >= 3600) snprintf(buf, sz, "%dh", secs / 3600);
-        else if (secs >= 60) snprintf(buf, sz, "%d:%02d", secs / 60, secs % 60);
-        else snprintf(buf, sz, "%d", secs);
-    }
-
     // Render "Remaining: Xs" or "Remaining: Xm Ys" in a tooltip (light gray)
     void renderAuraRemaining(int remainMs) {
         if (remainMs <= 0) return;
@@ -269,7 +262,6 @@ void CombatUI::renderRaidWarningOverlay(game::GameHandler& gameHandler) {
         // Walk only the new messages (deque — iterate from back by skipping old ones)
         size_t toScan = newCount - raidWarnChatSeenCount_;
         size_t startIdx = newCount > toScan ? newCount - toScan : 0;
-        auto* renderer = services_.renderer;
         for (size_t i = startIdx; i < newCount; ++i) {
             const auto& msg = chatHistory[i];
             if (msg.type == game::ChatType::RAID_WARNING ||

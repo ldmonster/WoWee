@@ -640,6 +640,13 @@ set(WOWEE_SOURCES
     # Addons
     src/addons/addon_manager.cpp
     src/addons/lua_engine.cpp
+    src/addons/lua_unit_api.cpp
+    src/addons/lua_spell_api.cpp
+    src/addons/lua_inventory_api.cpp
+    src/addons/lua_quest_api.cpp
+    src/addons/lua_social_api.cpp
+    src/addons/lua_system_api.cpp
+    src/addons/lua_action_api.cpp
     src/addons/toc_parser.cpp
 
     # Main

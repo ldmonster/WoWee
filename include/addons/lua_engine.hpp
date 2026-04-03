@@ -1,5 +1,6 @@
 #pragma once
 
+#include "addons/lua_services.hpp"
 #include <functional>
 #include <string>
 #include <vector>
@@ -27,6 +28,7 @@ public:
     bool executeString(const std::string& code);
 
     void setGameHandler(game::GameHandler* handler);
+    void setLuaServices(const LuaServices& services);
 
     // Fire a WoW event to all registered Lua handlers.
     void fireEvent(const std::string& eventName,
@@ -55,6 +57,7 @@ public:
 private:
     lua_State* L_ = nullptr;
     game::GameHandler* gameHandler_ = nullptr;
+    LuaServices luaServices_;
     LuaErrorCallback luaErrorCallback_;
 
     void registerCoreAPI();

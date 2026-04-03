@@ -53,23 +53,6 @@ namespace {
         return s.substr(first, last - first + 1);
     }
 
-    // Format a duration in seconds as compact text: "2h", "3:05", "42"
-    void fmtDurationCompact(char* buf, size_t sz, int secs) {
-        if (secs >= 3600) snprintf(buf, sz, "%dh", secs / 3600);
-        else if (secs >= 60) snprintf(buf, sz, "%d:%02d", secs / 60, secs % 60);
-        else snprintf(buf, sz, "%d", secs);
-    }
-
-    // Render "Remaining: Xs" or "Remaining: Xm Ys" in a tooltip (light gray)
-    void renderAuraRemaining(int remainMs) {
-        if (remainMs <= 0) return;
-        int s = remainMs / 1000;
-        char buf[32];
-        if (s < 60) snprintf(buf, sizeof(buf), "Remaining: %ds", s);
-        else snprintf(buf, sizeof(buf), "Remaining: %dm %ds", s / 60, s % 60);
-        ImGui::TextColored(kLightGray, "%s", buf);
-    }
-
     std::string toLower(std::string s) {
         std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
             return static_cast<char>(std::tolower(c));
@@ -187,12 +170,10 @@ bool ChatPanel::shouldShowMessage(const game::MessageChatData& msg, int tabIndex
 
 
 // Forward declaration — defined below
-static std::string firstMacroCommand(const std::string& macroText);
 static std::vector<std::string> allMacroCommands(const std::string& macroText);
 static std::string evaluateMacroConditionals(const std::string& rawArg,
                                               game::GameHandler& gameHandler,
                                               uint64_t& targetOverride);
-static std::string getMacroShowtooltipArg(const std::string& macroText);
 
 void ChatPanel::render(game::GameHandler& gameHandler,
                        InventoryScreen& inventoryScreen,
@@ -1708,22 +1689,6 @@ void ChatPanel::render(game::GameHandler& gameHandler,
 }
 
 
-static std::string firstMacroCommand(const std::string& macroText) {
-    size_t pos = 0;
-    while (pos <= macroText.size()) {
-        size_t nl = macroText.find('\n', pos);
-        std::string line = (nl != std::string::npos) ? macroText.substr(pos, nl - pos) : macroText.substr(pos);
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        size_t start = line.find_first_not_of(" \t");
-        if (start != std::string::npos) line = line.substr(start);
-        if (!line.empty() && line.front() != '#')
-            return line;
-        if (nl == std::string::npos) break;
-        pos = nl + 1;
-    }
-    return {};
-}
-
 // Collect all non-comment, non-empty lines from a macro body.
 static std::vector<std::string> allMacroCommands(const std::string& macroText) {
     std::vector<std::string> cmds;
@@ -1740,36 +1705,6 @@ static std::vector<std::string> allMacroCommands(const std::string& macroText) {
         pos = nl + 1;
     }
     return cmds;
-}
-
-// Returns the #showtooltip argument from a macro body:
-//   "#showtooltip Spell"  → "Spell"
-//   "#showtooltip"        → "__auto__" (derive from first /cast)
-//   (none)                → ""
-static std::string getMacroShowtooltipArg(const std::string& macroText) {
-    size_t pos = 0;
-    while (pos <= macroText.size()) {
-        size_t nl = macroText.find('\n', pos);
-        std::string line = (nl != std::string::npos) ? macroText.substr(pos, nl - pos) : macroText.substr(pos);
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        size_t fs = line.find_first_not_of(" \t");
-        if (fs != std::string::npos) line = line.substr(fs);
-        if (line.rfind("#showtooltip", 0) == 0 || line.rfind("#show", 0) == 0) {
-            size_t sp = line.find(' ');
-            if (sp != std::string::npos) {
-                std::string arg = line.substr(sp + 1);
-                size_t as = arg.find_first_not_of(" \t");
-                if (as != std::string::npos) arg = arg.substr(as);
-                size_t ae = arg.find_last_not_of(" \t");
-                if (ae != std::string::npos) arg.resize(ae + 1);
-                if (!arg.empty()) return arg;
-            }
-            return "__auto__";
-        }
-        if (nl == std::string::npos) break;
-        pos = nl + 1;
-    }
-    return {};
 }
 
 // ---------------------------------------------------------------------------

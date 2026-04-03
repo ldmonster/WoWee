@@ -43,25 +43,6 @@ namespace {
     constexpr auto& kColorGray        = kGray;
     constexpr auto& kColorDarkGray    = kDarkGray;
 
-    // Render gold/silver/copper amounts in WoW-canonical colors
-    void renderGoldText(uint32_t totalCopper) {
-        uint32_t gold    = totalCopper / 10000;
-        uint32_t silver  = (totalCopper / 100) % 100;
-        uint32_t copper  = totalCopper % 100;
-        bool shown = false;
-        if (gold > 0) {
-            ImGui::TextColored(ImVec4(1.0f, 0.84f, 0.0f, 1.0f), "%ug", gold);
-            shown = true;
-        }
-        if (silver > 0 || shown) {
-            if (shown) { ImGui::SameLine(0, 2); }
-            ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.75f, 1.0f), "%us", silver);
-            shown = true;
-        }
-        if (shown) { ImGui::SameLine(0, 2); }
-        ImGui::TextColored(ImVec4(0.72f, 0.45f, 0.2f, 1.0f), "%uc", copper);
-    }
-
     // Common ImGui window flags for popup dialogs
     const ImGuiWindowFlags kDialogFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize;
 
