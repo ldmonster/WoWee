@@ -8,6 +8,7 @@
 #include "audio/ambient_sound_manager.hpp"
 #include "core/coordinates.hpp"
 #include "core/memory_monitor.hpp"
+#include "core/profiler.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/adt_loader.hpp"
 #include "pipeline/m2_loader.hpp"
@@ -188,6 +189,7 @@ bool TerrainManager::initialize(pipeline::AssetManager* assets, TerrainRenderer*
 }
 
 void TerrainManager::update(const Camera& camera, float deltaTime) {
+    ZoneScopedN("TerrainManager::update");
     if (!streamingEnabled || !assetManager || !terrainRenderer) {
         return;
     }
@@ -1236,6 +1238,7 @@ void TerrainManager::workerLoop() {
 }
 
 void TerrainManager::processReadyTiles() {
+    ZoneScopedN("TerrainManager::processReadyTiles");
     // Move newly ready tiles into the finalizing deque.
     // Keep them in pendingTiles so streamTiles() won't re-enqueue them.
     {

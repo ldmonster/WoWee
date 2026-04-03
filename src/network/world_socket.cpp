@@ -4,6 +4,7 @@
 #include "game/opcode_table.hpp"
 #include "auth/crypto.hpp"
 #include "core/logger.hpp"
+#include "core/profiler.hpp"
 #include <iomanip>
 #include <sstream>
 #include <cstdio>
@@ -464,6 +465,7 @@ void WorldSocket::send(const Packet& packet) {
 }
 
 void WorldSocket::update() {
+    ZoneScopedN("WorldSocket::update");
     if (!useAsyncPump_) {
         pumpNetworkIO();
     }

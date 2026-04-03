@@ -1,5 +1,6 @@
 #include "core/application.hpp"
 #include "core/coordinates.hpp"
+#include "core/profiler.hpp"
 #include <unordered_set>
 #include <cmath>
 #include <chrono>
@@ -569,6 +570,7 @@ bool Application::initialize() {
 }
 
 void Application::run() {
+    ZoneScopedN("Application::run");
     LOG_INFO("Starting main loop");
 
     // Pin main thread to a dedicated CPU core to reduce scheduling jitter
@@ -759,6 +761,7 @@ void Application::run() {
 
             // Update application state
             try {
+                FrameMark;
                 update(deltaTime);
             } catch (const std::bad_alloc& e) {
                 LOG_ERROR("OOM during Application::update (state=", static_cast<int>(state),
@@ -1110,6 +1113,7 @@ void Application::logoutToLogin() {
 }
 
 void Application::update(float deltaTime) {
+    ZoneScopedN("Application::update");
     const char* updateCheckpoint = "enter";
     try {
     // Update based on current state

@@ -1,5 +1,6 @@
 # Build directories
 build/
+build_asan/
 build-debug/
 build-sanitize/
 bin/
@@ -63,6 +64,7 @@ cscope.out
 # External dependencies (except submodules and vendored headers)
 extern/*
 !extern/.gitkeep
+!extern/catch2
 !extern/imgui
 !extern/vk-bootstrap
 !extern/vk_mem_alloc.h
