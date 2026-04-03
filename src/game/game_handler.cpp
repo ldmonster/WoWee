@@ -5302,6 +5302,44 @@ void GameHandler::acceptBattlefield(uint32_t queueSlot) {
 }
 
 // ---------------------------------------------------------------------------
+// LFG / Dungeon Finder handlers (WotLK 3.3.5a)
+// ---------------------------------------------------------------------------
+
+static const char* lfgJoinResultString(uint8_t result) {
+    switch (result) {
+        case 0:  return nullptr; // success
+        case 1:  return "Role check failed.";
+        case 2:  return "No LFG slots available for your group.";
+        case 3:  return "No LFG object found.";
+        case 4:  return "No slots available (player).";
+        case 5:  return "No slots available (party).";
+        case 6:  return "Dungeon requirements not met by all members.";
+        case 7:  return "Party members are from different realms.";
+        case 8:  return "Not all members are present.";
+        case 9:  return "Get info timeout.";
+        case 10: return "Invalid dungeon slot.";
+        case 11: return "You are marked as a deserter.";
+        case 12: return "A party member is marked as a deserter.";
+        case 13: return "You are on a random dungeon cooldown.";
+        case 14: return "A party member is on a random dungeon cooldown.";
+        case 16: return "No spec/role available.";
+        default: return "Cannot join dungeon finder.";
+    }
+}
+
+static const char* lfgTeleportDeniedString(uint8_t reason) {
+    switch (reason) {
+        case 0:  return "You are not in a LFG group.";
+        case 1:  return "You are not in the dungeon.";
+        case 2:  return "You have a summon pending.";
+        case 3:  return "You are dead.";
+        case 4:  return "You have Deserter.";
+        case 5:  return "You do not meet the requirements.";
+        default: return "Teleport to dungeon denied.";
+    }
+}
+
+// ---------------------------------------------------------------------------
 // LFG outgoing packets
 // ---------------------------------------------------------------------------
 

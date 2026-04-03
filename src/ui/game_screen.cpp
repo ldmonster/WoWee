@@ -139,6 +139,51 @@ namespace {
         }
         return "Unknown";
     }
+
+    // Collect all non-comment, non-empty lines from a macro body.
+    std::vector<std::string> allMacroCommands(const std::string& macroText) {
+        std::vector<std::string> cmds;
+        size_t pos = 0;
+        while (pos <= macroText.size()) {
+            size_t nl = macroText.find('\n', pos);
+            std::string line = (nl != std::string::npos) ? macroText.substr(pos, nl - pos) : macroText.substr(pos);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            size_t start = line.find_first_not_of(" \t");
+            if (start != std::string::npos) line = line.substr(start);
+            if (!line.empty() && line.front() != '#')
+                cmds.push_back(std::move(line));
+            if (nl == std::string::npos) break;
+            pos = nl + 1;
+        }
+        return cmds;
+    }
+
+    // Returns the #showtooltip argument from a macro body.
+    std::string getMacroShowtooltipArg(const std::string& macroText) {
+        size_t pos = 0;
+        while (pos <= macroText.size()) {
+            size_t nl = macroText.find('\n', pos);
+            std::string line = (nl != std::string::npos) ? macroText.substr(pos, nl - pos) : macroText.substr(pos);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            size_t fs = line.find_first_not_of(" \t");
+            if (fs != std::string::npos) line = line.substr(fs);
+            if (line.rfind("#showtooltip", 0) == 0 || line.rfind("#show", 0) == 0) {
+                size_t sp = line.find(' ');
+                if (sp != std::string::npos) {
+                    std::string arg = line.substr(sp + 1);
+                    size_t as = arg.find_first_not_of(" \t");
+                    if (as != std::string::npos) arg = arg.substr(as);
+                    size_t ae = arg.find_last_not_of(" \t");
+                    if (ae != std::string::npos) arg.resize(ae + 1);
+                    if (!arg.empty()) return arg;
+                }
+                return "__auto__";
+            }
+            if (nl == std::string::npos) break;
+            pos = nl + 1;
+        }
+        return {};
+    }
 }
 
 namespace wowee { namespace ui {

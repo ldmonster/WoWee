@@ -24,9 +24,11 @@ jobs:
           - arch: x86-64
             runner: ubuntu-24.04
             deb_arch: amd64
+            build_jobs: $(nproc)
           - arch: arm64
             runner: ubuntu-24.04-arm
             deb_arch: arm64
+            build_jobs: 2
 
     steps:
       - name: Checkout
@@ -97,19 +99,19 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DWOWEE_ENABLE_AMD_FSR2=ON
 
       - name: Assert AMD FSR2 target
-        run: cmake --build build --target wowee_fsr2_amd_vk --parallel $(nproc)
+        run: cmake --build build --target wowee_fsr2_amd_vk --parallel ${{ matrix.build_jobs }}
 
       - name: Assert AMD FSR3 framegen probe target (if present)
         run: |
           set -euo pipefail
           if cmake --build build --target help | grep -q 'wowee_fsr3_framegen_amd_vk_probe'; then
-            cmake --build build --target wowee_fsr3_framegen_amd_vk_probe --parallel $(nproc)
+            cmake --build build --target wowee_fsr3_framegen_amd_vk_probe --parallel ${{ matrix.build_jobs }}
           else
             echo "FSR3 framegen probe target not generated for this SDK layout; continuing."
           fi
 
       - name: Build
-        run: cmake --build build --parallel $(nproc)
+        run: cmake --build build --parallel ${{ matrix.build_jobs }}
 
       - name: Package (DEB)
         run: cd build && cpack -G DEB
