@@ -5304,9 +5304,6 @@ void GameHandler::acceptBattlefield(uint32_t queueSlot) {
 // ---------------------------------------------------------------------------
 // LFG / Dungeon Finder handlers (WotLK 3.3.5a)
 // ---------------------------------------------------------------------------
-// NOTE: lfgJoinResultString() and lfgTeleportDeniedString() live in
-// social_handler.cpp where they are actually called.
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // LFG outgoing packets
