@@ -344,6 +344,9 @@ bool TerrainRenderer::loadTerrain(const pipeline::TerrainMesh& mesh,
                 if (baseTexId < texturePaths.size()) {
                     gpuChunk.baseTexture = loadTexture(texturePaths[baseTexId]);
                 } else {
+                    LOG_WARNING("Terrain[", tileX, ",", tileY, "] chunk[", x, ",", y,
+                                "] base textureId ", baseTexId, " >= texturePaths size ",
+                                texturePaths.size(), " — white fallback");
                     gpuChunk.baseTexture = whiteTexture.get();
                 }
 
@@ -354,6 +357,11 @@ bool TerrainRenderer::loadTerrain(const pipeline::TerrainMesh& mesh,
                     VkTexture* layerTex = whiteTexture.get();
                     if (layer.textureId < texturePaths.size()) {
                         layerTex = loadTexture(texturePaths[layer.textureId]);
+                    } else {
+                        LOG_WARNING("Terrain[", tileX, ",", tileY, "] chunk[", x, ",", y,
+                                    "] layer[", i, "] textureId ", layer.textureId,
+                                    " >= texturePaths size ", texturePaths.size(),
+                                    " — white fallback");
                     }
                     gpuChunk.layerTextures[li] = layerTex;
 
@@ -445,6 +453,9 @@ bool TerrainRenderer::loadTerrainIncremental(const pipeline::TerrainMesh& mesh,
             if (baseTexId < texturePaths.size()) {
                 gpuChunk.baseTexture = loadTexture(texturePaths[baseTexId]);
             } else {
+                LOG_WARNING("Terrain[", tileX, ",", tileY, "] chunk[", cx, ",", cy,
+                            "] base textureId ", baseTexId, " >= texturePaths size ",
+                            texturePaths.size(), " — white fallback");
                 gpuChunk.baseTexture = whiteTexture.get();
             }
 
@@ -455,6 +466,11 @@ bool TerrainRenderer::loadTerrainIncremental(const pipeline::TerrainMesh& mesh,
                 VkTexture* layerTex = whiteTexture.get();
                 if (layer.textureId < texturePaths.size()) {
                     layerTex = loadTexture(texturePaths[layer.textureId]);
+                } else {
+                    LOG_WARNING("Terrain[", tileX, ",", tileY, "] chunk[", cx, ",", cy,
+                                "] layer[", i, "] textureId ", layer.textureId,
+                                " >= texturePaths size ", texturePaths.size(),
+                                " — white fallback");
                 }
                 gpuChunk.layerTextures[li] = layerTex;
 

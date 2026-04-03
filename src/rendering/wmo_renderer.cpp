@@ -575,7 +575,15 @@ bool WMORenderer::loadModel(const pipeline::WMOModel& model, uint32_t id) {
                     tex = modelData.textures[texIndex];
                     hasTexture = (tex != nullptr && tex != whiteTexture_.get());
                     if (!tex) tex = whiteTexture_.get();
+                } else {
+                    LOG_WARNING("WMO ", id, " batch materialId=", batch.materialId,
+                                " texIndex=", texIndex, " >= textures size ",
+                                modelData.textures.size(), " — white fallback");
                 }
+            } else {
+                LOG_WARNING("WMO ", id, " batch materialId=", batch.materialId,
+                            " >= materialTextureIndices size ",
+                            modelData.materialTextureIndices.size(), " — white fallback");
             }
 
             bool alphaTest = false;

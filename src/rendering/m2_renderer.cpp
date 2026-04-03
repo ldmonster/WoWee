@@ -1238,6 +1238,10 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
         uint16_t texIdx = model.particleEmitters[ei].texture;
         if (texIdx < allTextures.size() && allTextures[texIdx] != nullptr) {
             gpuModel.particleTextures[ei] = allTextures[texIdx];
+        } else {
+            LOG_WARNING("M2 '", model.name, "' particle emitter[", ei,
+                        "] texture index ", texIdx, " out of range (", allTextures.size(),
+                        " textures) — using white fallback");
         }
     }
 
@@ -1279,6 +1283,11 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
                               ? model.textureLookup[texLookupIdx] : UINT32_MAX;
             if (texIdx < allTextures.size() && allTextures[texIdx] != nullptr) {
                 gpuModel.ribbonTextures[ri] = allTextures[texIdx];
+            } else {
+                LOG_WARNING("M2 '", model.name, "' ribbon emitter[", ri,
+                            "] texLookup=", texLookupIdx, " resolved texIdx=", texIdx,
+                            " out of range (", allTextures.size(),
+                            " textures) — using white fallback");
             }
             // Allocate descriptor set (reuse particleTexLayout_ = single sampler)
             if (particleTexLayout_ && materialDescPool_) {
@@ -1348,6 +1357,9 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
                     bgpu.texFlags = static_cast<uint8_t>(model.textures[texIdx].flags & 0x3);
                 }
             } else if (!allTextures.empty()) {
+                LOG_WARNING("M2 '", model.name, "' batch textureIndex ", batch.textureIndex,
+                            " out of range (textureLookup size=", model.textureLookup.size(),
+                            ") — falling back to texture[0]");
                 tex = allTextures[0];
                 texFailed = !textureLoadFailed.empty() && textureLoadFailed[0];
                 if (!textureKeysLower.empty()) {
