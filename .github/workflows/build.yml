@@ -222,6 +222,19 @@ jobs:
           exit 1
         fi
 
+        # dylibbundler may miss Homebrew's OpenSSL on some runner images.
+        # Copy libssl and libcrypto so wowee_bin can resolve them at runtime.
+        OPENSSL_LIB_DIR="$(brew --prefix openssl@3)/lib"
+        for lib in "${OPENSSL_LIB_DIR}"/libssl*.dylib "${OPENSSL_LIB_DIR}"/libcrypto*.dylib; do
+          [ -e "${lib}" ] || continue
+          cp -f "${lib}" Wowee.app/Contents/Frameworks/
+        done
+
+        if ! ls Wowee.app/Contents/Frameworks/libssl*.dylib >/dev/null 2>&1; then
+          echo "Missing OpenSSL libssl dylib(s) in app bundle Frameworks/" >&2
+          exit 1
+        fi
+
         # Info.plist
         cat > Wowee.app/Contents/Info.plist << 'EOF'
         <?xml version="1.0" encoding="UTF-8"?>
@@ -290,20 +303,20 @@ jobs:
         msystem: CLANGARM64
         update: true
         install: >-
-          mingw-w64-clang-aarch64-cmake  
-          mingw-w64-clang-aarch64-clang  
-          mingw-w64-clang-aarch64-ninja 
-          mingw-w64-clang-aarch64-pkgconf  
-          mingw-w64-clang-aarch64-SDL2  
-          mingw-w64-clang-aarch64-glew  
-          mingw-w64-clang-aarch64-glm  
-          mingw-w64-clang-aarch64-openssl  
-          mingw-w64-clang-aarch64-zlib  
-          mingw-w64-clang-aarch64-ffmpeg  
-          mingw-w64-clang-aarch64-unicorn  
-          mingw-w64-clang-aarch64-vulkan-loader  
-          mingw-w64-clang-aarch64-vulkan-headers  
-          mingw-w64-clang-aarch64-shaderc  
+          mingw-w64-clang-aarch64-cmake
+          mingw-w64-clang-aarch64-clang
+          mingw-w64-clang-aarch64-ninja
+          mingw-w64-clang-aarch64-pkgconf
+          mingw-w64-clang-aarch64-SDL2
+          mingw-w64-clang-aarch64-glew
+          mingw-w64-clang-aarch64-glm
+          mingw-w64-clang-aarch64-openssl
+          mingw-w64-clang-aarch64-zlib
+          mingw-w64-clang-aarch64-ffmpeg
+          mingw-w64-clang-aarch64-unicorn
+          mingw-w64-clang-aarch64-vulkan-loader
+          mingw-w64-clang-aarch64-vulkan-headers
+          mingw-w64-clang-aarch64-shaderc
           git
 
     - name: Build StormLib from source
@@ -384,21 +397,21 @@ jobs:
         msystem: MINGW64
         update: false
         install: >-
-          mingw-w64-x86_64-cmake 
-          mingw-w64-x86_64-gcc 
-          mingw-w64-x86_64-ninja 
-          mingw-w64-x86_64-pkgconf 
-          mingw-w64-x86_64-SDL2 
-          mingw-w64-x86_64-glew 
-          mingw-w64-x86_64-glm 
-          mingw-w64-x86_64-openssl 
-          mingw-w64-x86_64-zlib 
-          mingw-w64-x86_64-ffmpeg 
-          mingw-w64-x86_64-unicorn 
-          mingw-w64-x86_64-vulkan-loader 
-          mingw-w64-x86_64-vulkan-headers 
-          mingw-w64-x86_64-shaderc 
-          mingw-w64-x86_64-nsis 
+          mingw-w64-x86_64-cmake
+          mingw-w64-x86_64-gcc
+          mingw-w64-x86_64-ninja
+          mingw-w64-x86_64-pkgconf
+          mingw-w64-x86_64-SDL2
+          mingw-w64-x86_64-glew
+          mingw-w64-x86_64-glm
+          mingw-w64-x86_64-openssl
+          mingw-w64-x86_64-zlib
+          mingw-w64-x86_64-ffmpeg
+          mingw-w64-x86_64-unicorn
+          mingw-w64-x86_64-vulkan-loader
+          mingw-w64-x86_64-vulkan-headers
+          mingw-w64-x86_64-shaderc
+          mingw-w64-x86_64-nsis
           git
 
     - name: Build StormLib from source
