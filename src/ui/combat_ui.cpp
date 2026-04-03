@@ -8,6 +8,7 @@
 #include "ui/settings_panel.hpp"
 #include "ui/spellbook_screen.hpp"
 #include "ui/ui_colors.hpp"
+#include "ui/ui_helpers.hpp"
 #include "core/application.hpp"
 #include "core/logger.hpp"
 #include "core/coordinates.hpp"
@@ -27,20 +28,11 @@
 
 namespace {
     using namespace wowee::ui::colors;
+    using namespace wowee::ui::helpers;
     constexpr auto& kColorRed         = kRed;
     constexpr auto& kColorGreen       = kGreen;
     constexpr auto& kColorBrightGreen = kBrightGreen;
     constexpr auto& kColorYellow      = kYellow;
-
-    // Render "Remaining: Xs" or "Remaining: Xm Ys" in a tooltip (light gray)
-    void renderAuraRemaining(int remainMs) {
-        if (remainMs <= 0) return;
-        int s = remainMs / 1000;
-        char buf[32];
-        if (s < 60) snprintf(buf, sizeof(buf), "Remaining: %ds", s);
-        else snprintf(buf, sizeof(buf), "Remaining: %dm %ds", s / 60, s % 60);
-        ImGui::TextColored(kLightGray, "%s", buf);
-    }
 } // anonymous namespace
 
 namespace wowee {
