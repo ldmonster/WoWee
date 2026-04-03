@@ -25,8 +25,9 @@ endif()
 
 # Options
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
-option(WOWEE_BUILD_TESTS "Build tests" OFF)
+option(WOWEE_BUILD_TESTS "Build tests" ON)
 option(WOWEE_ENABLE_ASAN "Enable AddressSanitizer (Debug builds)" OFF)
+option(WOWEE_ENABLE_TRACY "Enable Tracy profiler instrumentation" OFF)
 option(WOWEE_ENABLE_AMD_FSR2 "Enable AMD FidelityFX FSR2 backend when SDK is present" ON)
 option(WOWEE_ENABLE_AMD_FSR3_FRAMEGEN "Enable AMD FidelityFX SDK FSR3 frame generation interface probe when SDK is present" ON)
 option(WOWEE_BUILD_AMD_FSR3_RUNTIME "Build native AMD FidelityFX VK runtime (Path A) from extern/FidelityFX-SDK/Kits" ON)
@@ -788,6 +789,15 @@ endif()
 
 # Create executable
 add_executable(wowee ${WOWEE_SOURCES} ${WOWEE_HEADERS} ${WOWEE_PLATFORM_SOURCES})
+
+# Tracy profiler — zero overhead when WOWEE_ENABLE_TRACY is OFF
+if(WOWEE_ENABLE_TRACY)
+    target_sources(wowee PRIVATE ${CMAKE_SOURCE_DIR}/extern/tracy/public/TracyClient.cpp)
+    target_compile_definitions(wowee PRIVATE TRACY_ENABLE)
+    target_include_directories(wowee SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/extern/tracy/public)
+    message(STATUS "Tracy profiler: ENABLED")
+endif()
+
 if(TARGET opcodes-generate)
     add_dependencies(wowee opcodes-generate)
 endif()
@@ -931,6 +941,12 @@ else()
     )
 endif()
 
+# ── Unit tests (Catch2) ──────────────────────────────────────
+if(WOWEE_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
+
 # AddressSanitizer — catch buffer overflows, use-after-free, etc.
 # Enable with:  cmake ... -DWOWEE_ENABLE_ASAN=ON -DCMAKE_BUILD_TYPE=Debug
 if(WOWEE_ENABLE_ASAN)
@@ -942,10 +958,10 @@ if(WOWEE_ENABLE_ASAN)
             $<$<CONFIG:Release>:/MD>
         )
     else()
-        target_compile_options(wowee PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-        target_link_options(wowee PRIVATE -fsanitize=address)
+        target_compile_options(wowee PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(wowee PRIVATE -fsanitize=address,undefined)
     endif()
-    message(STATUS "AddressSanitizer: ENABLED")
+    message(STATUS "AddressSanitizer + UBSan: ENABLED")
 endif()
 
 # Release build optimizations

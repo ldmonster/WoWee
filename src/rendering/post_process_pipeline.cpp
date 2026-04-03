@@ -8,6 +8,7 @@
 #include "rendering/camera.hpp"
 #include "rendering/amd_fsr3_runtime.hpp"
 #include "core/logger.hpp"
+#include "core/profiler.hpp"
 #include <cstdlib>
 #include <algorithm>
 #include <glm/gtc/matrix_inverse.hpp>
@@ -152,6 +153,7 @@ bool PostProcessPipeline::hasActivePostProcess() const {
 
 bool PostProcessPipeline::executePostProcessing(VkCommandBuffer cmd, uint32_t imageIndex,
                                                   Camera* camera, float deltaTime) {
+    ZoneScopedN("PostProcess::execute");
     currentCmd_ = cmd;
     camera_ = camera;
     lastDeltaTime_ = deltaTime;

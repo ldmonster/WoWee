@@ -13,6 +13,7 @@
 #include "rendering/weather.hpp"
 #include "rendering/lightning.hpp"
 #include "rendering/lighting_manager.hpp"
+#include "core/profiler.hpp"
 #include "rendering/sky_system.hpp"
 #include "rendering/swim_effects.hpp"
 #include "rendering/mount_dust.hpp"
@@ -797,6 +798,7 @@ void Renderer::applyMsaaChange() {
 }
 
 void Renderer::beginFrame() {
+    ZoneScopedN("Renderer::beginFrame");
     if (!vkCtx) return;
     if (vkCtx->isDeviceLost()) return;
 
@@ -924,6 +926,7 @@ void Renderer::beginFrame() {
 }
 
 void Renderer::endFrame() {
+    ZoneScopedN("Renderer::endFrame");
     if (!vkCtx || currentCmd == VK_NULL_HANDLE) return;
 
     // Track whether a post-processing path switched to an INLINE render pass.
@@ -1190,6 +1193,7 @@ bool Renderer::isMoving() const {
 }
 
 void Renderer::update(float deltaTime) {
+    ZoneScopedN("Renderer::update");
     globalTime += deltaTime;
     if (musicSwitchCooldown_ > 0.0f) {
         musicSwitchCooldown_ = std::max(0.0f, musicSwitchCooldown_ - deltaTime);
@@ -1975,6 +1979,7 @@ float Renderer::getBrightness() const {
 }
 
 void Renderer::renderWorld(game::World* world, game::GameHandler* gameHandler) {
+    ZoneScopedN("Renderer::renderWorld");
     (void)world;
 
     // Guard against null command buffer (e.g. after VK_ERROR_DEVICE_LOST)
@@ -3042,6 +3047,7 @@ void Renderer::renderReflectionPass() {
 }
 
 void Renderer::renderShadowPass() {
+    ZoneScopedN("Renderer::renderShadowPass");
     static const bool skipShadows = (std::getenv("WOWEE_SKIP_SHADOWS") != nullptr);
     if (skipShadows) return;
     if (!shadowsEnabled || shadowDepthImage[0] == VK_NULL_HANDLE) return;

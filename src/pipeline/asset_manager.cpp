@@ -1,6 +1,7 @@
 #include "pipeline/asset_manager.hpp"
 #include "core/logger.hpp"
 #include "core/memory_monitor.hpp"
+#include "core/profiler.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
@@ -166,6 +167,7 @@ void AssetManager::setBaseFallbackPath(const std::string& basePath) {
 }
 
 BLPImage AssetManager::loadTexture(const std::string& path) {
+    ZoneScopedN("AssetManager::loadTexture");
     if (!initialized) {
         LOG_ERROR("AssetManager not initialized");
         return BLPImage();
@@ -265,6 +267,7 @@ void AssetManager::setExpansionDataPath(const std::string& path) {
 }
 
 std::shared_ptr<DBCFile> AssetManager::loadDBC(const std::string& name) {
+    ZoneScopedN("AssetManager::loadDBC");
     if (!initialized) {
         LOG_ERROR("AssetManager not initialized");
         return nullptr;

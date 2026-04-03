@@ -12,6 +12,7 @@
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/blp_loader.hpp"
 #include "core/logger.hpp"
+#include "core/profiler.hpp"
 #include <chrono>
 #include <cctype>
 #include <glm/gtc/matrix_transform.hpp>
@@ -1866,6 +1867,7 @@ static glm::quat interpQuat(const pipeline::M2AnimationTrack& track,
 }
 
 static void computeBoneMatrices(const M2ModelGPU& model, M2Instance& instance) {
+    ZoneScopedN("M2::computeBoneMatrices");
     size_t numBones = std::min(model.bones.size(), size_t(128));
     if (numBones == 0) return;
     instance.boneMatrices.resize(numBones);
@@ -1898,6 +1900,7 @@ static void computeBoneMatrices(const M2ModelGPU& model, M2Instance& instance) {
 }
 
 void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::mat4& viewProjection) {
+    ZoneScopedN("M2Renderer::update");
     if (spatialIndexDirty_) {
         rebuildSpatialIndex();
     }

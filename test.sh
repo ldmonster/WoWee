@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
-# test.sh — Run the C++ linter (clang-tidy) against all first-party sources.
+# test.sh — Run the Catch2 unit tests and/or clang-tidy linter.
 #
 # Usage:
-#   ./test.sh            # lint src/ and include/ using build/compile_commands.json
-#   FIX=1 ./test.sh      # apply suggested fixes automatically (use with care)
+#   ./test.sh                    # run both lint and tests (default)
+#   ./test.sh --lint             # run clang-tidy only
+#   ./test.sh --test             # run ctest unit tests only
+#   ./test.sh --lint --test      # explicit: run both
+#   ./test.sh --asan             # run ctest under ASAN/UBSan (requires build_asan/)
+#   ./test.sh --test --asan      # same as above
+#   FIX=1 ./test.sh --lint       # apply clang-tidy fix suggestions (use with care)
 #
-# Exit code is non-zero if any clang-tidy diagnostic is emitted.
+# Exit code is non-zero if any lint diagnostic or test failure is reported.
+#
+# Build directories:
+#   build/       — Release build used for normal ctest  (cmake -DCMAKE_BUILD_TYPE=Release)
+#   build_asan/  — Debug+ASAN build used with --asan    (cmake -DCMAKE_BUILD_TYPE=Debug
+#                                                              -DWOWEE_ENABLE_ASAN=ON
+#                                                              -DWOWEE_BUILD_TESTS=ON)
 
 set -euo pipefail
 
@@ -13,8 +24,88 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # ---------------------------------------------------------------------------
-# Dependency check
+# Argument parsing
 # ---------------------------------------------------------------------------
+RUN_LINT=0
+RUN_TEST=0
+RUN_ASAN=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --lint) RUN_LINT=1 ;;
+        --test) RUN_TEST=1 ;;
+        --asan) RUN_ASAN=1; RUN_TEST=1 ;;
+        --help|-h)
+            sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $arg"
+            echo "Usage: $0 [--lint] [--test] [--asan]"
+            exit 1
+            ;;
+    esac
+done
+
+# Default: run both when no flags provided
+if [[ $RUN_LINT -eq 0 && $RUN_TEST -eq 0 ]]; then
+    RUN_LINT=1
+    RUN_TEST=1
+fi
+
+# ---------------------------------------------------------------------------
+# ── UNIT TESTS ─────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+OVERALL_FAILED=0
+
+if [[ $RUN_TEST -eq 1 ]]; then
+    if [[ $RUN_ASAN -eq 1 ]]; then
+        BUILD_TEST_DIR="$SCRIPT_DIR/build_asan"
+        TEST_LABEL="ASAN+UBSan"
+    else
+        BUILD_TEST_DIR="$SCRIPT_DIR/build"
+        TEST_LABEL="Release"
+    fi
+
+    if [[ ! -d "$BUILD_TEST_DIR" ]]; then
+        echo "Build directory not found: $BUILD_TEST_DIR"
+        if [[ $RUN_ASAN -eq 1 ]]; then
+            echo "Configure it with:"
+            echo "  cmake -B build_asan -DCMAKE_BUILD_TYPE=Debug -DWOWEE_ENABLE_ASAN=ON -DWOWEE_BUILD_TESTS=ON"
+        else
+            echo "Run cmake first:  cmake -B build -DCMAKE_BUILD_TYPE=Release -DWOWEE_BUILD_TESTS=ON"
+        fi
+        exit 1
+    fi
+
+    # Check that CTestTestfile.cmake exists (tests were configured)
+    if [[ ! -f "$BUILD_TEST_DIR/CTestTestfile.cmake" ]]; then
+        echo "CTestTestfile.cmake not found in $BUILD_TEST_DIR — tests not configured."
+        echo "Re-run cmake with -DWOWEE_BUILD_TESTS=ON"
+        exit 1
+    fi
+
+    echo "──────────────────────────────────────────────"
+    echo " Running unit tests [$TEST_LABEL]"
+    echo "──────────────────────────────────────────────"
+    if ! (cd "$BUILD_TEST_DIR" && ctest --output-on-failure); then
+        OVERALL_FAILED=1
+        echo ""
+        echo "One or more unit tests FAILED."
+    else
+        echo ""
+        echo "All unit tests passed."
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# ── LINT ───────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+if [[ $RUN_LINT -eq 0 ]]; then
+    exit $OVERALL_FAILED
+fi
+
+# Dependency check
 CLANG_TIDY=""
 for candidate in clang-tidy clang-tidy-18 clang-tidy-17 clang-tidy-16 clang-tidy-15 clang-tidy-14; do
     if command -v "$candidate" >/dev/null 2>&1; then
@@ -29,6 +120,9 @@ if [[ -z "$CLANG_TIDY" ]]; then
     exit 1
 fi
 
+echo "──────────────────────────────────────────────"
+echo " Running clang-tidy lint"
+echo "──────────────────────────────────────────────"
 echo "Using: $($CLANG_TIDY --version | head -1)"
 
 # run-clang-tidy runs checks in parallel; fall back to sequential if absent.
@@ -40,9 +134,7 @@ for candidate in run-clang-tidy run-clang-tidy-18 run-clang-tidy-17 run-clang-ti
     fi
 done
 
-# ---------------------------------------------------------------------------
 # Build database check
-# ---------------------------------------------------------------------------
 COMPILE_COMMANDS="$SCRIPT_DIR/build/compile_commands.json"
 if [[ ! -f "$COMPILE_COMMANDS" ]]; then
     echo "compile_commands.json not found at $COMPILE_COMMANDS"
@@ -108,7 +200,7 @@ if [[ "$FIX" == "1" ]]; then
     echo "Fix mode enabled — applying suggested fixes."
 fi
 
-FAILED=0
+LINT_FAILED=0
 
 if [[ -n "$RUN_CLANG_TIDY" ]]; then
     echo "Running via $RUN_CLANG_TIDY (parallel)..."
@@ -119,7 +211,7 @@ if [[ -n "$RUN_CLANG_TIDY" ]]; then
         -p "$SCRIPT_DIR/build" \
         $FIX_FLAG \
         "${EXTRA_RUN_ARGS[@]}" \
-        "$SRC_REGEX" || FAILED=$?
+        "$SRC_REGEX" || LINT_FAILED=$?
 else
     echo "run-clang-tidy not found; running sequentially..."
     for f in "${SOURCE_FILES[@]}"; do
@@ -127,18 +219,20 @@ else
             -p "$SCRIPT_DIR/build" \
             $FIX_FLAG \
             "${EXTRA_TIDY_ARGS[@]}" \
-            "$f" || FAILED=$?
+            "$f" || LINT_FAILED=$?
     done
 fi
 
 # ---------------------------------------------------------------------------
 # Result
 # ---------------------------------------------------------------------------
-if [[ $FAILED -ne 0 ]]; then
+if [[ $LINT_FAILED -ne 0 ]]; then
     echo ""
     echo "clang-tidy reported issues. Fix them or add suppressions in .clang-tidy."
-    exit 1
+    OVERALL_FAILED=1
+else
+    echo ""
+    echo "Lint passed."
 fi
 
-echo ""
-echo "Lint passed."
+exit $OVERALL_FAILED

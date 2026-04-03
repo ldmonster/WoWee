@@ -1,5 +1,6 @@
 #include "pipeline/adt_loader.hpp"
 #include "core/logger.hpp"
+#include "core/profiler.hpp"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -28,6 +29,7 @@ float HeightMap::getHeight(int x, int y) const {
 
 // ADTLoader implementation
 ADTTerrain ADTLoader::load(const std::vector<uint8_t>& adtData) {
+    ZoneScopedN("ADTLoader::load");
     ADTTerrain terrain;
 
     if (adtData.empty()) {
