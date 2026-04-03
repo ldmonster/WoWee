@@ -253,6 +253,43 @@ jobs:
         # Ad-hoc codesign (allows running on the local machine)
         codesign --force --deep --sign - Wowee.app
 
+    - name: Verify bundled dylibs
+      run: |
+        set -euo pipefail
+        echo "=== dylib references for wowee_bin ==="
+        otool -L Wowee.app/Contents/MacOS/wowee_bin
+
+        # Every non-system dylib referenced by the binary must resolve inside
+        # the bundle.  System paths (/usr/lib, /System) are always present on
+        # macOS and don't need bundling.
+        missing=0
+        while IFS= read -r dep; do
+          # Strip leading whitespace and version info: "	/path/to/lib.dylib (compat ...)"
+          path=$(echo "$dep" | sed 's/^[[:space:]]*//;s/ (compat.*//')
+          case "$path" in
+            /usr/lib/*|/System/*|@executable_path/*|@rpath/*) continue ;;
+          esac
+          # Resolve @loader_path relative to the binary
+          resolved="${path/#@loader_path/Wowee.app/Contents/MacOS}"
+          if [ ! -f "$resolved" ]; then
+            basename=$(basename "$path")
+            if [ ! -f "Wowee.app/Contents/Frameworks/$basename" ]; then
+              echo "ERROR: unbundled dylib: $path" >&2
+              missing=$((missing + 1))
+            fi
+          fi
+        done < <(otool -L Wowee.app/Contents/MacOS/wowee_bin | tail -n +2)
+
+        if [ "$missing" -gt 0 ]; then
+          echo ""
+          echo "=== Frameworks directory ==="
+          ls -la Wowee.app/Contents/Frameworks/
+          echo ""
+          echo "FAIL: $missing dylib(s) missing from app bundle" >&2
+          exit 1
+        fi
+        echo "All non-system dylibs are bundled."
+
     - name: Create DMG
       run: |
         set -euo pipefail

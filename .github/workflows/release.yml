@@ -228,6 +228,35 @@ jobs:
         # Ad-hoc codesign
         codesign --force --deep --sign - Wowee.app
 
+    - name: Verify bundled dylibs
+      run: |
+        set -euo pipefail
+        echo "=== dylib references for wowee_bin ==="
+        otool -L Wowee.app/Contents/MacOS/wowee_bin
+
+        missing=0
+        while IFS= read -r dep; do
+          path=$(echo "$dep" | sed 's/^[[:space:]]*//;s/ (compat.*//')
+          case "$path" in
+            /usr/lib/*|/System/*|@executable_path/*|@rpath/*) continue ;;
+          esac
+          resolved="${path/#@loader_path/Wowee.app/Contents/MacOS}"
+          if [ ! -f "$resolved" ]; then
+            basename=$(basename "$path")
+            if [ ! -f "Wowee.app/Contents/Frameworks/$basename" ]; then
+              echo "ERROR: unbundled dylib: $path" >&2
+              missing=$((missing + 1))
+            fi
+          fi
+        done < <(otool -L Wowee.app/Contents/MacOS/wowee_bin | tail -n +2)
+
+        if [ "$missing" -gt 0 ]; then
+          ls -la Wowee.app/Contents/Frameworks/
+          echo "FAIL: $missing dylib(s) missing from app bundle" >&2
+          exit 1
+        fi
+        echo "All non-system dylibs are bundled."
+
     - name: Create DMG
       run: |
         TAG="${GITHUB_REF_NAME}"
