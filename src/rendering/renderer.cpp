@@ -734,12 +734,13 @@ void Renderer::applyMsaaChange() {
     VkSampleCountFlagBits current = vkCtx->getMsaaSamples();
     if (samples == current) return;
 
-    LOG_INFO("Changing MSAA from ", static_cast<int>(current), "x to ", static_cast<int>(samples), "x");
+    LOG_WARNING("MSAA change: ", static_cast<int>(current), "x → ", static_cast<int>(samples), "x");
 
     // Single GPU wait — all subsequent operations are CPU-side object creation
     vkDeviceWaitIdle(vkCtx->getDevice());
 
     // Set new MSAA and recreate swapchain (render pass, depth, MSAA image, framebuffers)
+    LOG_WARNING("MSAA: recreating swapchain");
     vkCtx->setMsaaSamples(samples);
     if (!vkCtx->recreateSwapchain(window->getWidth(), window->getHeight())) {
         LOG_ERROR("MSAA change failed — reverting to 1x");
@@ -748,6 +749,7 @@ void Renderer::applyMsaaChange() {
     }
 
     // Recreate all sub-renderer pipelines (they embed sample count from render pass)
+    LOG_WARNING("MSAA: recreating terrain/water/wmo/m2/char pipelines");
     if (terrainRenderer) terrainRenderer->recreatePipelines();
     if (waterRenderer) {
         waterRenderer->recreatePipelines();
@@ -756,6 +758,7 @@ void Renderer::applyMsaaChange() {
     if (wmoRenderer) wmoRenderer->recreatePipelines();
     if (m2Renderer) m2Renderer->recreatePipelines();
     if (characterRenderer) characterRenderer->recreatePipelines();
+    LOG_WARNING("MSAA: recreating quest/weather/sky pipelines");
     if (questMarkerRenderer) questMarkerRenderer->recreatePipelines();
     if (weather) weather->recreatePipelines();
     if (lightning) lightning->recreatePipelines();
@@ -772,6 +775,7 @@ void Renderer::applyMsaaChange() {
         if (auto* lf = skySystem->getLensFlare()) lf->recreatePipelines();
     }
 
+    LOG_WARNING("MSAA: recreating minimap/postprocess/imgui");
     if (minimap) minimap->recreatePipelines();
 
     // Selection circle + overlay + FSR use lazy init, just destroy them
@@ -800,7 +804,7 @@ void Renderer::applyMsaaChange() {
     };
     ImGui_ImplVulkan_Init(&initInfo);
 
-    LOG_INFO("MSAA change complete");
+    LOG_WARNING("MSAA change complete");
 }
 
 void Renderer::beginFrame() {
