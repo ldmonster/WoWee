@@ -808,6 +808,14 @@ void Renderer::beginFrame() {
     if (!vkCtx) return;
     if (vkCtx->isDeviceLost()) return;
 
+    // Diagnostic: log pointer state to detect corrupt this/members
+    LOG_WARNING("beginFrame: this=", (void*)this,
+                " vkCtx=", (void*)vkCtx,
+                " msaaP=", msaaChangePending_,
+                " ppPipe=", (void*)postProcessPipeline_.get(),
+                " cam=", (void*)camera.get(),
+                " swDirty=", vkCtx->isSwapchainDirty());
+
     // Apply deferred MSAA change between frames (before any rendering state is used)
     g_crashRenderPhase = "bf:msaa";
     if (msaaChangePending_) {
