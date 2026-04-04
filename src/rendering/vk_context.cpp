@@ -745,6 +745,20 @@ void VkContext::destroyDepthBuffer() {
 bool VkContext::createMsaaColorImage() {
     if (msaaSamples_ == VK_SAMPLE_COUNT_1_BIT) return true; // No MSAA image needed
 
+    // Check if lazily allocated memory is available — only use TRANSIENT when it is.
+    // AMD GPUs (especially RDNA4) don't expose lazily allocated memory; using TRANSIENT
+    // without it can cause the driver to optimize for tile-only storage, leading to
+    // crashes during MSAA resolve when the backing memory was never populated.
+    bool hasLazyMemory = false;
+    VkPhysicalDeviceMemoryProperties memProps;
+    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProps);
+    for (uint32_t i = 0; i < memProps.memoryTypeCount; i++) {
+        if (memProps.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT) {
+            hasLazyMemory = true;
+            break;
+        }
+    }
+
     VkImageCreateInfo imgInfo{};
     imgInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imgInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -754,11 +768,16 @@ bool VkContext::createMsaaColorImage() {
     imgInfo.arrayLayers = 1;
     imgInfo.samples = msaaSamples_;
     imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imgInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
 
     VmaAllocationCreateInfo allocInfo{};
     allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-    allocInfo.preferredFlags = VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT;
+
+    if (hasLazyMemory) {
+        imgInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+        allocInfo.preferredFlags = VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT;
+    } else {
+        imgInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    }
 
     if (vmaCreateImage(allocator, &imgInfo, &allocInfo, &msaaColorImage_, &msaaColorAllocation_, nullptr) != VK_SUCCESS) {
         // Retry without TRANSIENT (some drivers reject it at high sample counts)
