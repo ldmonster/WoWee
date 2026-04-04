@@ -293,6 +293,7 @@ bool PostProcessPipeline::executePostProcessing(VkCommandBuffer cmd, uint32_t im
         fsr2_.frameIndex = (fsr2_.frameIndex + 1) % 256;  // Wrap to keep Halton values well-distributed
 
     } else if (fxaa_.enabled && fxaa_.sceneFramebuffer) {
+        inlineMode = true;
         // End the off-screen scene render pass
         vkCmdEndRenderPass(currentCmd_);
 
@@ -333,6 +334,7 @@ bool PostProcessPipeline::executePostProcessing(VkCommandBuffer cmd, uint32_t im
         renderFXAAPass();
 
     } else if (fsr_.enabled && fsr_.sceneFramebuffer) {
+        inlineMode = true;
         // FSR1 upscale path — only runs when FXAA is not active.
         // When both FSR1 and FXAA are enabled, FXAA took priority above.
         vkCmdEndRenderPass(currentCmd_);
