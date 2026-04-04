@@ -1285,6 +1285,17 @@ void InventoryHandler::useItemById(uint32_t itemId) {
 
 void InventoryHandler::handleListInventory(network::Packet& packet) {
     if (!ListInventoryParser::parse(packet, currentVendorItems_)) return;
+
+    // Detect repair capability from NPC flags (covers direct vendors without gossip).
+    // UNIT_NPC_FLAG_REPAIR = 0x1000.
+    if (!currentVendorItems_.canRepair && currentVendorItems_.vendorGuid != 0) {
+        if (auto* unit = owner_.getUnitByGuid(currentVendorItems_.vendorGuid)) {
+            if (unit->getNpcFlags() & 0x1000) {
+                currentVendorItems_.canRepair = true;
+            }
+        }
+    }
+
     vendorWindowOpen_ = true;
     owner_.closeGossip();
     if (owner_.addonEventCallback_) owner_.addonEventCallback_("MERCHANT_SHOW", {});

@@ -4964,7 +4964,12 @@ network::Packet BuybackItemPacket::build(uint64_t vendorGuid, uint32_t slot) {
 }
 
 bool ListInventoryParser::parse(network::Packet& packet, ListInventoryData& data) {
+    // Preserve canRepair — it was set by the gossip handler before this packet
+    // arrived and is not part of the wire format.
+    const bool savedCanRepair = data.canRepair;
     data = ListInventoryData{};
+    data.canRepair = savedCanRepair;
+
     if (!packet.hasRemaining(9)) {
         LOG_WARNING("ListInventoryParser: packet too short");
         return false;
