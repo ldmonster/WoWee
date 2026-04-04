@@ -300,5 +300,76 @@ inline const char* getSpellCastResultString(uint8_t result, int powerType = -1) 
     }
 }
 
+// ── SpellEffect — SMSG_SPELLLOGEXECUTE effectType field (3.3.5a) ──────────
+// Full WoW enum has 164 entries; only values used in the codebase or commonly
+// relevant are defined here. Values match SharedDefines.h SpellEffects enum.
+namespace SpellEffect {
+    constexpr uint8_t NONE                      = 0;
+    constexpr uint8_t INSTAKILL                 = 1;
+    constexpr uint8_t SCHOOL_DAMAGE             = 2;
+    constexpr uint8_t DUMMY                     = 3;
+    constexpr uint8_t TELEPORT_UNITS            = 5;
+    constexpr uint8_t APPLY_AURA                = 6;
+    constexpr uint8_t ENVIRONMENTAL_DAMAGE      = 7;
+    constexpr uint8_t POWER_DRAIN               = 10;
+    constexpr uint8_t HEALTH_LEECH              = 11;
+    constexpr uint8_t HEAL                      = 12;
+    constexpr uint8_t WEAPON_DAMAGE_NOSCHOOL    = 16;
+    constexpr uint8_t RESURRECT                 = 18;
+    constexpr uint8_t EXTRA_ATTACKS             = 19;
+    constexpr uint8_t CREATE_ITEM               = 24;
+    constexpr uint8_t WEAPON_DAMAGE             = 25;
+    constexpr uint8_t INTERRUPT_CAST            = 26;
+    constexpr uint8_t OPEN_LOCK                 = 27;
+    constexpr uint8_t APPLY_AREA_AURA_PARTY     = 35;
+    constexpr uint8_t LEARN_SPELL               = 36;
+    constexpr uint8_t DISPEL                    = 38;
+    constexpr uint8_t SUMMON                    = 40;
+    constexpr uint8_t ENERGIZE                  = 43;
+    constexpr uint8_t WEAPON_PERCENT_DAMAGE     = 44;
+    constexpr uint8_t TRIGGER_SPELL             = 45;
+    constexpr uint8_t FEED_PET                  = 49;
+    constexpr uint8_t DISMISS_PET               = 50;
+    constexpr uint8_t ENCHANT_ITEM_PERM         = 53;
+    constexpr uint8_t ENCHANT_ITEM_TEMP         = 54;
+    constexpr uint8_t SUMMON_PET                = 56;
+    constexpr uint8_t LEARN_PET_SPELL           = 57;
+    constexpr uint8_t WEAPON_DAMAGE_PLUS        = 58;
+    constexpr uint8_t CREATE_HOUSE              = 60;
+    constexpr uint8_t DUEL                      = 62;
+    constexpr uint8_t QUEST_COMPLETE            = 63;
+    constexpr uint8_t NORMALIZED_WEAPON_DMG     = 75;
+    constexpr uint8_t OPEN_LOCK_ITEM            = 79;
+    constexpr uint8_t APPLY_AREA_AURA_RAID      = 81;
+    constexpr uint8_t ACTIVATE_RUNE             = 92;
+    constexpr uint8_t KNOCK_BACK                = 99;
+    constexpr uint8_t PULL                      = 100;
+    constexpr uint8_t DISPEL_MECHANIC           = 108;
+    constexpr uint8_t RESURRECT_NEW             = 113;
+    constexpr uint8_t CREATE_ITEM2              = 114;
+    constexpr uint8_t MILLING                   = 115;
+    constexpr uint8_t PROSPECTING               = 118;
+    constexpr uint8_t CHARGE                    = 126;
+    constexpr uint8_t TITAN_GRIP                = 155;
+    constexpr uint8_t TOTAL_SPELL_EFFECTS       = 164;
+} // namespace SpellEffect
+
+// ── SpellMissInfo — SMSG_SPELLLOGMISS / SMSG_SPELL_GO miss type (3.3.5a) ─
+namespace SpellMissInfo {
+    constexpr uint8_t NONE      = 0;   // Miss
+    constexpr uint8_t MISS      = 0;
+    constexpr uint8_t DODGE     = 1;
+    constexpr uint8_t PARRY     = 2;
+    constexpr uint8_t BLOCK     = 3;
+    constexpr uint8_t EVADE     = 4;
+    constexpr uint8_t IMMUNE    = 5;
+    constexpr uint8_t DEFLECT   = 6;
+    constexpr uint8_t ABSORB    = 7;
+    constexpr uint8_t RESIST    = 8;
+    constexpr uint8_t IMMUNE2   = 9;   // Second immunity flag
+    constexpr uint8_t IMMUNE3   = 10;  // Third immunity flag
+    constexpr uint8_t REFLECT   = 11;
+} // namespace SpellMissInfo
+
 } // namespace game
 } // namespace wowee

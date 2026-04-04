@@ -84,7 +84,7 @@ bool Celestial::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout)
         .setVertexInput({binding}, {posAttr, uvAttr})
         .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
         .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
-        .setDepthTest(true, false, VK_COMPARE_OP_LESS_OR_EQUAL) // test on, write off (sky layer)
+        .setNoDepthTest() // Sky layer: celestials always render (skybox doesn't write depth)
         .setColorBlendAttachment(PipelineBuilder::blendAdditive())
         .setMultisample(vkCtx_->getMsaaSamples())
         .setLayout(pipelineLayout_)
@@ -411,6 +411,12 @@ float Celestial::calculateCelestialAngle(float timeOfDay, float riseTime, float 
 
 void Celestial::update(float deltaTime) {
     sunHazeTimer_ += deltaTime;
+    // Keep timer in a range where GPU sin() precision is reliable (< ~10000).
+    // The noise period repeats at multiples of 1.0 on each axis, so fmod by a
+    // large integer preserves visual continuity.
+    if (sunHazeTimer_ > 10000.0f) {
+        sunHazeTimer_ = std::fmod(sunHazeTimer_, 10000.0f);
+    }
 
     if (!moonPhaseCycling_) {
         return;

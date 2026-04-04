@@ -131,6 +131,35 @@ private:
     std::vector<std::string> introTracks_;
     bool loginMusicVolumeAdjusted_ = false;
     int savedMusicVolume_ = 30;
+
+    // ----- Login-screen graphics settings popup -----
+    bool showLoginSettings_ = false;
+
+    // Local copies of the settings keys we expose in the login popup.
+    // Loaded on first open; saved on Apply.
+    struct LoginGraphicsState {
+        int  preset          = 2;   // 0=Custom 1=Low 2=Medium 3=High 4=Ultra
+        bool shadows         = true;
+        float shadowDistance = 300.0f;
+        int  antiAliasing    = 0;   // 0=Off 1=2x 2=4x 3=8x
+        bool fxaa            = false;
+        bool normalMapping   = true;
+        bool pom             = true;
+        int  pomQuality      = 1;   // 0=Low 1=Medium 2=High
+        int  upscalingMode   = 0;   // 0=Off 1=FSR1 2=FSR3
+        bool waterRefraction = true;
+        int  groundClutter   = 100; // 0-150
+        int  brightness      = 50;  // 0-100
+        bool vsync           = false;
+        bool fullscreen      = false;
+    };
+    LoginGraphicsState loginGfx_;
+    bool loginGfxLoaded_ = false;
+
+    void renderLoginSettingsWindow();
+    void loadLoginGraphicsState();
+    void saveLoginGraphicsState();
+    static void applyPresetToState(LoginGraphicsState& s, int preset);
 };
 
 }} // namespace wowee::ui

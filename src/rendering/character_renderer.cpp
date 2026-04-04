@@ -15,6 +15,7 @@
  * the original WoW Model Viewer (charcontrol.h, REGION_FAC=2).
  */
 #include "rendering/character_renderer.hpp"
+#include "rendering/animation_ids.hpp"
 #include "rendering/vk_context.hpp"
 #include "rendering/vk_texture.hpp"
 #include "rendering/vk_pipeline.hpp"
@@ -34,6 +35,7 @@
 #include <cmath>
 #include <filesystem>
 #include <future>
+#include <numeric>
 #include <thread>
 #include <functional>
 #include <unordered_map>
@@ -261,7 +263,8 @@ bool CharacterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFram
             .setVertexInput({charBinding}, charAttrs)
             .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
             .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
-            .setDepthTest(true, depthWrite, VK_COMPARE_OP_LESS_OR_EQUAL)
+            .setDepthTest(true, depthWrite, VK_COMPARE_OP_LESS)
+            .setDepthBias(0.0f, 0.0f)
             .setColorBlendAttachment(blendState)
             .setMultisample(samples);
         if (alphaToCoverage)
@@ -269,7 +272,7 @@ bool CharacterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFram
         return builder
             .setLayout(pipelineLayout_)
             .setRenderPass(mainPass)
-            .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
+            .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS})
             .build(device, vkCtx_->getPipelineCache());
     };
 
@@ -1733,9 +1736,9 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
                         inst.animationTime -= static_cast<float>(seq.duration);
                     }
                 } else {
-                    // One-shot animation finished: return to Stand (0) unless dead
-                    if (inst.currentAnimationId != 1 /*Death*/) {
-                        playAnimation(pair.first, 0, true);
+                    // One-shot animation finished: return to Stand unless dead
+                    if (inst.currentAnimationId != anim::DEATH) {
+                        playAnimation(pair.first, anim::STAND, true);
                     } else {
                         // Stay on last frame of death
                         inst.animationTime = static_cast<float>(seq.duration);
@@ -2380,8 +2383,24 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                     return gpuModel.data.materials[b.materialIndex].blendMode;
                 return 0;
             };
+
+            // Sort batches by (priorityPlane, materialLayer) so equipment layers
+            // render in the order the M2 format intends. priorityPlane separates
+            // overlay effects; materialLayer orders coplanar body parts.
+            std::vector<size_t> sortedBatchIndices(gpuModel.data.batches.size());
+            std::iota(sortedBatchIndices.begin(), sortedBatchIndices.end(), 0);
+            std::stable_sort(sortedBatchIndices.begin(), sortedBatchIndices.end(),
+                [&](size_t a, size_t b) {
+                    const auto& ba = gpuModel.data.batches[a];
+                    const auto& bb = gpuModel.data.batches[b];
+                    if (ba.priorityPlane != bb.priorityPlane)
+                        return ba.priorityPlane < bb.priorityPlane;
+                    return ba.materialLayer < bb.materialLayer;
+                });
+
             for (int pass = 0; pass < 2; pass++) {
-            for (const auto& batch : gpuModel.data.batches) {
+            for (size_t bi : sortedBatchIndices) {
+                const auto& batch = gpuModel.data.batches[bi];
                 uint16_t bm = getBatchBlendMode(batch);
                 if (pass == 0 && bm != 0) continue;  // pass 0: opaque only
                 if (pass == 1 && bm == 0) continue;   // pass 1: non-opaque only
@@ -2598,6 +2617,10 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 // Bind material descriptor set (set 1)
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         pipelineLayout_, 1, 1, &materialSet, 0, nullptr);
+
+                // Per-batch depth bias from materialLayer to separate coplanar
+                // armor pieces (chest/legs/gloves) that share identical depth.
+                vkCmdSetDepthBias(cmd, static_cast<float>(batch.materialLayer) * 0.5f, 0.0f, 0.0f);
 
                 vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
             }
@@ -3030,8 +3053,8 @@ void CharacterRenderer::moveInstanceTo(uint32_t instanceId, const glm::vec3& des
             // Stop at current location.
             inst.position = destination;
             inst.isMoving = false;
-            if (inst.currentAnimationId == 4 || inst.currentAnimationId == 5) {
-                playAnimation(instanceId, 0, true);
+            if (inst.currentAnimationId == anim::WALK || inst.currentAnimationId == anim::RUN) {
+                playAnimation(instanceId, anim::STAND, true);
             }
             return;
         }
@@ -3509,7 +3532,8 @@ void CharacterRenderer::recreatePipelines() {
             .setVertexInput({charBinding}, charAttrs)
             .setTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
             .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
-            .setDepthTest(true, depthWrite, VK_COMPARE_OP_LESS_OR_EQUAL)
+            .setDepthTest(true, depthWrite, VK_COMPARE_OP_LESS)
+            .setDepthBias(0.0f, 0.0f)
             .setColorBlendAttachment(blendState)
             .setMultisample(samples);
         if (alphaToCoverage)
@@ -3517,7 +3541,7 @@ void CharacterRenderer::recreatePipelines() {
         return builder
             .setLayout(pipelineLayout_)
             .setRenderPass(mainPass)
-            .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
+            .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS})
             .build(device, vkCtx_->getPipelineCache());
     };
 

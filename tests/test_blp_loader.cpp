@@ -1,4 +1,4 @@
-// Phase 0 – BLP loader tests: isValid, format names, invalid data handling
+// BLP loader tests: isValid, format names, invalid data handling
 #include <catch_amalgamated.hpp>
 #include "pipeline/blp_loader.hpp"
 

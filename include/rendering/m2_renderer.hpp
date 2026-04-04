@@ -295,7 +295,7 @@ public:
      */
     /** Pre-allocate GPU resources (bone SSBOs, descriptors) on main thread before parallel render. */
     void prepareRender(uint32_t frameIndex, const Camera& camera);
-    /** Phase 2.3: Dispatch GPU frustum culling compute shader on primary cmd before render pass. */
+    /** Dispatch GPU frustum culling compute shader on primary cmd before render pass. */
     void dispatchCullCompute(VkCommandBuffer cmd, uint32_t frameIndex, const Camera& camera);
     void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera);
 
@@ -329,6 +329,11 @@ public:
     void setInstancePosition(uint32_t instanceId, const glm::vec3& position);
     void setInstanceTransform(uint32_t instanceId, const glm::mat4& transform);
     void setInstanceAnimationFrozen(uint32_t instanceId, bool frozen);
+    /// Set the animation sequence by animation ID (e.g. anim::OPEN, anim::CLOSE).
+    /// Finds the first sequence with matching ID. Unfreezes the instance and resets time.
+    void setInstanceAnimation(uint32_t instanceId, uint32_t animationId, bool loop = true);
+    /// Check if a model instance has a specific animation ID in its sequence table.
+    bool hasAnimation(uint32_t instanceId, uint32_t animationId) const;
     float getInstanceAnimDuration(uint32_t instanceId) const;
     void removeInstance(uint32_t instanceId);
     void removeInstances(const std::vector<uint32_t>& instanceIds);
@@ -439,7 +444,7 @@ private:
     void* megaBoneMapped_[2] = {};
     VkDescriptorSet megaBoneSet_[2] = {};
 
-    // Phase 2.1: GPU instance data SSBO — per-instance transforms, fade, bones for instanced draws.
+    // GPU instance data SSBO — per-instance transforms, fade, bones for instanced draws.
     // Shader reads instanceData[push.instanceDataOffset + gl_InstanceIndex].
     struct M2InstanceGPU {
         glm::mat4 model;           // 64 bytes @ offset 0
@@ -458,7 +463,7 @@ private:
     VkDescriptorSet instanceSet_[2] = {};
     uint32_t instanceDataCount_ = 0; // reset each frame in render()
 
-    // Phase 2.3: GPU Frustum Culling via Compute Shader
+    // GPU Frustum Culling via Compute Shader
     // Compute shader tests each M2 instance against frustum planes + distance, writes visibility[].
     // CPU reads back visibility to build sortedVisible_ without per-instance frustum/distance tests.
     struct CullInstanceGPU {        // matches CullInstance in m2_cull.comp.glsl (32 bytes, std430)

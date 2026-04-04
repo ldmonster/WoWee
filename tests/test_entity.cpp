@@ -1,4 +1,4 @@
-// Phase 0 – Entity, Unit, Player, GameObject, EntityManager tests
+// Entity, Unit, Player, GameObject, EntityManager tests
 #include <catch_amalgamated.hpp>
 #include "game/entity.hpp"
 #include <memory>

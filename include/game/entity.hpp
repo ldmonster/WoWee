@@ -261,6 +261,10 @@ public:
     uint32_t getNpcFlags() const { return npcFlags; }
     void setNpcFlags(uint32_t f) { npcFlags = f; }
 
+    // NPC emote state (UNIT_NPC_EMOTESTATE) — persistent looping animation for NPCs
+    uint32_t getNpcEmoteState() const { return npcEmoteState; }
+    void setNpcEmoteState(uint32_t e) { npcEmoteState = e; }
+
     // Returns true if NPC has interaction flags (gossip/vendor/quest/trainer)
     bool isInteractable() const { return npcFlags != 0; }
 
@@ -284,6 +288,7 @@ protected:
     uint32_t unitFlags = 0;
     uint32_t dynamicFlags = 0;
     uint32_t npcFlags = 0;
+    uint32_t npcEmoteState = 0;
     uint32_t factionTemplate = 0;
     bool hostile = false;
 };

@@ -63,7 +63,7 @@ void DialogManager::renderLateDialogs(game::GameHandler& gameHandler) {
 }
 
 // ============================================================
-// Group Invite Popup (Phase 4)
+// Group Invite Popup
 // ============================================================
 
 void DialogManager::renderGroupInvitePopup(game::GameHandler& gameHandler) {

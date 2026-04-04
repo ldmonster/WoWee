@@ -9,7 +9,7 @@
 namespace wowee {
 namespace rendering {
 
-// Phase 2.5: Lightweight Render Graph / Frame Graph
+// Lightweight Render Graph / Frame Graph
 // Converts hardcoded pass sequence (shadow → reflection → compute cull →
 // main → post-process → ImGui → present) into declarative graph nodes.
 // Graph auto-inserts VkImageMemoryBarrier between passes.

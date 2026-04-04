@@ -934,7 +934,8 @@ public:
     void setGhostStateCallback(GhostStateCallback cb) { ghostStateCallback_ = std::move(cb); }
 
     // Melee swing callback (for driving animation/SFX)
-    using MeleeSwingCallback = std::function<void()>;
+    // spellId: 0 = regular auto-attack swing, non-zero = melee ability (special attack)
+    using MeleeSwingCallback = std::function<void(uint32_t spellId)>;
     void setMeleeSwingCallback(MeleeSwingCallback cb) { meleeSwingCallback_ = std::move(cb); }
 
     // Spell cast animation callbacks — true=start cast/channel, false=finish/cancel
@@ -958,6 +959,23 @@ public:
     // NPC swing callback (plays attack animation on NPC)
     using NpcSwingCallback = std::function<void(uint64_t guid)>;
     void setNpcSwingCallback(NpcSwingCallback cb) { npcSwingCallback_ = std::move(cb); }
+
+    // Hit reaction callback — triggers victim animation (dodge, block, wound, crit wound)
+    enum class HitReaction : uint8_t { WOUND, CRIT_WOUND, DODGE, PARRY, BLOCK, SHIELD_BLOCK };
+    using HitReactionCallback = std::function<void(uint64_t victimGuid, HitReaction reaction)>;
+    void setHitReactionCallback(HitReactionCallback cb) { hitReactionCallback_ = std::move(cb); }
+
+    // Stun state callback — fires when UNIT_FLAG_STUNNED changes on the local player
+    using StunStateCallback = std::function<void(bool stunned)>;
+    void setStunStateCallback(StunStateCallback cb) { stunStateCallback_ = std::move(cb); }
+
+    // Stealth state callback — fires when UNIT_FLAG_SNEAKING changes on the local player
+    using StealthStateCallback = std::function<void(bool stealthed)>;
+    void setStealthStateCallback(StealthStateCallback cb) { stealthStateCallback_ = std::move(cb); }
+
+    // Player health changed callback — fires when local player HP changes
+    using PlayerHealthCallback = std::function<void(uint32_t health, uint32_t maxHealth)>;
+    void setPlayerHealthCallback(PlayerHealthCallback cb) { playerHealthCallback_ = std::move(cb); }
 
     // NPC greeting callback (plays voice line when NPC is clicked)
     using NpcGreetingCallback = std::function<void(uint64_t guid, const glm::vec3& position)>;
@@ -1092,6 +1110,19 @@ public:
 
     using GameObjectCustomAnimCallback = std::function<void(uint64_t guid, uint32_t animId)>;
     void setGameObjectCustomAnimCallback(GameObjectCustomAnimCallback cb) { gameObjectCustomAnimCallback_ = std::move(cb); }
+
+    // GameObject state change callback (triggered when GAMEOBJECT_BYTES_1 updates — state byte changes)
+    // goState: 0=READY(closed), 1=OPEN, 2=DESTROYED
+    using GameObjectStateCallback = std::function<void(uint64_t guid, uint8_t goState)>;
+    void setGameObjectStateCallback(GameObjectStateCallback cb) { gameObjectStateCallback_ = std::move(cb); }
+
+    // Sprint aura callback — fired when sprint-type aura active state changes on player
+    using SprintAuraCallback = std::function<void(bool active)>;
+    void setSprintAuraCallback(SprintAuraCallback cb) { sprintAuraCallback_ = std::move(cb); }
+
+    // Vehicle state callback — fired when player enters/exits a vehicle
+    using VehicleStateCallback = std::function<void(bool entered, uint32_t vehicleId)>;
+    void setVehicleStateCallback(VehicleStateCallback cb) { vehicleStateCallback_ = std::move(cb); }
 
     // Faction hostility map (populated from FactionTemplate.dbc by Application)
     void setFactionHostileMap(std::unordered_map<uint32_t, bool> map) { factionHostileMap_ = std::move(map); }
@@ -1805,6 +1836,10 @@ public:
     // Item looted / received callback (SMSG_ITEM_PUSH_RESULT when showInChat is set)
     using ItemLootCallback = std::function<void(uint32_t itemId, uint32_t count, uint32_t quality, const std::string& name)>;
     void setItemLootCallback(ItemLootCallback cb) { itemLootCallback_ = std::move(cb); }
+
+    // Loot window open/close callback (for loot kneel animation)
+    using LootWindowCallback = std::function<void(bool open)>;
+    void setLootWindowCallback(LootWindowCallback cb) { lootWindowCallback_ = std::move(cb); }
 
     // Quest turn-in completion callback
     using QuestCompleteCallback = std::function<void(uint32_t questId, const std::string& questTitle)>;
@@ -2532,6 +2567,9 @@ private:
     GameObjectMoveCallback gameObjectMoveCallback_;
     GameObjectDespawnCallback gameObjectDespawnCallback_;
     GameObjectCustomAnimCallback gameObjectCustomAnimCallback_;
+    GameObjectStateCallback gameObjectStateCallback_;
+    SprintAuraCallback sprintAuraCallback_;
+    VehicleStateCallback vehicleStateCallback_;
 
     // Transport tracking
     struct TransportAttachment {
@@ -3111,6 +3149,10 @@ private:
     UnitAnimHintCallback unitAnimHintCallback_;
     UnitMoveFlagsCallback unitMoveFlagsCallback_;
     NpcSwingCallback npcSwingCallback_;
+    HitReactionCallback hitReactionCallback_;
+    StunStateCallback stunStateCallback_;
+    StealthStateCallback stealthStateCallback_;
+    PlayerHealthCallback playerHealthCallback_;
     NpcGreetingCallback npcGreetingCallback_;
     NpcFarewellCallback npcFarewellCallback_;
     NpcVendorCallback npcVendorCallback_;
@@ -3209,6 +3251,9 @@ private:
 
     // ---- Item loot callback ----
     ItemLootCallback itemLootCallback_;
+
+    // ---- Loot window callback ----
+    LootWindowCallback lootWindowCallback_;
 
     // ---- Quest completion callback ----
     QuestCompleteCallback questCompleteCallback_;

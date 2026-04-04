@@ -173,7 +173,7 @@ private:
     struct UnitFieldIndices {
         uint16_t health, maxHealth, powerBase, maxPowerBase;
         uint16_t level, faction, flags, dynFlags;
-        uint16_t displayId, mountDisplayId, npcFlags;
+        uint16_t displayId, mountDisplayId, npcFlags, npcEmoteState;
         uint16_t bytes0, bytes1;
         static UnitFieldIndices resolve();
     };

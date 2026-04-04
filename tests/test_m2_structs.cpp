@@ -1,4 +1,4 @@
-// Phase 0 – M2 struct layout and field tests (header-only, no loader source)
+// M2 struct layout and field tests (header-only, no loader source)
 #include <catch_amalgamated.hpp>
 #include "pipeline/m2_loader.hpp"
 #include <cstring>

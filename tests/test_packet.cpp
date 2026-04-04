@@ -1,4 +1,4 @@
-// Phase 0 – Packet read/write round-trip, packed GUID, bounds checks
+// Packet read/write round-trip, packed GUID, bounds checks
 #include <catch_amalgamated.hpp>
 #include "network/packet.hpp"
 

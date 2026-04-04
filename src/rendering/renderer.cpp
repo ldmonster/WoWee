@@ -250,13 +250,13 @@ bool Renderer::createPerFrameResources() {
     // --- Create descriptor pool for UBO + image sampler (normal frames + reflection) ---
     VkDescriptorPoolSize poolSizes[2]{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = MAX_FRAMES + 1; // +1 for reflection perFrame UBO
+    poolSizes[0].descriptorCount = MAX_FRAMES * 2; // normal frames + reflection frames
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES + 1;
+    poolSizes[1].descriptorCount = MAX_FRAMES * 2;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.maxSets = MAX_FRAMES + 1; // +1 for reflection descriptor set
+    poolInfo.maxSets = MAX_FRAMES * 2; // normal frames + reflection frames
     poolInfo.poolSizeCount = 2;
     poolInfo.pPoolSizes = poolSizes;
 
@@ -344,42 +344,48 @@ bool Renderer::createPerFrameResources() {
         }
         reflPerFrameUBOMapped = mapInfo.pMappedData;
 
+        VkDescriptorSetLayout layouts[MAX_FRAMES];
+        for (uint32_t i = 0; i < MAX_FRAMES; i++) layouts[i] = perFrameSetLayout;
+
         VkDescriptorSetAllocateInfo setAlloc{};
         setAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         setAlloc.descriptorPool = sceneDescriptorPool;
-        setAlloc.descriptorSetCount = 1;
-        setAlloc.pSetLayouts = &perFrameSetLayout;
+        setAlloc.descriptorSetCount = MAX_FRAMES;
+        setAlloc.pSetLayouts = layouts;
 
-        if (vkAllocateDescriptorSets(device, &setAlloc, &reflPerFrameDescSet) != VK_SUCCESS) {
-            LOG_ERROR("Failed to allocate reflection per-frame descriptor set");
+        if (vkAllocateDescriptorSets(device, &setAlloc, reflPerFrameDescSet) != VK_SUCCESS) {
+            LOG_ERROR("Failed to allocate reflection per-frame descriptor sets");
             return false;
         }
 
-        VkDescriptorBufferInfo descBuf{};
-        descBuf.buffer = reflPerFrameUBO;
-        descBuf.offset = 0;
-        descBuf.range = sizeof(GPUPerFrameData);
+        // Bind each reflection descriptor to the same UBO but its own frame's shadow view
+        for (uint32_t i = 0; i < MAX_FRAMES; i++) {
+            VkDescriptorBufferInfo descBuf{};
+            descBuf.buffer = reflPerFrameUBO;
+            descBuf.offset = 0;
+            descBuf.range = sizeof(GPUPerFrameData);
 
-        VkDescriptorImageInfo shadowImgInfo{};
-        shadowImgInfo.sampler = shadowSampler;
-        shadowImgInfo.imageView = shadowDepthView[0];  // reflection uses frame 0 shadow view
-        shadowImgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            VkDescriptorImageInfo shadowImgInfo{};
+            shadowImgInfo.sampler = shadowSampler;
+            shadowImgInfo.imageView = shadowDepthView[i];
+            shadowImgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-        VkWriteDescriptorSet writes[2]{};
-        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].dstSet = reflPerFrameDescSet;
-        writes[0].dstBinding = 0;
-        writes[0].descriptorCount = 1;
-        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writes[0].pBufferInfo = &descBuf;
-        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet = reflPerFrameDescSet;
-        writes[1].dstBinding = 1;
-        writes[1].descriptorCount = 1;
-        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[1].pImageInfo = &shadowImgInfo;
+            VkWriteDescriptorSet writes[2]{};
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = reflPerFrameDescSet[i];
+            writes[0].dstBinding = 0;
+            writes[0].descriptorCount = 1;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[0].pBufferInfo = &descBuf;
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = reflPerFrameDescSet[i];
+            writes[1].dstBinding = 1;
+            writes[1].descriptorCount = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[1].pImageInfo = &shadowImgInfo;
 
-        vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+            vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+        }
     }
 
     LOG_INFO("Per-frame Vulkan resources created (shadow map ", SHADOW_MAP_SIZE, "x", SHADOW_MAP_SIZE, ")");
@@ -460,7 +466,7 @@ void Renderer::updatePerFrameUBO() {
 
     currentFrameData.lightSpaceMatrix = lightSpaceMatrix;
     // Scale shadow bias proportionally to ortho extent to avoid acne at close range / gaps at far range
-    float shadowBias = 0.8f * (shadowDistance_ / 300.0f);
+    float shadowBias = glm::clamp(0.8f * (shadowDistance_ / 300.0f), 0.0f, 1.0f);
     currentFrameData.shadowParams = glm::vec4(shadowsEnabled ? 1.0f : 0.0f, shadowBias, 0.0f, 0.0f);
 
     // Player water ripple data: pack player XY into shadowParams.zw, ripple strength into fogParams.w
@@ -566,7 +572,7 @@ bool Renderer::initialize(core::Window* win) {
     postProcessPipeline_ = std::make_unique<PostProcessPipeline>();
     postProcessPipeline_->initialize(vkCtx);
 
-    // Phase 2.5: Create render graph and register virtual resources
+    // Create render graph and register virtual resources
     renderGraph_ = std::make_unique<RenderGraph>();
     renderGraph_->registerResource("shadow_depth");
     renderGraph_->registerResource("reflection_texture");
@@ -687,7 +693,7 @@ void Renderer::shutdown() {
         postProcessPipeline_.reset();
     }
 
-    // Phase 2.5: Destroy render graph
+    // Destroy render graph
     renderGraph_.reset();
 
     destroyPerFrameResources();
@@ -1018,8 +1024,26 @@ void Renderer::setInCombat(bool combat) {
     if (animationController_) animationController_->setInCombat(combat);
 }
 
-void Renderer::setEquippedWeaponType(uint32_t inventoryType) {
-    if (animationController_) animationController_->setEquippedWeaponType(inventoryType);
+void Renderer::setEquippedWeaponType(uint32_t inventoryType, bool is2HLoose, bool isFist,
+                                     bool isDagger, bool hasOffHand, bool hasShield) {
+    if (animationController_) animationController_->setEquippedWeaponType(inventoryType, is2HLoose, isFist, isDagger, hasOffHand, hasShield);
+}
+
+void Renderer::triggerSpecialAttack(uint32_t spellId) {
+    if (animationController_) animationController_->triggerSpecialAttack(spellId);
+}
+
+void Renderer::setEquippedRangedType(RangedWeaponType type) {
+    if (animationController_) animationController_->setEquippedRangedType(type);
+}
+
+void Renderer::triggerRangedShot() {
+    if (animationController_) animationController_->triggerRangedShot();
+}
+
+RangedWeaponType Renderer::getEquippedRangedType() const {
+    return animationController_ ? animationController_->getEquippedRangedType()
+                                : RangedWeaponType::NONE;
 }
 
 void Renderer::setCharging(bool c) {
@@ -2797,8 +2821,8 @@ glm::mat4 Renderer::computeLightSpaceMatrix() {
         sunDir = -sunDir;
     }
     // Keep a minimum downward component so the frustum doesn't collapse at grazing angles.
-    if (sunDir.z > -0.08f) {
-        sunDir.z = -0.08f;
+    if (sunDir.z > -0.15f) {
+        sunDir.z = -0.15f;
         sunDir = glm::normalize(sunDir);
     }
 
@@ -2986,6 +3010,11 @@ void Renderer::renderReflectionPass() {
     if (!waterRenderer || !camera || !waterRenderer->hasReflectionPass() || !waterRenderer->hasSurfaces()) return;
     if (currentCmd == VK_NULL_HANDLE || !reflPerFrameUBOMapped) return;
 
+    // Select the current frame's pre-bound reflection descriptor set
+    // (each frame's set was bound to its own shadow depth view at init).
+    uint32_t frame = vkCtx->getCurrentFrame();
+    VkDescriptorSet reflDescSet = reflPerFrameDescSet[frame];
+
     // Reflection pass uses 1x MSAA. Scene pipelines must be render-pass-compatible,
     // which requires matching sample counts. Only render scene into reflection when MSAA is off.
     bool canRenderScene = (vkCtx->getMsaaSamples() == VK_SAMPLE_COUNT_1_BIT);
@@ -3040,13 +3069,13 @@ void Renderer::renderReflectionPass() {
                 skyParams.horizonGlow = lp.horizonGlow;
             }
             // weatherIntensity left at default 0 for reflection pass (no game handler in scope)
-            skySystem->render(currentCmd, reflPerFrameDescSet, *camera, skyParams);
+            skySystem->render(currentCmd, reflDescSet, *camera, skyParams);
         }
         if (terrainRenderer && terrainEnabled) {
-            terrainRenderer->render(currentCmd, reflPerFrameDescSet, *camera);
+            terrainRenderer->render(currentCmd, reflDescSet, *camera);
         }
         if (wmoRenderer) {
-            wmoRenderer->render(currentCmd, reflPerFrameDescSet, *camera);
+            wmoRenderer->render(currentCmd, reflDescSet, *camera);
         }
     }
 
@@ -3139,7 +3168,7 @@ void Renderer::renderShadowPass() {
     shadowDepthLayout_[frame] = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
 
-// Phase 2.5: Build the per-frame render graph for off-screen pre-passes.
+// Build the per-frame render graph for off-screen pre-passes.
 // Declares passes as graph nodes with input/output dependencies.
 // compile() performs topological sort; execute() runs them with auto barriers.
 void Renderer::buildFrameGraph(game::GameHandler* gameHandler) {

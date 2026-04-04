@@ -1,5 +1,6 @@
 #include "ui/auth_screen.hpp"
 #include "ui/ui_colors.hpp"
+#include "ui/settings_panel.hpp"
 #include "auth/crypto.hpp"
 #include "core/application.hpp"
 #include "core/logger.hpp"
@@ -13,8 +14,9 @@
 #include <imgui_impl_vulkan.h>
 #include "stb_image.h"
 #include <filesystem>
-#include <sstream>
 #include <fstream>
+#include <map>
+#include <sstream>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
@@ -492,6 +494,11 @@ void AuthScreen::render(auth::AuthHandler& authHandler) {
         if (ImGui::Button("Clear", ImVec2(160, 40))) {
             statusMessage.clear();
         }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Settings", ImVec2(160, 40))) {
+            showLoginSettings_ = true;
+        }
     }
 
     ImGui::Spacing();
@@ -503,6 +510,8 @@ void AuthScreen::render(auth::AuthHandler& authHandler) {
     ImGui::TextWrapped("Default port is 3724.");
 
     ImGui::End();
+
+    renderLoginSettingsWindow();
 }
 
 void AuthScreen::stopLoginMusic() {
@@ -943,6 +952,218 @@ void AuthScreen::destroyBackgroundImage() {
     if (bgImageView) { vkDestroyImageView(device, bgImageView, nullptr); bgImageView = VK_NULL_HANDLE; }
     if (bgImage) { vkDestroyImage(device, bgImage, nullptr); bgImage = VK_NULL_HANDLE; }
     if (bgMemory) { vkFreeMemory(device, bgMemory, nullptr); bgMemory = VK_NULL_HANDLE; }
+}
+
+// ---------------------------------------------------------------------------
+// Login-screen graphics settings popup
+// ---------------------------------------------------------------------------
+
+void AuthScreen::applyPresetToState(LoginGraphicsState& s, int preset) {
+    switch (preset) {
+    case 1: // Low
+        s.shadows = false; s.shadowDistance = 75.0f; s.antiAliasing = 0;
+        s.fxaa = false; s.normalMapping = false; s.pom = false; s.pomQuality = 1;
+        s.upscalingMode = 0; s.waterRefraction = false; s.groundClutter = 25;
+        s.brightness = 50; s.vsync = false; s.fullscreen = false;
+        break;
+    case 2: // Medium
+        s.shadows = true; s.shadowDistance = 150.0f; s.antiAliasing = 0;
+        s.fxaa = false; s.normalMapping = true; s.pom = true; s.pomQuality = 1;
+        s.upscalingMode = 0; s.waterRefraction = true; s.groundClutter = 100;
+        s.brightness = 50; s.vsync = false; s.fullscreen = false;
+        break;
+    case 3: // High
+        s.shadows = true; s.shadowDistance = 250.0f; s.antiAliasing = 1;
+        s.fxaa = true; s.normalMapping = true; s.pom = true; s.pomQuality = 1;
+        s.upscalingMode = 0; s.waterRefraction = true; s.groundClutter = 130;
+        s.brightness = 50; s.vsync = false; s.fullscreen = false;
+        break;
+    case 4: // Ultra
+        s.shadows = true; s.shadowDistance = 400.0f; s.antiAliasing = 2;
+        s.fxaa = true; s.normalMapping = true; s.pom = true; s.pomQuality = 2;
+        s.upscalingMode = 0; s.waterRefraction = true; s.groundClutter = 150;
+        s.brightness = 50; s.vsync = false; s.fullscreen = false;
+        break;
+    default: // Custom — no change
+        break;
+    }
+}
+
+void AuthScreen::loadLoginGraphicsState() {
+    std::ifstream file(SettingsPanel::getSettingsPath());
+    if (!file.is_open()) {
+        // File doesn't exist yet — keep struct defaults (Medium equivalent)
+        return;
+    }
+
+    std::string line;
+    while (std::getline(file, line)) {
+        auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string key = line.substr(0, eq);
+        std::string val = line.substr(eq + 1);
+
+        if (key == "graphics_preset")       loginGfx_.preset        = std::stoi(val);
+        else if (key == "shadows")          loginGfx_.shadows        = (val == "1");
+        else if (key == "shadow_distance")  loginGfx_.shadowDistance = std::stof(val);
+        else if (key == "antialiasing")     loginGfx_.antiAliasing   = std::stoi(val);
+        else if (key == "fxaa")             loginGfx_.fxaa           = (val == "1");
+        else if (key == "normal_mapping")   loginGfx_.normalMapping  = (val == "1");
+        else if (key == "pom")              loginGfx_.pom            = (val == "1");
+        else if (key == "pom_quality")      loginGfx_.pomQuality     = std::stoi(val);
+        else if (key == "upscaling_mode")   loginGfx_.upscalingMode  = std::stoi(val);
+        else if (key == "water_refraction") loginGfx_.waterRefraction = (val == "1");
+        else if (key == "ground_clutter_density") loginGfx_.groundClutter = std::stoi(val);
+        else if (key == "brightness")       loginGfx_.brightness     = std::stoi(val);
+        else if (key == "vsync")            loginGfx_.vsync          = (val == "1");
+        else if (key == "fullscreen")       loginGfx_.fullscreen     = (val == "1");
+    }
+}
+
+void AuthScreen::saveLoginGraphicsState() {
+    // Read the full settings file into a map to preserve non-graphics keys.
+    std::map<std::string, std::string> cfg;
+    std::ifstream in(SettingsPanel::getSettingsPath());
+    if (in.is_open()) {
+        std::string line;
+        while (std::getline(in, line)) {
+            auto eq = line.find('=');
+            if (eq != std::string::npos)
+                cfg[line.substr(0, eq)] = line.substr(eq + 1);
+        }
+        in.close();
+    }
+
+    // Overwrite graphics keys.
+    cfg["graphics_preset"]       = std::to_string(loginGfx_.preset);
+    cfg["shadows"]               = loginGfx_.shadows        ? "1" : "0";
+    cfg["shadow_distance"]       = std::to_string(static_cast<int>(loginGfx_.shadowDistance));
+    cfg["antialiasing"]          = std::to_string(loginGfx_.antiAliasing);
+    cfg["fxaa"]                  = loginGfx_.fxaa           ? "1" : "0";
+    cfg["normal_mapping"]        = loginGfx_.normalMapping  ? "1" : "0";
+    cfg["pom"]                   = loginGfx_.pom            ? "1" : "0";
+    cfg["pom_quality"]           = std::to_string(loginGfx_.pomQuality);
+    cfg["upscaling_mode"]        = std::to_string(loginGfx_.upscalingMode);
+    cfg["water_refraction"]      = loginGfx_.waterRefraction ? "1" : "0";
+    cfg["ground_clutter_density"]= std::to_string(loginGfx_.groundClutter);
+    cfg["brightness"]            = std::to_string(loginGfx_.brightness);
+    cfg["vsync"]                 = loginGfx_.vsync           ? "1" : "0";
+    cfg["fullscreen"]            = loginGfx_.fullscreen      ? "1" : "0";
+
+    // Write everything back.
+    std::ofstream out(SettingsPanel::getSettingsPath());
+    if (!out.is_open()) return;
+    for (const auto& [k, v] : cfg)
+        out << k << "=" << v << "\n";
+}
+
+void AuthScreen::renderLoginSettingsWindow() {
+    if (showLoginSettings_) {
+        ImGui::OpenPopup("Graphics Settings");
+        showLoginSettings_ = false;
+        loginGfxLoaded_ = false; // Reload from disk each time the popup opens.
+    }
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(500, 560), ImGuiCond_Always);
+
+    if (ImGui::BeginPopupModal("Graphics Settings", nullptr, ImGuiWindowFlags_NoResize)) {
+        if (!loginGfxLoaded_) {
+            loadLoginGraphicsState();
+            loginGfxLoaded_ = true;
+        }
+
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.0f, 1.0f), "Graphics Settings");
+        ImGui::TextWrapped("Adjust settings below or reset to a safe preset. Changes take effect on next login.");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Preset selector
+        const char* presetNames[] = {"Custom", "Low", "Medium", "High", "Ultra"};
+        ImGui::Text("Preset:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::Combo("##preset", &loginGfx_.preset, presetNames, 5)) {
+            if (loginGfx_.preset != 0) // 0 = Custom — don't override manually set values
+                applyPresetToState(loginGfx_, loginGfx_.preset);
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Shadow settings
+        ImGui::Checkbox("Shadows", &loginGfx_.shadows);
+        if (loginGfx_.shadows) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(200.0f);
+            float sd = loginGfx_.shadowDistance;
+            if (ImGui::SliderFloat("Shadow Distance", &sd, 50.0f, 600.0f, "%.0f"))
+                loginGfx_.shadowDistance = sd;
+        }
+
+        // Anti-aliasing
+        const char* aaNames[] = {"Off", "2x MSAA", "4x MSAA"};
+        ImGui::Text("Anti-Aliasing:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(130.0f);
+        ImGui::Combo("##aa", &loginGfx_.antiAliasing, aaNames, 3);
+
+        ImGui::Checkbox("FXAA",           &loginGfx_.fxaa);
+        ImGui::Checkbox("Normal Mapping", &loginGfx_.normalMapping);
+
+        // POM
+        ImGui::Checkbox("Parallax Occlusion Mapping (POM)", &loginGfx_.pom);
+        if (loginGfx_.pom) {
+            const char* pomQ[] = {"Medium", "High"};
+            ImGui::Text("  POM Quality:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(110.0f);
+            ImGui::Combo("##pomq", &loginGfx_.pomQuality, pomQ, 2);
+        }
+
+        ImGui::Checkbox("Water Refraction",  &loginGfx_.waterRefraction);
+
+        // Ground clutter density
+        ImGui::Text("Ground Clutter:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(200.0f);
+        ImGui::SliderInt("##clutter", &loginGfx_.groundClutter, 0, 200);
+
+        // Brightness
+        ImGui::Text("Brightness:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(200.0f);
+        ImGui::SliderInt("##brightness", &loginGfx_.brightness, 0, 100);
+
+        ImGui::Checkbox("V-Sync",      &loginGfx_.vsync);
+        ImGui::Checkbox("Fullscreen",  &loginGfx_.fullscreen);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Action buttons
+        if (ImGui::Button("Reset to Medium", ImVec2(160, 32))) {
+            applyPresetToState(loginGfx_, 2);
+            loginGfx_.preset = 2;
+        }
+        ImGui::SameLine();
+
+        float rightEdge = ImGui::GetContentRegionAvail().x;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + rightEdge - 220.0f);
+        if (ImGui::Button("Cancel", ImVec2(100, 32))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Apply", ImVec2(100, 32))) {
+            saveLoginGraphicsState();
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
 }
 
 }} // namespace wowee::ui

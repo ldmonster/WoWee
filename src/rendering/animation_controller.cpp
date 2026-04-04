@@ -1,4 +1,5 @@
 #include "rendering/animation_controller.hpp"
+#include "rendering/animation_ids.hpp"
 #include "rendering/renderer.hpp"
 #include "rendering/camera.hpp"
 #include "rendering/camera_controller.hpp"
@@ -14,6 +15,7 @@
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/dbc_layout.hpp"
+#include "game/inventory.hpp"
 #include "core/application.hpp"
 #include "core/logger.hpp"
 #include "audio/audio_coordinator.hpp"
@@ -71,36 +73,57 @@ static std::vector<std::string> parseEmoteCommands(const std::string& raw) {
 
 static bool isLoopingEmote(const std::string& command) {
     static const std::unordered_set<std::string> kLooping = {
-        "dance",
-        "train",
+        "dance", "train", "dead", "eat", "work",
     };
     return kLooping.find(command) != kLooping.end();
+}
+
+// Map one-shot emote animation IDs to their persistent EMOTE_STATE_* looping variants.
+// When a looping emote is played, we prefer the STATE variant if the model has it.
+static uint32_t getEmoteStateVariant(uint32_t oneShotAnimId) {
+    static const std::unordered_map<uint32_t, uint32_t> kStateMap = {
+        {anim::EMOTE_DANCE,         anim::EMOTE_STATE_DANCE},
+        {anim::EMOTE_LAUGH,         anim::EMOTE_STATE_LAUGH},
+        {anim::EMOTE_POINT,         anim::EMOTE_STATE_POINT},
+        {anim::EMOTE_EAT,           anim::EMOTE_STATE_EAT},
+        {anim::EMOTE_ROAR,          anim::EMOTE_STATE_ROAR},
+        {anim::EMOTE_APPLAUD,       anim::EMOTE_STATE_APPLAUD},
+        {anim::EMOTE_WORK,          anim::EMOTE_STATE_WORK},
+        {anim::EMOTE_USE_STANDING,  anim::EMOTE_STATE_USE_STANDING},
+        {anim::EATING_LOOP,         anim::EMOTE_STATE_EAT},
+    };
+    auto it = kStateMap.find(oneShotAnimId);
+    return it != kStateMap.end() ? it->second : 0;
 }
 
 static void loadFallbackEmotes() {
     if (!EMOTE_TABLE.empty()) return;
     EMOTE_TABLE = {
-        {"wave",    {67,  0, false, "You wave.", "You wave at %s.", "%s waves.", "%s waves at %s.", "wave"}},
-        {"bow",     {66,  0, false, "You bow down graciously.", "You bow down before %s.", "%s bows down graciously.", "%s bows down before %s.", "bow"}},
-        {"laugh",   {70,  0, false, "You laugh.", "You laugh at %s.", "%s laughs.", "%s laughs at %s.", "laugh"}},
-        {"point",   {84,  0, false, "You point over yonder.", "You point at %s.", "%s points over yonder.", "%s points at %s.", "point"}},
-        {"cheer",   {68,  0, false, "You cheer!", "You cheer at %s.", "%s cheers!", "%s cheers at %s.", "cheer"}},
-        {"dance",   {69,  0, true,  "You burst into dance.", "You dance with %s.", "%s bursts into dance.", "%s dances with %s.", "dance"}},
-        {"kneel",   {75,  0, false, "You kneel down.", "You kneel before %s.", "%s kneels down.", "%s kneels before %s.", "kneel"}},
-        {"applaud", {80,  0, false, "You applaud. Bravo!", "You applaud at %s. Bravo!", "%s applauds. Bravo!", "%s applauds at %s. Bravo!", "applaud"}},
-        {"shout",   {81,  0, false, "You shout.", "You shout at %s.", "%s shouts.", "%s shouts at %s.", "shout"}},
-        {"chicken", {78,  0, false, "With arms flapping, you strut around. Cluck, Cluck, Chicken!",
+        {"wave",    {anim::EMOTE_WAVE,    0, false, "You wave.", "You wave at %s.", "%s waves.", "%s waves at %s.", "wave"}},
+        {"bow",     {anim::EMOTE_BOW,     0, false, "You bow down graciously.", "You bow down before %s.", "%s bows down graciously.", "%s bows down before %s.", "bow"}},
+        {"laugh",   {anim::EMOTE_LAUGH,   0, false, "You laugh.", "You laugh at %s.", "%s laughs.", "%s laughs at %s.", "laugh"}},
+        {"point",   {anim::EMOTE_POINT,   0, false, "You point over yonder.", "You point at %s.", "%s points over yonder.", "%s points at %s.", "point"}},
+        {"cheer",   {anim::EMOTE_CHEER,   0, false, "You cheer!", "You cheer at %s.", "%s cheers!", "%s cheers at %s.", "cheer"}},
+        {"dance",   {anim::EMOTE_DANCE,   0, true,  "You burst into dance.", "You dance with %s.", "%s bursts into dance.", "%s dances with %s.", "dance"}},
+        {"kneel",   {anim::EMOTE_KNEEL,   0, false, "You kneel down.", "You kneel before %s.", "%s kneels down.", "%s kneels before %s.", "kneel"}},
+        {"applaud", {anim::EMOTE_APPLAUD, 0, false, "You applaud. Bravo!", "You applaud at %s. Bravo!", "%s applauds. Bravo!", "%s applauds at %s. Bravo!", "applaud"}},
+        {"shout",   {anim::EMOTE_SHOUT,   0, false, "You shout.", "You shout at %s.", "%s shouts.", "%s shouts at %s.", "shout"}},
+        {"chicken", {anim::EMOTE_CHICKEN, 0, false, "With arms flapping, you strut around. Cluck, Cluck, Chicken!",
                      "With arms flapping, you strut around %s. Cluck, Cluck, Chicken!",
                      "%s struts around. Cluck, Cluck, Chicken!", "%s struts around %s. Cluck, Cluck, Chicken!", "chicken"}},
-        {"cry",     {77,  0, false, "You cry.", "You cry on %s's shoulder.", "%s cries.", "%s cries on %s's shoulder.", "cry"}},
-        {"kiss",    {76,  0, false, "You blow a kiss into the wind.", "You blow a kiss to %s.", "%s blows a kiss into the wind.", "%s blows a kiss to %s.", "kiss"}},
-        {"roar",    {74,  0, false, "You roar with bestial vigor. So fierce!", "You roar with bestial vigor at %s. So fierce!", "%s roars with bestial vigor. So fierce!", "%s roars with bestial vigor at %s. So fierce!", "roar"}},
-        {"salute",  {113, 0, false, "You salute.", "You salute %s with respect.", "%s salutes.", "%s salutes %s with respect.", "salute"}},
-        {"rude",    {73,  0, false, "You make a rude gesture.", "You make a rude gesture at %s.", "%s makes a rude gesture.", "%s makes a rude gesture at %s.", "rude"}},
-        {"flex",    {82,  0, false, "You flex your muscles. Oooooh so strong!", "You flex at %s. Oooooh so strong!", "%s flexes. Oooooh so strong!", "%s flexes at %s. Oooooh so strong!", "flex"}},
-        {"shy",     {83,  0, false, "You smile shyly.", "You smile shyly at %s.", "%s smiles shyly.", "%s smiles shyly at %s.", "shy"}},
-        {"beg",     {79,  0, false, "You beg everyone around you. How pathetic.", "You beg %s. How pathetic.", "%s begs everyone around. How pathetic.", "%s begs %s. How pathetic.", "beg"}},
-        {"eat",     {61,  0, false, "You begin to eat.", "You begin to eat in front of %s.", "%s begins to eat.", "%s begins to eat in front of %s.", "eat"}},
+        {"cry",     {anim::EMOTE_CRY,     0, false, "You cry.", "You cry on %s's shoulder.", "%s cries.", "%s cries on %s's shoulder.", "cry"}},
+        {"kiss",    {anim::EMOTE_KISS,    0, false, "You blow a kiss into the wind.", "You blow a kiss to %s.", "%s blows a kiss into the wind.", "%s blows a kiss to %s.", "kiss"}},
+        {"roar",    {anim::EMOTE_ROAR,    0, false, "You roar with bestial vigor. So fierce!", "You roar with bestial vigor at %s. So fierce!", "%s roars with bestial vigor. So fierce!", "%s roars with bestial vigor at %s. So fierce!", "roar"}},
+        {"salute",  {anim::EMOTE_SALUTE,  0, false, "You salute.", "You salute %s with respect.", "%s salutes.", "%s salutes %s with respect.", "salute"}},
+        {"rude",    {anim::EMOTE_RUDE,    0, false, "You make a rude gesture.", "You make a rude gesture at %s.", "%s makes a rude gesture.", "%s makes a rude gesture at %s.", "rude"}},
+        {"flex",    {anim::EMOTE_FLEX,    0, false, "You flex your muscles. Oooooh so strong!", "You flex at %s. Oooooh so strong!", "%s flexes. Oooooh so strong!", "%s flexes at %s. Oooooh so strong!", "flex"}},
+        {"shy",     {anim::EMOTE_SHY,     0, false, "You smile shyly.", "You smile shyly at %s.", "%s smiles shyly.", "%s smiles shyly at %s.", "shy"}},
+        {"beg",     {anim::EMOTE_BEG,     0, false, "You beg everyone around you. How pathetic.", "You beg %s. How pathetic.", "%s begs everyone around. How pathetic.", "%s begs %s. How pathetic.", "beg"}},
+        {"eat",     {anim::EMOTE_EAT,     0, true,  "You begin to eat.", "You begin to eat in front of %s.", "%s begins to eat.", "%s begins to eat in front of %s.", "eat"}},
+        {"talk",    {anim::EMOTE_TALK,    0, false, "You talk.", "You talk to %s.", "%s talks.", "%s talks to %s.", "talk"}},
+        {"work",    {anim::EMOTE_WORK,    0, true,  "You begin to work.", "You begin to work near %s.", "%s begins to work.", "%s begins to work near %s.", "work"}},
+        {"train",   {anim::EMOTE_TRAIN,   0, true,  "You let off a train whistle. Choo Choo!", "You let off a train whistle at %s. Choo Choo!", "%s lets off a train whistle. Choo Choo!", "%s lets off a train whistle at %s. Choo Choo!", "train"}},
+        {"dead",    {anim::EMOTE_DEAD,    0, true,  "You play dead.", "You play dead in front of %s.", "%s plays dead.", "%s plays dead in front of %s.", "dead"}},
     };
 }
 
@@ -243,6 +266,20 @@ void AnimationController::playEmote(const std::string& emoteName) {
     emoteActive_ = true;
     emoteAnimId_ = info.animId;
     emoteLoop_ = info.loop;
+
+    // For looping emotes, prefer the EMOTE_STATE_* variant if the model has it
+    if (emoteLoop_) {
+        uint32_t stateVariant = getEmoteStateVariant(emoteAnimId_);
+        if (stateVariant != 0) {
+            auto* characterRenderer = renderer_->getCharacterRenderer();
+            uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
+            if (characterRenderer && characterInstanceId > 0 &&
+                characterRenderer->hasAnimation(characterInstanceId, stateVariant)) {
+                emoteAnimId_ = stateVariant;
+            }
+        }
+    }
+
     charAnimState_ = CharAnimState::EMOTE;
 
     auto* characterRenderer = renderer_->getCharacterRenderer();
@@ -256,6 +293,165 @@ void AnimationController::cancelEmote() {
     emoteActive_ = false;
     emoteAnimId_ = 0;
     emoteLoop_ = false;
+}
+
+void AnimationController::startSpellCast(uint32_t precastAnimId, uint32_t castAnimId, bool castLoop,
+                                         uint32_t finalizeAnimId) {
+    spellPrecastAnimId_ = precastAnimId;
+    spellCastAnimId_ = castAnimId;
+    spellCastLoop_ = castLoop;
+    spellFinalizeAnimId_ = finalizeAnimId;
+
+    // Start with precast phase if available, otherwise go straight to cast
+    if (spellPrecastAnimId_ != 0) {
+        charAnimState_ = CharAnimState::SPELL_PRECAST;
+    } else {
+        charAnimState_ = CharAnimState::SPELL_CASTING;
+    }
+    // Force immediate animation update by invalidating the last request
+    lastPlayerAnimRequest_ = UINT32_MAX;
+}
+
+void AnimationController::stopSpellCast() {
+    if (charAnimState_ != CharAnimState::SPELL_PRECAST &&
+        charAnimState_ != CharAnimState::SPELL_CASTING) return;
+
+    if (spellFinalizeAnimId_ != 0) {
+        // Transition to finalization phase — one-shot release animation
+        charAnimState_ = CharAnimState::SPELL_FINALIZE;
+        lastPlayerAnimRequest_ = UINT32_MAX;
+    } else if (spellCastLoop_) {
+        // No finalize anim — let current cast cycle finish as one-shot
+        spellCastLoop_ = false;
+        charAnimState_ = CharAnimState::SPELL_FINALIZE;
+        lastPlayerAnimRequest_ = UINT32_MAX;
+    } else {
+        // Instant cast (no finalize, no loop) — wait for completion in current state
+        charAnimState_ = CharAnimState::SPELL_FINALIZE;
+        lastPlayerAnimRequest_ = UINT32_MAX;
+    }
+}
+
+void AnimationController::startLooting() {
+    // Don't override jump, swim, stun, or death states
+    if (charAnimState_ == CharAnimState::JUMP_START ||
+        charAnimState_ == CharAnimState::JUMP_MID ||
+        charAnimState_ == CharAnimState::JUMP_END ||
+        charAnimState_ == CharAnimState::SWIM ||
+        charAnimState_ == CharAnimState::SWIM_IDLE ||
+        charAnimState_ == CharAnimState::STUNNED) return;
+    charAnimState_ = CharAnimState::LOOTING;
+    lastPlayerAnimRequest_ = UINT32_MAX;
+}
+
+void AnimationController::stopLooting() {
+    if (charAnimState_ != CharAnimState::LOOTING) return;
+    charAnimState_ = CharAnimState::IDLE;
+    lastPlayerAnimRequest_ = UINT32_MAX;
+}
+
+void AnimationController::triggerHitReaction(uint32_t animId) {
+    // Hit reactions interrupt spell casting but not jumps/swimming/stun
+    if (charAnimState_ == CharAnimState::JUMP_START ||
+        charAnimState_ == CharAnimState::JUMP_MID ||
+        charAnimState_ == CharAnimState::JUMP_END ||
+        charAnimState_ == CharAnimState::SWIM ||
+        charAnimState_ == CharAnimState::SWIM_IDLE ||
+        charAnimState_ == CharAnimState::STUNNED) return;
+    if (charAnimState_ == CharAnimState::SPELL_CASTING ||
+        charAnimState_ == CharAnimState::SPELL_PRECAST ||
+        charAnimState_ == CharAnimState::SPELL_FINALIZE) {
+        spellPrecastAnimId_ = 0;
+        spellCastAnimId_ = 0;
+        spellCastLoop_ = false;
+        spellFinalizeAnimId_ = 0;
+    }
+    hitReactionAnimId_ = animId;
+    charAnimState_ = CharAnimState::HIT_REACTION;
+    lastPlayerAnimRequest_ = UINT32_MAX;
+}
+
+void AnimationController::setStunned(bool stunned) {
+    stunned_ = stunned;
+    if (stunned) {
+        // Stun overrides most states (not swimming/jumping — those are physics)
+        if (charAnimState_ == CharAnimState::SWIM ||
+            charAnimState_ == CharAnimState::SWIM_IDLE) return;
+        // Interrupt spell casting
+        if (charAnimState_ == CharAnimState::SPELL_CASTING ||
+            charAnimState_ == CharAnimState::SPELL_PRECAST ||
+            charAnimState_ == CharAnimState::SPELL_FINALIZE) {
+            spellPrecastAnimId_ = 0;
+            spellCastAnimId_ = 0;
+            spellCastLoop_ = false;
+            spellFinalizeAnimId_ = 0;
+        }
+        hitReactionAnimId_ = 0;
+        charAnimState_ = CharAnimState::STUNNED;
+        lastPlayerAnimRequest_ = UINT32_MAX;
+    } else {
+        if (charAnimState_ == CharAnimState::STUNNED) {
+            charAnimState_ = inCombat_ ? CharAnimState::COMBAT_IDLE : CharAnimState::IDLE;
+            lastPlayerAnimRequest_ = UINT32_MAX;
+        }
+    }
+}
+
+void AnimationController::setStandState(uint8_t state) {
+    if (state == standState_) return;
+    standState_ = state;
+
+    if (state == STAND_STATE_STAND) {
+        // Standing up — exit animation handled by state machine (!sitting → SIT_UP)
+        // sitUpAnim_ is retained from the entry so the correct exit animation plays.
+        return;
+    }
+
+    // Configure transition/loop/exit animations per stand-state type
+    if (state == STAND_STATE_SIT) {
+        // Ground sit
+        sitDownAnim_ = anim::SIT_GROUND_DOWN;
+        sitLoopAnim_ = anim::SITTING;
+        sitUpAnim_   = anim::SIT_GROUND_UP;
+        charAnimState_ = CharAnimState::SIT_DOWN;
+    } else if (state == STAND_STATE_SLEEP) {
+        // Sleep
+        sitDownAnim_ = anim::SLEEP_DOWN;
+        sitLoopAnim_ = anim::SLEEP;
+        sitUpAnim_   = anim::SLEEP_UP;
+        charAnimState_ = CharAnimState::SIT_DOWN;
+    } else if (state == STAND_STATE_KNEEL) {
+        // Kneel
+        sitDownAnim_ = anim::KNEEL_START;
+        sitLoopAnim_ = anim::KNEEL_LOOP;
+        sitUpAnim_   = anim::KNEEL_END;
+        charAnimState_ = CharAnimState::SIT_DOWN;
+    } else if (state >= STAND_STATE_SIT_CHAIR && state <= STAND_STATE_SIT_HIGH) {
+        // Chair variants — no transition animation, go directly to loop
+        sitDownAnim_ = 0;
+        sitUpAnim_   = 0;
+        if (state == STAND_STATE_SIT_LOW) {
+            sitLoopAnim_ = anim::SIT_CHAIR_LOW;
+        } else if (state == STAND_STATE_SIT_HIGH) {
+            sitLoopAnim_ = anim::SIT_CHAIR_HIGH;
+        } else {
+            sitLoopAnim_ = anim::SIT_CHAIR_MED;
+        }
+        charAnimState_ = CharAnimState::SITTING;
+    } else if (state == STAND_STATE_DEAD) {
+        // Dead — leave to death handling elsewhere
+        sitDownAnim_ = 0;
+        sitLoopAnim_ = 0;
+        sitUpAnim_   = 0;
+        return;
+    }
+    lastPlayerAnimRequest_ = UINT32_MAX;
+}
+
+void AnimationController::setStealthed(bool stealth) {
+    if (stealthed_ == stealth) return;
+    stealthed_ = stealth;
+    lastPlayerAnimRequest_ = UINT32_MAX;
 }
 
 std::string AnimationController::getEmoteText(const std::string& emoteName, const std::string* targetName) {
@@ -337,6 +533,23 @@ void AnimationController::resetCombatVisualState() {
     targetPosition_ = nullptr;
     meleeSwingTimer_ = 0.0f;
     meleeSwingCooldown_ = 0.0f;
+    specialAttackAnimId_ = 0;
+    rangedShootTimer_ = 0.0f;
+    rangedAnimId_ = 0;
+    spellPrecastAnimId_ = 0;
+    spellCastAnimId_ = 0;
+    spellCastLoop_ = false;
+    spellFinalizeAnimId_ = 0;
+    hitReactionAnimId_ = 0;
+    stunned_ = false;
+    lowHealth_ = false;
+    if (charAnimState_ == CharAnimState::SPELL_CASTING ||
+        charAnimState_ == CharAnimState::SPELL_PRECAST ||
+        charAnimState_ == CharAnimState::SPELL_FINALIZE ||
+        charAnimState_ == CharAnimState::HIT_REACTION ||
+        charAnimState_ == CharAnimState::STUNNED ||
+        charAnimState_ == CharAnimState::RANGED_SHOOT)
+        charAnimState_ = CharAnimState::IDLE;
     if (auto* svs = renderer_->getSpellVisualSystem()) svs->reset();
 }
 
@@ -355,6 +568,7 @@ void AnimationController::triggerMeleeSwing() {
     if (emoteActive_) {
         cancelEmote();
     }
+    specialAttackAnimId_ = 0;  // Clear any special attack override
     resolveMeleeAnimId();
     meleeSwingCooldown_ = 0.1f;
     float durationSec = meleeAnimDurationMs_ > 0.0f ? meleeAnimDurationMs_ / 1000.0f : 0.6f;
@@ -366,6 +580,108 @@ void AnimationController::triggerMeleeSwing() {
     }
 }
 
+void AnimationController::triggerSpecialAttack(uint32_t /*spellId*/) {
+    auto* characterRenderer = renderer_->getCharacterRenderer();
+    uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
+    if (!characterRenderer || characterInstanceId == 0) return;
+    if (meleeSwingCooldown_ > 0.0f) return;
+    if (emoteActive_) {
+        cancelEmote();
+    }
+
+    auto has = [&](uint32_t id) { return characterRenderer->hasAnimation(characterInstanceId, id); };
+
+    // Choose special attack animation based on equipped weapon type
+    uint32_t specAnim = 0;
+    if (equippedHasShield_ && has(anim::SHIELD_BASH)) {
+        specAnim = anim::SHIELD_BASH;
+    } else if ((equippedWeaponInvType_ == game::InvType::TWO_HAND || equippedIs2HLoose_) && has(anim::SPECIAL_2H)) {
+        specAnim = anim::SPECIAL_2H;
+    } else if (equippedWeaponInvType_ != game::InvType::NON_EQUIP && has(anim::SPECIAL_1H)) {
+        specAnim = anim::SPECIAL_1H;
+    } else if (has(anim::SPECIAL_UNARMED)) {
+        specAnim = anim::SPECIAL_UNARMED;
+    } else if (has(anim::SPECIAL_1H)) {
+        specAnim = anim::SPECIAL_1H;
+    }
+
+    if (specAnim == 0) {
+        // No special animation available — fall back to regular melee swing
+        triggerMeleeSwing();
+        return;
+    }
+
+    specialAttackAnimId_ = specAnim;
+    meleeSwingCooldown_ = 0.1f;
+    // Query the special attack animation duration
+    std::vector<pipeline::M2Sequence> sequences;
+    float dur = 0.6f;
+    if (characterRenderer->getAnimationSequences(characterInstanceId, sequences)) {
+        for (const auto& seq : sequences) {
+            if (seq.id == specAnim && seq.duration > 0) {
+                dur = static_cast<float>(seq.duration) / 1000.0f;
+                break;
+            }
+        }
+    }
+    if (dur < 0.25f) dur = 0.25f;
+    if (dur > 1.0f) dur = 1.0f;
+    meleeSwingTimer_ = dur;
+    if (renderer_->getAudioCoordinator()->getActivitySoundManager()) {
+        renderer_->getAudioCoordinator()->getActivitySoundManager()->playMeleeSwing();
+    }
+}
+
+// ── Ranged combat ────────────────────────────────────────────────────────────
+
+void AnimationController::triggerRangedShot() {
+    auto* characterRenderer = renderer_->getCharacterRenderer();
+    uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
+    if (!characterRenderer || characterInstanceId == 0) return;
+    if (rangedShootTimer_ > 0.0f) return;
+    if (emoteActive_) cancelEmote();
+
+    auto has = [&](uint32_t id) { return characterRenderer->hasAnimation(characterInstanceId, id); };
+
+    // Resolve ranged attack animation based on weapon type
+    uint32_t shootAnim = 0;
+    switch (equippedRangedType_) {
+        case RangedWeaponType::BOW:
+            if (has(anim::FIRE_BOW))        shootAnim = anim::FIRE_BOW;
+            else if (has(anim::ATTACK_BOW)) shootAnim = anim::ATTACK_BOW;
+            break;
+        case RangedWeaponType::GUN:
+            if (has(anim::ATTACK_RIFLE))    shootAnim = anim::ATTACK_RIFLE;
+            break;
+        case RangedWeaponType::CROSSBOW:
+            if (has(anim::ATTACK_CROSSBOW)) shootAnim = anim::ATTACK_CROSSBOW;
+            else if (has(anim::ATTACK_BOW)) shootAnim = anim::ATTACK_BOW;
+            break;
+        case RangedWeaponType::THROWN:
+            if (has(anim::ATTACK_THROWN))    shootAnim = anim::ATTACK_THROWN;
+            break;
+        default: break;
+    }
+    if (shootAnim == 0) return;  // Model has no ranged animation
+
+    rangedAnimId_ = shootAnim;
+
+    // Query animation duration
+    std::vector<pipeline::M2Sequence> sequences;
+    float dur = 0.6f;
+    if (characterRenderer->getAnimationSequences(characterInstanceId, sequences)) {
+        for (const auto& seq : sequences) {
+            if (seq.id == shootAnim && seq.duration > 0) {
+                dur = static_cast<float>(seq.duration) / 1000.0f;
+                break;
+            }
+        }
+    }
+    if (dur < 0.25f) dur = 0.25f;
+    if (dur > 1.5f) dur = 1.5f;
+    rangedShootTimer_ = dur;
+}
+
 uint32_t AnimationController::resolveMeleeAnimId() {
     auto* characterRenderer = renderer_->getCharacterRenderer();
     uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
@@ -375,7 +691,8 @@ uint32_t AnimationController::resolveMeleeAnimId() {
         return 0;
     }
 
-    if (meleeAnimId_ != 0 && characterRenderer->hasAnimation(characterInstanceId, meleeAnimId_)) {
+    // When dual-wielding, bypass cache to alternate main/off-hand animations
+    if (!equippedHasOffHand_ && meleeAnimId_ != 0 && characterRenderer->hasAnimation(characterInstanceId, meleeAnimId_)) {
         return meleeAnimId_;
     }
 
@@ -397,13 +714,50 @@ uint32_t AnimationController::resolveMeleeAnimId() {
 
     const uint32_t* attackCandidates;
     size_t candidateCount;
-    static const uint32_t candidates2H[] = {18, 17, 16, 19, 20, 21};
-    static const uint32_t candidates1H[] = {17, 18, 16, 19, 20, 21};
-    static const uint32_t candidatesUnarmed[] = {16, 17, 18, 19, 20, 21};
-    if (equippedWeaponInvType_ == 17) {
+    static const uint32_t candidates2H[] = {anim::ATTACK_2H, anim::ATTACK_1H, anim::ATTACK_UNARMED, anim::ATTACK_2H_LOOSE, anim::PARRY_UNARMED, anim::PARRY_1H};
+    static const uint32_t candidates2HLoosePierce[] = {anim::ATTACK_2H_LOOSE_PIERCE, anim::ATTACK_2H_LOOSE, anim::ATTACK_2H, anim::ATTACK_1H, anim::ATTACK_UNARMED};
+    static const uint32_t candidates1H[] = {anim::ATTACK_1H, anim::ATTACK_2H, anim::ATTACK_UNARMED, anim::ATTACK_2H_LOOSE, anim::PARRY_UNARMED, anim::PARRY_1H};
+    static const uint32_t candidatesDagger[] = {anim::ATTACK_1H_PIERCE, anim::ATTACK_1H, anim::ATTACK_UNARMED};
+    static const uint32_t candidatesUnarmed[] = {anim::ATTACK_UNARMED, anim::ATTACK_1H, anim::ATTACK_2H, anim::ATTACK_2H_LOOSE, anim::PARRY_UNARMED, anim::PARRY_1H};
+    static const uint32_t candidatesFist[] = {anim::ATTACK_FIST_1H, anim::ATTACK_FIST_1H_OFF, anim::ATTACK_1H, anim::ATTACK_UNARMED, anim::PARRY_FIST_1H, anim::PARRY_1H};
+    // Off-hand attack variants (used when dual-wielding on off-hand turn)
+    static const uint32_t candidatesOffHand[] = {anim::ATTACK_OFF, anim::ATTACK_1H, anim::ATTACK_UNARMED};
+    static const uint32_t candidatesOffHandPierce[] = {anim::ATTACK_OFF_PIERCE, anim::ATTACK_OFF, anim::ATTACK_1H_PIERCE, anim::ATTACK_1H};
+    static const uint32_t candidatesOffHandFist[] = {anim::ATTACK_FIST_1H_OFF, anim::ATTACK_OFF, anim::ATTACK_FIST_1H, anim::ATTACK_1H};
+    static const uint32_t candidatesOffHandUnarmed[] = {anim::ATTACK_UNARMED_OFF, anim::ATTACK_UNARMED, anim::ATTACK_OFF, anim::ATTACK_1H};
+
+    // Dual-wield: alternate main-hand and off-hand swings
+    bool useOffHand = equippedHasOffHand_ && meleeOffHandTurn_;
+    meleeOffHandTurn_ = equippedHasOffHand_ ? !meleeOffHandTurn_ : false;
+
+    if (useOffHand) {
+        if (equippedIsFist_) {
+            attackCandidates = candidatesOffHandFist;
+            candidateCount = 4;
+        } else if (equippedIsDagger_) {
+            attackCandidates = candidatesOffHandPierce;
+            candidateCount = 4;
+        } else if (equippedWeaponInvType_ == game::InvType::NON_EQUIP) {
+            attackCandidates = candidatesOffHandUnarmed;
+            candidateCount = 4;
+        } else {
+            attackCandidates = candidatesOffHand;
+            candidateCount = 3;
+        }
+    } else if (equippedIsFist_) {
+        attackCandidates = candidatesFist;
+        candidateCount = 6;
+    } else if (equippedIsDagger_) {
+        attackCandidates = candidatesDagger;
+        candidateCount = 3;
+    } else if (equippedIs2HLoose_) {
+        // Polearm thrust uses pierce variant
+        attackCandidates = candidates2HLoosePierce;
+        candidateCount = 5;
+    } else if (equippedWeaponInvType_ == game::InvType::TWO_HAND) {
         attackCandidates = candidates2H;
         candidateCount = 6;
-    } else if (equippedWeaponInvType_ == 0) {
+    } else if (equippedWeaponInvType_ == game::InvType::NON_EQUIP) {
         attackCandidates = candidatesUnarmed;
         candidateCount = 6;
     } else {
@@ -419,7 +773,7 @@ uint32_t AnimationController::resolveMeleeAnimId() {
         }
     }
 
-    const uint32_t avoidIds[] = {0, 1, 4, 5, 11, 12, 13, 37, 38, 39, 41, 42, 97};
+    const uint32_t avoidIds[] = {anim::STAND, anim::DEATH, anim::WALK, anim::RUN, anim::SHUFFLE_LEFT, anim::SHUFFLE_RIGHT, anim::WALK_BACKWARDS, anim::JUMP_START, anim::JUMP, anim::JUMP_END, anim::SWIM_IDLE, anim::SWIM, anim::SITTING};
     auto isAvoid = [&](uint32_t id) -> bool {
         for (uint32_t avoid : avoidIds) {
             if (id == avoid) return true;
@@ -587,8 +941,8 @@ void AnimationController::setMounted(uint32_t mountInstId, uint32_t mountDisplay
             return nullptr;
         };
 
-        uint32_t runId = findFirst({5, 4});
-        uint32_t standId = findFirst({0});
+        uint32_t runId = findFirst({anim::RUN, anim::WALK});
+        uint32_t standId = findFirst({anim::STAND});
 
         std::vector<uint32_t> loops;
         for (const auto& seq : sequences) {
@@ -657,12 +1011,20 @@ void AnimationController::setMounted(uint32_t mountInstId, uint32_t mountDisplay
 
     auto [discoveredStart, discoveredLoop, discoveredEnd] = discoverJumpSet();
 
-    mountAnims_.jumpStart = discoveredStart > 0 ? discoveredStart : findFirst({40, 37});
-    mountAnims_.jumpLoop  = discoveredLoop > 0 ? discoveredLoop : findFirst({38});
-    mountAnims_.jumpEnd   = discoveredEnd > 0 ? discoveredEnd : findFirst({39});
-    mountAnims_.rearUp    = findFirst({94, 92, 40});
-    mountAnims_.run       = findFirst({5, 4});
-    mountAnims_.stand     = findFirst({0});
+    mountAnims_.jumpStart = discoveredStart > 0 ? discoveredStart : findFirst({anim::FALL, anim::JUMP_START});
+    mountAnims_.jumpLoop  = discoveredLoop > 0 ? discoveredLoop : findFirst({anim::JUMP});
+    mountAnims_.jumpEnd   = discoveredEnd > 0 ? discoveredEnd : findFirst({anim::JUMP_END});
+    mountAnims_.rearUp    = findFirst({anim::MOUNT_SPECIAL, anim::RUN_RIGHT, anim::FALL});
+    mountAnims_.run       = findFirst({anim::RUN, anim::WALK});
+    mountAnims_.stand     = findFirst({anim::STAND});
+    // Discover flight animations (flying mounts only — may all be 0 for ground mounts)
+    mountAnims_.flyIdle      = findFirst({anim::FLY_IDLE});
+    mountAnims_.flyForward   = findFirst({anim::FLY_FORWARD, anim::FLY_RUN_2});
+    mountAnims_.flyBackwards = findFirst({anim::FLY_BACKWARDS, anim::FLY_WALK_BACKWARDS});
+    mountAnims_.flyLeft      = findFirst({anim::FLY_LEFT, anim::FLY_SHUFFLE_LEFT});
+    mountAnims_.flyRight     = findFirst({anim::FLY_RIGHT, anim::FLY_SHUFFLE_RIGHT});
+    mountAnims_.flyUp        = findFirst({anim::FLY_UP, anim::FLY_RISE});
+    mountAnims_.flyDown      = findFirst({anim::FLY_DOWN});
 
     // Discover idle fidget animations using proper WoW M2 metadata
     mountAnims_.fidgets.clear();
@@ -767,6 +1129,11 @@ void AnimationController::updateMeleeTimers(float deltaTime) {
     }
     if (meleeSwingTimer_ > 0.0f) {
         meleeSwingTimer_ = std::max(0.0f, meleeSwingTimer_ - deltaTime);
+        if (meleeSwingTimer_ <= 0.0f) specialAttackAnimId_ = 0;
+    }
+    // Ranged shot timer (same pattern as melee)
+    if (rangedShootTimer_ > 0.0f) {
+        rangedShootTimer_ = std::max(0.0f, rangedShootTimer_ - deltaTime);
     }
 }
 
@@ -777,29 +1144,6 @@ void AnimationController::updateCharacterAnimation() {
     auto* cameraController = renderer_->getCameraController();
     uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
 
-    // WoW WotLK AnimationData.dbc IDs
-    constexpr uint32_t ANIM_STAND      = 0;
-    constexpr uint32_t ANIM_WALK       = 4;
-    constexpr uint32_t ANIM_RUN        = 5;
-    constexpr uint32_t ANIM_STRAFE_RUN_RIGHT  = 92;
-    constexpr uint32_t ANIM_STRAFE_RUN_LEFT   = 93;
-    constexpr uint32_t ANIM_STRAFE_WALK_LEFT  = 11;
-    constexpr uint32_t ANIM_STRAFE_WALK_RIGHT = 12;
-    constexpr uint32_t ANIM_BACKPEDAL         = 13;
-    constexpr uint32_t ANIM_JUMP_START = 37;
-    constexpr uint32_t ANIM_JUMP_MID   = 38;
-    constexpr uint32_t ANIM_JUMP_END   = 39;
-    constexpr uint32_t ANIM_SIT_DOWN   = 97;
-    constexpr uint32_t ANIM_SITTING    = 97;
-    constexpr uint32_t ANIM_SWIM_IDLE  = 41;
-    constexpr uint32_t ANIM_SWIM       = 42;
-    constexpr uint32_t ANIM_MOUNT      = 91;
-    constexpr uint32_t ANIM_READY_UNARMED = 22;
-    constexpr uint32_t ANIM_READY_1H      = 23;
-    constexpr uint32_t ANIM_READY_2H      = 24;
-    constexpr uint32_t ANIM_READY_2H_L    = 25;
-    constexpr uint32_t ANIM_FLY_IDLE   = 158;
-    constexpr uint32_t ANIM_FLY_FORWARD = 159;
 
     CharAnimState newState = charAnimState_;
 
@@ -827,6 +1171,7 @@ void AnimationController::updateCharacterAnimation() {
     bool sitting = cameraController->isSitting();
     bool swim = cameraController->isSwimming();
     bool forceMelee = meleeSwingTimer_ > 0.0f && grounded && !swim;
+    bool forceRanged = rangedShootTimer_ > 0.0f && grounded && !swim;
 
     const glm::vec3& characterPosition = renderer_->getCharacterPosition();
     float characterYaw = renderer_->getCharacterYaw();
@@ -836,11 +1181,28 @@ void AnimationController::updateCharacterAnimation() {
         newState = CharAnimState::MOUNT;
         charAnimState_ = newState;
 
+        // Rider animation — defaults to MOUNT, but uses MOUNT_FLIGHT_* variants when flying
+        uint32_t riderAnim = anim::MOUNT;
+        if (cameraController->isFlyingActive()) {
+            auto hasRider = [&](uint32_t id) { return characterRenderer->hasAnimation(characterInstanceId, id); };
+            if (moving) {
+                if (cameraController->isAscending() && hasRider(anim::MOUNT_FLIGHT_UP))
+                    riderAnim = anim::MOUNT_FLIGHT_UP;
+                else if (cameraController->isDescending() && hasRider(anim::MOUNT_FLIGHT_DOWN))
+                    riderAnim = anim::MOUNT_FLIGHT_DOWN;
+                else if (hasRider(anim::MOUNT_FLIGHT_FORWARD))
+                    riderAnim = anim::MOUNT_FLIGHT_FORWARD;
+            } else {
+                if (hasRider(anim::MOUNT_FLIGHT_IDLE))
+                    riderAnim = anim::MOUNT_FLIGHT_IDLE;
+            }
+        }
+
         uint32_t currentAnimId = 0;
         float currentAnimTimeMs = 0.0f, currentAnimDurationMs = 0.0f;
         bool haveState = characterRenderer->getAnimationState(characterInstanceId, currentAnimId, currentAnimTimeMs, currentAnimDurationMs);
-        if (!haveState || currentAnimId != ANIM_MOUNT) {
-            characterRenderer->playAnimation(characterInstanceId, ANIM_MOUNT, true);
+        if (!haveState || currentAnimId != riderAnim) {
+            characterRenderer->playAnimation(characterInstanceId, riderAnim, true);
         }
 
         float mountBob = 0.0f;
@@ -872,7 +1234,7 @@ void AnimationController::updateCharacterAnimation() {
                 return fallback;
             };
 
-            uint32_t mountAnimId = ANIM_STAND;
+            uint32_t mountAnimId = anim::STAND;
 
             uint32_t curMountAnim = 0;
             float curMountTime = 0, curMountDur = 0;
@@ -894,8 +1256,8 @@ void AnimationController::updateCharacterAnimation() {
                     }
                 }
 
-                uint32_t flyAnims[] = {ANIM_FLY_FORWARD, ANIM_FLY_IDLE, 234, 229, 233, 141, 369, 6, ANIM_RUN};
-                mountAnimId = ANIM_STAND;
+                uint32_t flyAnims[] = {anim::FLY_FORWARD, anim::FLY_IDLE, anim::FLY_RUN_2, anim::FLY_SPELL, anim::FLY_RISE, anim::SPELL_KNEEL_LOOP, anim::FLY_CUSTOM_SPELL_10, anim::DEAD, anim::RUN};
+                mountAnimId = anim::STAND;
                 for (uint32_t fa : flyAnims) {
                     if (characterRenderer->hasAnimation(mountInstanceId_, fa)) {
                         mountAnimId = fa;
@@ -988,14 +1350,54 @@ void AnimationController::updateCharacterAnimation() {
                     }
                 }
             } else if (moving) {
-                if (anyStrafeLeft) {
-                    mountAnimId = pickMountAnim({ANIM_STRAFE_RUN_LEFT, ANIM_STRAFE_WALK_LEFT, ANIM_RUN}, ANIM_RUN);
+                const bool flying = cameraController->isFlyingActive();
+                const bool mountSwim = cameraController->isSwimming();
+                if (flying) {
+                    // Directional flying animations for mount
+                    if (cameraController->isAscending()) {
+                        mountAnimId = pickMountAnim({anim::FLY_UP, anim::FLY_FORWARD}, anim::RUN);
+                    } else if (cameraController->isDescending()) {
+                        mountAnimId = pickMountAnim({anim::FLY_DOWN, anim::FLY_FORWARD}, anim::RUN);
+                    } else if (anyStrafeLeft) {
+                        mountAnimId = pickMountAnim({anim::FLY_LEFT, anim::FLY_SHUFFLE_LEFT, anim::FLY_FORWARD}, anim::RUN);
+                    } else if (anyStrafeRight) {
+                        mountAnimId = pickMountAnim({anim::FLY_RIGHT, anim::FLY_SHUFFLE_RIGHT, anim::FLY_FORWARD}, anim::RUN);
+                    } else if (movingBackward) {
+                        mountAnimId = pickMountAnim({anim::FLY_BACKWARDS, anim::FLY_WALK_BACKWARDS, anim::FLY_FORWARD}, anim::RUN);
+                    } else {
+                        mountAnimId = pickMountAnim({anim::FLY_FORWARD, anim::FLY_IDLE}, anim::RUN);
+                    }
+                } else if (mountSwim) {
+                    // Mounted swimming animations
+                    if (anyStrafeLeft) {
+                        mountAnimId = pickMountAnim({anim::MOUNT_SWIM_LEFT, anim::SWIM_LEFT, anim::MOUNT_SWIM}, anim::RUN);
+                    } else if (anyStrafeRight) {
+                        mountAnimId = pickMountAnim({anim::MOUNT_SWIM_RIGHT, anim::SWIM_RIGHT, anim::MOUNT_SWIM}, anim::RUN);
+                    } else if (movingBackward) {
+                        mountAnimId = pickMountAnim({anim::MOUNT_SWIM_BACKWARDS, anim::SWIM_BACKWARDS, anim::MOUNT_SWIM}, anim::RUN);
+                    } else {
+                        mountAnimId = pickMountAnim({anim::MOUNT_SWIM, anim::SWIM}, anim::RUN);
+                    }
+                } else if (anyStrafeLeft) {
+                    mountAnimId = pickMountAnim({anim::MOUNT_RUN_LEFT, anim::RUN_LEFT, anim::SHUFFLE_LEFT, anim::RUN}, anim::RUN);
                 } else if (anyStrafeRight) {
-                    mountAnimId = pickMountAnim({ANIM_STRAFE_RUN_RIGHT, ANIM_STRAFE_WALK_RIGHT, ANIM_RUN}, ANIM_RUN);
+                    mountAnimId = pickMountAnim({anim::MOUNT_RUN_RIGHT, anim::RUN_RIGHT, anim::SHUFFLE_RIGHT, anim::RUN}, anim::RUN);
                 } else if (movingBackward) {
-                    mountAnimId = pickMountAnim({ANIM_BACKPEDAL}, ANIM_RUN);
+                    mountAnimId = pickMountAnim({anim::MOUNT_WALK_BACKWARDS, anim::WALK_BACKWARDS}, anim::RUN);
                 } else {
-                    mountAnimId = ANIM_RUN;
+                    mountAnimId = anim::RUN;
+                }
+            } else if (!moving && cameraController->isSwimming()) {
+                // Mounted swim idle
+                mountAnimId = pickMountAnim({anim::MOUNT_SWIM_IDLE, anim::SWIM_IDLE}, anim::STAND);
+            } else if (!moving && cameraController->isFlyingActive()) {
+                // Hovering in flight — use FLY_IDLE instead of STAND
+                if (cameraController->isAscending()) {
+                    mountAnimId = pickMountAnim({anim::FLY_UP, anim::FLY_IDLE}, anim::STAND);
+                } else if (cameraController->isDescending()) {
+                    mountAnimId = pickMountAnim({anim::FLY_DOWN, anim::FLY_IDLE}, anim::STAND);
+                } else {
+                    mountAnimId = pickMountAnim({anim::FLY_IDLE, anim::FLY_FORWARD}, anim::STAND);
                 }
             }
 
@@ -1165,7 +1567,7 @@ void AnimationController::updateCharacterAnimation() {
         return;
     }
 
-    if (!forceMelee) switch (charAnimState_) {
+    if (!forceMelee && !forceRanged) switch (charAnimState_) {
         case CharAnimState::IDLE:
             if (swim) {
                 newState = moving ? CharAnimState::SWIM : CharAnimState::SWIM_IDLE;
@@ -1180,7 +1582,13 @@ void AnimationController::updateCharacterAnimation() {
             } else if (moving) {
                 newState = CharAnimState::WALK;
             } else if (inCombat_ && grounded) {
-                newState = CharAnimState::COMBAT_IDLE;
+                // Play unsheathe one-shot before entering combat idle
+                if (characterRenderer && characterInstanceId > 0 &&
+                    characterRenderer->hasAnimation(characterInstanceId, anim::UNSHEATHE)) {
+                    newState = CharAnimState::UNSHEATHE;
+                } else {
+                    newState = CharAnimState::COMBAT_IDLE;
+                }
             }
             break;
 
@@ -1246,7 +1654,21 @@ void AnimationController::updateCharacterAnimation() {
             if (swim) {
                 newState = CharAnimState::SWIM_IDLE;
             } else if (!sitting) {
-                newState = CharAnimState::IDLE;
+                // Stand up requested — play exit animation if available and not moving
+                if (sitUpAnim_ != 0 && !moving) {
+                    newState = CharAnimState::SIT_UP;
+                } else {
+                    newState = CharAnimState::IDLE;
+                }
+            } else if (sitDownAnim_ != 0 && characterRenderer && characterInstanceId > 0) {
+                // Auto-chain: when sit-down one-shot finishes → enter loop
+                uint32_t curId = 0; float curT = 0.0f, curDur = 0.0f;
+                if (characterRenderer->getAnimationState(characterInstanceId, curId, curT, curDur)) {
+                    // Renderer auto-returns one-shots to STAND — detect that OR normal completion
+                    if (curId != sitDownAnim_ || (curDur > 0.1f && curT >= curDur - 0.05f)) {
+                        newState = CharAnimState::SITTING;
+                    }
+                }
             }
             break;
 
@@ -1254,7 +1676,29 @@ void AnimationController::updateCharacterAnimation() {
             if (swim) {
                 newState = CharAnimState::SWIM_IDLE;
             } else if (!sitting) {
-                newState = CharAnimState::IDLE;
+                if (sitUpAnim_ != 0 && !moving) {
+                    newState = CharAnimState::SIT_UP;
+                } else {
+                    newState = CharAnimState::IDLE;
+                }
+            }
+            break;
+
+        case CharAnimState::SIT_UP:
+            if (swim) {
+                newState = CharAnimState::SWIM_IDLE;
+            } else if (moving) {
+                // Movement cancels exit animation
+                newState = sprinting ? CharAnimState::RUN : CharAnimState::WALK;
+            } else if (characterRenderer && characterInstanceId > 0) {
+                uint32_t curId = 0; float curT = 0.0f, curDur = 0.0f;
+                if (characterRenderer->getAnimationState(characterInstanceId, curId, curT, curDur)) {
+                    // Renderer auto-returns one-shots to STAND — detect that OR normal completion
+                    if (curId != (sitUpAnim_ ? sitUpAnim_ : anim::SIT_GROUND_UP)
+                            || (curDur > 0.1f && curT >= curDur - 0.05f)) {
+                        newState = CharAnimState::IDLE;
+                    }
+                }
             }
             break;
 
@@ -1273,11 +1717,27 @@ void AnimationController::updateCharacterAnimation() {
                 newState = CharAnimState::SIT_DOWN;
             } else if (!emoteLoop_ && characterRenderer && characterInstanceId > 0) {
                 uint32_t curId = 0; float curT = 0.0f, curDur = 0.0f;
-                if (characterRenderer->getAnimationState(characterInstanceId, curId, curT, curDur)
-                        && curDur > 0.1f && curT >= curDur - 0.05f) {
-                    cancelEmote();
-                    newState = CharAnimState::IDLE;
+                if (characterRenderer->getAnimationState(characterInstanceId, curId, curT, curDur)) {
+                    // Renderer auto-returns one-shots to STAND — detect that OR normal completion
+                    if (curId != emoteAnimId_ || (curDur > 0.1f && curT >= curDur - 0.05f)) {
+                        cancelEmote();
+                        newState = CharAnimState::IDLE;
+                    }
                 }
+            }
+            break;
+
+        case CharAnimState::LOOTING:
+            // Cancel loot animation on movement, jump, swim, combat
+            if (swim) {
+                stopLooting();
+                newState = CharAnimState::SWIM_IDLE;
+            } else if (jumping || !grounded) {
+                stopLooting();
+                newState = CharAnimState::JUMP_START;
+            } else if (moving) {
+                stopLooting();
+                newState = sprinting ? CharAnimState::RUN : CharAnimState::WALK;
             }
             break;
 
@@ -1317,6 +1777,42 @@ void AnimationController::updateCharacterAnimation() {
             }
             break;
 
+        case CharAnimState::RANGED_SHOOT:
+            if (swim) {
+                newState = CharAnimState::SWIM_IDLE;
+            } else if (!grounded && jumping) {
+                newState = CharAnimState::JUMP_START;
+            } else if (!grounded) {
+                newState = CharAnimState::JUMP_MID;
+            } else if (moving && sprinting) {
+                newState = CharAnimState::RUN;
+            } else if (moving) {
+                newState = CharAnimState::WALK;
+            } else if (inCombat_) {
+                newState = CharAnimState::RANGED_LOAD;
+            } else {
+                newState = CharAnimState::IDLE;
+            }
+            break;
+
+        case CharAnimState::RANGED_LOAD:
+            if (swim) {
+                newState = CharAnimState::SWIM_IDLE;
+            } else if (!grounded && jumping) {
+                newState = CharAnimState::JUMP_START;
+            } else if (!grounded) {
+                newState = CharAnimState::JUMP_MID;
+            } else if (moving && sprinting) {
+                newState = CharAnimState::RUN;
+            } else if (moving) {
+                newState = CharAnimState::WALK;
+            } else if (inCombat_) {
+                newState = CharAnimState::COMBAT_IDLE;
+            } else {
+                newState = CharAnimState::IDLE;
+            }
+            break;
+
         case CharAnimState::MOUNT:
             if (swim) {
                 newState = moving ? CharAnimState::SWIM : CharAnimState::SWIM_IDLE;
@@ -1347,20 +1843,181 @@ void AnimationController::updateCharacterAnimation() {
             } else if (moving) {
                 newState = CharAnimState::WALK;
             } else if (!inCombat_) {
-                newState = CharAnimState::IDLE;
+                // Play sheathe one-shot before returning to idle
+                if (characterRenderer && characterInstanceId > 0 &&
+                    characterRenderer->hasAnimation(characterInstanceId, anim::SHEATHE)) {
+                    newState = CharAnimState::SHEATHE;
+                } else {
+                    newState = CharAnimState::IDLE;
+                }
             }
             break;
 
         case CharAnimState::CHARGE:
             break;
+
+        case CharAnimState::UNSHEATHE:
+            // One-shot weapon draw: when complete → COMBAT_IDLE
+            if (swim) {
+                newState = moving ? CharAnimState::SWIM : CharAnimState::SWIM_IDLE;
+            } else if (moving) {
+                newState = inCombat_ ? (sprinting ? CharAnimState::RUN : CharAnimState::WALK)
+                                     : (sprinting ? CharAnimState::RUN : CharAnimState::WALK);
+            } else if (characterRenderer && characterInstanceId > 0) {
+                uint32_t curId = 0; float curT = 0.0f, curDur = 0.0f;
+                if (characterRenderer->getAnimationState(characterInstanceId, curId, curT, curDur)) {
+                    if (curId != anim::UNSHEATHE || (curDur > 0.1f && curT >= curDur - 0.05f)) {
+                        newState = CharAnimState::COMBAT_IDLE;
+                    }
+                }
+            }
+            break;
+
+        case CharAnimState::SHEATHE:
+            // One-shot weapon put-away: when complete → IDLE
+            if (swim) {
+                newState = moving ? CharAnimState::SWIM : CharAnimState::SWIM_IDLE;
+            } else if (moving) {
+                newState = sprinting ? CharAnimState::RUN : CharAnimState::WALK;
+            } else if (inCombat_) {
+                // Re-entered combat during sheathe — go straight to combat idle
+                newState = CharAnimState::COMBAT_IDLE;
+            } else if (characterRenderer && characterInstanceId > 0) {
+                uint32_t curId = 0; float curT = 0.0f, curDur = 0.0f;
+                if (characterRenderer->getAnimationState(characterInstanceId, curId, curT, curDur)) {
+                    if (curId != anim::SHEATHE || (curDur > 0.1f && curT >= curDur - 0.05f)) {
+                        newState = CharAnimState::IDLE;
+                    }
+                }
+            }
+            break;
+
+        case CharAnimState::SPELL_PRECAST:
+            // One-shot wind-up: auto-advance to SPELL_CASTING when complete
+            if (swim) {
+                spellPrecastAnimId_ = 0; spellCastAnimId_ = 0; spellFinalizeAnimId_ = 0;
+                newState = moving ? CharAnimState::SWIM : CharAnimState::SWIM_IDLE;
+            } else if (!grounded && jumping) {
+                spellPrecastAnimId_ = 0; spellCastAnimId_ = 0; spellFinalizeAnimId_ = 0;
+                newState = CharAnimState::JUMP_START;
+            } else if (!grounded) {
+                spellPrecastAnimId_ = 0; spellCastAnimId_ = 0; spellFinalizeAnimId_ = 0;
+                newState = CharAnimState::JUMP_MID;
+            } else if (characterRenderer && characterInstanceId > 0) {
+                uint32_t curId = 0; float curT = 0.0f, curDur = 0.0f;
+                uint32_t expectedAnim = spellPrecastAnimId_ ? spellPrecastAnimId_ : anim::SPELL_PRECAST;
+                if (characterRenderer->getAnimationState(characterInstanceId, curId, curT, curDur)) {
+                    if (curId != expectedAnim || (curDur > 0.1f && curT >= curDur - 0.05f)) {
+                        // Precast finished → advance to casting phase
+                        newState = CharAnimState::SPELL_CASTING;
+                    }
+                }
+            }
+            break;
+
+        case CharAnimState::SPELL_CASTING:
+            // Spell cast loop holds until interrupted by movement, jump, swim, or stopSpellCast()
+            if (swim) {
+                spellPrecastAnimId_ = 0; spellCastAnimId_ = 0; spellFinalizeAnimId_ = 0;
+                newState = moving ? CharAnimState::SWIM : CharAnimState::SWIM_IDLE;
+            } else if (!grounded && jumping) {
+                spellPrecastAnimId_ = 0; spellCastAnimId_ = 0; spellFinalizeAnimId_ = 0;
+                newState = CharAnimState::JUMP_START;
+            } else if (!grounded) {
+                spellPrecastAnimId_ = 0; spellCastAnimId_ = 0; spellFinalizeAnimId_ = 0;
+                newState = CharAnimState::JUMP_MID;
+            } else if (moving) {
+                spellPrecastAnimId_ = 0; spellCastAnimId_ = 0; spellFinalizeAnimId_ = 0;
+                newState = sprinting ? CharAnimState::RUN : CharAnimState::WALK;
+            }
+            // Looping cast stays until stopSpellCast() is called externally
+            break;
+
+        case CharAnimState::SPELL_FINALIZE: {
+            // One-shot release: play finalize anim completely, then return to idle
+            if (swim) {
+                spellPrecastAnimId_ = 0; spellCastAnimId_ = 0; spellFinalizeAnimId_ = 0;
+                newState = moving ? CharAnimState::SWIM : CharAnimState::SWIM_IDLE;
+            } else if (!grounded && jumping) {
+                spellPrecastAnimId_ = 0; spellCastAnimId_ = 0; spellFinalizeAnimId_ = 0;
+                newState = CharAnimState::JUMP_START;
+            } else if (characterRenderer && characterInstanceId > 0) {
+                uint32_t curId = 0; float curT = 0.0f, curDur = 0.0f;
+                // Determine which animation we expect to be playing
+                uint32_t expectedAnim = spellFinalizeAnimId_ ? spellFinalizeAnimId_
+                                      : (spellCastAnimId_ ? spellCastAnimId_ : anim::SPELL);
+                if (characterRenderer->getAnimationState(characterInstanceId, curId, curT, curDur)) {
+                    if (curId != expectedAnim || (curDur > 0.1f && curT >= curDur - 0.05f)) {
+                        // Finalization complete → return to idle
+                        spellPrecastAnimId_ = 0;
+                        spellCastAnimId_ = 0;
+                        spellFinalizeAnimId_ = 0;
+                        newState = inCombat_ ? CharAnimState::COMBAT_IDLE : CharAnimState::IDLE;
+                    }
+                }
+            }
+            break;
+        }
+
+        case CharAnimState::HIT_REACTION:
+            // One-shot reaction: exit when animation finishes
+            if (swim) {
+                hitReactionAnimId_ = 0;
+                newState = moving ? CharAnimState::SWIM : CharAnimState::SWIM_IDLE;
+            } else if (moving) {
+                hitReactionAnimId_ = 0;
+                newState = sprinting ? CharAnimState::RUN : CharAnimState::WALK;
+            } else if (characterRenderer && characterInstanceId > 0) {
+                uint32_t curId = 0; float curT = 0.0f, curDur = 0.0f;
+                uint32_t expectedHitAnim = hitReactionAnimId_ ? hitReactionAnimId_ : anim::COMBAT_WOUND;
+                if (characterRenderer->getAnimationState(characterInstanceId, curId, curT, curDur)) {
+                    // Renderer auto-returns one-shots to STAND — detect that OR normal completion
+                    if (curId != expectedHitAnim || (curDur > 0.1f && curT >= curDur - 0.05f)) {
+                        hitReactionAnimId_ = 0;
+                        newState = inCombat_ ? CharAnimState::COMBAT_IDLE : CharAnimState::IDLE;
+                    }
+                }
+            }
+            break;
+
+        case CharAnimState::STUNNED:
+            // Stun holds until setStunned(false) is called.
+            // Only swim can break it (physics override).
+            if (swim) {
+                stunned_ = false;
+                newState = moving ? CharAnimState::SWIM : CharAnimState::SWIM_IDLE;
+            }
+            break;
     }
 
-    if (forceMelee) {
+    // Stun overrides melee/charge (can't act while stunned)
+    if (stunned_ && newState != CharAnimState::SWIM && newState != CharAnimState::SWIM_IDLE
+        && newState != CharAnimState::STUNNED) {
+        newState = CharAnimState::STUNNED;
+    }
+
+    if (forceMelee && !stunned_) {
         newState = CharAnimState::MELEE_SWING;
+        spellPrecastAnimId_ = 0;
+        spellCastAnimId_ = 0;
+        spellFinalizeAnimId_ = 0;
+        hitReactionAnimId_ = 0;
     }
 
-    if (charging_) {
+    if (forceRanged && !stunned_ && !forceMelee) {
+        newState = CharAnimState::RANGED_SHOOT;
+        spellPrecastAnimId_ = 0;
+        spellCastAnimId_ = 0;
+        spellFinalizeAnimId_ = 0;
+        hitReactionAnimId_ = 0;
+    }
+
+    if (charging_ && !stunned_) {
         newState = CharAnimState::CHARGE;
+        spellPrecastAnimId_ = 0;
+        spellCastAnimId_ = 0;
+        spellFinalizeAnimId_ = 0;
+        hitReactionAnimId_ = 0;
     }
 
     if (newState != charAnimState_) {
@@ -1376,61 +2033,192 @@ void AnimationController::updateCharacterAnimation() {
         return fallback;
     };
 
-    uint32_t animId = ANIM_STAND;
+    uint32_t animId = anim::STAND;
     bool loop = true;
 
     switch (charAnimState_) {
-        case CharAnimState::IDLE:       animId = ANIM_STAND;      loop = true;  break;
+        case CharAnimState::IDLE:
+            if (lowHealth_ && characterRenderer->hasAnimation(characterInstanceId, anim::STAND_WOUND)) {
+                animId = anim::STAND_WOUND;
+            } else {
+                animId = anim::STAND;
+            }
+            loop = true;
+            break;
         case CharAnimState::WALK:
             if (movingBackward) {
-                animId = pickFirstAvailable({ANIM_BACKPEDAL}, ANIM_WALK);
+                animId = pickFirstAvailable({anim::WALK_BACKWARDS}, anim::WALK);
             } else if (anyStrafeLeft) {
-                animId = pickFirstAvailable({ANIM_STRAFE_WALK_LEFT, ANIM_STRAFE_RUN_LEFT}, ANIM_WALK);
+                animId = pickFirstAvailable({anim::SHUFFLE_LEFT, anim::RUN_LEFT}, anim::WALK);
             } else if (anyStrafeRight) {
-                animId = pickFirstAvailable({ANIM_STRAFE_WALK_RIGHT, ANIM_STRAFE_RUN_RIGHT}, ANIM_WALK);
+                animId = pickFirstAvailable({anim::SHUFFLE_RIGHT, anim::RUN_RIGHT}, anim::WALK);
             } else {
-                animId = pickFirstAvailable({ANIM_WALK, ANIM_RUN}, ANIM_STAND);
+                animId = pickFirstAvailable({anim::WALK, anim::RUN}, anim::STAND);
             }
             loop = true;
             break;
         case CharAnimState::RUN:
             if (movingBackward) {
-                animId = pickFirstAvailable({ANIM_BACKPEDAL}, ANIM_WALK);
+                animId = pickFirstAvailable({anim::WALK_BACKWARDS}, anim::WALK);
             } else if (anyStrafeLeft) {
-                animId = pickFirstAvailable({ANIM_STRAFE_RUN_LEFT}, ANIM_RUN);
+                animId = pickFirstAvailable({anim::RUN_LEFT}, anim::RUN);
             } else if (anyStrafeRight) {
-                animId = pickFirstAvailable({ANIM_STRAFE_RUN_RIGHT}, ANIM_RUN);
+                animId = pickFirstAvailable({anim::RUN_RIGHT}, anim::RUN);
+            } else if (sprintAuraActive_) {
+                animId = pickFirstAvailable({anim::SPRINT, anim::RUN, anim::WALK}, anim::STAND);
             } else {
-                animId = pickFirstAvailable({ANIM_RUN, ANIM_WALK}, ANIM_STAND);
+                animId = pickFirstAvailable({anim::RUN, anim::WALK}, anim::STAND);
             }
             loop = true;
             break;
-        case CharAnimState::JUMP_START: animId = ANIM_JUMP_START; loop = false; break;
-        case CharAnimState::JUMP_MID:   animId = ANIM_JUMP_MID;   loop = false; break;
-        case CharAnimState::JUMP_END:   animId = ANIM_JUMP_END;   loop = false; break;
-        case CharAnimState::SIT_DOWN:   animId = ANIM_SIT_DOWN;   loop = false; break;
-        case CharAnimState::SITTING:    animId = ANIM_SITTING;    loop = true;  break;
+        case CharAnimState::JUMP_START: animId = anim::JUMP_START; loop = false; break;
+        case CharAnimState::JUMP_MID:   animId = anim::JUMP;       loop = false; break;
+        case CharAnimState::JUMP_END:   animId = anim::JUMP_END;   loop = false; break;
+        case CharAnimState::SIT_DOWN:
+            animId = sitDownAnim_ ? sitDownAnim_ : anim::SIT_GROUND_DOWN;
+            loop = false;
+            break;
+        case CharAnimState::SITTING:
+            animId = sitLoopAnim_ ? sitLoopAnim_ : anim::SITTING;
+            loop = true;
+            break;
+        case CharAnimState::SIT_UP:
+            animId = sitUpAnim_ ? sitUpAnim_ : anim::SIT_GROUND_UP;
+            loop = false;
+            break;
         case CharAnimState::EMOTE:      animId = emoteAnimId_;    loop = emoteLoop_; break;
-        case CharAnimState::SWIM_IDLE:  animId = ANIM_SWIM_IDLE;  loop = true;  break;
-        case CharAnimState::SWIM:       animId = ANIM_SWIM;       loop = true;  break;
+        case CharAnimState::LOOTING:    animId = anim::LOOT;      loop = true;  break;
+        case CharAnimState::SWIM_IDLE:  animId = anim::SWIM_IDLE;  loop = true;  break;
+        case CharAnimState::SWIM:
+            if (movingBackward) {
+                animId = pickFirstAvailable({anim::SWIM_BACKWARDS}, anim::SWIM);
+            } else if (anyStrafeLeft) {
+                animId = pickFirstAvailable({anim::SWIM_LEFT}, anim::SWIM);
+            } else if (anyStrafeRight) {
+                animId = pickFirstAvailable({anim::SWIM_RIGHT}, anim::SWIM);
+            } else {
+                animId = anim::SWIM;
+            }
+            loop = true;
+            break;
         case CharAnimState::MELEE_SWING:
-            animId = resolveMeleeAnimId();
+            if (specialAttackAnimId_ != 0) {
+                animId = specialAttackAnimId_;
+            } else {
+                animId = resolveMeleeAnimId();
+            }
             if (animId == 0) {
-                animId = ANIM_STAND;
+                animId = anim::STAND;
             }
             loop = false;
             break;
-        case CharAnimState::MOUNT:      animId = ANIM_MOUNT;      loop = true;  break;
+        case CharAnimState::RANGED_SHOOT:
+            animId = rangedAnimId_ ? rangedAnimId_ : anim::ATTACK_BOW;
+            loop = false;
+            break;
+        case CharAnimState::RANGED_LOAD:
+            switch (equippedRangedType_) {
+                case RangedWeaponType::BOW:
+                    animId = pickFirstAvailable({anim::LOAD_BOW}, anim::STAND); break;
+                case RangedWeaponType::GUN:
+                    animId = pickFirstAvailable({anim::LOAD_RIFLE}, anim::STAND); break;
+                case RangedWeaponType::CROSSBOW:
+                    animId = pickFirstAvailable({anim::LOAD_BOW}, anim::STAND); break;
+                default:
+                    animId = anim::STAND; break;
+            }
+            loop = false;
+            break;
+        case CharAnimState::MOUNT:      animId = anim::MOUNT;      loop = true;  break;
         case CharAnimState::COMBAT_IDLE:
-            animId = pickFirstAvailable(
-                {ANIM_READY_1H, ANIM_READY_2H, ANIM_READY_2H_L, ANIM_READY_UNARMED},
-                ANIM_STAND);
+            // Wounded idle overrides combat stance when HP < 20%
+            if (lowHealth_ && characterRenderer->hasAnimation(characterInstanceId, anim::STAND_WOUND)) {
+                animId = anim::STAND_WOUND;
+            } else if (equippedRangedType_ == RangedWeaponType::BOW) {
+                animId = pickFirstAvailable(
+                    {anim::READY_BOW, anim::READY_1H, anim::READY_UNARMED},
+                    anim::STAND);
+            } else if (equippedRangedType_ == RangedWeaponType::GUN) {
+                animId = pickFirstAvailable(
+                    {anim::READY_RIFLE, anim::READY_BOW, anim::READY_1H, anim::READY_UNARMED},
+                    anim::STAND);
+            } else if (equippedRangedType_ == RangedWeaponType::CROSSBOW) {
+                animId = pickFirstAvailable(
+                    {anim::READY_CROSSBOW, anim::READY_BOW, anim::READY_1H, anim::READY_UNARMED},
+                    anim::STAND);
+            } else if (equippedRangedType_ == RangedWeaponType::THROWN) {
+                animId = pickFirstAvailable(
+                    {anim::READY_THROWN, anim::READY_1H, anim::READY_UNARMED},
+                    anim::STAND);
+            } else if (equippedIs2HLoose_) {
+                animId = pickFirstAvailable(
+                    {anim::READY_2H_LOOSE, anim::READY_2H, anim::READY_1H, anim::READY_UNARMED},
+                    anim::STAND);
+            } else if (equippedWeaponInvType_ == game::InvType::TWO_HAND) {
+                animId = pickFirstAvailable(
+                    {anim::READY_2H, anim::READY_2H_LOOSE, anim::READY_1H, anim::READY_UNARMED},
+                    anim::STAND);
+            } else if (equippedIsFist_) {
+                animId = pickFirstAvailable(
+                    {anim::READY_FIST_1H, anim::READY_FIST, anim::READY_1H, anim::READY_UNARMED},
+                    anim::STAND);
+            } else if (equippedWeaponInvType_ == game::InvType::NON_EQUIP) {
+                animId = pickFirstAvailable(
+                    {anim::READY_UNARMED, anim::READY_1H, anim::READY_FIST},
+                    anim::STAND);
+            } else {
+                // 1H (inventoryType 13, 21, etc.)
+                animId = pickFirstAvailable(
+                    {anim::READY_1H, anim::READY_2H, anim::READY_UNARMED},
+                    anim::STAND);
+            }
             loop = true;
             break;
         case CharAnimState::CHARGE:
-            animId = ANIM_RUN;
+            animId = anim::RUN;
             loop = true;
             break;
+        case CharAnimState::UNSHEATHE:
+            animId = anim::UNSHEATHE;
+            loop = false;
+            break;
+        case CharAnimState::SHEATHE:
+            animId = pickFirstAvailable({anim::SHEATHE, anim::HIP_SHEATHE}, anim::SHEATHE);
+            loop = false;
+            break;
+        case CharAnimState::SPELL_PRECAST:
+            animId = spellPrecastAnimId_ ? spellPrecastAnimId_ : anim::SPELL_PRECAST;
+            loop = false;  // One-shot wind-up
+            break;
+        case CharAnimState::SPELL_CASTING:
+            animId = spellCastAnimId_ ? spellCastAnimId_ : anim::SPELL;
+            loop = spellCastLoop_;
+            break;
+        case CharAnimState::SPELL_FINALIZE:
+            // Play finalization anim if set, otherwise let the cast anim finish as one-shot
+            animId = spellFinalizeAnimId_ ? spellFinalizeAnimId_
+                   : (spellCastAnimId_ ? spellCastAnimId_ : anim::SPELL);
+            loop = false;  // One-shot release
+            break;
+        case CharAnimState::HIT_REACTION:
+            animId = hitReactionAnimId_ ? hitReactionAnimId_ : anim::COMBAT_WOUND;
+            loop = false;
+            break;
+        case CharAnimState::STUNNED:
+            animId = anim::STUN;
+            loop = true;
+            break;
+    }
+
+    // Stealth animation substitution: override idle/walk/run with stealth variants
+    if (stealthed_) {
+        if (charAnimState_ == CharAnimState::IDLE || charAnimState_ == CharAnimState::COMBAT_IDLE) {
+            animId = pickFirstAvailable({anim::STEALTH_STAND}, animId);
+        } else if (charAnimState_ == CharAnimState::WALK) {
+            animId = pickFirstAvailable({anim::STEALTH_WALK}, animId);
+        } else if (charAnimState_ == CharAnimState::RUN) {
+            animId = pickFirstAvailable({anim::STEALTH_RUN, anim::STEALTH_WALK}, animId);
+        }
     }
 
     uint32_t currentAnimId = 0;
@@ -1438,7 +2226,10 @@ void AnimationController::updateCharacterAnimation() {
     float currentAnimDurationMs = 0.0f;
     bool haveState = characterRenderer->getAnimationState(characterInstanceId, currentAnimId, currentAnimTimeMs, currentAnimDurationMs);
     const bool requestChanged = (lastPlayerAnimRequest_ != animId) || (lastPlayerAnimLoopRequest_ != loop);
-    const bool shouldPlay = (haveState && currentAnimId != animId) || (!haveState && requestChanged);
+    // requestChanged alone is sufficient: covers both anim ID changes AND loop-mode
+    // changes on the same anim (e.g. spell cast loop → finalization one-shot).
+    // The currentAnimId check handles engine drift (fallback anim playing instead).
+    const bool shouldPlay = requestChanged || (haveState && currentAnimId != animId);
     if (shouldPlay) {
         characterRenderer->playAnimation(characterInstanceId, animId, loop);
         lastPlayerAnimRequest_ = animId;

@@ -8,6 +8,7 @@
 #include "core/coordinates.hpp"
 #include "core/input.hpp"
 #include "rendering/renderer.hpp"
+#include "rendering/animation_controller.hpp"
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/terrain_manager.hpp"
 #include "rendering/minimap.hpp"
@@ -104,10 +105,10 @@ GameScreen::GameScreen() {
     loadSettings();
 }
 
-// Section 3.5: Set UI services and propagate to child components
+// Set UI services and propagate to child components
 void GameScreen::setServices(const UIServices& services) {
     services_ = services;
-    // Update legacy pointer for Phase A compatibility
+    // Update legacy pointer for compatibility
     appearanceComposer_ = services.appearanceComposer;
     // Propagate to child panels
     chatPanel_.setServices(services);
@@ -503,7 +504,37 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         auto* r = services_.renderer;
         if (r) {
             const auto& mh = gameHandler.getInventory().getEquipSlot(game::EquipSlot::MAIN_HAND);
-            r->setEquippedWeaponType(mh.empty() ? 0 : mh.item.inventoryType);
+            const auto& oh = gameHandler.getInventory().getEquipSlot(game::EquipSlot::OFF_HAND);
+            if (mh.empty()) {
+                r->setEquippedWeaponType(0, false);
+            } else {
+                // Polearms and staves use ATTACK_2H_LOOSE instead of ATTACK_2H
+                bool is2HLoose = (mh.item.subclassName == "Polearm" || mh.item.subclassName == "Staff");
+                bool isFist = (mh.item.subclassName == "Fist Weapon");
+                bool isDagger = (mh.item.subclassName == "Dagger");
+                bool hasOffHand = !oh.empty() &&
+                    (oh.item.inventoryType == game::InvType::ONE_HAND ||
+                     oh.item.subclassName == "Fist Weapon");
+                bool hasShield = !oh.empty() && oh.item.inventoryType == game::InvType::SHIELD;
+                r->setEquippedWeaponType(mh.item.inventoryType, is2HLoose, isFist, isDagger, hasOffHand, hasShield);
+            }
+            // Detect ranged weapon type from RANGED slot
+            const auto& rangedSlot = gameHandler.getInventory().getEquipSlot(game::EquipSlot::RANGED);
+            if (rangedSlot.empty()) {
+                r->setEquippedRangedType(rendering::RangedWeaponType::NONE);
+            } else if (rangedSlot.item.inventoryType == game::InvType::RANGED_BOW) {
+                // subclassName distinguishes Bow vs Crossbow
+                if (rangedSlot.item.subclassName == "Crossbow")
+                    r->setEquippedRangedType(rendering::RangedWeaponType::CROSSBOW);
+                else
+                    r->setEquippedRangedType(rendering::RangedWeaponType::BOW);
+            } else if (rangedSlot.item.inventoryType == game::InvType::RANGED_GUN) {
+                r->setEquippedRangedType(rendering::RangedWeaponType::GUN);
+            } else if (rangedSlot.item.inventoryType == game::InvType::THROWN) {
+                r->setEquippedRangedType(rendering::RangedWeaponType::THROWN);
+            } else {
+                r->setEquippedRangedType(rendering::RangedWeaponType::NONE);
+            }
         }
     }
 
@@ -4103,7 +4134,7 @@ void GameScreen::renderWorldMap(game::GameHandler& gameHandler) {
 }
 
 // ============================================================
-// Action Bar (Phase 3)
+// Action Bar
 // ============================================================
 
 VkDescriptorSet GameScreen::getSpellIcon(uint32_t spellId, pipeline::AssetManager* am) {
@@ -4216,36 +4247,6 @@ VkDescriptorSet GameScreen::getSpellIcon(uint32_t spellId, pipeline::AssetManage
     spellIconCache_[spellId] = ds;
     return ds;
 }
-
-
-
-// ============================================================
-// Stance / Form / Presence Bar
-// Shown for Warriors (stances), Death Knights (presences),
-// Druids (shapeshift forms), Rogues (stealth), Priests (Shadowform).
-// Buttons display the player's known stance/form spells.
-// Active form is detected by checking permanent player auras.
-// ============================================================
-
-
-// ============================================================
-// Bag Bar
-// ============================================================
-
-
-// ============================================================
-// XP Bar
-// ============================================================
-
-
-// ============================================================
-// Reputation Bar
-// ============================================================
-
-
-// ============================================================
-// Cast Bar (Phase 3)
-// ============================================================
 
 // ============================================================
 // Mirror Timers (breath / fatigue / feign death)
@@ -4526,18 +4527,6 @@ void GameScreen::renderQuestObjectiveTracker(game::GameHandler& gameHandler) {
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
 }
-
-// ============================================================
-// Raid Warning / Boss Emote Center-Screen Overlay
-// ============================================================
-
-// ============================================================
-// Floating Combat Text (Phase 2)
-// ============================================================
-
-// ============================================================
-// DPS / HPS Meter
-// ============================================================
 
 // ============================================================
 // Nameplates — world-space health bars projected to screen
@@ -5148,10 +5137,6 @@ void GameScreen::renderNameplates(game::GameHandler& gameHandler) {
 }
 
 // ============================================================
-// Party Frames (Phase 4)
-// ============================================================
-
-// ============================================================
 // Durability Warning (equipment damage indicator)
 // ============================================================
 
@@ -5312,95 +5297,6 @@ void GameScreen::renderUIErrors(game::GameHandler& /*gameHandler*/, float deltaT
     ImGui::End();
     ImGui::PopStyleVar();
 }
-
-
-// ============================================================
-// Boss Encounter Frames
-// ============================================================
-
-// ============================================================
-// Social Frame — compact online friends panel (toggled by socialPanel_.showSocialFrame_)
-// ============================================================
-
-// ============================================================
-// Buff/Debuff Bar (Phase 3)
-// ============================================================
-
-// ============================================================
-// Loot Window (Phase 5)
-// ============================================================
-
-
-// ============================================================
-// Gossip Window (Phase 5)
-// ============================================================
-
-
-// ============================================================
-// Quest Details Window
-// ============================================================
-
-
-// ============================================================
-// Quest Request Items Window (turn-in progress check)
-// ============================================================
-
-
-// ============================================================
-// Quest Offer Reward Window (choose reward)
-// ============================================================
-
-
-// ============================================================
-// ItemExtendedCost.dbc loader
-// ============================================================
-
-
-
-// ============================================================
-// Vendor Window (Phase 5)
-// ============================================================
-
-
-// ============================================================
-// Trainer
-// ============================================================
-
-
-// ============================================================
-// Teleporter Panel
-// ============================================================
-
-// ============================================================
-// Escape Menu
-// ============================================================
-
-
-// ============================================================
-// Barber Shop Window
-// ============================================================
-
-
-// ============================================================
-// Pet Stable Window
-// ============================================================
-
-
-// ============================================================
-// Taxi Window
-// ============================================================
-
-
-// ============================================================
-// Logout Countdown
-// ============================================================
-
-
-// ============================================================
-// Death Screen
-// ============================================================
-
-
 
 void GameScreen::renderQuestMarkers(game::GameHandler& gameHandler) {
     const auto& statuses = gameHandler.getNpcQuestStatuses();

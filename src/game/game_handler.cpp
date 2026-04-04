@@ -31,6 +31,7 @@
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "core/logger.hpp"
+#include "rendering/animation_ids.hpp"
 #include <glm/gtx/quaternion.hpp>
 #include <algorithm>
 #include <cmath>
@@ -1275,12 +1276,25 @@ void GameHandler::registerOpcodeHandlers() {
     };
     // Consume silently — opcodes we receive but don't need to act on
     for (auto op : {
-        Opcode::SMSG_GAMEOBJECT_DESPAWN_ANIM, Opcode::SMSG_GAMEOBJECT_RESET_STATE,
         Opcode::SMSG_FLIGHT_SPLINE_SYNC, Opcode::SMSG_FORCE_DISPLAY_UPDATE,
         Opcode::SMSG_FORCE_SEND_QUEUED_PACKETS, Opcode::SMSG_FORCE_SET_VEHICLE_REC_ID,
         Opcode::SMSG_CORPSE_MAP_POSITION_QUERY_RESPONSE, Opcode::SMSG_DAMAGE_CALC_LOG,
         Opcode::SMSG_DYNAMIC_DROP_ROLL_RESULT, Opcode::SMSG_DESTRUCTIBLE_BUILDING_DAMAGE,
     }) { registerSkipHandler(op); }
+
+    // Game object despawn animation — reset state to closed before actual despawn
+    dispatchTable_[Opcode::SMSG_GAMEOBJECT_DESPAWN_ANIM] = [this](network::Packet& packet) {
+        if (!packet.hasRemaining(8)) return;
+        uint64_t guid = packet.readUInt64();
+        // Trigger a CLOSE animation / freeze before the object is removed
+        if (gameObjectStateCallback_) gameObjectStateCallback_(guid, 0);
+    };
+    // Game object reset state — return to READY(closed) state
+    dispatchTable_[Opcode::SMSG_GAMEOBJECT_RESET_STATE] = [this](network::Packet& packet) {
+        if (!packet.hasRemaining(8)) return;
+        uint64_t guid = packet.readUInt64();
+        if (gameObjectStateCallback_) gameObjectStateCallback_(guid, 0);
+    };
     dispatchTable_[Opcode::SMSG_FORCED_DEATH_UPDATE] = [this](network::Packet& packet) {
         playerDead_ = true;
         if (ghostStateCallback_) ghostStateCallback_(false);
@@ -2124,10 +2138,15 @@ void GameHandler::registerOpcodeHandlers() {
         if (packet.hasRemaining(1)) {
             (void)packet.readPackedGuid(); // player guid (unused)
         }
+        uint32_t newVehicleId = 0;
         if (packet.hasRemaining(4)) {
-            vehicleId_ = packet.readUInt32();
-        } else {
-            vehicleId_ = 0;
+            newVehicleId = packet.readUInt32();
+        }
+        bool wasInVehicle = vehicleId_ != 0;
+        bool nowInVehicle = newVehicleId != 0;
+        vehicleId_ = newVehicleId;
+        if (wasInVehicle != nowInVehicle && vehicleStateCallback_) {
+            vehicleStateCallback_(nowInVehicle, newVehicleId);
         }
     };
     // guid(8) + status(1): status 1 = NPC has available/new routes for this player
@@ -2842,6 +2861,9 @@ void GameHandler::registerOpcodeHandlers() {
     };
     dispatchTable_[Opcode::SMSG_ON_CANCEL_EXPECTED_RIDE_VEHICLE_AURA] = [this](network::Packet& packet) {
         vehicleId_ = 0;  // Vehicle ride cancelled; clear UI
+        if (vehicleStateCallback_) {
+            vehicleStateCallback_(false, 0);
+        }
         packet.skipAll();
     };
     // uint32 type (0=normal, 1=heavy, 2=tired/restricted) + uint32 minutes played
@@ -6047,6 +6069,12 @@ void GameHandler::preloadDBCCaches() const {
     loadAreaNameCache();    // WorldMapArea.dbc
     loadMapNameCache();     // Map.dbc
     loadLfgDungeonDbc();    // LFGDungeons.dbc
+
+    // Validate animation constants against AnimationData.dbc
+    if (auto* am = services_.assetManager) {
+        auto animDbc = am->loadDBC("AnimationData.dbc");
+        rendering::anim::validateAgainstDBC(animDbc);
+    }
 
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0).count();

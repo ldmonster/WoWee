@@ -1,5 +1,6 @@
 #include "rendering/character_preview.hpp"
 #include "rendering/character_renderer.hpp"
+#include "rendering/animation_ids.hpp"
 #include "rendering/vk_render_target.hpp"
 #include "rendering/vk_texture.hpp"
 #include "rendering/vk_context.hpp"
@@ -584,7 +585,7 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
     charRenderer_->setActiveGeosets(instanceId_, activeGeosets);
 
     // Play idle animation (Stand = animation ID 0)
-    charRenderer_->playAnimation(instanceId_, 0, true);
+    charRenderer_->playAnimation(instanceId_, rendering::anim::STAND, true);
 
     // Cache core appearance for later equipment geosets.
     race_ = race;

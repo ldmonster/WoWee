@@ -123,6 +123,9 @@ void CombatHandler::registerOpcodes(DispatchTable& table) {
                 addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(envAbs), 0, false, 0, 0, victimGuid);
             if (envRes > 0)
                 addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(envRes), 0, false, 0, 0, victimGuid);
+            // Drowning damage → play DROWN one-shot on player
+            if (envType == 1 && dmg > 0 && owner_.emoteAnimCallback_)
+                owner_.emoteAnimCallback_(victimGuid, 131); // anim::DROWN
         }
         packet.skipAll();
     };
@@ -440,7 +443,7 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
         lastMeleeSwingMs_ = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count());
-        if (owner_.meleeSwingCallback_) owner_.meleeSwingCallback_();
+        if (owner_.meleeSwingCallback_) owner_.meleeSwingCallback_(0);
     }
     if (!isPlayerAttacker && owner_.npcSwingCallback_) {
         owner_.npcSwingCallback_(data.attackerGuid);
@@ -518,6 +521,17 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
             addCombatText(CombatTextEntry::ABSORB, static_cast<int32_t>(totalAbsorbed), 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
         if (totalResisted > 0)
             addCombatText(CombatTextEntry::RESIST, static_cast<int32_t>(totalResisted), 0, isPlayerAttacker, 0, data.attackerGuid, data.targetGuid);
+    }
+
+    // Fire hit reaction animation on the victim
+    if (owner_.hitReactionCallback_ && !data.isMiss()) {
+        using HR = GameHandler::HitReaction;
+        HR reaction = HR::WOUND;
+        if (data.victimState == 1) reaction = HR::DODGE;
+        else if (data.victimState == 2) reaction = HR::PARRY;
+        else if (data.victimState == 4) reaction = HR::BLOCK;
+        else if (data.isCrit()) reaction = HR::CRIT_WOUND;
+        owner_.hitReactionCallback_(data.targetGuid, reaction);
     }
 
 }

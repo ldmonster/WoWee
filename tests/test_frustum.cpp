@@ -1,4 +1,4 @@
-// Phase 0 – Frustum plane extraction and intersection tests
+// Frustum plane extraction and intersection tests
 #include <catch_amalgamated.hpp>
 #include "rendering/frustum.hpp"
 

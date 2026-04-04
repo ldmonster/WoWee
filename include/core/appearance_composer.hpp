@@ -52,13 +52,13 @@ public:
     // Player model path resolution
     std::string getPlayerModelPath(game::Race race, game::Gender gender) const;
 
-    // Phase 1: Resolve texture paths from CharSections.dbc and fill model texture slots.
+    // Resolve texture paths from CharSections.dbc and fill model texture slots.
     // Call BEFORE charRenderer->loadModel().
     PlayerTextureInfo resolvePlayerTextures(pipeline::M2Model& model,
                                            game::Race race, game::Gender gender,
                                            uint32_t appearanceBytes);
 
-    // Phase 2: Apply composited textures to loaded model instance.
+    // Apply composited textures to loaded model instance.
     // Call AFTER charRenderer->loadModel(). Saves skin state for re-compositing.
     void compositePlayerSkin(uint32_t modelSlotId, const PlayerTextureInfo& texInfo);
 

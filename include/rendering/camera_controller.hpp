@@ -118,6 +118,9 @@ public:
     void setFeatherFallActive(bool active) { featherFallActive_ = active; }
     void setWaterWalkActive(bool active) { waterWalkActive_ = active; }
     void setFlyingActive(bool active) { flyingActive_ = active; }
+    bool isFlyingActive() const { return flyingActive_; }
+    bool isAscending() const { return wasAscending_; }
+    bool isDescending() const { return wasDescending_; }
     void setHoverActive(bool active) { hoverActive_ = active; }
     void setMounted(bool m) { mounted_ = m; }
     void setMountHeightOffset(float offset) { mountHeightOffset_ = offset; }

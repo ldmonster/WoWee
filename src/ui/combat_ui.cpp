@@ -40,7 +40,7 @@ namespace ui {
 
 
 // ============================================================
-// Cast Bar (Phase 3)
+// Cast Bar
 // ============================================================
 
 void CombatUI::renderCastBar(game::GameHandler& gameHandler, SpellIconFn getSpellIcon) {
@@ -341,7 +341,7 @@ void CombatUI::renderRaidWarningOverlay(game::GameHandler& gameHandler) {
 
 
 // ============================================================
-// Floating Combat Text (Phase 2)
+// Floating Combat Text
 // ============================================================
 
 void CombatUI::renderCombatText(game::GameHandler& gameHandler) {
@@ -838,7 +838,7 @@ void CombatUI::renderDPSMeter(game::GameHandler& gameHandler,
 
 
 // ============================================================
-// Buff/Debuff Bar (Phase 3)
+// Buff/Debuff Bar
 // ============================================================
 
 void CombatUI::renderBuffBar(game::GameHandler& gameHandler,

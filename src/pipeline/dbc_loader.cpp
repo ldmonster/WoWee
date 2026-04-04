@@ -79,7 +79,9 @@ bool DBCFile::load(const std::vector<uint8_t>& dbcData) {
     const uint8_t* recordStart = dbcData.data() + sizeof(DBCHeader);
     uint32_t totalRecordSize = recordCount * recordSize;
     recordData.resize(totalRecordSize);
-    std::memcpy(recordData.data(), recordStart, totalRecordSize);
+    if (totalRecordSize > 0) {
+        std::memcpy(recordData.data(), recordStart, totalRecordSize);
+    }
 
     // Copy string block
     const uint8_t* stringStart = recordStart + totalRecordSize;

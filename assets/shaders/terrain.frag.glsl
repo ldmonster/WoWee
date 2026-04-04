@@ -116,8 +116,8 @@ void main() {
         vec4 lsPos = lightSpaceMatrix * vec4(biasedPos, 1.0);
         vec3 proj = lsPos.xyz / lsPos.w;
         proj.xy = proj.xy * 0.5 + 0.5;
-        if (proj.x >= 0.0 && proj.x <= 1.0 && proj.y >= 0.0 && proj.y <= 1.0 && proj.z <= 1.0) {
-            float bias = 0.0002;
+        if (proj.x >= 0.0 && proj.x <= 1.0 && proj.y >= 0.0 && proj.y <= 1.0 && proj.z >= 0.0 && proj.z <= 1.0) {
+            float bias = max(0.0005 * (1.0 - abs(dot(norm, ldir))), 0.00005);
             shadow = sampleShadowPCF(uShadowMap, vec3(proj.xy, proj.z - bias));
             shadow = mix(1.0, shadow, shadowParams.y);
         }

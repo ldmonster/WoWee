@@ -11,6 +11,9 @@ namespace rendering {
 
 class Renderer;
 
+/// Ranged weapon type for animation selection (bow/gun/crossbow/thrown)
+enum class RangedWeaponType : uint8_t { NONE = 0, BOW, GUN, CROSSBOW, THROWN };
+
 // ============================================================================
 // AnimationController — extracted from Renderer (§4.2)
 //
@@ -63,9 +66,81 @@ public:
 
     // ── Melee combat ───────────────────────────────────────────────────────
     void triggerMeleeSwing();
-    void setEquippedWeaponType(uint32_t inventoryType) { equippedWeaponInvType_ = inventoryType; meleeAnimId_ = 0; }
+    /// inventoryType: WoW inventory type (0=unarmed, 13=1H, 17=2H, 21=main-hand, …)
+    /// is2HLoose: true for polearms/staves (use ATTACK_2H_LOOSE instead of ATTACK_2H)
+    void setEquippedWeaponType(uint32_t inventoryType, bool is2HLoose = false,
+                               bool isFist = false, bool isDagger = false,
+                               bool hasOffHand = false, bool hasShield = false) {
+        equippedWeaponInvType_ = inventoryType;
+        equippedIs2HLoose_ = is2HLoose;
+        equippedIsFist_ = isFist;
+        equippedIsDagger_ = isDagger;
+        equippedHasOffHand_ = hasOffHand;
+        equippedHasShield_ = hasShield;
+        meleeAnimId_ = 0;  // Force re-resolve on next swing
+    }
+    /// Play a special attack animation for a melee ability (spellId → SPECIAL_1H/2H/SHIELD_BASH/WHIRLWIND)
+    void triggerSpecialAttack(uint32_t spellId);
+
+    // ── Sprint aura animation ────────────────────────────────────────────
+    void setSprintAuraActive(bool active) { sprintAuraActive_ = active; }
+
+    // ── Ranged combat ──────────────────────────────────────────────────────
+    void setEquippedRangedType(RangedWeaponType type) {
+        equippedRangedType_ = type;
+        rangedAnimId_ = 0;  // Force re-resolve
+    }
+    /// Trigger a ranged shot animation (Auto Shot, Shoot, Throw)
+    void triggerRangedShot();
+    RangedWeaponType getEquippedRangedType() const { return equippedRangedType_; }
     void setCharging(bool charging) { charging_ = charging; }
     bool isCharging() const { return charging_; }
+
+    // ── Spell casting ──────────────────────────────────────────────────────
+    /// Enter spell cast animation sequence:
+    ///   precastAnimId (one-shot wind-up) → castAnimId (looping hold) → finalizeAnimId (one-shot release)
+    /// Any phase can be 0 to skip it.
+    void startSpellCast(uint32_t precastAnimId, uint32_t castAnimId, bool castLoop,
+                        uint32_t finalizeAnimId = 0);
+    /// Leave spell cast animation state → plays finalization anim then idle.
+    void stopSpellCast();
+
+    // ── Loot animation ─────────────────────────────────────────────────────
+    void startLooting();
+    void stopLooting();
+
+    // ── Hit reactions ──────────────────────────────────────────────────────
+    /// Play a one-shot hit reaction animation (wound, dodge, block, etc.)
+    /// on the player character.  The state machine returns to the previous
+    /// state once the reaction animation finishes.
+    void triggerHitReaction(uint32_t animId);
+
+    // ── Crowd control ──────────────────────────────────────────────────────
+    /// Enter/exit stunned state (loops STUN animation until cleared).
+    void setStunned(bool stunned);
+    bool isStunned() const { return stunned_; }
+
+    // ── Health-based idle ──────────────────────────────────────────────────
+    /// When true, idle/combat-idle will prefer STAND_WOUND if the model has it.
+    void setLowHealth(bool low) { lowHealth_ = low; }
+
+    // ── Stand state (sit/sleep/kneel transitions) ──────────────────────────
+    // WoW UnitStandStateType constants
+    static constexpr uint8_t STAND_STATE_STAND      = 0;
+    static constexpr uint8_t STAND_STATE_SIT         = 1;
+    static constexpr uint8_t STAND_STATE_SIT_CHAIR   = 2;
+    static constexpr uint8_t STAND_STATE_SLEEP       = 3;
+    static constexpr uint8_t STAND_STATE_SIT_LOW     = 4;
+    static constexpr uint8_t STAND_STATE_SIT_MED     = 5;
+    static constexpr uint8_t STAND_STATE_SIT_HIGH    = 6;
+    static constexpr uint8_t STAND_STATE_DEAD        = 7;
+    static constexpr uint8_t STAND_STATE_KNEEL       = 8;
+    static constexpr uint8_t STAND_STATE_SUBMERGED   = 9;
+    void setStandState(uint8_t state);
+
+    // ── Stealth ────────────────────────────────────────────────────────────
+    /// When true, idle/walk/run use stealth animation variants.
+    void setStealthed(bool stealth);
 
     // ── Effect triggers ────────────────────────────────────────────────────
     void triggerLevelUpEffect(const glm::vec3& position);
@@ -94,7 +169,10 @@ private:
     // Character animation state machine
     enum class CharAnimState {
         IDLE, WALK, RUN, JUMP_START, JUMP_MID, JUMP_END, SIT_DOWN, SITTING,
-        EMOTE, SWIM_IDLE, SWIM, MELEE_SWING, MOUNT, CHARGE, COMBAT_IDLE
+        SIT_UP, EMOTE, SWIM_IDLE, SWIM, MELEE_SWING, MOUNT, CHARGE, COMBAT_IDLE,
+        SPELL_PRECAST, SPELL_CASTING, SPELL_FINALIZE, HIT_REACTION, STUNNED, LOOTING,
+        UNSHEATHE, SHEATHE,  // Weapon draw/put-away one-shot transitions
+        RANGED_SHOOT, RANGED_LOAD  // Ranged attack sequence: shoot → reload
     };
     CharAnimState charAnimState_ = CharAnimState::IDLE;
     float locomotionStopGraceTimer_ = 0.0f;
@@ -106,6 +184,30 @@ private:
     bool emoteActive_ = false;
     uint32_t emoteAnimId_ = 0;
     bool emoteLoop_ = false;
+
+    // Spell cast sequence state (PRECAST → CASTING → FINALIZE)
+    uint32_t spellPrecastAnimId_ = 0;   // One-shot wind-up (phase 1)
+    uint32_t spellCastAnimId_ = 0;      // Looping cast hold (phase 2)
+    uint32_t spellFinalizeAnimId_ = 0;  // One-shot release (phase 3)
+    bool spellCastLoop_ = false;
+
+    // Hit reaction state
+    uint32_t hitReactionAnimId_ = 0;
+
+    // Crowd control
+    bool stunned_ = false;
+
+    // Health-based idle
+    bool lowHealth_ = false;
+
+    // Stand state (sit/sleep/kneel)
+    uint8_t standState_ = 0;
+    uint32_t sitDownAnim_ = 0;   // Transition-in animation (one-shot)
+    uint32_t sitLoopAnim_ = 0;   // Looping pose animation
+    uint32_t sitUpAnim_ = 0;     // Transition-out animation (one-shot)
+
+    // Stealth
+    bool stealthed_ = false;
 
     // Target facing
     const glm::vec3* targetPosition_ = nullptr;
@@ -139,7 +241,19 @@ private:
     float meleeSwingCooldown_ = 0.0f;
     float meleeAnimDurationMs_ = 0.0f;
     uint32_t meleeAnimId_ = 0;
+    uint32_t specialAttackAnimId_ = 0; // Non-zero during special attack (overrides resolveMeleeAnimId)
     uint32_t equippedWeaponInvType_ = 0;
+    bool equippedIs2HLoose_ = false;  // Polearm or staff
+    bool equippedIsFist_ = false;     // Fist weapon
+    bool equippedIsDagger_ = false;   // Dagger (uses pierce variants)
+    bool equippedHasOffHand_ = false; // Has off-hand weapon (dual wield)
+    bool equippedHasShield_ = false;  // Has shield equipped (for SHIELD_BASH)
+    bool meleeOffHandTurn_ = false;   // Alternates main/off-hand swings
+
+    // Ranged weapon state
+    RangedWeaponType equippedRangedType_ = RangedWeaponType::NONE;
+    float rangedShootTimer_ = 0.0f;    // Countdown for ranged attack animation
+    uint32_t rangedAnimId_ = 0;        // Cached ranged attack animation
 
     // Mount animation capabilities (discovered at mount time, varies per model)
     struct MountAnimSet {
@@ -149,6 +263,14 @@ private:
         uint32_t rearUp = 0;     // Rear-up / special flourish
         uint32_t run = 0;        // Run animation (discovered, don't assume)
         uint32_t stand = 0;      // Stand animation (discovered)
+        // Flight animations (discovered from mount model)
+        uint32_t flyIdle = 0;
+        uint32_t flyForward = 0;
+        uint32_t flyBackwards = 0;
+        uint32_t flyLeft = 0;
+        uint32_t flyRight = 0;
+        uint32_t flyUp = 0;
+        uint32_t flyDown = 0;
         std::vector<uint32_t> fidgets;  // Idle fidget animations (head turn, tail swish, etc.)
     };
 
@@ -171,6 +293,7 @@ private:
     uint32_t mountActiveFidget_ = 0;     // Currently playing fidget animation ID (0 = none)
     bool taxiFlight_ = false;
     bool taxiAnimsLogged_ = false;
+    bool sprintAuraActive_ = false;  // Sprint/Dash aura active → use SPRINT anim
 
     // Private animation helpers
     bool shouldTriggerFootstepEvent(uint32_t animationId, float animationTimeMs, float animationDurationMs);

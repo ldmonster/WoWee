@@ -193,7 +193,7 @@ bool TerrainRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameL
         envSizeMBOrDefault("WOWEE_TERRAIN_TEX_CACHE_MB", 4096) * 1024ull * 1024ull;
     LOG_INFO("Terrain texture cache budget: ", textureCacheBudgetBytes_ / (1024 * 1024), " MB");
 
-    // Phase 2.2: Allocate mega vertex/index buffers and indirect draw buffer.
+    // Allocate mega vertex/index buffers and indirect draw buffer.
     // All terrain chunks share these buffers, eliminating per-chunk VB/IB rebinds.
     {
         VmaAllocator allocator = vkCtx->getAllocator();
@@ -375,7 +375,7 @@ void TerrainRenderer::shutdown() {
     if (shadowParamsLayout_) { vkDestroyDescriptorSetLayout(device, shadowParamsLayout_, nullptr); shadowParamsLayout_ = VK_NULL_HANDLE; }
     if (shadowParamsUBO_) { vmaDestroyBuffer(allocator, shadowParamsUBO_, shadowParamsAlloc_); shadowParamsUBO_ = VK_NULL_HANDLE; shadowParamsAlloc_ = VK_NULL_HANDLE; }
 
-    // Phase 2.2: Destroy mega buffers and indirect draw buffer
+    // Destroy mega buffers and indirect draw buffer
     if (megaVB_) { vmaDestroyBuffer(allocator, megaVB_, megaVBAlloc_); megaVB_ = VK_NULL_HANDLE; megaVBAlloc_ = VK_NULL_HANDLE; megaVBMapped_ = nullptr; }
     if (megaIB_) { vmaDestroyBuffer(allocator, megaIB_, megaIBAlloc_); megaIB_ = VK_NULL_HANDLE; megaIBAlloc_ = VK_NULL_HANDLE; megaIBMapped_ = nullptr; }
     if (indirectBuffer_) { vmaDestroyBuffer(allocator, indirectBuffer_, indirectAlloc_); indirectBuffer_ = VK_NULL_HANDLE; indirectAlloc_ = VK_NULL_HANDLE; indirectMapped_ = nullptr; }
@@ -622,7 +622,7 @@ TerrainChunkGPU TerrainRenderer::uploadChunk(const pipeline::ChunkMesh& chunk) {
     gpuChunk.indexBuffer = ib.buffer;
     gpuChunk.indexAlloc = ib.allocation;
 
-    // Phase 2.2: Also copy into mega buffers for indirect drawing
+    // Also copy into mega buffers for indirect drawing
     uint32_t vertCount = static_cast<uint32_t>(chunk.vertices.size());
     uint32_t idxCount = static_cast<uint32_t>(chunk.indices.size());
     if (megaVBMapped_ && megaIBMapped_ &&
@@ -880,7 +880,7 @@ void TerrainRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, c
     renderedChunks = 0;
     culledChunks = 0;
 
-    // Phase 2.2: Use mega VB + IB when available.
+    // Use mega VB + IB when available.
     // Bind mega buffers once, then use direct draws with base vertex/index offsets.
     const bool useMegaBuffers = (megaVB_ && megaIB_);
     if (useMegaBuffers) {
@@ -1092,7 +1092,7 @@ void TerrainRenderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSp
     vkCmdPushConstants(cmd, shadowPipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT,
                        0, 128, &push);
 
-    // Phase 2.2: Bind mega buffers once for shadow pass (same as opaque)
+    // Bind mega buffers once for shadow pass (same as opaque)
     const bool useMegaShadow = (megaVB_ && megaIB_);
     if (useMegaShadow) {
         VkDeviceSize megaOffset = 0;

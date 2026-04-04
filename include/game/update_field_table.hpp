@@ -34,6 +34,7 @@ enum class UF : uint16_t {
     UNIT_FIELD_AURAS,           // Start of aura spell ID array (48 consecutive uint32 slots, classic/vanilla only)
     UNIT_FIELD_AURAFLAGS,       // Aura flags packed 4-per-uint32 (12 uint32 slots); 0x01=cancelable,0x02=harmful,0x04=helpful
     UNIT_NPC_FLAGS,
+    UNIT_NPC_EMOTESTATE,       // Persistent NPC emote animation ID (uint32)
     UNIT_DYNAMIC_FLAGS,
     UNIT_FIELD_RESISTANCES,   // Physical armor (index 0 of the resistance array)
     UNIT_FIELD_STAT0,         // Strength (effective base, includes items)
@@ -84,6 +85,7 @@ enum class UF : uint16_t {
 
     // GameObject fields
     GAMEOBJECT_DISPLAYID,
+    GAMEOBJECT_BYTES_1,
 
     // Item fields
     ITEM_FIELD_STACK_COUNT,

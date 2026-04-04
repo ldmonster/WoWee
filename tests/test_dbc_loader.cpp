@@ -1,4 +1,4 @@
-// Phase 0 – DBC binary parsing tests with synthetic data
+// DBC binary parsing tests with synthetic data
 #include <catch_amalgamated.hpp>
 #include "pipeline/dbc_loader.hpp"
 #include <cstring>

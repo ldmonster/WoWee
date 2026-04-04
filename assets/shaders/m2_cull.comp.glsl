@@ -1,6 +1,6 @@
 #version 450
 
-// Phase 2.3: GPU Frustum Culling for M2 doodads
+// GPU Frustum Culling for M2 doodads
 // Each compute thread tests one M2 instance against 6 frustum planes.
 // Input:  per-instance bounding sphere + flags.
 // Output: uint visibility array (1 = visible, 0 = culled).

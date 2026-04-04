@@ -679,6 +679,7 @@ void InventoryHandler::closeLoot() {
         owner_.socket->send(packet);
     }
     lootWindowOpen_ = false;
+    if (owner_.lootWindowCallback_) owner_.lootWindowCallback_(false);
     if (owner_.addonEventCallback_) owner_.addonEventCallback_("LOOT_CLOSED", {});
     currentLoot_ = LootResponseData{};
 }
@@ -704,6 +705,7 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
         return;
     }
     lootWindowOpen_ = true;
+    if (owner_.lootWindowCallback_) owner_.lootWindowCallback_(true);
     if (owner_.addonEventCallback_) {
         owner_.addonEventCallback_("LOOT_OPENED", {});
         owner_.addonEventCallback_("LOOT_READY", {});
@@ -749,6 +751,7 @@ void InventoryHandler::handleLootReleaseResponse(network::Packet& packet) {
     (void)packet;
     localLootState_.erase(currentLoot_.lootGuid);
     lootWindowOpen_ = false;
+    if (owner_.lootWindowCallback_) owner_.lootWindowCallback_(false);
     if (owner_.addonEventCallback_) owner_.addonEventCallback_("LOOT_CLOSED", {});
     currentLoot_ = LootResponseData{};
 }

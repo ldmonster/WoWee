@@ -53,6 +53,7 @@ class AmdFsr3Runtime;
 class SpellVisualSystem;
 class PostProcessPipeline;
 class AnimationController;
+enum class RangedWeaponType : uint8_t;
 class LevelUpEffect;
 class ChargeEffect;
 class SwimEffects;
@@ -176,7 +177,13 @@ public:
     void resetCombatVisualState();
     bool isMoving() const;
     void triggerMeleeSwing();
-    void setEquippedWeaponType(uint32_t inventoryType);
+    void setEquippedWeaponType(uint32_t inventoryType, bool is2HLoose = false,
+                               bool isFist = false, bool isDagger = false,
+                               bool hasOffHand = false, bool hasShield = false);
+    void triggerSpecialAttack(uint32_t spellId);
+    void setEquippedRangedType(RangedWeaponType type);
+    void triggerRangedShot();
+    RangedWeaponType getEquippedRangedType() const;
     void setCharging(bool charging);
     bool isCharging() const;
     void startChargeEffect(const glm::vec3& position, const glm::vec3& direction);
@@ -386,7 +393,7 @@ private:
     VkBuffer reflPerFrameUBO = VK_NULL_HANDLE;
     VmaAllocation reflPerFrameUBOAlloc = VK_NULL_HANDLE;
     void* reflPerFrameUBOMapped = nullptr;
-    VkDescriptorSet reflPerFrameDescSet = VK_NULL_HANDLE;
+    VkDescriptorSet reflPerFrameDescSet[MAX_FRAMES] = {};
 
     bool createPerFrameResources();
     void destroyPerFrameResources();
@@ -434,7 +441,7 @@ private:
 
     bool ghostMode_ = false;  // set each frame from gameHandler->isPlayerGhost()
 
-    // Phase 2.5: Render Graph — declarative pass ordering with automatic barriers
+    // Render Graph — declarative pass ordering with automatic barriers
     std::unique_ptr<RenderGraph> renderGraph_;
     void buildFrameGraph(game::GameHandler* gameHandler);
 

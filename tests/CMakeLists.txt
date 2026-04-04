@@ -135,6 +135,19 @@ endif()
 add_test(NAME frustum COMMAND test_frustum)
 register_test_target(test_frustum)
 
+# ── test_animation_ids ───────────────────────────────────────
+add_executable(test_animation_ids
+    test_animation_ids.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/rendering/animation_ids.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+)
+target_include_directories(test_animation_ids PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_animation_ids SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_animation_ids PRIVATE catch2_main)
+add_test(NAME animation_ids COMMAND test_animation_ids)
+register_test_target(test_animation_ids)
+
 # ── ASAN / UBSan for test targets ────────────────────────────
 if(WOWEE_ENABLE_ASAN AND NOT MSVC)
     foreach(_t IN LISTS ALL_TEST_TARGETS)

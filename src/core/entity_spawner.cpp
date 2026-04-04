@@ -9,6 +9,7 @@
 #include "audio/npc_voice_manager.hpp"
 #include "pipeline/m2_loader.hpp"
 #include "pipeline/wmo_loader.hpp"
+#include "rendering/animation_ids.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_layout.hpp"
@@ -2214,9 +2215,26 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
     // Spawn in the correct pose. If the server marked this creature dead before
     // the queued spawn was processed, start directly in death animation.
     if (deadCreatureGuids_.count(guid)) {
-        charRenderer->playAnimation(instanceId, 1, false); // Death
+        charRenderer->playAnimation(instanceId, rendering::anim::DEATH, false);
     } else {
-        charRenderer->playAnimation(instanceId, 0, true); // Idle
+        // Check if this NPC has a persistent emote state (e.g. working, eating, dancing)
+        uint32_t npcEmote = 0;
+        if (gameHandler_) {
+            auto entity = gameHandler_->getEntityManager().getEntity(guid);
+            if (entity && entity->getType() == game::ObjectType::UNIT) {
+                npcEmote = std::static_pointer_cast<game::Unit>(entity)->getNpcEmoteState();
+            }
+        }
+        if (npcEmote != 0 && charRenderer->hasAnimation(instanceId, npcEmote)) {
+            charRenderer->playAnimation(instanceId, npcEmote, true);
+        } else if (charRenderer->hasAnimation(instanceId, rendering::anim::BIRTH)) {
+            // Play birth animation (one-shot) — will return to STAND after
+            charRenderer->playAnimation(instanceId, rendering::anim::BIRTH, false);
+        } else if (charRenderer->hasAnimation(instanceId, rendering::anim::SPAWN)) {
+            charRenderer->playAnimation(instanceId, rendering::anim::SPAWN, false);
+        } else {
+            charRenderer->playAnimation(instanceId, rendering::anim::STAND, true);
+        }
     }
     charRenderer->startFadeIn(instanceId, 0.5f);
 
@@ -2316,7 +2334,7 @@ void EntitySpawner::spawnOnlinePlayer(uint64_t guid,
         for (uint32_t si = 0; si < model.sequences.size(); si++) {
             if (!(model.sequences[si].flags & 0x20)) {
                 uint32_t animId = model.sequences[si].id;
-                if (animId != 0 && animId != 4 && animId != 5) continue;
+                if (animId != rendering::anim::STAND && animId != rendering::anim::WALK && animId != rendering::anim::RUN) continue;
                 char animFileName[256];
                 snprintf(animFileName, sizeof(animFileName),
                          "%s%s%04u-%02u.anim",
@@ -2488,7 +2506,7 @@ void EntitySpawner::spawnOnlinePlayer(uint64_t guid,
     activeGeosets.insert(kGeosetBareFeet);
     charRenderer->setActiveGeosets(instanceId, activeGeosets);
 
-    charRenderer->playAnimation(instanceId, 0, true);
+    charRenderer->playAnimation(instanceId, rendering::anim::STAND, true);
     playerInstances_[guid] = instanceId;
 
     OnlinePlayerAppearanceState st;
@@ -3373,7 +3391,21 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
                                   lowerPath.find("portalfx") != std::string::npos ||
                                   lowerPath.find("spellportal") != std::string::npos);
         if (!isAnimatedEffect && !isTransportGO) {
-            m2Renderer->setInstanceAnimationFrozen(instanceId, true);
+            // Check for totem idle animations — totems should animate, not freeze
+            bool isTotem = false;
+            if (m2Renderer->hasAnimation(instanceId, 245)) {         // TOTEM_SMALL
+                m2Renderer->setInstanceAnimation(instanceId, 245, true);
+                isTotem = true;
+            } else if (m2Renderer->hasAnimation(instanceId, 246)) {  // TOTEM_MEDIUM
+                m2Renderer->setInstanceAnimation(instanceId, 246, true);
+                isTotem = true;
+            } else if (m2Renderer->hasAnimation(instanceId, 247)) {  // TOTEM_LARGE
+                m2Renderer->setInstanceAnimation(instanceId, 247, true);
+                isTotem = true;
+            }
+            if (!isTotem) {
+                m2Renderer->setInstanceAnimationFrozen(instanceId, true);
+            }
         }
 
         gameObjectInstances_[guid] = {modelId, instanceId, false};
@@ -4601,8 +4633,8 @@ void EntitySpawner::processPendingMount() {
         for (uint32_t si = 0; si < model.sequences.size(); si++) {
             if (!(model.sequences[si].flags & 0x20)) {
                 uint32_t animId = model.sequences[si].id;
-                // Only load stand(0), walk(4), run(5) anims to avoid hang
-                if (animId != 0 && animId != 4 && animId != 5) continue;
+                // Only load stand, walk, run anims to avoid hang
+                if (animId != rendering::anim::STAND && animId != rendering::anim::WALK && animId != rendering::anim::RUN) continue;
                 char animFileName[256];
                 snprintf(animFileName, sizeof(animFileName), "%s%04u-%02u.anim",
                     basePath.c_str(), animId, model.sequences[si].variationIndex);
@@ -4854,10 +4886,11 @@ void EntitySpawner::processPendingMount() {
 
     // For taxi mounts, start with flying animation; for ground mounts, start with stand
     bool isTaxi = gameHandler_ && gameHandler_->isOnTaxiFlight();
-    uint32_t startAnim = 0; // ANIM_STAND
+    uint32_t startAnim = rendering::anim::STAND;
     if (isTaxi) {
         // Try WotLK fly anims first, then Vanilla-friendly fallbacks
-        uint32_t taxiCandidates[] = {159, 158, 234, 229, 233, 141, 369, 6, 5}; // FlyForward, FlyIdle, FlyRun(234), FlyStand(229), FlyWalk(233), FlyMounted, FlyRun, Fly, Run
+        using namespace rendering::anim;
+        uint32_t taxiCandidates[] = {FLY_FORWARD, FLY_IDLE, FLY_RUN_2, FLY_SPELL, FLY_RISE, SPELL_KNEEL_LOOP, FLY_CUSTOM_SPELL_10, DEAD, RUN};
         for (uint32_t anim : taxiCandidates) {
             if (charRenderer->hasAnimation(instanceId, anim)) {
                 startAnim = anim;

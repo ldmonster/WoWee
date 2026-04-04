@@ -542,6 +542,7 @@ EntityController::UnitFieldIndices EntityController::UnitFieldIndices::resolve()
         fieldIndex(UF::UNIT_FIELD_DISPLAYID),
         fieldIndex(UF::UNIT_FIELD_MOUNTDISPLAYID),
         fieldIndex(UF::UNIT_NPC_FLAGS),
+        fieldIndex(UF::UNIT_NPC_EMOTESTATE),
         fieldIndex(UF::UNIT_FIELD_BYTES_0),
         fieldIndex(UF::UNIT_FIELD_BYTES_1)
     };
@@ -697,6 +698,7 @@ bool EntityController::applyUnitFieldsOnCreate(const UpdateBlock& block,
             }
         }
         else if (key == ufi.npcFlags) { unit->setNpcFlags(val); }
+        else if (key == ufi.npcEmoteState) { unit->setNpcEmoteState(val); }
         else if (key == ufi.dynFlags) {
             unit->setDynamicFlags(val);
             if (block.objectType == ObjectType::UNIT &&
@@ -795,7 +797,28 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                 if (!uid.empty())
                     pendingEvents_.emit("UNIT_DISPLAYPOWER", {uid});
             }
-        } else if (key == ufi.flags) { unit->setUnitFlags(val); }
+        } else if (key == ufi.flags) {
+            uint32_t oldFlags = unit->getUnitFlags();
+            unit->setUnitFlags(val);
+            // Detect stun state change on local player
+            constexpr uint32_t UNIT_FLAG_STUNNED = 0x00040000;
+            if (block.guid == owner_.playerGuid && owner_.stunStateCallback_) {
+                bool wasStunned = (oldFlags & UNIT_FLAG_STUNNED) != 0;
+                bool nowStunned = (val & UNIT_FLAG_STUNNED) != 0;
+                if (wasStunned != nowStunned) {
+                    owner_.stunStateCallback_(nowStunned);
+                }
+            }
+            // Detect stealth state change on local player
+            constexpr uint32_t UNIT_FLAG_SNEAKING = 0x02000000;
+            if (block.guid == owner_.playerGuid && owner_.stealthStateCallback_) {
+                bool wasStealth = (oldFlags & UNIT_FLAG_SNEAKING) != 0;
+                bool nowStealth = (val & UNIT_FLAG_SNEAKING) != 0;
+                if (wasStealth != nowStealth) {
+                    owner_.stealthStateCallback_(nowStealth);
+                }
+            }
+        }
         else if (ufi.bytes1 != 0xFFFF && key == ufi.bytes1 && block.guid == owner_.playerGuid) {
             uint8_t newForm = static_cast<uint8_t>((val >> 24) & 0xFF);
             if (newForm != owner_.shapeshiftFormId_) {
@@ -863,6 +886,14 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
             }
             unit->setMountDisplayId(val);
         } else if (key == ufi.npcFlags) { unit->setNpcFlags(val); }
+        else if (key == ufi.npcEmoteState) {
+            uint32_t oldEmote = unit->getNpcEmoteState();
+            unit->setNpcEmoteState(val);
+            // Fire emote animation callback so entity_spawner can update the NPC's idle anim
+            if (val != oldEmote && owner_.emoteAnimCallback_) {
+                owner_.emoteAnimCallback_(block.guid, val);
+            }
+        }
         // Power/maxpower range checks AFTER all specific fields
         else if (key >= ufi.powerBase && key < ufi.powerBase + 7) {
             unit->setPowerByType(static_cast<uint8_t>(key - ufi.powerBase), val);
@@ -887,6 +918,11 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
                 }
             }
         }
+    }
+
+    // Fire player health callback for wounded-idle animation
+    if (result.healthChanged && block.guid == owner_.playerGuid && owner_.playerHealthCallback_) {
+        owner_.playerHealthCallback_(unit->getHealth(), unit->getMaxHealth());
     }
 
     return result;
@@ -1630,6 +1666,17 @@ void EntityController::onValuesUpdateGameObject(const UpdateBlock& block, std::s
         } else if (owner_.gameObjectMoveCallback_) {
             owner_.gameObjectMoveCallback_(block.guid, entity->getX(), entity->getY(),
                                     entity->getZ(), entity->getOrientation());
+        }
+    }
+
+    // Detect GO state changes from GAMEOBJECT_BYTES_1 (packed: byte0=state, byte1=type, byte2=artKit, byte3=animProgress)
+    const uint16_t ufGoBytes1 = fieldIndex(UF::GAMEOBJECT_BYTES_1);
+    if (ufGoBytes1 != 0xFFFF) {
+        auto itB = block.fields.find(ufGoBytes1);
+        if (itB != block.fields.end()) {
+            uint8_t goState = static_cast<uint8_t>(itB->second & 0xFF);
+            if (owner_.gameObjectStateCallback_)
+                owner_.gameObjectStateCallback_(block.guid, goState);
         }
     }
 }

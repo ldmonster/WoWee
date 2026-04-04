@@ -4212,6 +4212,37 @@ void M2Renderer::setInstanceAnimationFrozen(uint32_t instanceId, bool frozen) {
     }
 }
 
+void M2Renderer::setInstanceAnimation(uint32_t instanceId, uint32_t animationId, bool loop) {
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end()) return;
+    auto& inst = instances[idxIt->second];
+    if (!inst.cachedModel) return;
+    const auto& seqs = inst.cachedModel->sequences;
+    // Find the first sequence matching the requested animation ID
+    for (int i = 0; i < static_cast<int>(seqs.size()); ++i) {
+        if (seqs[i].id == animationId) {
+            inst.currentSequenceIndex = i;
+            inst.animDuration = static_cast<float>(seqs[i].duration);
+            inst.animTime = 0.0f;
+            inst.animSpeed = 1.0f;
+            // Use playingVariation=true for one-shot (returns to idle when done)
+            inst.playingVariation = !loop;
+            return;
+        }
+    }
+}
+
+bool M2Renderer::hasAnimation(uint32_t instanceId, uint32_t animationId) const {
+    auto idxIt = instanceIndexById.find(instanceId);
+    if (idxIt == instanceIndexById.end()) return false;
+    const auto& inst = instances[idxIt->second];
+    if (!inst.cachedModel) return false;
+    for (const auto& seq : inst.cachedModel->sequences) {
+        if (seq.id == animationId) return true;
+    }
+    return false;
+}
+
 float M2Renderer::getInstanceAnimDuration(uint32_t instanceId) const {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end()) return 0.0f;

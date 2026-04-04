@@ -1,6 +1,8 @@
 #include "core/application.hpp"
 #include "core/coordinates.hpp"
 #include "core/profiler.hpp"
+#include "rendering/animation_ids.hpp"
+#include "rendering/animation_controller.hpp"
 #include <unordered_set>
 #include <cmath>
 #include <chrono>
@@ -941,7 +943,7 @@ void Application::setState(AppState newState) {
                 });
                 cc->setStandUpCallback([this]() {
                     if (gameHandler) {
-                        gameHandler->setStandState(0); // CMSG_STAND_STATE_CHANGE(STAND)
+                        gameHandler->setStandState(rendering::AnimationController::STAND_STATE_STAND);
                     }
                 });
                 cc->setAutoFollowCancelCallback([this]() {
@@ -952,9 +954,16 @@ void Application::setState(AppState newState) {
                 cc->setUseWoWSpeed(true);
             }
             if (gameHandler) {
-                gameHandler->setMeleeSwingCallback([this]() {
+                gameHandler->setMeleeSwingCallback([this](uint32_t spellId) {
                     if (renderer) {
-                        renderer->triggerMeleeSwing();
+                        // Ranged auto-attack spells: Auto Shot (75), Shoot (5019), Throw (2764)
+                        if (spellId == 75 || spellId == 5019 || spellId == 2764) {
+                            renderer->triggerRangedShot();
+                        } else if (spellId != 0) {
+                            renderer->triggerSpecialAttack(spellId);
+                        } else {
+                            renderer->triggerMeleeSwing();
+                        }
                     }
                 });
                 gameHandler->setKnockBackCallback([this](float vcos, float vsin, float hspeed, float vspeed) {
@@ -1924,17 +1933,17 @@ void Application::update(float deltaTime) {
                             _creatureWasWalking[guid]  = isWalkingNow;
                             uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
                             bool gotState = charRenderer->getAnimationState(instanceId, curAnimId, curT, curDur);
-                            if (!gotState || curAnimId != 1 /*Death*/) {
+                            if (!gotState || curAnimId != rendering::anim::DEATH) {
                                 uint32_t targetAnim;
                                 if (isMovingNow) {
-                                    if (isFlyingNow)        targetAnim = 159u; // FlyForward
-                                    else if (isSwimmingNow) targetAnim = 42u;  // Swim
-                                    else if (isWalkingNow)  targetAnim = 4u;   // Walk
-                                    else                    targetAnim = 5u;   // Run
+                                    if (isFlyingNow)        targetAnim = rendering::anim::FLY_FORWARD;
+                                    else if (isSwimmingNow) targetAnim = rendering::anim::SWIM;
+                                    else if (isWalkingNow)  targetAnim = rendering::anim::WALK;
+                                    else                    targetAnim = rendering::anim::RUN;
                                 } else {
-                                    if (isFlyingNow)        targetAnim = 158u; // FlyIdle (hover)
-                                    else if (isSwimmingNow) targetAnim = 41u;  // SwimIdle
-                                    else                    targetAnim = 0u;   // Stand
+                                    if (isFlyingNow)        targetAnim = rendering::anim::FLY_IDLE;
+                                    else if (isSwimmingNow) targetAnim = rendering::anim::SWIM_IDLE;
+                                    else                    targetAnim = rendering::anim::STAND;
                                 }
                                 charRenderer->playAnimation(instanceId, targetAnim, /*loop=*/true);
                             }
@@ -2038,17 +2047,17 @@ void Application::update(float deltaTime) {
                             _pCreatureWasWalking[guid]  = isWalkingNow;
                             uint32_t curAnimId = 0; float curT = 0.0f, curDur = 0.0f;
                             bool gotState = charRenderer->getAnimationState(instanceId, curAnimId, curT, curDur);
-                            if (!gotState || curAnimId != 1 /*Death*/) {
+                            if (!gotState || curAnimId != rendering::anim::DEATH) {
                                 uint32_t targetAnim;
                                 if (isMovingNow) {
-                                    if (isFlyingNow)        targetAnim = 159u; // FlyForward
-                                    else if (isSwimmingNow) targetAnim = 42u;  // Swim
-                                    else if (isWalkingNow)  targetAnim = 4u;   // Walk
-                                    else                    targetAnim = 5u;   // Run
+                                    if (isFlyingNow)        targetAnim = rendering::anim::FLY_FORWARD;
+                                    else if (isSwimmingNow) targetAnim = rendering::anim::SWIM;
+                                    else if (isWalkingNow)  targetAnim = rendering::anim::WALK;
+                                    else                    targetAnim = rendering::anim::RUN;
                                 } else {
-                                    if (isFlyingNow)        targetAnim = 158u; // FlyIdle (hover)
-                                    else if (isSwimmingNow) targetAnim = 41u;  // SwimIdle
-                                    else                    targetAnim = 0u;   // Stand
+                                    if (isFlyingNow)        targetAnim = rendering::anim::FLY_IDLE;
+                                    else if (isSwimmingNow) targetAnim = rendering::anim::SWIM_IDLE;
+                                    else                    targetAnim = rendering::anim::STAND;
                                 }
                                 charRenderer->playAnimation(instanceId, targetAnim, /*loop=*/true);
                             }
@@ -2748,17 +2757,68 @@ void Application::setupUICallbacks() {
     });
 
     // GameObject custom animation callback (e.g. chest opening)
-    gameHandler->setGameObjectCustomAnimCallback([this](uint64_t guid, uint32_t /*animId*/) {
-        if (!entitySpawner_) return;
+    gameHandler->setGameObjectCustomAnimCallback([this](uint64_t guid, uint32_t animId) {
+        if (!entitySpawner_ || !renderer) return;
         auto& goInstances = entitySpawner_->getGameObjectInstances();
         auto it = goInstances.find(guid);
-        if (it == goInstances.end() || !renderer) return;
+        if (it == goInstances.end()) return;
         auto& info = it->second;
         if (!info.isWmo) {
             if (auto* m2r = renderer->getM2Renderer()) {
-                m2r->setInstanceAnimationFrozen(info.instanceId, false);
+                // Play the custom animation as a one-shot if model supports it
+                if (m2r->hasAnimation(info.instanceId, animId))
+                    m2r->setInstanceAnimation(info.instanceId, animId, false);
+                else
+                    m2r->setInstanceAnimationFrozen(info.instanceId, false);
             }
         }
+    });
+
+    // GameObject state change callback — animate doors/chests opening/closing/destroying
+    gameHandler->setGameObjectStateCallback([this](uint64_t guid, uint8_t goState) {
+        if (!entitySpawner_ || !renderer) return;
+        auto& goInstances = entitySpawner_->getGameObjectInstances();
+        auto it = goInstances.find(guid);
+        if (it == goInstances.end()) return;
+        auto& info = it->second;
+        if (info.isWmo) return; // WMOs don't have M2 animation sequences
+        auto* m2r = renderer->getM2Renderer();
+        if (!m2r) return;
+        uint32_t instId = info.instanceId;
+        // GO states: 0=READY(closed), 1=OPEN, 2=DESTROYED/ACTIVE
+        if (goState == 1) {
+            // Opening: play OPEN(148) one-shot, fall back to unfreezing
+            if (m2r->hasAnimation(instId, 148))
+                m2r->setInstanceAnimation(instId, 148, false);
+            else
+                m2r->setInstanceAnimationFrozen(instId, false);
+        } else if (goState == 2) {
+            // Destroyed: play DESTROY(149) one-shot
+            if (m2r->hasAnimation(instId, 149))
+                m2r->setInstanceAnimation(instId, 149, false);
+        } else {
+            // Closed: play CLOSE(146) one-shot, else freeze
+            if (m2r->hasAnimation(instId, 146))
+                m2r->setInstanceAnimation(instId, 146, false);
+            else
+                m2r->setInstanceAnimationFrozen(instId, true);
+        }
+    });
+
+    // Sprint aura callback — use SPRINT(143) animation when sprint-type buff is active
+    gameHandler->setSprintAuraCallback([this](bool active) {
+        if (!renderer) return;
+        auto* ac = renderer->getAnimationController();
+        if (ac) ac->setSprintAuraActive(active);
+    });
+
+    // Vehicle state callback — hide player character when inside a vehicle
+    gameHandler->setVehicleStateCallback([this](bool entered, uint32_t /*vehicleId*/) {
+        if (!renderer) return;
+        auto* cr = renderer->getCharacterRenderer();
+        uint32_t instId = renderer->getCharacterInstanceId();
+        if (!cr || instId == 0) return;
+        cr->setInstanceVisible(instId, !entered);
     });
 
     // Charge callback — warrior rushes toward target
@@ -3059,8 +3119,8 @@ void Application::setupUICallbacks() {
                     auto* cr = renderer->getCharacterRenderer();
                     bool gotState = cr->getAnimationState(instanceId, curAnimId, curT, curDur);
                     // Only start Run if not already running and not in Death animation.
-                    if (!gotState || (curAnimId != 1 /*Death*/ && curAnimId != 5u /*Run*/)) {
-                        cr->playAnimation(instanceId, 5u, /*loop=*/true);
+                    if (!gotState || (curAnimId != rendering::anim::DEATH && curAnimId != rendering::anim::RUN)) {
+                        cr->playAnimation(instanceId, rendering::anim::RUN, /*loop=*/true);
                     }
                     entitySpawner_->getCreatureWasMoving()[guid] = true;
                 }
@@ -3256,11 +3316,11 @@ void Application::setupUICallbacks() {
         uint32_t instanceId = entitySpawner_->getCreatureInstanceId(guid);
         if (instanceId == 0) instanceId = entitySpawner_->getPlayerInstanceId(guid);
         if (instanceId != 0) {
-            renderer->getCharacterRenderer()->playAnimation(instanceId, 1, false); // Death
+            renderer->getCharacterRenderer()->playAnimation(instanceId, rendering::anim::DEATH, false);
         }
     });
 
-    // NPC/player respawn callback (online mode) - reset to idle animation
+    // NPC/player respawn callback (online mode) - play rise animation then idle
     gameHandler->setNpcRespawnCallback([this](uint64_t guid) {
         if (!entitySpawner_) return;
         entitySpawner_->unmarkCreatureDead(guid);
@@ -3268,11 +3328,18 @@ void Application::setupUICallbacks() {
         uint32_t instanceId = entitySpawner_->getCreatureInstanceId(guid);
         if (instanceId == 0) instanceId = entitySpawner_->getPlayerInstanceId(guid);
         if (instanceId != 0) {
-            renderer->getCharacterRenderer()->playAnimation(instanceId, 0, true); // Idle
+            auto* cr = renderer->getCharacterRenderer();
+            // Play RISE one-shot (auto-returns to STAND when finished), fall back to STAND
+            if (cr->hasAnimation(instanceId, rendering::anim::RISE))
+                cr->playAnimation(instanceId, rendering::anim::RISE, false);
+            else
+                cr->playAnimation(instanceId, rendering::anim::STAND, true);
         }
     });
 
     // NPC/player swing callback (online mode) - play attack animation
+    // Probes the model for the best available attack animation:
+    //   ATTACK_1H(17) → ATTACK_2H(18) → ATTACK_2H_LOOSE(19) → ATTACK_UNARMED(16)
     gameHandler->setNpcSwingCallback([this](uint64_t guid) {
         if (!entitySpawner_) return;
         if (!renderer || !renderer->getCharacterRenderer()) return;
@@ -3280,8 +3347,12 @@ void Application::setupUICallbacks() {
         if (instanceId == 0) instanceId = entitySpawner_->getPlayerInstanceId(guid);
         if (instanceId != 0) {
             auto* cr = renderer->getCharacterRenderer();
-            // Try weapon-appropriate attack anim: 17=1H, 18=2H, 16=unarmed fallback
-            static const uint32_t attackAnims[] = {17, 18, 16};
+            static const uint32_t attackAnims[] = {
+                rendering::anim::ATTACK_1H,
+                rendering::anim::ATTACK_2H,
+                rendering::anim::ATTACK_2H_LOOSE,
+                rendering::anim::ATTACK_UNARMED
+            };
             bool played = false;
             for (uint32_t anim : attackAnims) {
                 if (cr->hasAnimation(instanceId, anim)) {
@@ -3290,8 +3361,68 @@ void Application::setupUICallbacks() {
                     break;
                 }
             }
-            if (!played) cr->playAnimation(instanceId, 16, false);
+            if (!played) cr->playAnimation(instanceId, rendering::anim::ATTACK_UNARMED, false);
         }
+    });
+
+    // Hit reaction callback — plays one-shot dodge/block/wound animation on the victim
+    gameHandler->setHitReactionCallback([this](uint64_t victimGuid, game::GameHandler::HitReaction reaction) {
+        if (!renderer) return;
+        auto* cr = renderer->getCharacterRenderer();
+        if (!cr) return;
+
+        // Determine animation based on reaction type
+        uint32_t animId = rendering::anim::COMBAT_WOUND;
+        switch (reaction) {
+            case game::GameHandler::HitReaction::DODGE:      animId = rendering::anim::DODGE; break;
+            case game::GameHandler::HitReaction::PARRY:      break; // Parry already handled by existing system
+            case game::GameHandler::HitReaction::BLOCK:      animId = rendering::anim::BLOCK; break;
+            case game::GameHandler::HitReaction::SHIELD_BLOCK: animId = rendering::anim::SHIELD_BLOCK; break;
+            case game::GameHandler::HitReaction::CRIT_WOUND: animId = rendering::anim::COMBAT_CRITICAL; break;
+            case game::GameHandler::HitReaction::WOUND:      animId = rendering::anim::COMBAT_WOUND; break;
+        }
+
+        // For local player: use AnimationController state
+        bool isLocalPlayer = (victimGuid == gameHandler->getPlayerGuid());
+        if (isLocalPlayer) {
+            auto* ac = renderer->getAnimationController();
+            if (ac) {
+                uint32_t charInstId = renderer->getCharacterInstanceId();
+                if (charInstId && cr->hasAnimation(charInstId, animId))
+                    ac->triggerHitReaction(animId);
+            }
+            return;
+        }
+
+        // For NPCs/other players: direct playAnimation
+        if (!entitySpawner_) return;
+        uint32_t instanceId = entitySpawner_->getCreatureInstanceId(victimGuid);
+        if (instanceId == 0) instanceId = entitySpawner_->getPlayerInstanceId(victimGuid);
+        if (instanceId != 0 && cr->hasAnimation(instanceId, animId))
+            cr->playAnimation(instanceId, animId, false);
+    });
+
+    // Stun state callback — enters/exits STUNNED animation on local player
+    gameHandler->setStunStateCallback([this](bool stunned) {
+        if (!renderer) return;
+        auto* ac = renderer->getAnimationController();
+        if (ac) ac->setStunned(stunned);
+    });
+
+    // Stealth state callback — switches to stealth animation variants
+    gameHandler->setStealthStateCallback([this](bool stealthed) {
+        if (!renderer) return;
+        auto* ac = renderer->getAnimationController();
+        if (ac) ac->setStealthed(stealthed);
+    });
+
+    // Player health callback — switches to wounded idle when HP < 20%
+    gameHandler->setPlayerHealthCallback([this](uint32_t health, uint32_t maxHealth) {
+        if (!renderer) return;
+        auto* ac = renderer->getAnimationController();
+        if (!ac) return;
+        bool lowHp = (maxHealth > 0) && (health > 0) && (health * 5 <= maxHealth);
+        ac->setLowHealth(lowHp);
     });
 
     // Unit animation hint callback — plays jump (38=JumpMid) animation on other players/NPCs.
@@ -3305,9 +3436,9 @@ void Application::setupUICallbacks() {
         uint32_t instanceId = entitySpawner_->getPlayerInstanceId(guid);
         if (instanceId == 0) instanceId = entitySpawner_->getCreatureInstanceId(guid);
         if (instanceId == 0) return;
-        // Don't override Death animation (1)
+        // Don't override Death animation
         uint32_t curAnim = 0; float curT = 0.0f, curDur = 0.0f;
-        if (cr->getAnimationState(instanceId, curAnim, curT, curDur) && curAnim == 1) return;
+        if (cr->getAnimationState(instanceId, curAnim, curT, curDur) && curAnim == rendering::anim::DEATH) return;
         cr->playAnimation(instanceId, animId, /*loop=*/true);
     });
 
@@ -3331,16 +3462,23 @@ void Application::setupUICallbacks() {
         else            flyState.erase(guid);
     });
 
-    // Emote animation callback — play server-driven emote animations on NPCs and other players
+    // Emote animation callback — play server-driven emote animations on NPCs and other players.
+    // When emoteAnim is 0, the NPC's emote state was cleared → revert to STAND.
+    // Non-zero values from UNIT_NPC_EMOTESTATE updates are persistent (played looping).
     gameHandler->setEmoteAnimCallback([this](uint64_t guid, uint32_t emoteAnim) {
         if (!entitySpawner_) return;
-        if (!renderer || emoteAnim == 0) return;
+        if (!renderer) return;
         auto* cr = renderer->getCharacterRenderer();
         if (!cr) return;
         // Look up creature instance first, then online players
         uint32_t emoteInstanceId = entitySpawner_->getCreatureInstanceId(guid);
         if (emoteInstanceId != 0) {
-            cr->playAnimation(emoteInstanceId, emoteAnim, false);
+            if (emoteAnim == 0) {
+                // Emote state cleared → return to idle
+                cr->playAnimation(emoteInstanceId, rendering::anim::STAND, true);
+            } else {
+                cr->playAnimation(emoteInstanceId, emoteAnim, false);
+            }
             return;
         }
         emoteInstanceId = entitySpawner_->getPlayerInstanceId(guid);
@@ -3350,34 +3488,134 @@ void Application::setupUICallbacks() {
     });
 
     // Spell cast animation callback — play cast animation on caster (player or NPC/other player)
-    gameHandler->setSpellCastAnimCallback([this](uint64_t guid, bool start, bool /*isChannel*/) {
+    // Probes the model for the best available spell animation with fallback chain:
+    //   Regular cast: SPELL_CAST_DIRECTED(53) → SPELL_CAST_OMNI(54) → SPELL_CAST(32) → SPELL(2)
+    //   Channel:      CHANNEL_CAST_DIRECTED(124) → CHANNEL_CAST_OMNI(125) → SPELL_CAST_DIRECTED(53) → SPELL(2)
+    // For the local player, uses AnimationController state machine to prevent
+    // COMBAT_IDLE from overriding the spell animation.  For NPCs/other players,
+    // calls playAnimation directly (they don't share the player state machine).
+    gameHandler->setSpellCastAnimCallback([this](uint64_t guid, bool start, bool isChannel) {
         if (!entitySpawner_) return;
         if (!renderer) return;
         auto* cr = renderer->getCharacterRenderer();
         if (!cr) return;
-        // Animation 3 = SpellCast (one-shot; return-to-idle handled by character_renderer)
-        const uint32_t castAnim = 3;
-        // Check player character
+
+        // Determine if this is the local player
+        bool isLocalPlayer = false;
+        uint32_t instanceId = 0;
         {
             uint32_t charInstId = renderer->getCharacterInstanceId();
             if (charInstId != 0 && guid == gameHandler->getPlayerGuid()) {
-                if (start) cr->playAnimation(charInstId, castAnim, false);
-                // On finish: playAnimation(castAnim, loop=false) will auto-return to Stand
-                return;
+                instanceId = charInstId;
+                isLocalPlayer = true;
             }
         }
-        // Check creatures and other online players
-        {
-            uint32_t cInst = entitySpawner_->getCreatureInstanceId(guid);
-            if (cInst != 0) {
-                if (start) cr->playAnimation(cInst, castAnim, false);
-                return;
+        if (instanceId == 0) instanceId = entitySpawner_->getCreatureInstanceId(guid);
+        if (instanceId == 0) instanceId = entitySpawner_->getPlayerInstanceId(guid);
+        if (instanceId == 0) return;
+
+        if (start) {
+            // Detect fishing spells (channeled) — use FISHING_LOOP instead of generic cast
+            auto isFishingSpell = [](uint32_t spellId) {
+                return spellId == 7620 || spellId == 7731 || spellId == 7732 ||
+                       spellId == 18248 || spellId == 33095 || spellId == 51294;
+            };
+            uint32_t currentSpell = isLocalPlayer ? gameHandler->getCurrentCastSpellId() : 0;
+            bool isFishing = isChannel && isFishingSpell(currentSpell);
+
+            if (isFishing && cr->hasAnimation(instanceId, rendering::anim::FISHING_LOOP)) {
+                // Fishing: use FISHING_LOOP (looping idle) for the channel duration
+                if (isLocalPlayer) {
+                    auto* ac = renderer->getAnimationController();
+                    if (ac) ac->startSpellCast(0, rendering::anim::FISHING_LOOP, true, 0);
+                } else {
+                    cr->playAnimation(instanceId, rendering::anim::FISHING_LOOP, true);
+                }
+            } else {
+            // Spell animation sequence: PRECAST (one-shot) → CAST (loop) → FINALIZE (one-shot) → idle
+            // Probe model for best available animations with fallback chains:
+            //   Regular cast: SPELL_CAST_DIRECTED → SPELL_CAST_OMNI → SPELL_CAST → SPELL
+            //   Channel:      CHANNEL_CAST_DIRECTED → CHANNEL_CAST_OMNI → SPELL_CAST_DIRECTED → SPELL
+            bool hasTarget = gameHandler->hasTarget();
+
+            // Phase 1: Precast wind-up (one-shot, non-channels only)
+            uint32_t precastAnim = 0;
+            if (!isChannel && cr->hasAnimation(instanceId, rendering::anim::SPELL_PRECAST)) {
+                precastAnim = rendering::anim::SPELL_PRECAST;
             }
-        }
-        {
-            uint32_t pInst = entitySpawner_->getPlayerInstanceId(guid);
-            if (pInst != 0) {
-                if (start) cr->playAnimation(pInst, castAnim, false);
+
+            // Phase 2: Cast hold (looping until stopSpellCast)
+            static const uint32_t castDirected[] = {
+                rendering::anim::SPELL_CAST_DIRECTED,
+                rendering::anim::SPELL_CAST_OMNI,
+                rendering::anim::SPELL_CAST,
+                rendering::anim::SPELL
+            };
+            static const uint32_t castOmni[] = {
+                rendering::anim::SPELL_CAST_OMNI,
+                rendering::anim::SPELL_CAST_DIRECTED,
+                rendering::anim::SPELL_CAST,
+                rendering::anim::SPELL
+            };
+            static const uint32_t channelDirected[] = {
+                rendering::anim::CHANNEL_CAST_DIRECTED,
+                rendering::anim::CHANNEL_CAST_OMNI,
+                rendering::anim::SPELL_CAST_DIRECTED,
+                rendering::anim::SPELL
+            };
+            static const uint32_t channelOmni[] = {
+                rendering::anim::CHANNEL_CAST_OMNI,
+                rendering::anim::CHANNEL_CAST_DIRECTED,
+                rendering::anim::SPELL_CAST_DIRECTED,
+                rendering::anim::SPELL
+            };
+            const uint32_t* chain;
+            if (isChannel) {
+                chain = hasTarget ? channelDirected : channelOmni;
+            } else {
+                chain = hasTarget ? castDirected : castOmni;
+            }
+            uint32_t castAnim = rendering::anim::SPELL;
+            for (size_t i = 0; i < 4; ++i) {
+                if (cr->hasAnimation(instanceId, chain[i])) {
+                    castAnim = chain[i];
+                    break;
+                }
+            }
+
+            // Phase 3: Finalization release (one-shot after cast ends)
+            // Pick a different animation from the cast loop for visual variety
+            static const uint32_t finalizeChain[] = {
+                rendering::anim::SPELL_CAST_OMNI,
+                rendering::anim::SPELL_CAST,
+                rendering::anim::SPELL
+            };
+            uint32_t finalizeAnim = 0;
+            if (isLocalPlayer && !isChannel) {
+                for (uint32_t fa : finalizeChain) {
+                    if (fa != castAnim && cr->hasAnimation(instanceId, fa)) {
+                        finalizeAnim = fa;
+                        break;
+                    }
+                }
+                if (finalizeAnim == 0 && cr->hasAnimation(instanceId, rendering::anim::SPELL))
+                    finalizeAnim = rendering::anim::SPELL;
+            }
+
+            if (isLocalPlayer) {
+                auto* ac = renderer->getAnimationController();
+                if (ac) ac->startSpellCast(precastAnim, castAnim, true, finalizeAnim);
+            } else {
+                cr->playAnimation(instanceId, castAnim, true);
+            }
+            } // end !isFishing
+        } else {
+            // Cast/channel ended — plays finalization anim completely then returns to idle
+            if (isLocalPlayer) {
+                auto* ac = renderer->getAnimationController();
+                if (ac) ac->stopSpellCast();
+            } else if (isChannel) {
+                cr->playAnimation(instanceId, rendering::anim::STAND, true);
             }
         }
     });
@@ -3392,41 +3630,54 @@ void Application::setupUICallbacks() {
         cr->setInstanceOpacity(charInstId, isGhost ? 0.5f : 1.0f);
     });
 
-    // Stand state animation callback — map server stand state to M2 animation on player
-    // and sync camera sit flag so movement is blocked while sitting
+    // Stand state animation callback — route through AnimationController state machine
+    // for proper sit/sleep/kneel transition animations (down → loop → up)
     gameHandler->setStandStateCallback([this](uint8_t standState) {
         if (!renderer) return;
+        using AC = rendering::AnimationController;
 
         // Sync camera controller sitting flag: block movement while sitting/kneeling
         if (auto* cc = renderer->getCameraController()) {
-            cc->setSitting(standState >= 1 && standState <= 8 && standState != 7);
+            cc->setSitting(standState >= AC::STAND_STATE_SIT &&
+                           standState <= AC::STAND_STATE_KNEEL &&
+                           standState != AC::STAND_STATE_DEAD);
         }
 
-        auto* cr = renderer->getCharacterRenderer();
-        if (!cr) return;
-        uint32_t charInstId = renderer->getCharacterInstanceId();
-        if (charInstId == 0) return;
-        // WoW stand state → M2 animation ID mapping
-        // 0=Stand→0, 1-6=Sit variants→27 (SitGround), 7=Dead→1, 8=Kneel→72
-        // Do not force Stand(0) here: locomotion state machine already owns standing/running.
-        // Forcing Stand on packet timing causes visible run-cycle hitching while steering.
-        uint32_t animId = 0;
-        if (standState == 0) {
+        auto* ac = renderer->getAnimationController();
+        if (!ac) return;
+
+        // Death is special — play directly, not through sit state machine
+        if (standState == AC::STAND_STATE_DEAD) {
+            auto* cr = renderer->getCharacterRenderer();
+            if (!cr) return;
+            uint32_t charInstId = renderer->getCharacterInstanceId();
+            if (charInstId == 0) return;
+            cr->playAnimation(charInstId, rendering::anim::DEATH, false);
             return;
-        } else if (standState >= 1 && standState <= 6) {
-            animId = 27;  // SitGround (covers sit-chair too; correct visual differs by chair height)
-        } else if (standState == 7) {
-            animId = 1;   // Death
-        } else if (standState == 8) {
-            animId = 72;  // Kneel
         }
-        // Loop sit/kneel (not death) so the held-pose frame stays visible
-        const bool loop = (animId != 1);
-        cr->playAnimation(charInstId, animId, loop);
+
+        ac->setStandState(standState);
+    });
+
+    // Loot window callback — play kneel/loot animation while looting
+    gameHandler->setLootWindowCallback([this](bool open) {
+        if (!renderer) return;
+        auto* ac = renderer->getAnimationController();
+        if (!ac) return;
+        if (open) ac->startLooting();
+        else      ac->stopLooting();
     });
 
     // NPC greeting callback - play voice line
     gameHandler->setNpcGreetingCallback([this](uint64_t guid, const glm::vec3& position) {
+        // Play NPC_WELCOME animation on the NPC
+        if (entitySpawner_ && renderer) {
+            auto* cr = renderer->getCharacterRenderer();
+            if (cr) {
+                uint32_t instanceId = entitySpawner_->getCreatureInstanceId(guid);
+                if (instanceId != 0) cr->playAnimation(instanceId, rendering::anim::NPC_WELCOME, false);
+            }
+        }
         if (audioCoordinator_ && audioCoordinator_->getNpcVoiceManager()) {
             // Convert canonical to render coords for 3D audio
             glm::vec3 renderPos = core::coords::canonicalToRender(position);
@@ -3722,8 +3973,8 @@ void Application::spawnPlayerCharacter() {
 	            : std::unordered_set<uint16_t>{};
 	        charRenderer->setActiveGeosets(instanceId, activeGeosets);
 
-        // Play idle animation (Stand = animation ID 0)
-        charRenderer->playAnimation(instanceId, 0, true);
+        // Play idle animation
+        charRenderer->playAnimation(instanceId, rendering::anim::STAND, true);
         LOG_INFO("Spawned player character at (",
                 static_cast<int>(spawnPos.x), ", ",
                 static_cast<int>(spawnPos.y), ", ",

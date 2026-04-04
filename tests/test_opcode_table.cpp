@@ -1,4 +1,4 @@
-// Phase 0 – OpcodeTable load from JSON, toWire/fromWire mapping
+// OpcodeTable load from JSON, toWire/fromWire mapping
 #include <catch_amalgamated.hpp>
 #include "game/opcode_table.hpp"
 #include <fstream>

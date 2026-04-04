@@ -13,7 +13,7 @@ layout(set = 0, binding = 0) uniform PerFrame {
     vec4 shadowParams;
 };
 
-// Phase 2.1: Per-draw push constants (batch-level data only)
+// Per-draw push constants (batch-level data only)
 layout(push_constant) uniform Push {
     int texCoordSet;         // UV set index (0 or 1)
     int isFoliage;           // Foliage wind animation flag
@@ -24,7 +24,7 @@ layout(set = 2, binding = 0) readonly buffer BoneSSBO {
     mat4 bones[];
 };
 
-// Phase 2.1: Per-instance data read via gl_InstanceIndex (GPU instancing)
+// Per-instance data read via gl_InstanceIndex (GPU instancing)
 struct InstanceData {
     mat4 model;
     vec2 uvOffset;
@@ -51,7 +51,7 @@ layout(location = 4) out float ModelHeight;
 layout(location = 5) out float vFadeAlpha;
 
 void main() {
-    // Phase 2.1: Fetch per-instance data from SSBO
+    // Fetch per-instance data from SSBO
     int instIdx = push.instanceDataOffset + gl_InstanceIndex;
     mat4 model = instanceData[instIdx].model;
     vec2 uvOff = instanceData[instIdx].uvOffset;

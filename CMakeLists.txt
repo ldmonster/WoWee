@@ -616,6 +616,7 @@ set(WOWEE_SOURCES
     src/rendering/spell_visual_system.cpp
     src/rendering/post_process_pipeline.cpp
     src/rendering/animation_controller.cpp
+    src/rendering/animation_ids.cpp
     src/rendering/loading_screen.cpp
 
     # UI

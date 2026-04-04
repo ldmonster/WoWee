@@ -1,4 +1,4 @@
-// Phase 0 – SRP6a challenge/proof smoke tests
+// SRP6a challenge/proof smoke tests
 #include <catch_amalgamated.hpp>
 #include "auth/srp.hpp"
 #include "auth/crypto.hpp"

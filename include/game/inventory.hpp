@@ -28,6 +28,38 @@ enum class EquipSlot : uint8_t {
     NUM_SLOTS  // = 23
 };
 
+// WoW InventoryType field values (from ItemDisplayInfo / Item.dbc / CMSG_ITEM_QUERY)
+// Used in ItemDef::inventoryType and equipment update packets.
+namespace InvType {
+    constexpr uint8_t NON_EQUIP     = 0;   // Not equippable / unarmed
+    constexpr uint8_t HEAD          = 1;
+    constexpr uint8_t NECK          = 2;
+    constexpr uint8_t SHOULDERS     = 3;
+    constexpr uint8_t SHIRT         = 4;
+    constexpr uint8_t CHEST         = 5;   // Chest armor
+    constexpr uint8_t WAIST         = 6;
+    constexpr uint8_t LEGS          = 7;
+    constexpr uint8_t FEET          = 8;
+    constexpr uint8_t WRISTS        = 9;
+    constexpr uint8_t HANDS         = 10;
+    constexpr uint8_t FINGER        = 11;  // Ring
+    constexpr uint8_t TRINKET       = 12;
+    constexpr uint8_t ONE_HAND      = 13;  // One-handed weapon (sword, mace, dagger, fist)
+    constexpr uint8_t SHIELD        = 14;
+    constexpr uint8_t RANGED_BOW    = 15;  // Bow
+    constexpr uint8_t BACK          = 16;  // Cloak
+    constexpr uint8_t TWO_HAND      = 17;  // Two-handed weapon (also polearm/staff by inventoryType alone)
+    constexpr uint8_t BAG           = 18;
+    constexpr uint8_t TABARD        = 19;
+    constexpr uint8_t ROBE          = 20;  // Chest (robe variant)
+    constexpr uint8_t MAIN_HAND     = 21;  // Main-hand only weapon
+    constexpr uint8_t OFF_HAND      = 22;  // Off-hand (held-in-off-hand items, not weapons)
+    constexpr uint8_t HOLDABLE      = 23;  // Off-hand holdable (books, orbs)
+    constexpr uint8_t AMMO          = 24;
+    constexpr uint8_t THROWN        = 25;
+    constexpr uint8_t RANGED_GUN    = 26;  // Gun / Crossbow / Wand
+} // namespace InvType
+
 struct ItemDef {
     uint32_t itemId = 0;
     std::string name;

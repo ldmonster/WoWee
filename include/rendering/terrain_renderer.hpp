@@ -60,7 +60,7 @@ struct TerrainChunkGPU {
     float boundingSphereRadius = 0.0f;
     glm::vec3 boundingSphereCenter = glm::vec3(0.0f);
 
-    // Phase 2.2: Offsets into mega buffers for indirect drawing (-1 = not in mega buffer)
+    // Offsets into mega buffers for indirect drawing (-1 = not in mega buffer)
     int32_t megaBaseVertex = -1;
     uint32_t megaFirstIndex = 0;
     uint32_t vertexCount = 0;
@@ -206,7 +206,7 @@ private:
     int renderedChunks = 0;
     int culledChunks = 0;
 
-    // Phase 2.2: Mega vertex/index buffers for indirect drawing
+    // Mega vertex/index buffers for indirect drawing
     // All terrain chunks share a single VB + IB, eliminating per-chunk rebinds.
     // Indirect draw commands are built CPU-side each frame for visible chunks.
     VkBuffer megaVB_ = VK_NULL_HANDLE;
