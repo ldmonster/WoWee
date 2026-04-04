@@ -1177,15 +1177,18 @@ bool VkContext::createImGuiResources() {
         }
     }
 
-    // Create descriptor pool for ImGui
+    // Create descriptor pool for ImGui.
+    // Budget: ~10 internal ImGui sets + up to 2000 UI icon textures (spells,
+    // items, talents, buffs, etc.) that are uploaded and cached for the session.
+    static constexpr uint32_t IMGUI_POOL_SIZE = 2048;
     VkDescriptorPoolSize poolSizes[] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 100},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, IMGUI_POOL_SIZE},
     };
 
     VkDescriptorPoolCreateInfo dpInfo{};
     dpInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     dpInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-    dpInfo.maxSets = 100;
+    dpInfo.maxSets = IMGUI_POOL_SIZE;
     dpInfo.poolSizeCount = 1;
     dpInfo.pPoolSizes = poolSizes;
 
@@ -1374,9 +1377,17 @@ VkDescriptorSet VkContext::uploadImGuiTexture(const uint8_t* rgba, int width, in
         }
     }
 
-    // Register with ImGui
+    // Register with ImGui (allocates from imguiDescriptorPool)
     VkDescriptorSet ds = ImGui_ImplVulkan_AddTexture(uiTextureSampler_, imageView,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    if (!ds) {
+        LOG_ERROR("ImGui descriptor pool exhausted — cannot upload UI texture");
+        vkDestroyImageView(device, imageView, nullptr);
+        vkDestroyImage(device, image, nullptr);
+        vkFreeMemory(device, imageMemory, nullptr);
+        return VK_NULL_HANDLE;
+    }
 
     // Track for cleanup
     uiTextures_.push_back({image, imageMemory, imageView});
