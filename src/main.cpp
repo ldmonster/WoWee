@@ -6,6 +6,11 @@
 #include <cctype>
 #include <string>
 #include <SDL2/SDL.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <libgen.h>
+#include <unistd.h>
+#endif
 #ifdef __linux__
 #include <X11/Xlib.h>
 #include <execinfo.h>
@@ -97,6 +102,24 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     std::signal(SIGTERM, crashHandler);
     std::signal(SIGINT,  crashHandler);
 #endif
+    // Change working directory to the executable's directory so relative asset
+    // paths (assets/shaders/, Data/, etc.) resolve correctly from any launch location.
+#ifdef __APPLE__
+    {
+        uint32_t bufSize = 0;
+        _NSGetExecutablePath(nullptr, &bufSize);
+        std::string exePath(bufSize, '\0');
+        _NSGetExecutablePath(exePath.data(), &bufSize);
+        chdir(dirname(exePath.data()));
+    }
+#elif defined(__linux__)
+    {
+        char buf[4096];
+        ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (len > 0) { buf[len] = '\0'; chdir(dirname(buf)); }
+    }
+#endif
+
     try {
         wowee::core::Logger::getInstance().setLogLevel(readLogLevelFromEnv());
         LOG_INFO("=== Wowee Native Client ===");
