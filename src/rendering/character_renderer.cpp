@@ -479,20 +479,37 @@ void CharacterRenderer::destroyModelGPU(M2ModelGPU& gpuModel) {
     if (gpuModel.indexBuffer) { vmaDestroyBuffer(alloc, gpuModel.indexBuffer, gpuModel.indexAlloc); gpuModel.indexBuffer = VK_NULL_HANDLE; }
 }
 
-void CharacterRenderer::destroyInstanceBones(CharacterInstance& inst) {
+void CharacterRenderer::destroyInstanceBones(CharacterInstance& inst, bool defer) {
     if (!vkCtx_) return;
     VmaAllocator alloc = vkCtx_->getAllocator();
     VkDevice device = vkCtx_->getDevice();
     for (int i = 0; i < 2; i++) {
-        if (inst.boneSet[i] != VK_NULL_HANDLE && boneDescPool_ != VK_NULL_HANDLE) {
-            vkFreeDescriptorSets(device, boneDescPool_, 1, &inst.boneSet[i]);
-            inst.boneSet[i] = VK_NULL_HANDLE;
-        }
-        if (inst.boneBuffer[i]) {
-            vmaDestroyBuffer(alloc, inst.boneBuffer[i], inst.boneAlloc[i]);
-            inst.boneBuffer[i] = VK_NULL_HANDLE;
-            inst.boneAlloc[i] = VK_NULL_HANDLE;
-            inst.boneMapped[i] = nullptr;
+        VkDescriptorSet boneSet = inst.boneSet[i];
+        ::VkBuffer boneBuf = inst.boneBuffer[i];
+        VmaAllocation boneAlloc = inst.boneAlloc[i];
+        inst.boneSet[i] = VK_NULL_HANDLE;
+        inst.boneBuffer[i] = VK_NULL_HANDLE;
+        inst.boneAlloc[i] = VK_NULL_HANDLE;
+        inst.boneMapped[i] = nullptr;
+
+        if (!defer) {
+            if (boneSet != VK_NULL_HANDLE && boneDescPool_ != VK_NULL_HANDLE) {
+                vkFreeDescriptorSets(device, boneDescPool_, 1, &boneSet);
+            }
+            if (boneBuf) {
+                vmaDestroyBuffer(alloc, boneBuf, boneAlloc);
+            }
+        } else if (boneSet != VK_NULL_HANDLE || boneBuf) {
+            VkDescriptorPool pool = boneDescPool_;
+            vkCtx_->deferAfterFrameFence([device, alloc, pool, boneSet, boneBuf, boneAlloc]() {
+                if (boneSet != VK_NULL_HANDLE && pool != VK_NULL_HANDLE) {
+                    VkDescriptorSet s = boneSet;
+                    vkFreeDescriptorSets(device, pool, 1, &s);
+                }
+                if (boneBuf) {
+                    vmaDestroyBuffer(alloc, boneBuf, boneAlloc);
+                }
+            });
         }
     }
 }
@@ -2953,8 +2970,9 @@ void CharacterRenderer::removeInstance(uint32_t instanceId) {
         removeInstance(wa.weaponInstanceId);
     }
 
-    // Destroy bone buffers for this instance
-    destroyInstanceBones(it->second);
+    // Defer bone buffer destruction — in-flight command buffers may still
+    // reference these descriptor sets.
+    destroyInstanceBones(it->second, /*defer=*/true);
 
     instances.erase(it);
 }

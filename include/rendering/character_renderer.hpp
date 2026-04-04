@@ -209,7 +209,7 @@ private:
     glm::mat4 getBoneTransform(const pipeline::M2Bone& bone, float time, int sequenceIndex);
     glm::mat4 getModelMatrix(const CharacterInstance& instance) const;
     void destroyModelGPU(M2ModelGPU& gpuModel);
-    void destroyInstanceBones(CharacterInstance& inst);
+    void destroyInstanceBones(CharacterInstance& inst, bool defer = false);
 
     // Keyframe interpolation helpers
     static int findKeyframeIndex(const std::vector<uint32_t>& timestamps, float time);
