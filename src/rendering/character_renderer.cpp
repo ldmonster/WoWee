@@ -1690,6 +1690,9 @@ void CharacterRenderer::update(float deltaTime, const glm::vec3& cameraPos) {
         float distSq = glm::distance2(inst.position, cameraPos);
         if (distSq >= animUpdateRadiusSq) continue;
 
+        // Advance global sequence timer (accumulates independently of animation wrapping)
+        inst.globalSequenceTime += deltaTime * 1000.0f;
+
         // Always advance animation time (cheap)
         if (inst.cachedModel && !inst.cachedModel->data.sequences.empty()) {
             if (inst.currentSequenceIndex < 0) {
@@ -1852,8 +1855,10 @@ int CharacterRenderer::findKeyframeIndex(const std::vector<uint32_t>& timestamps
 }
 
 // Resolve sequence index and time for a track, handling global sequences.
+// globalSeqTime is a separate accumulating timer that is NOT wrapped at the
+// current animation's sequence duration, so global sequences get full range.
 static void resolveTrackTime(const pipeline::M2AnimationTrack& track,
-                              int seqIdx, float time,
+                              int seqIdx, float animTime, float globalSeqTime,
                               const std::vector<uint32_t>& globalSeqDurations,
                               int& outSeqIdx, float& outTime) {
     if (track.globalSequence >= 0 &&
@@ -1861,14 +1866,14 @@ static void resolveTrackTime(const pipeline::M2AnimationTrack& track,
         outSeqIdx = 0;
         float dur = static_cast<float>(globalSeqDurations[track.globalSequence]);
         if (dur > 0.0f) {
-            outTime = std::fmod(time, dur);
+            outTime = std::fmod(globalSeqTime, dur);
             if (outTime < 0.0f) outTime += dur;
         } else {
             outTime = 0.0f;
         }
     } else {
         outSeqIdx = seqIdx;
-        outTime = time;
+        outTime = animTime;
     }
 }
 
@@ -1959,7 +1964,8 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
 
         // Local transform includes pivot bracket: T(pivot)*T*R*S*T(-pivot)
         // At rest this is identity, so no separate bind pose is needed
-        glm::mat4 localTransform = getBoneTransform(bone, instance.animationTime, instance.currentSequenceIndex, gsd);
+        glm::mat4 localTransform = getBoneTransform(bone, instance.animationTime, instance.globalSequenceTime,
+                                                    instance.currentSequenceIndex, gsd);
 
         // Compose with parent
         if (bone.parentBone >= 0 && static_cast<size_t>(bone.parentBone) < numBones) {
@@ -1970,16 +1976,16 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
     }
 }
 
-glm::mat4 CharacterRenderer::getBoneTransform(const pipeline::M2Bone& bone, float time, int sequenceIndex,
-                                               const std::vector<uint32_t>& globalSeqDurations) {
+glm::mat4 CharacterRenderer::getBoneTransform(const pipeline::M2Bone& bone, float animTime, float globalSeqTime,
+                                               int sequenceIndex, const std::vector<uint32_t>& globalSeqDurations) {
     // Resolve global sequences: bones with globalSequence >= 0 use sequence 0
     // with time wrapped at the global sequence duration, independent of the
     // character's current animation.
     int tSeq, rSeq, sSeq;
     float tTime, rTime, sTime;
-    resolveTrackTime(bone.translation, sequenceIndex, time, globalSeqDurations, tSeq, tTime);
-    resolveTrackTime(bone.rotation, sequenceIndex, time, globalSeqDurations, rSeq, rTime);
-    resolveTrackTime(bone.scale, sequenceIndex, time, globalSeqDurations, sSeq, sTime);
+    resolveTrackTime(bone.translation, sequenceIndex, animTime, globalSeqTime, globalSeqDurations, tSeq, tTime);
+    resolveTrackTime(bone.rotation, sequenceIndex, animTime, globalSeqTime, globalSeqDurations, rSeq, rTime);
+    resolveTrackTime(bone.scale, sequenceIndex, animTime, globalSeqTime, globalSeqDurations, sSeq, sTime);
 
     glm::vec3 translation = interpolateVec3(bone.translation, tSeq, tTime, glm::vec3(0.0f));
     glm::quat rotation = interpolateQuat(bone.rotation, rSeq, rTime);

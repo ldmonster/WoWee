@@ -158,6 +158,7 @@ private:
         uint32_t currentAnimationId = 0;
         int currentSequenceIndex = -1;  // Index into M2Model::sequences
         float animationTime = 0.0f;
+        float globalSequenceTime = 0.0f; // Separate timer for global sequences (accumulates without wrapping at sequence duration)
         bool animationLoop = true;
         bool isDead = false;  // Prevents movement while in death state
         std::vector<glm::mat4> boneMatrices;  // Current bone transforms
@@ -206,8 +207,8 @@ private:
     void calculateBindPose(M2ModelGPU& gpuModel);
     void updateAnimation(CharacterInstance& instance, float deltaTime);
     void calculateBoneMatrices(CharacterInstance& instance);
-    glm::mat4 getBoneTransform(const pipeline::M2Bone& bone, float time, int sequenceIndex,
-                               const std::vector<uint32_t>& globalSeqDurations);
+    glm::mat4 getBoneTransform(const pipeline::M2Bone& bone, float animTime, float globalSeqTime,
+                               int sequenceIndex, const std::vector<uint32_t>& globalSeqDurations);
     glm::mat4 getModelMatrix(const CharacterInstance& instance) const;
     void destroyModelGPU(M2ModelGPU& gpuModel, bool defer = false);
     void destroyInstanceBones(CharacterInstance& inst, bool defer = false);
