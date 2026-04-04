@@ -535,11 +535,25 @@ bool WardenModule::parseExecutableFormat(const std::vector<uint8_t>& exeData) {
             return false;
         }
     #else
+        // When using Unicorn emulation the module image is copied into the
+        // emulator's address space, so we only need read/write access here.
+        // Native execution paths (non-Unicorn) need PROT_EXEC; on macOS this
+        // requires MAP_JIT due to hardened-runtime restrictions.
+        #ifdef HAVE_UNICORN
+            int mmapProt  = PROT_READ | PROT_WRITE;
+            int mmapFlags = MAP_PRIVATE | MAP_ANONYMOUS;
+        #elif defined(__APPLE__)
+            int mmapProt  = PROT_READ | PROT_WRITE | PROT_EXEC;
+            int mmapFlags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT;
+        #else
+            int mmapProt  = PROT_READ | PROT_WRITE | PROT_EXEC;
+            int mmapFlags = MAP_PRIVATE | MAP_ANONYMOUS;
+        #endif
         moduleMemory_ = mmap(
             nullptr,
             finalCodeSize,
-            PROT_READ | PROT_WRITE | PROT_EXEC,
-            MAP_PRIVATE | MAP_ANONYMOUS,
+            mmapProt,
+            mmapFlags,
             -1,
             0
         );

@@ -20,6 +20,7 @@ static void printUsage(const char* prog) {
               << "  --skip-dbc          Do not extract DBFilesClient/*.dbc (visual assets only)\n"
               << "  --dbc-csv           Convert selected DBFilesClient/*.dbc to CSV under\n"
               << "                      <output>/expansions/<expansion>/db/*.csv (for committing)\n"
+              << "  --listfile <path>   External listfile for MPQ file enumeration (auto-detected)\n"
               << "  --reference-manifest <path>\n"
               << "                      Only extract files NOT in this manifest (delta extraction)\n"
               << "  --dbc-csv-out <dir> Write CSV DBCs into <dir> (overrides default output path)\n"
@@ -53,6 +54,8 @@ int main(int argc, char** argv) {
             opts.generateDbcCsv = true;
         } else if (std::strcmp(argv[i], "--dbc-csv-out") == 0 && i + 1 < argc) {
             opts.dbcCsvOutputDir = argv[++i];
+        } else if (std::strcmp(argv[i], "--listfile") == 0 && i + 1 < argc) {
+            opts.listFile = argv[++i];
         } else if (std::strcmp(argv[i], "--reference-manifest") == 0 && i + 1 < argc) {
             opts.referenceManifest = argv[++i];
         } else if (std::strcmp(argv[i], "--verify") == 0) {
@@ -98,6 +101,24 @@ int main(int argc, char** argv) {
         }
     }
     opts.locale = locale;
+
+    // Auto-detect external listfile if not specified
+    if (opts.listFile.empty()) {
+        // Look next to the binary, then in the source tree
+        namespace fs = std::filesystem;
+        std::string binDir = fs::path(argv[0]).parent_path().string();
+        for (const auto& candidate : {
+            binDir + "/listfile.txt",
+            binDir + "/../../../tools/asset_extract/listfile.txt",
+            opts.mpqDir + "/listfile.txt",
+        }) {
+            if (fs::exists(candidate)) {
+                opts.listFile = candidate;
+                std::cout << "Auto-detected listfile: " << candidate << "\n";
+                break;
+            }
+        }
+    }
 
     std::cout << "=== Wowee Asset Extractor ===\n";
     std::cout << "MPQ directory: " << opts.mpqDir << "\n";
