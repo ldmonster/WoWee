@@ -14,7 +14,6 @@
 #include <iostream>
 #include <mutex>
 #include <set>
-#include <sstream>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -31,12 +30,6 @@ namespace tools {
 
 namespace fs = std::filesystem;
 using wowee::pipeline::DBCFile;
-
-// Archive descriptor for priority-based loading
-struct ArchiveDesc {
-    std::string path;
-    int priority;
-};
 
 static std::string toLowerStr(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
@@ -394,161 +387,148 @@ std::string Extractor::detectExpansion(const std::string& mpqDir) {
     return "";
 }
 
-std::string Extractor::detectLocale(const std::string& mpqDir) {
-    for (const auto& loc : kKnownLocales) {
-        if (fs::is_directory(mpqDir + "/" + loc))
-            return loc;
+static std::string findCaseInsensitiveDirectory(const std::string& parentDir,
+                                                   const std::string& directoryName) {
+    if (!fs::exists(parentDir) || !fs::is_directory(parentDir)) return "";
+    std::string lowerDirectoryName = toLowerStr(directoryName);
+    for (const auto& entry : fs::directory_iterator(parentDir)) {
+        if (!entry.is_directory()) continue;
+        std::string name = entry.path().filename().string();
+        if (toLowerStr(name) == lowerDirectoryName) {
+            return name;
+        }
     }
     return "";
 }
 
+std::string Extractor::detectLocale(const std::string& mpqDir) {
+    if (!fs::exists(mpqDir) || !fs::is_directory(mpqDir)) return "";
+    for (const auto& entry : fs::directory_iterator(mpqDir)) {
+        if (!entry.is_directory()) continue;
+        std::string name = entry.path().filename().string();
+        std::string lower = toLowerStr(name);
+        for (const auto& loc : kKnownLocales) {
+            if (toLowerStr(loc) == lower) {
+                return name;
+            }
+        }
+    }
+    return "";
+}
+
+static std::unordered_map<std::string, std::string> buildCaseMap(const std::string& dir) {
+    std::unordered_map<std::string, std::string> map;
+    if (!fs::exists(dir) || !fs::is_directory(dir)) return map;
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        if (entry.is_regular_file()) {
+            std::string filename = entry.path().filename().string();
+            if (filename.rfind("._", 0) == 0) {
+                continue;
+            }
+            std::string ext = toLowerStr(entry.path().extension().string());
+            if (ext == ".mpq") {
+                std::string lower = toLowerStr(filename);
+                map[lower] = filename;
+            }
+        }
+    }
+    return map;
+}
+
 // Discover archive files with expansion-specific and locale-aware loading
-static std::vector<ArchiveDesc> discoverArchives(const std::string& mpqDir,
+static std::vector<std::string> discoverArchives(const std::string& mpqDir,
                                                   const std::string& expansion,
                                                   const std::string& locale) {
-    std::vector<ArchiveDesc> result;
+    std::vector<std::string> result;
 
-    auto tryAdd = [&](const std::string& name, int prio) {
-        std::string fullPath = mpqDir + "/" + name;
-        if (fs::exists(fullPath)) {
-            result.push_back({fullPath, prio});
+    auto caseMap = buildCaseMap(mpqDir);
+    std::string lowerLocale = toLowerStr(locale);
+    if (!locale.empty()) {
+        std::string actualLocaleDir = findCaseInsensitiveDirectory(mpqDir, locale);
+        if (actualLocaleDir.empty()) {
+            actualLocaleDir = locale;
+        }
+        std::string localeDir = mpqDir + "/" + actualLocaleDir;
+        std::cout << "Locale directory: " << localeDir << "\n";
+        auto localeMap = buildCaseMap(localeDir);
+        for (auto& [name, realName] : localeMap) {
+            caseMap[lowerLocale + "/" + name] = actualLocaleDir + "/" + realName;
+        }
+    }
+
+    std::vector<std::string> baseSequence;
+    std::vector<std::string> localeSequence;
+
+    if (expansion == "classic" || expansion == "turtle") {
+        baseSequence = {
+            "base.mpq", "backup.mpq", "dbc.mpq", "fonts.mpq",
+            "interface.mpq", "misc.mpq", "model.mpq", "sound.mpq",
+            "speech.mpq", "terrain.mpq", "texture.mpq", "wmo.mpq"
+        };
+    } else if (expansion == "tbc") {
+        baseSequence = { "common.mpq", "expansion.mpq" };
+        if (!locale.empty()) {
+            localeSequence = {
+                lowerLocale + "/backup-" + lowerLocale + ".mpq",
+                lowerLocale + "/base-" + lowerLocale + ".mpq",
+                lowerLocale + "/locale-" + lowerLocale + ".mpq",
+                lowerLocale + "/speech-" + lowerLocale + ".mpq",
+                lowerLocale + "/expansion-locale-" + lowerLocale + ".mpq",
+                lowerLocale + "/expansion-speech-" + lowerLocale + ".mpq",
+            };
+        }
+    } else {
+        baseSequence = { "common.mpq", "common-2.mpq", "expansion.mpq", "lichking.mpq" };
+        if (!locale.empty()) {
+            localeSequence = {
+                lowerLocale + "/backup-" + lowerLocale + ".mpq",
+                lowerLocale + "/base-" + lowerLocale + ".mpq",
+                lowerLocale + "/locale-" + lowerLocale + ".mpq",
+                lowerLocale + "/speech-" + lowerLocale + ".mpq",
+                lowerLocale + "/expansion-locale-" + lowerLocale + ".mpq",
+                lowerLocale + "/expansion-speech-" + lowerLocale + ".mpq",
+                lowerLocale + "/lichking-locale-" + lowerLocale + ".mpq",
+                lowerLocale + "/lichking-speech-" + lowerLocale + ".mpq",
+            };
+        }
+    }
+
+    std::vector<std::string> sequence;
+    for (const auto& name : baseSequence) {
+        sequence.push_back(name);
+    }
+    for (const auto& name : localeSequence) {
+        sequence.push_back(name);
+    }
+
+    // Interleave patches: base patch then locale patch for each tier
+    std::vector<std::string> patchSuffixes = {""};
+    for (int i = 2; i <= 9; ++i) {
+        patchSuffixes.push_back(std::string("-") + std::to_string(i));
+    }
+    for (char c = 'a'; c <= 'z'; ++c) {
+        patchSuffixes.push_back(std::string("-") + c);
+    }
+
+    for (const auto& suffix : patchSuffixes) {
+        sequence.push_back("patch" + suffix + ".mpq");
+        if (!locale.empty()) {
+            sequence.push_back(lowerLocale + "/patch-" + lowerLocale + suffix + ".mpq");
+        }
+    }
+
+    auto addIfPresent = [&](const std::string& expected) {
+        auto it = caseMap.find(toLowerStr(expected));
+        if (it != caseMap.end()) {
+            result.push_back(mpqDir + "/" + it->second);
         }
     };
 
-    if (expansion == "classic" || expansion == "turtle") {
-        // Vanilla-era base archives (also used by Turtle WoW clients)
-        tryAdd("base.MPQ", 90);
-        tryAdd("base.mpq", 90);
-        tryAdd("backup.MPQ", 95);
-        tryAdd("backup.mpq", 95);
-        tryAdd("dbc.MPQ", 100);
-        tryAdd("dbc.mpq", 100);
-        tryAdd("fonts.MPQ", 100);
-        tryAdd("fonts.mpq", 100);
-        tryAdd("interface.MPQ", 100);
-        tryAdd("interface.mpq", 100);
-        tryAdd("misc.MPQ", 100);
-        tryAdd("misc.mpq", 100);
-        tryAdd("model.MPQ", 100);
-        tryAdd("model.mpq", 100);
-        tryAdd("sound.MPQ", 100);
-        tryAdd("sound.mpq", 100);
-        tryAdd("speech.MPQ", 100);
-        tryAdd("speech.mpq", 100);
-        tryAdd("terrain.MPQ", 100);
-        tryAdd("terrain.mpq", 100);
-        tryAdd("texture.MPQ", 100);
-        tryAdd("texture.mpq", 100);
-        tryAdd("wmo.MPQ", 100);
-        tryAdd("wmo.mpq", 100);
-
-        // Patches
-        tryAdd("patch.MPQ", 150);
-        tryAdd("patch.mpq", 150);
-        for (int i = 1; i <= 9; ++i) {
-            tryAdd("patch-" + std::to_string(i) + ".MPQ", 160 + (i * 10));
-            tryAdd("patch-" + std::to_string(i) + ".mpq", 160 + (i * 10));
-        }
-        // Turtle WoW uses letter patch MPQs (patch-a.mpq ... patch-z.mpq).
-        for (char c = 'a'; c <= 'z'; ++c) {
-            tryAdd(std::string("patch-") + c + ".mpq", 800 + (c - 'a'));
-            tryAdd(std::string("Patch-") + static_cast<char>(std::toupper(c)) + ".mpq", 900 + (c - 'a'));
-        }
-
-        // Locale
-        if (!locale.empty()) {
-            tryAdd(locale + "/base-" + locale + ".MPQ", 230);
-            tryAdd(locale + "/speech-" + locale + ".MPQ", 240);
-            tryAdd(locale + "/locale-" + locale + ".MPQ", 250);
-            tryAdd(locale + "/patch-" + locale + ".MPQ", 450);
-        }
-    } else if (expansion == "tbc") {
-        // TBC 2.4.x base archives
-        tryAdd("common.MPQ", 100);
-        tryAdd("common-2.MPQ", 100);
-        tryAdd("expansion.MPQ", 100);
-
-        // Patches
-        tryAdd("patch.MPQ", 150);
-        tryAdd("patch-2.MPQ", 200);
-        tryAdd("patch-3.MPQ", 300);
-        tryAdd("patch-4.MPQ", 400);
-        tryAdd("patch-5.MPQ", 500);
-
-        // Letter patches
-        for (char c = 'a'; c <= 'z'; ++c) {
-            tryAdd(std::string("patch-") + c + ".mpq", 800 + (c - 'a'));
-            tryAdd(std::string("Patch-") + static_cast<char>(std::toupper(c)) + ".mpq", 900 + (c - 'a'));
-        }
-
-        // Locale
-        if (!locale.empty()) {
-            tryAdd(locale + "/backup-" + locale + ".MPQ", 225);
-            tryAdd(locale + "/base-" + locale + ".MPQ", 230);
-            tryAdd(locale + "/speech-" + locale + ".MPQ", 240);
-            tryAdd(locale + "/expansion-speech-" + locale + ".MPQ", 245);
-            tryAdd(locale + "/expansion-locale-" + locale + ".MPQ", 246);
-            tryAdd(locale + "/locale-" + locale + ".MPQ", 250);
-            tryAdd(locale + "/patch-" + locale + ".MPQ", 450);
-            tryAdd(locale + "/patch-" + locale + "-2.MPQ", 460);
-            tryAdd(locale + "/patch-" + locale + "-3.MPQ", 470);
-        }
-    } else {
-        // WotLK 3.3.5a (default)
-        tryAdd("common.MPQ", 100);
-        tryAdd("common-2.MPQ", 100);
-        tryAdd("expansion.MPQ", 100);
-        tryAdd("lichking.MPQ", 100);
-
-        // Patches
-        tryAdd("patch.MPQ", 150);
-        tryAdd("patch-2.MPQ", 200);
-        tryAdd("patch-3.MPQ", 300);
-        tryAdd("patch-4.MPQ", 400);
-        tryAdd("patch-5.MPQ", 500);
-
-        // Letter patches
-        for (char c = 'a'; c <= 'z'; ++c) {
-            tryAdd(std::string("patch-") + c + ".mpq", 800 + (c - 'a'));
-            tryAdd(std::string("Patch-") + static_cast<char>(std::toupper(c)) + ".mpq", 900 + (c - 'a'));
-        }
-
-        // Locale
-        if (!locale.empty()) {
-            tryAdd(locale + "/backup-" + locale + ".MPQ", 225);
-            tryAdd(locale + "/base-" + locale + ".MPQ", 230);
-            tryAdd(locale + "/speech-" + locale + ".MPQ", 240);
-            tryAdd(locale + "/expansion-speech-" + locale + ".MPQ", 245);
-            tryAdd(locale + "/expansion-locale-" + locale + ".MPQ", 246);
-            tryAdd(locale + "/lichking-speech-" + locale + ".MPQ", 248);
-            tryAdd(locale + "/lichking-locale-" + locale + ".MPQ", 249);
-            tryAdd(locale + "/locale-" + locale + ".MPQ", 250);
-            tryAdd(locale + "/patch-" + locale + ".MPQ", 450);
-            tryAdd(locale + "/patch-" + locale + "-2.MPQ", 460);
-            tryAdd(locale + "/patch-" + locale + "-3.MPQ", 470);
-        }
+    for (const auto& entry : sequence) {
+        addIfPresent(entry);
     }
-
-    // Sort by priority so highest-priority archives are last
-    // (we'll iterate highest-prio first when extracting)
-    std::sort(result.begin(), result.end(),
-              [](const ArchiveDesc& a, const ArchiveDesc& b) { return a.priority < b.priority; });
 
     return result;
-}
-
-// Read a text file into a vector of lines (for external listfile loading)
-static std::vector<std::string> readLines(const std::string& path) {
-    std::vector<std::string> lines;
-    std::ifstream f(path);
-    if (!f) return lines;
-    std::string line;
-    while (std::getline(f, line)) {
-        // Trim trailing \r
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (!line.empty()) lines.push_back(std::move(line));
-    }
-    return lines;
 }
 
 // Extract the (listfile) from an MPQ archive into a set of filenames
@@ -595,14 +575,9 @@ bool Extractor::enumerateFiles(const Options& opts,
 
     std::cout << "Found " << archives.size() << " MPQ archives\n";
 
-    // Load external listfile into memory once (avoids repeated file I/O)
-    std::vector<std::string> externalEntries;
-    std::vector<const char*> externalPtrs;
-    if (!opts.listFile.empty()) {
-        externalEntries = readLines(opts.listFile);
-        externalPtrs.reserve(externalEntries.size());
-        for (const auto& e : externalEntries) externalPtrs.push_back(e.c_str());
-        std::cout << "  Loaded external listfile: " << externalEntries.size() << " entries\n";
+    const bool haveExternalListFile = !opts.listFile.empty();
+    if (haveExternalListFile) {
+        std::cout << "  Using external listfile: " << opts.listFile << "\n";
     }
 
     const auto wantedDbcs = buildWantedDbcSet(opts);
@@ -611,21 +586,20 @@ bool Extractor::enumerateFiles(const Options& opts,
     // Enumerate from highest priority first so first-seen files win
     for (auto it = archives.rbegin(); it != archives.rend(); ++it) {
         HANDLE hMpq = nullptr;
-        if (!SFileOpenArchive(it->path.c_str(), 0, 0, &hMpq)) {
-            std::cerr << "  Failed to open: " << it->path << "\n";
+        if (!SFileOpenArchive(it->c_str(), 0, 0, &hMpq)) {
+            std::cerr << "  Failed to open: " << *it << "\n";
             continue;
         }
 
-        // Inject external listfile entries into archive's in-memory name table.
-        // SFileAddListFileEntries is fast — it only hashes the names against the
-        // archive's hash table, no file I/O involved.
-        if (!externalPtrs.empty()) {
-            SFileAddListFileEntries(hMpq, externalPtrs.data(),
-                                   static_cast<DWORD>(externalPtrs.size()));
+        // Inject external listfile into archive's in-memory name table.
+        // SFileAddListFile reads the file and hashes names against the
+        // archive's hash table.
+        if (haveExternalListFile) {
+            SFileAddListFile(hMpq, opts.listFile.c_str());
         }
 
         if (opts.verbose) {
-            std::cout << "  Scanning: " << it->path << " (priority " << it->priority << ")\n";
+            std::cout << "  Scanning: " << *it << "\n";
         }
 
         SFILE_FIND_DATA findData;
@@ -721,19 +695,18 @@ bool Extractor::run(const Options& opts) {
     // thread-safe even with separate handles, so we serialize all MPQ reads.
     struct SharedArchive {
         HANDLE handle;
-        int priority;
         std::string path;
     };
     std::vector<SharedArchive> sharedHandles;
-    for (const auto& ad : archives) {
+    for (const auto& path : archives) {
         HANDLE h = nullptr;
-        if (SFileOpenArchive(ad.path.c_str(), 0, 0, &h)) {
+        if (SFileOpenArchive(path.c_str(), 0, 0, &h)) {
             if (!opts.listFile.empty()) {
                 SFileAddListFile(h, opts.listFile.c_str());
             }
-            sharedHandles.push_back({h, ad.priority, ad.path});
+            sharedHandles.push_back({h, path});
         } else {
-            std::cerr << "  Failed to open archive: " << ad.path << "\n";
+            std::cerr << "  Failed to open archive: " << path << "\n";
         }
     }
     if (sharedHandles.empty()) {
