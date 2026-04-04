@@ -316,6 +316,8 @@ bool VkContext::selectPhysicalDevice() {
     VkPhysicalDeviceFeatures requiredFeatures{};
     requiredFeatures.samplerAnisotropy = VK_TRUE;
     requiredFeatures.fillModeNonSolid = VK_TRUE;  // wireframe debug pipelines
+    requiredFeatures.shaderStorageImageWriteWithoutFormat = VK_TRUE;  // FSR2 compute shaders
+    requiredFeatures.shaderInt16 = VK_TRUE;  // FSR2 compute shaders
     selector.set_surface(surface)
             .set_minimum_version(1, 1)
             .set_required_features(requiredFeatures)
@@ -389,6 +391,33 @@ bool VkContext::selectPhysicalDevice() {
 
 bool VkContext::createLogicalDevice() {
     vkb::DeviceBuilder deviceBuilder{vkbPhysicalDevice_};
+
+    // Enable optional Vulkan 1.2 features for FSR2 compute shaders (shaderFloat16)
+    VkPhysicalDeviceVulkan12Features enabled12{};
+    enabled12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    if (instanceApiVersion_ >= VK_API_VERSION_1_2) {
+        VkPhysicalDeviceVulkan12Features supported12{};
+        supported12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        VkPhysicalDeviceFeatures2 features2{};
+        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2.pNext = &supported12;
+        vkGetPhysicalDeviceFeatures2(physicalDevice, &features2);
+        if (supported12.shaderFloat16) {
+            enabled12.shaderFloat16 = VK_TRUE;
+            LOG_INFO("Enabling shaderFloat16 for FSR2 compute shaders");
+        }
+        deviceBuilder.add_pNext(&enabled12);
+    }
+
+    // Enable AMD device coherent memory feature if the extension was enabled
+    // (prevents validation errors when VMA selects memory types with DEVICE_COHERENT_BIT_AMD)
+    VkPhysicalDeviceCoherentMemoryFeaturesAMD coherentFeatures{};
+    coherentFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COHERENT_MEMORY_FEATURES_AMD;
+    if (vkbPhysicalDevice_.enable_extension_if_present(VK_AMD_DEVICE_COHERENT_MEMORY_EXTENSION_NAME)) {
+        coherentFeatures.deviceCoherentMemory = VK_TRUE;
+        deviceBuilder.add_pNext(&coherentFeatures);
+        LOG_INFO("Enabling AMD device coherent memory");
+    }
 
     // If the graphics queue family supports >= 2 queues, request a second one
     // for parallel texture/buffer uploads.  Both queues share the same family
