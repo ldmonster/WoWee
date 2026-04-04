@@ -63,7 +63,8 @@ public:
     void compositePlayerSkin(uint32_t modelSlotId, const PlayerTextureInfo& texInfo);
 
     // Build default active geosets for player character
-    std::unordered_set<uint16_t> buildDefaultPlayerGeosets(uint8_t hairStyleId, uint8_t facialId);
+    std::unordered_set<uint16_t> buildDefaultPlayerGeosets(uint8_t raceId, uint8_t sexId,
+                                                           uint8_t hairStyleId, uint8_t facialId);
 
     // Equipment weapon loading (reads inventory, attaches weapon M2 models)
     void loadEquippedWeapons();
