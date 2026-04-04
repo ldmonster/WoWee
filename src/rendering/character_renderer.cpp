@@ -270,7 +270,7 @@ bool CharacterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFram
     };
 
     opaquePipeline_ = buildCharPipeline(PipelineBuilder::blendDisabled(), true);
-    alphaTestPipeline_ = buildCharPipeline(PipelineBuilder::blendAlpha(), true);
+    alphaTestPipeline_ = buildCharPipeline(PipelineBuilder::blendDisabled(), true);
     alphaPipeline_ = buildCharPipeline(PipelineBuilder::blendAlpha(), false);
     additivePipeline_ = buildCharPipeline(PipelineBuilder::blendAdditive(), false);
 
@@ -1481,6 +1481,8 @@ void CharacterRenderer::setupModelBuffers(M2ModelGPU& gpuModel) {
     std::vector<glm::vec3> bitanAccum(vertCount, glm::vec3(0.0f));
 
     // Copy base vertex data
+    size_t numBones = model.bones.size();
+    int outOfRangeCount = 0, ge128Count = 0, nonzeroWeightOOR = 0;
     for (size_t i = 0; i < vertCount; i++) {
         const auto& src = model.vertices[i];
         auto& dst = gpuVerts[i];
@@ -1490,6 +1492,22 @@ void CharacterRenderer::setupModelBuffers(M2ModelGPU& gpuModel) {
         dst.normal = src.normal;
         dst.texCoords = src.texCoords[0]; // Use first UV set
         dst.tangent = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f); // default
+
+        // Diagnostic: check bone indices
+        for (int j = 0; j < 4; j++) {
+            uint8_t bi = src.boneIndices[j];
+            uint8_t bw = src.boneWeights[j];
+            if (bi >= numBones) {
+                outOfRangeCount++;
+                if (bw > 0) nonzeroWeightOOR++;
+            }
+            if (bi >= 128) ge128Count++;
+        }
+    }
+    if (outOfRangeCount > 0 || ge128Count > 0) {
+        LOG_WARNING("VERTEX DIAG: model bones=", numBones, " verts=", vertCount,
+                    " outOfRange=", outOfRangeCount, " (nonzeroWeight=", nonzeroWeightOOR, ")",
+                    " ge128=", ge128Count);
     }
 
     // Accumulate tangent/bitangent per triangle
@@ -1959,6 +1977,19 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
 
     const auto& gsd = model.globalSequenceDurations;
 
+    // One-time diagnostic: check bone ordering (parents must precede children)
+    static bool checkedBoneOrder = false;
+    if (!checkedBoneOrder) {
+        checkedBoneOrder = true;
+        for (size_t i = 0; i < numBones; i++) {
+            const auto& bone = model.bones[i];
+            if (bone.parentBone >= 0 && static_cast<size_t>(bone.parentBone) >= i) {
+                LOG_WARNING("Bone ", i, " references parent ", bone.parentBone,
+                            " which comes AFTER it — will use stale matrix!");
+            }
+        }
+    }
+
     for (size_t i = 0; i < numBones; i++) {
         const auto& bone = model.bones[i];
 
@@ -1973,6 +2004,26 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
         } else {
             instance.boneMatrices[i] = localTransform;
         }
+
+        // Diagnostic: detect bones with extreme translation
+        float tx = std::abs(instance.boneMatrices[i][3][0]);
+        float ty = std::abs(instance.boneMatrices[i][3][1]);
+        float tz = std::abs(instance.boneMatrices[i][3][2]);
+        static int diagFrames = 0;
+        if (diagFrames < 3 && (tx > 50.0f || ty > 50.0f || tz > 50.0f)) {
+            LOG_WARNING("BONE DIAG: bone[", i, "] keyBone=", bone.keyBoneId,
+                        " flags=0x", std::hex, bone.flags, std::dec,
+                        " parent=", bone.parentBone,
+                        " pivot=(", bone.pivot.x, ",", bone.pivot.y, ",", bone.pivot.z, ")",
+                        " mat_t=(", instance.boneMatrices[i][3][0], ",",
+                        instance.boneMatrices[i][3][1], ",", instance.boneMatrices[i][3][2], ")",
+                        " local_t=(", localTransform[3][0], ",", localTransform[3][1], ",",
+                        localTransform[3][2], ")",
+                        " animTime=", instance.animationTime,
+                        " gsTime=", instance.globalSequenceTime,
+                        " seqIdx=", instance.currentSequenceIndex);
+        }
+        if (i == numBones - 1) diagFrames++;
     }
 }
 
@@ -2297,8 +2348,39 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 return whiteTexture_.get();
             };
 
-            // Draw batches (submeshes) with per-batch textures
+            // One-time batch diagnostic for first character instance
+            static bool batchDiagDone = false;
+            if (!batchDiagDone && !instance.hasOverrideModelMatrix) {
+                batchDiagDone = true;
+                for (const auto& b : gpuModel.data.batches) {
+                    uint16_t bm = 0, mf = 0;
+                    if (b.materialIndex < gpuModel.data.materials.size()) {
+                        bm = gpuModel.data.materials[b.materialIndex].blendMode;
+                        mf = gpuModel.data.materials[b.materialIndex].flags;
+                    }
+                    uint16_t bg = static_cast<uint16_t>(b.submeshId / 100);
+                    bool active = instance.activeGeosets.empty() ||
+                                  instance.activeGeosets.count(b.submeshId);
+                    LOG_WARNING("BATCH DIAG: submesh=", b.submeshId, " group=", bg,
+                                " blend=", bm, " matFlags=0x", std::hex, mf, std::dec,
+                                " texIdx=", b.textureIndex, " matIdx=", b.materialIndex,
+                                " active=", active);
+                }
+            }
+
+            // Draw batches in two passes: opaque (blendMode 0) first, then
+            // alpha-key/blend after.  This ensures capes and body parts write
+            // depth before hair overlay, preventing hair→cape z-fight.
+            auto getBatchBlendMode = [&](const pipeline::M2Batch& b) -> uint16_t {
+                if (b.materialIndex < gpuModel.data.materials.size())
+                    return gpuModel.data.materials[b.materialIndex].blendMode;
+                return 0;
+            };
+            for (int pass = 0; pass < 2; pass++) {
             for (const auto& batch : gpuModel.data.batches) {
+                uint16_t bm = getBatchBlendMode(batch);
+                if (pass == 0 && bm != 0) continue;  // pass 0: opaque only
+                if (pass == 1 && bm == 0) continue;   // pass 1: non-opaque only
                 if (applyGeosetFilter) {
                     if (instance.activeGeosets.find(batch.submeshId) == instance.activeGeosets.end()) {
                         continue;
@@ -2449,7 +2531,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 // Create per-batch material UBO
                 CharMaterialUBO matData{};
                 matData.opacity = instance.opacity;
-                matData.alphaTest = (blendNeedsCutout || alphaCutout) ? 1 : 0;
+                matData.alphaTest = blendNeedsCutout ? 1 : 0;
                 matData.colorKeyBlack = (blendNeedsCutout || colorKeyBlack) ? 1 : 0;
                 matData.unlit = unlit ? 1 : 0;
                 matData.emissiveBoost = emissiveBoost;
@@ -2509,6 +2591,7 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
 
                 vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
             }
+            } // end pass loop
         } else {
             // Draw entire model with first texture
             VkTexture* texPtr = !gpuModel.textureIds.empty() ? gpuModel.textureIds[0] : whiteTexture_.get();
@@ -3425,7 +3508,7 @@ void CharacterRenderer::recreatePipelines() {
              " pipelineLayout=", (void*)pipelineLayout_);
 
     opaquePipeline_ = buildCharPipeline(PipelineBuilder::blendDisabled(), true);
-    alphaTestPipeline_ = buildCharPipeline(PipelineBuilder::blendAlpha(), true);
+    alphaTestPipeline_ = buildCharPipeline(PipelineBuilder::blendDisabled(), true);
     alphaPipeline_ = buildCharPipeline(PipelineBuilder::blendAlpha(), false);
     additivePipeline_ = buildCharPipeline(PipelineBuilder::blendAdditive(), false);
 
