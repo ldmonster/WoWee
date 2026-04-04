@@ -2140,6 +2140,8 @@ bool TurtlePacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjec
         out.blocks.reserve(out.blockCount);
         for (uint32_t i = 0; i < out.blockCount; ++i) {
             if (!packet.hasData()) {
+                // If we already parsed some blocks, keep them (layout is confirmed valid).
+                if (!out.blocks.empty()) break;
                 packet.setReadPos(start);
                 return false;
             }
@@ -2147,6 +2149,7 @@ bool TurtlePacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjec
             const size_t blockStart = packet.getReadPos();
             uint8_t updateTypeVal = packet.readUInt8();
             if (updateTypeVal > static_cast<uint8_t>(UpdateType::NEAR_OBJECTS)) {
+                if (!out.blocks.empty()) break;
                 packet.setReadPos(start);
                 return false;
             }
@@ -2220,14 +2223,19 @@ bool TurtlePacketParsers::parseUpdateObject(network::Packet& packet, UpdateObjec
             }
 
             if (!ok) {
-                LOG_WARNING("[Turtle] SMSG_UPDATE_OBJECT block parse failed",
-                            " blockIndex=", i,
-                            " updateType=", updateTypeName(updateType),
-                            " readPos=", packet.getReadPos(),
-                            " blockStart=", blockStart,
-                            " packetSize=", packet.getSize());
-                packet.setReadPos(start);
-                return false;
+                static int turtleBlockErrors = 0;
+                if (++turtleBlockErrors <= 5) {
+                    LOG_WARNING("[Turtle] SMSG_UPDATE_OBJECT block parse failed",
+                                " blockIndex=", i, " of ", out.blockCount,
+                                " updateType=", updateTypeName(updateType),
+                                " readPos=", packet.getReadPos(),
+                                " blockStart=", blockStart,
+                                " packetSize=", packet.getSize(),
+                                " (", out.blocks.size(), " blocks kept)");
+                }
+                // Keep successfully parsed blocks instead of discarding all.
+                // Cannot re-sync within the packet, so stop parsing here.
+                break;
             }
 
             out.blocks.push_back(std::move(block));

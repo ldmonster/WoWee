@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <sstream>
 #include <iomanip>
@@ -1010,8 +1011,18 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
                     packet.setReadPos(prePointCount);
                     return false;
                 }
-                packet.readFloat(); packet.readFloat(); packet.readFloat(); // endPoint
-                LOG_DEBUG("  Spline pointCount=", pc, " compressed=", compressed, " (", tag, ")");
+                float epX = packet.readFloat();
+                float epY = packet.readFloat();
+                float epZ = packet.readFloat();
+                // Validate endPoint: garbage bytes rarely produce finite world coords
+                if (!std::isfinite(epX) || !std::isfinite(epY) || !std::isfinite(epZ) ||
+                    std::fabs(epX) > 65000.0f || std::fabs(epY) > 65000.0f ||
+                    std::fabs(epZ) > 65000.0f) {
+                    packet.setReadPos(prePointCount);
+                    return false;
+                }
+                LOG_DEBUG("  Spline pointCount=", pc, " compressed=", compressed,
+                          " endPt=(", epX, ",", epY, ",", epZ, ") (", tag, ")");
                 return true;
             };
 
