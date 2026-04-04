@@ -253,8 +253,9 @@ bool CharacterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFram
     };
 
     // --- Build pipelines ---
-    auto buildCharPipeline = [&](VkPipelineColorBlendAttachmentState blendState, bool depthWrite) -> VkPipeline {
-        return PipelineBuilder()
+    auto buildCharPipeline = [&](VkPipelineColorBlendAttachmentState blendState,
+                                  bool depthWrite, bool alphaToCoverage = false) -> VkPipeline {
+        auto builder = PipelineBuilder()
             .setShaders(charVert.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                         charFrag.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
             .setVertexInput({charBinding}, charAttrs)
@@ -262,7 +263,10 @@ bool CharacterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFram
             .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
             .setDepthTest(true, depthWrite, VK_COMPARE_OP_LESS_OR_EQUAL)
             .setColorBlendAttachment(blendState)
-            .setMultisample(samples)
+            .setMultisample(samples);
+        if (alphaToCoverage)
+            builder.setAlphaToCoverage(true);
+        return builder
             .setLayout(pipelineLayout_)
             .setRenderPass(mainPass)
             .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
@@ -270,7 +274,7 @@ bool CharacterRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFram
     };
 
     opaquePipeline_ = buildCharPipeline(PipelineBuilder::blendDisabled(), true);
-    alphaTestPipeline_ = buildCharPipeline(PipelineBuilder::blendDisabled(), true);
+    alphaTestPipeline_ = buildCharPipeline(PipelineBuilder::blendDisabled(), true, true);
     alphaPipeline_ = buildCharPipeline(PipelineBuilder::blendAlpha(), false);
     additivePipeline_ = buildCharPipeline(PipelineBuilder::blendAdditive(), false);
 
@@ -2385,6 +2389,12 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                     if (instance.activeGeosets.find(batch.submeshId) == instance.activeGeosets.end()) {
                         continue;
                     }
+                } else {
+                    // Even without a geoset filter, skip eye glow (group 17)
+                    // and group 18 unless explicitly opted in. These geosets are
+                    // only for DK/NE eye glow and should be off by default.
+                    uint16_t grp = batch.submeshId / 100;
+                    if (grp == 17 || grp == 18) continue;
                 }
 
                 // Resolve texture for this batch (prefer hair textures for hair geosets).
@@ -2950,6 +2960,10 @@ void CharacterRenderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& light
             if (blendMode >= 2) continue; // skip transparent
             if (applyGeosetFilter &&
                 inst.activeGeosets.find(batch.submeshId) == inst.activeGeosets.end()) continue;
+            if (!applyGeosetFilter) {
+                uint16_t grp = batch.submeshId / 100;
+                if (grp == 17 || grp == 18) continue;
+            }
             vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
         }
     }
@@ -3487,8 +3501,9 @@ void CharacterRenderer::recreatePipelines() {
         {5, 0, VK_FORMAT_R32G32B32A32_SFLOAT, static_cast<uint32_t>(offsetof(CharVertexGPU, tangent))},
     };
 
-    auto buildCharPipeline = [&](VkPipelineColorBlendAttachmentState blendState, bool depthWrite) -> VkPipeline {
-        return PipelineBuilder()
+    auto buildCharPipeline = [&](VkPipelineColorBlendAttachmentState blendState,
+                                  bool depthWrite, bool alphaToCoverage = false) -> VkPipeline {
+        auto builder = PipelineBuilder()
             .setShaders(charVert.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                         charFrag.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
             .setVertexInput({charBinding}, charAttrs)
@@ -3496,7 +3511,10 @@ void CharacterRenderer::recreatePipelines() {
             .setRasterization(VK_POLYGON_MODE_FILL, VK_CULL_MODE_NONE)
             .setDepthTest(true, depthWrite, VK_COMPARE_OP_LESS_OR_EQUAL)
             .setColorBlendAttachment(blendState)
-            .setMultisample(samples)
+            .setMultisample(samples);
+        if (alphaToCoverage)
+            builder.setAlphaToCoverage(true);
+        return builder
             .setLayout(pipelineLayout_)
             .setRenderPass(mainPass)
             .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
@@ -3508,7 +3526,7 @@ void CharacterRenderer::recreatePipelines() {
              " pipelineLayout=", (void*)pipelineLayout_);
 
     opaquePipeline_ = buildCharPipeline(PipelineBuilder::blendDisabled(), true);
-    alphaTestPipeline_ = buildCharPipeline(PipelineBuilder::blendDisabled(), true);
+    alphaTestPipeline_ = buildCharPipeline(PipelineBuilder::blendDisabled(), true, true);
     alphaPipeline_ = buildCharPipeline(PipelineBuilder::blendAlpha(), false);
     additivePipeline_ = buildCharPipeline(PipelineBuilder::blendAdditive(), false);
 

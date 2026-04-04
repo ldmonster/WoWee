@@ -126,7 +126,14 @@ void main() {
 
     vec4 texColor = texture(uTexture, finalUV);
 
-    if (alphaTest != 0 && texColor.a < 0.5) discard;
+    if (alphaTest != 0) {
+        // Screen-space sharpened alpha for alpha-to-coverage anti-aliasing.
+        // Rescales alpha so the 0.5 cutoff maps to exactly the texel boundary,
+        // giving smooth edges when MSAA + alpha-to-coverage is active.
+        float aGrad = fwidth(texColor.a);
+        texColor.a = clamp((texColor.a - 0.5) / max(aGrad, 0.001) * 0.5 + 0.5, 0.0, 1.0);
+        if (texColor.a < 1.0 / 255.0) discard;
+    }
     if (colorKeyBlack != 0) {
         float lum = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
         float ck = smoothstep(0.12, 0.30, lum);

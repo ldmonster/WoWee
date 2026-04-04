@@ -15,6 +15,7 @@
 #include <X11/Xlib.h>
 #include <execinfo.h>
 #include <unistd.h>
+#include <libgen.h>
 #include <cstring>
 
 // Keep a persistent X11 connection for emergency mouse release in signal handlers.
