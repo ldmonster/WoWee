@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <memory>
 
+#include "pipeline/dbc_layout.hpp"
+
 namespace wowee {
 namespace pipeline {
 
@@ -148,6 +150,29 @@ private:
      */
     bool loadCSV(const std::vector<uint8_t>& csvData);
 };
+
+/**
+ * Build the 8-element texture region field index array for ItemDisplayInfo.dbc.
+ * Classic/Turtle 23-field DBCs have textures at 14-21;
+ * TBC/WotLK 25-field DBCs have textures at 15-22.
+ * Detects automatically from the loaded DBC's field count.
+ */
+inline void getItemDisplayInfoTextureFields(const DBCFile& dbc,
+    const DBCFieldMap* layout,
+    uint32_t (&out)[8])
+{
+    // 25-field DBCs (TBC/WotLK) shift textures +1 vs 23-field (Classic/Turtle)
+    uint32_t base = (dbc.getFieldCount() >= 25) ? 15u : 14u;
+    if (layout) {
+        uint32_t idx = layout->field("TextureArmUpper");
+        if (idx != 0xFFFFFFFF) {
+            base = idx;
+            // Correct JSON layouts written for 23-field when DBC is actually 25-field
+            if (base == 14 && dbc.getFieldCount() >= 25) base = 15;
+        }
+    }
+    for (int i = 0; i < 8; i++) out[i] = base + static_cast<uint32_t>(i);
+}
 
 } // namespace pipeline
 } // namespace wowee

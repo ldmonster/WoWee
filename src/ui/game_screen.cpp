@@ -3910,18 +3910,8 @@ void GameScreen::updateCharacterTextures(game::Inventory& inventory) {
     if (!displayInfoDbc) return;
     const auto* idiL = pipeline::getActiveDBCLayout()
         ? pipeline::getActiveDBCLayout()->getLayout("ItemDisplayInfo") : nullptr;
-    // Texture component region fields (8 regions: ArmUpper..Foot)
-    // Binary DBC (23 fields) has textures at 14+
-    const uint32_t texRegionFields[8] = {
-        idiL ? (*idiL)["TextureArmUpper"]  : 14u,
-        idiL ? (*idiL)["TextureArmLower"]  : 15u,
-        idiL ? (*idiL)["TextureHand"]      : 16u,
-        idiL ? (*idiL)["TextureTorsoUpper"]: 17u,
-        idiL ? (*idiL)["TextureTorsoLower"]: 18u,
-        idiL ? (*idiL)["TextureLegUpper"]  : 19u,
-        idiL ? (*idiL)["TextureLegLower"]  : 20u,
-        idiL ? (*idiL)["TextureFoot"]      : 21u,
-    };
+    uint32_t texRegionFields[8];
+    pipeline::getItemDisplayInfoTextureFields(*displayInfoDbc, idiL, texRegionFields);
 
     // Collect equipment texture regions from all equipped items
     std::vector<std::pair<int, std::string>> regionLayers;

@@ -119,14 +119,14 @@
     "InventoryIcon": 5,
     "LeftModel": 1,
     "LeftModelTexture": 3,
-    "TextureArmLower": 16,
-    "TextureArmUpper": 15,
-    "TextureFoot": 22,
-    "TextureHand": 17,
-    "TextureLegLower": 21,
-    "TextureLegUpper": 20,
-    "TextureTorsoLower": 19,
-    "TextureTorsoUpper": 18
+    "TextureArmLower": 15,
+    "TextureArmUpper": 14,
+    "TextureFoot": 21,
+    "TextureHand": 16,
+    "TextureLegLower": 20,
+    "TextureLegUpper": 19,
+    "TextureTorsoLower": 18,
+    "TextureTorsoUpper": 17
   },
   "ItemSet": {
     "ID": 0,

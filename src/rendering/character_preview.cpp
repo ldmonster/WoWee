@@ -739,16 +739,8 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
     // Texture component region fields — use DBC layout when available, fall back to binary offsets.
     const auto* idiL = pipeline::getActiveDBCLayout()
         ? pipeline::getActiveDBCLayout()->getLayout("ItemDisplayInfo") : nullptr;
-    const uint32_t texRegionFields[8] = {
-        idiL ? (*idiL)["TextureArmUpper"]   : 14u,
-        idiL ? (*idiL)["TextureArmLower"]   : 15u,
-        idiL ? (*idiL)["TextureHand"]       : 16u,
-        idiL ? (*idiL)["TextureTorsoUpper"] : 17u,
-        idiL ? (*idiL)["TextureTorsoLower"] : 18u,
-        idiL ? (*idiL)["TextureLegUpper"]   : 19u,
-        idiL ? (*idiL)["TextureLegLower"]   : 20u,
-        idiL ? (*idiL)["TextureFoot"]       : 21u,
-    };
+    uint32_t texRegionFields[8];
+    pipeline::getItemDisplayInfoTextureFields(*displayInfoDbc, idiL, texRegionFields);
 
     std::vector<std::pair<int, std::string>> regionLayers;
     regionLayers.reserve(32);

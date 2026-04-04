@@ -1076,16 +1076,8 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
                             };
                             const auto* idiL = pipeline::getActiveDBCLayout()
                                 ? pipeline::getActiveDBCLayout()->getLayout("ItemDisplayInfo") : nullptr;
-                            const uint32_t texRegionFields[8] = {
-                                idiL ? (*idiL)["TextureArmUpper"]  : 14u,
-                                idiL ? (*idiL)["TextureArmLower"]  : 15u,
-                                idiL ? (*idiL)["TextureHand"]      : 16u,
-                                idiL ? (*idiL)["TextureTorsoUpper"]: 17u,
-                                idiL ? (*idiL)["TextureTorsoLower"]: 18u,
-                                idiL ? (*idiL)["TextureLegUpper"]  : 19u,
-                                idiL ? (*idiL)["TextureLegLower"]  : 20u,
-                                idiL ? (*idiL)["TextureFoot"]      : 21u,
-                            };
+                            uint32_t texRegionFields[8];
+                            pipeline::getItemDisplayInfoTextureFields(*idiDbc, idiL, texRegionFields);
                             const bool npcIsFemale = (extraCopy.sexId == 1);
                             const bool npcHasArmArmor = (extraCopy.equipDisplayId[7] != 0 || extraCopy.equipDisplayId[8] != 0);
 
@@ -2949,18 +2941,8 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
         "FootTexture",
     };
 
-    // Texture component region fields from DBC layout
-    // Binary DBC (23 fields) has textures at 14+
-    const uint32_t texRegionFields[8] = {
-        idiL ? (*idiL)["TextureArmUpper"]  : 14u,
-        idiL ? (*idiL)["TextureArmLower"]  : 15u,
-        idiL ? (*idiL)["TextureHand"]      : 16u,
-        idiL ? (*idiL)["TextureTorsoUpper"]: 17u,
-        idiL ? (*idiL)["TextureTorsoLower"]: 18u,
-        idiL ? (*idiL)["TextureLegUpper"]  : 19u,
-        idiL ? (*idiL)["TextureLegLower"]  : 20u,
-        idiL ? (*idiL)["TextureFoot"]      : 21u,
-    };
+    uint32_t texRegionFields[8];
+    pipeline::getItemDisplayInfoTextureFields(*displayInfoDbc, idiL, texRegionFields);
 
     std::vector<std::pair<int, std::string>> regionLayers;
     const bool isFemale = (st.genderId == 1);
@@ -4038,16 +4020,8 @@ std::vector<std::string> EntitySpawner::resolveEquipmentTexturePaths(uint64_t gu
         "TorsoUpperTexture", "TorsoLowerTexture",
         "LegUpperTexture", "LegLowerTexture", "FootTexture",
     };
-    const uint32_t texRegionFields[8] = {
-        idiL ? (*idiL)["TextureArmUpper"]  : 14u,
-        idiL ? (*idiL)["TextureArmLower"]  : 15u,
-        idiL ? (*idiL)["TextureHand"]      : 16u,
-        idiL ? (*idiL)["TextureTorsoUpper"]: 17u,
-        idiL ? (*idiL)["TextureTorsoLower"]: 18u,
-        idiL ? (*idiL)["TextureLegUpper"]  : 19u,
-        idiL ? (*idiL)["TextureLegLower"]  : 20u,
-        idiL ? (*idiL)["TextureFoot"]      : 21u,
-    };
+    uint32_t texRegionFields[8];
+    pipeline::getItemDisplayInfoTextureFields(*displayInfoDbc, idiL, texRegionFields);
     const bool isFemale = (st.genderId == 1);
 
     for (int s = 0; s < 19; s++) {
