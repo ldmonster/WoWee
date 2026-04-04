@@ -222,6 +222,14 @@ void SpellHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
         return;
     }
 
+    // Stop movement before casting — servers reject cast-time spells while moving
+    const uint32_t moveFlags = owner_.movementInfo.flags;
+    const bool isMoving = (moveFlags & 0x0Fu) != 0; // FORWARD|BACKWARD|STRAFE_LEFT|STRAFE_RIGHT
+    if (isMoving) {
+        owner_.movementInfo.flags &= ~0x0Fu;
+        owner_.sendMovement(Opcode::MSG_MOVE_STOP);
+    }
+
     uint64_t target = targetGuid != 0 ? targetGuid : owner_.targetGuid;
     // Self-targeted spells like hearthstone should not send a target
     if (spellId == 8690) target = 0;

@@ -2024,6 +2024,13 @@ void CharacterRenderer::prepareRender(uint32_t frameIndex) {
                             &instance.boneBuffer[frameIndex], &instance.boneAlloc[frameIndex], &allocInfo);
             instance.boneMapped[frameIndex] = allocInfo.pMappedData;
 
+            // Initialize all bone slots to identity so out-of-range indices
+            // produce correct (neutral) transforms instead of GPU garbage
+            if (instance.boneMapped[frameIndex]) {
+                auto* dst = static_cast<glm::mat4*>(instance.boneMapped[frameIndex]);
+                for (int j = 0; j < MAX_BONES; j++) dst[j] = glm::mat4(1.0f);
+            }
+
             VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
             ai.descriptorPool = boneDescPool_;
             ai.descriptorSetCount = 1;
@@ -2146,6 +2153,13 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
                 vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci,
                                 &instance.boneBuffer[frameIndex], &instance.boneAlloc[frameIndex], &allocInfo);
                 instance.boneMapped[frameIndex] = allocInfo.pMappedData;
+
+                // Initialize all bone slots to identity so out-of-range indices
+                // produce correct (neutral) transforms instead of GPU garbage
+                if (instance.boneMapped[frameIndex]) {
+                    auto* dst = static_cast<glm::mat4*>(instance.boneMapped[frameIndex]);
+                    for (int j = 0; j < MAX_BONES; j++) dst[j] = glm::mat4(1.0f);
+                }
 
                 // Allocate descriptor set for bone SSBO
                 VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -2786,6 +2800,13 @@ void CharacterRenderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& light
                 vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci,
                     &inst.boneBuffer[frameIndex], &inst.boneAlloc[frameIndex], &ai);
                 inst.boneMapped[frameIndex] = ai.pMappedData;
+
+                // Initialize all bone slots to identity so out-of-range indices
+                // produce correct (neutral) transforms instead of GPU garbage
+                if (inst.boneMapped[frameIndex]) {
+                    auto* dst = static_cast<glm::mat4*>(inst.boneMapped[frameIndex]);
+                    for (int j = 0; j < MAX_BONES; j++) dst[j] = glm::mat4(1.0f);
+                }
 
                 VkDescriptorSetAllocateInfo dsAI{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
                 dsAI.descriptorPool = boneDescPool_;
