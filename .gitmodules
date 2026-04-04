@@ -6,3 +6,9 @@
 	path = extern/vk-bootstrap
 	url = https://github.com/charles-lunarg/vk-bootstrap.git
 	shallow = true
+[submodule "extern/FidelityFX-SDK"]
+	path = extern/FidelityFX-SDK
+	url = https://github.com/Kelsidavis/FidelityFX-SDK.git
+[submodule "extern/FidelityFX-FSR2"]
+	path = extern/FidelityFX-FSR2
+	url = https://github.com/Kelsidavis/FidelityFX-FSR2.git
