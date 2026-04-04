@@ -60,6 +60,11 @@ struct TerrainChunkGPU {
     float boundingSphereRadius = 0.0f;
     glm::vec3 boundingSphereCenter = glm::vec3(0.0f);
 
+    // Phase 2.2: Offsets into mega buffers for indirect drawing (-1 = not in mega buffer)
+    int32_t megaBaseVertex = -1;
+    uint32_t megaFirstIndex = 0;
+    uint32_t vertexCount = 0;
+
     bool isValid() const { return vertexBuffer != VK_NULL_HANDLE && indexBuffer != VK_NULL_HANDLE; }
 };
 
@@ -200,6 +205,25 @@ private:
     bool fogEnabled = true;
     int renderedChunks = 0;
     int culledChunks = 0;
+
+    // Phase 2.2: Mega vertex/index buffers for indirect drawing
+    // All terrain chunks share a single VB + IB, eliminating per-chunk rebinds.
+    // Indirect draw commands are built CPU-side each frame for visible chunks.
+    VkBuffer megaVB_ = VK_NULL_HANDLE;
+    VmaAllocation megaVBAlloc_ = VK_NULL_HANDLE;
+    void* megaVBMapped_ = nullptr;
+    VkBuffer megaIB_ = VK_NULL_HANDLE;
+    VmaAllocation megaIBAlloc_ = VK_NULL_HANDLE;
+    void* megaIBMapped_ = nullptr;
+    uint32_t megaVBUsed_ = 0;  // vertices used
+    uint32_t megaIBUsed_ = 0;  // indices used
+    static constexpr uint32_t MEGA_VB_MAX_VERTS   = 1536 * 1024; // ~1.5M verts × 44B ≈ 64MB
+    static constexpr uint32_t MEGA_IB_MAX_INDICES  = 6 * 1024 * 1024; // 6M indices × 4B = 24MB
+
+    VkBuffer indirectBuffer_ = VK_NULL_HANDLE;
+    VmaAllocation indirectAlloc_ = VK_NULL_HANDLE;
+    void* indirectMapped_ = nullptr;
+    static constexpr uint32_t MAX_INDIRECT_DRAWS = 8192;
 };
 
 } // namespace rendering

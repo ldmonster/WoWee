@@ -128,7 +128,7 @@ bool TerrainRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameL
     vertexAttribs[3] = { 3, 0, VK_FORMAT_R32G32_SFLOAT,
         static_cast<uint32_t>(offsetof(pipeline::TerrainVertex, layerUV)) };
 
-    // --- Build fill pipeline ---
+    // --- Build fill pipeline (base for derivatives — shared state optimization) ---
     VkRenderPass mainPass = vkCtx->getImGuiRenderPass();
 
     pipeline = PipelineBuilder()
@@ -143,6 +143,7 @@ bool TerrainRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameL
         .setLayout(pipelineLayout)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
+        .setFlags(VK_PIPELINE_CREATE_ALLOW_DERIVATIVES_BIT)
         .build(device, vkCtx->getPipelineCache());
 
     if (!pipeline) {
@@ -152,7 +153,7 @@ bool TerrainRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameL
         return false;
     }
 
-    // --- Build wireframe pipeline ---
+    // --- Build wireframe pipeline (derivative of fill) ---
     wireframePipeline = PipelineBuilder()
         .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
@@ -165,6 +166,8 @@ bool TerrainRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameL
         .setLayout(pipelineLayout)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
+        .setFlags(VK_PIPELINE_CREATE_DERIVATIVE_BIT)
+        .setBasePipeline(pipeline)
         .build(device, vkCtx->getPipelineCache());
 
     if (!wireframePipeline) {
@@ -189,6 +192,64 @@ bool TerrainRenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameL
     textureCacheBudgetBytes_ =
         envSizeMBOrDefault("WOWEE_TERRAIN_TEX_CACHE_MB", 4096) * 1024ull * 1024ull;
     LOG_INFO("Terrain texture cache budget: ", textureCacheBudgetBytes_ / (1024 * 1024), " MB");
+
+    // Phase 2.2: Allocate mega vertex/index buffers and indirect draw buffer.
+    // All terrain chunks share these buffers, eliminating per-chunk VB/IB rebinds.
+    {
+        VmaAllocator allocator = vkCtx->getAllocator();
+
+        // Mega vertex buffer (host-visible for direct write during chunk upload)
+        VkBufferCreateInfo vbCI{};
+        vbCI.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        vbCI.size = static_cast<VkDeviceSize>(MEGA_VB_MAX_VERTS) * sizeof(pipeline::TerrainVertex);
+        vbCI.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        VmaAllocationCreateInfo vbAllocCI{};
+        vbAllocCI.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+        vbAllocCI.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        VmaAllocationInfo vbInfo{};
+        if (vmaCreateBuffer(allocator, &vbCI, &vbAllocCI,
+                &megaVB_, &megaVBAlloc_, &vbInfo) == VK_SUCCESS) {
+            megaVBMapped_ = vbInfo.pMappedData;
+        } else {
+            LOG_WARNING("TerrainRenderer: mega VB allocation failed, per-chunk fallback");
+        }
+
+        // Mega index buffer
+        VkBufferCreateInfo ibCI{};
+        ibCI.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        ibCI.size = static_cast<VkDeviceSize>(MEGA_IB_MAX_INDICES) * sizeof(uint32_t);
+        ibCI.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+        VmaAllocationCreateInfo ibAllocCI{};
+        ibAllocCI.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+        ibAllocCI.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        VmaAllocationInfo ibInfo{};
+        if (vmaCreateBuffer(allocator, &ibCI, &ibAllocCI,
+                &megaIB_, &megaIBAlloc_, &ibInfo) == VK_SUCCESS) {
+            megaIBMapped_ = ibInfo.pMappedData;
+        } else {
+            LOG_WARNING("TerrainRenderer: mega IB allocation failed, per-chunk fallback");
+        }
+
+        // Indirect draw command buffer
+        VkBufferCreateInfo indCI{};
+        indCI.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        indCI.size = MAX_INDIRECT_DRAWS * sizeof(VkDrawIndexedIndirectCommand);
+        indCI.usage = VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+        VmaAllocationCreateInfo indAllocCI{};
+        indAllocCI.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+        indAllocCI.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        VmaAllocationInfo indInfo{};
+        if (vmaCreateBuffer(allocator, &indCI, &indAllocCI,
+                &indirectBuffer_, &indirectAlloc_, &indInfo) == VK_SUCCESS) {
+            indirectMapped_ = indInfo.pMappedData;
+        } else {
+            LOG_WARNING("TerrainRenderer: indirect buffer allocation failed");
+        }
+
+        LOG_INFO("Terrain mega buffers: VB=", vbCI.size / (1024*1024), "MB IB=",
+                 ibCI.size / (1024*1024), "MB indirect=",
+                 indCI.size / 1024, "KB");
+    }
 
     LOG_INFO("Terrain renderer initialized (Vulkan)");
     return true;
@@ -232,7 +293,7 @@ void TerrainRenderer::recreatePipelines() {
 
     VkRenderPass mainPass = vkCtx->getImGuiRenderPass();
 
-    // Rebuild fill pipeline
+    // Rebuild fill pipeline (base for derivatives — shared state optimization)
     pipeline = PipelineBuilder()
         .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
@@ -245,13 +306,14 @@ void TerrainRenderer::recreatePipelines() {
         .setLayout(pipelineLayout)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
+        .setFlags(VK_PIPELINE_CREATE_ALLOW_DERIVATIVES_BIT)
         .build(device, vkCtx->getPipelineCache());
 
     if (!pipeline) {
         LOG_ERROR("TerrainRenderer::recreatePipelines: failed to create fill pipeline");
     }
 
-    // Rebuild wireframe pipeline
+    // Rebuild wireframe pipeline (derivative of fill)
     wireframePipeline = PipelineBuilder()
         .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
@@ -264,6 +326,8 @@ void TerrainRenderer::recreatePipelines() {
         .setLayout(pipelineLayout)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
+        .setFlags(VK_PIPELINE_CREATE_DERIVATIVE_BIT)
+        .setBasePipeline(pipeline)
         .build(device, vkCtx->getPipelineCache());
 
     if (!wireframePipeline) {
@@ -310,6 +374,13 @@ void TerrainRenderer::shutdown() {
     if (shadowParamsPool_) { vkDestroyDescriptorPool(device, shadowParamsPool_, nullptr); shadowParamsPool_ = VK_NULL_HANDLE; shadowParamsSet_ = VK_NULL_HANDLE; }
     if (shadowParamsLayout_) { vkDestroyDescriptorSetLayout(device, shadowParamsLayout_, nullptr); shadowParamsLayout_ = VK_NULL_HANDLE; }
     if (shadowParamsUBO_) { vmaDestroyBuffer(allocator, shadowParamsUBO_, shadowParamsAlloc_); shadowParamsUBO_ = VK_NULL_HANDLE; shadowParamsAlloc_ = VK_NULL_HANDLE; }
+
+    // Phase 2.2: Destroy mega buffers and indirect draw buffer
+    if (megaVB_) { vmaDestroyBuffer(allocator, megaVB_, megaVBAlloc_); megaVB_ = VK_NULL_HANDLE; megaVBAlloc_ = VK_NULL_HANDLE; megaVBMapped_ = nullptr; }
+    if (megaIB_) { vmaDestroyBuffer(allocator, megaIB_, megaIBAlloc_); megaIB_ = VK_NULL_HANDLE; megaIBAlloc_ = VK_NULL_HANDLE; megaIBMapped_ = nullptr; }
+    if (indirectBuffer_) { vmaDestroyBuffer(allocator, indirectBuffer_, indirectAlloc_); indirectBuffer_ = VK_NULL_HANDLE; indirectAlloc_ = VK_NULL_HANDLE; indirectMapped_ = nullptr; }
+    megaVBUsed_ = 0;
+    megaIBUsed_ = 0;
 
     vkCtx = nullptr;
 }
@@ -537,6 +608,7 @@ TerrainChunkGPU TerrainRenderer::uploadChunk(const pipeline::ChunkMesh& chunk) {
     gpuChunk.worldY = chunk.worldY;
     gpuChunk.worldZ = chunk.worldZ;
     gpuChunk.indexCount = static_cast<uint32_t>(chunk.indices.size());
+    gpuChunk.vertexCount = static_cast<uint32_t>(chunk.vertices.size());
 
     VkDeviceSize vbSize = chunk.vertices.size() * sizeof(pipeline::TerrainVertex);
     AllocatedBuffer vb = uploadBuffer(*vkCtx, chunk.vertices.data(), vbSize,
@@ -549,6 +621,25 @@ TerrainChunkGPU TerrainRenderer::uploadChunk(const pipeline::ChunkMesh& chunk) {
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     gpuChunk.indexBuffer = ib.buffer;
     gpuChunk.indexAlloc = ib.allocation;
+
+    // Phase 2.2: Also copy into mega buffers for indirect drawing
+    uint32_t vertCount = static_cast<uint32_t>(chunk.vertices.size());
+    uint32_t idxCount = static_cast<uint32_t>(chunk.indices.size());
+    if (megaVBMapped_ && megaIBMapped_ &&
+        megaVBUsed_ + vertCount <= MEGA_VB_MAX_VERTS &&
+        megaIBUsed_ + idxCount <= MEGA_IB_MAX_INDICES) {
+        // Copy vertices
+        auto* vbDst = static_cast<pipeline::TerrainVertex*>(megaVBMapped_) + megaVBUsed_;
+        std::memcpy(vbDst, chunk.vertices.data(), vertCount * sizeof(pipeline::TerrainVertex));
+        // Copy indices
+        auto* ibDst = static_cast<uint32_t*>(megaIBMapped_) + megaIBUsed_;
+        std::memcpy(ibDst, chunk.indices.data(), idxCount * sizeof(uint32_t));
+
+        gpuChunk.megaBaseVertex = static_cast<int32_t>(megaVBUsed_);
+        gpuChunk.megaFirstIndex = megaIBUsed_;
+        megaVBUsed_ += vertCount;
+        megaIBUsed_ += idxCount;
+    }
 
     return gpuChunk;
 }
@@ -789,6 +880,15 @@ void TerrainRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, c
     renderedChunks = 0;
     culledChunks = 0;
 
+    // Phase 2.2: Use mega VB + IB when available.
+    // Bind mega buffers once, then use direct draws with base vertex/index offsets.
+    const bool useMegaBuffers = (megaVB_ && megaIB_);
+    if (useMegaBuffers) {
+        VkDeviceSize megaOffset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &megaVB_, &megaOffset);
+        vkCmdBindIndexBuffer(cmd, megaIB_, 0, VK_INDEX_TYPE_UINT32);
+    }
+
     for (const auto& chunk : chunks) {
         if (!chunk.isValid() || !chunk.materialSet) continue;
 
@@ -808,11 +908,17 @@ void TerrainRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, c
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
                                  1, 1, &chunk.materialSet, 0, nullptr);
 
-        VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(cmd, 0, 1, &chunk.vertexBuffer, &offset);
-        vkCmdBindIndexBuffer(cmd, chunk.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-
-        vkCmdDrawIndexed(cmd, chunk.indexCount, 1, 0, 0, 0);
+        if (useMegaBuffers && chunk.megaBaseVertex >= 0) {
+            // Direct draw from mega buffer — single VB/IB already bound
+            vkCmdDrawIndexed(cmd, chunk.indexCount, 1,
+                             chunk.megaFirstIndex, chunk.megaBaseVertex, 0);
+        } else {
+            // Fallback: per-chunk VB/IB bind + direct draw
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &chunk.vertexBuffer, &offset);
+            vkCmdBindIndexBuffer(cmd, chunk.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, chunk.indexCount, 1, 0, 0, 0);
+        }
         renderedChunks++;
     }
 
@@ -986,6 +1092,14 @@ void TerrainRenderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSp
     vkCmdPushConstants(cmd, shadowPipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT,
                        0, 128, &push);
 
+    // Phase 2.2: Bind mega buffers once for shadow pass (same as opaque)
+    const bool useMegaShadow = (megaVB_ && megaIB_);
+    if (useMegaShadow) {
+        VkDeviceSize megaOffset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &megaVB_, &megaOffset);
+        vkCmdBindIndexBuffer(cmd, megaIB_, 0, VK_INDEX_TYPE_UINT32);
+    }
+
     for (const auto& chunk : chunks) {
         if (!chunk.isValid()) continue;
 
@@ -995,10 +1109,14 @@ void TerrainRenderer::renderShadow(VkCommandBuffer cmd, const glm::mat4& lightSp
         float combinedRadius = shadowRadius + chunk.boundingSphereRadius;
         if (distSq > combinedRadius * combinedRadius) continue;
 
-        VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(cmd, 0, 1, &chunk.vertexBuffer, &offset);
-        vkCmdBindIndexBuffer(cmd, chunk.indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-        vkCmdDrawIndexed(cmd, chunk.indexCount, 1, 0, 0, 0);
+        if (useMegaShadow && chunk.megaBaseVertex >= 0) {
+            vkCmdDrawIndexed(cmd, chunk.indexCount, 1, chunk.megaFirstIndex, chunk.megaBaseVertex, 0);
+        } else {
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &chunk.vertexBuffer, &offset);
+            vkCmdBindIndexBuffer(cmd, chunk.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, chunk.indexCount, 1, 0, 0, 0);
+        }
     }
 }
 

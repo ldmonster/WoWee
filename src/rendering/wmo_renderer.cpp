@@ -169,7 +169,7 @@ bool WMORenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
     vertexAttribs[4] = { 4, 0, VK_FORMAT_R32G32B32A32_SFLOAT,
         static_cast<uint32_t>(offsetof(WMOVertexData, tangent)) };
 
-    // --- Build opaque pipeline ---
+    // --- Build opaque pipeline (base for derivatives — shared state optimization) ---
     VkRenderPass mainPass = vkCtx_->getImGuiRenderPass();
 
     opaquePipeline_ = PipelineBuilder()
@@ -184,6 +184,7 @@ bool WMORenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
+        .setFlags(VK_PIPELINE_CREATE_ALLOW_DERIVATIVES_BIT)
         .build(device, vkCtx_->getPipelineCache());
 
     if (!opaquePipeline_) {
@@ -193,7 +194,7 @@ bool WMORenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
         return false;
     }
 
-    // --- Build transparent pipeline ---
+    // --- Build transparent pipeline (derivative of opaque) ---
     transparentPipeline_ = PipelineBuilder()
         .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
@@ -206,13 +207,15 @@ bool WMORenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
+        .setFlags(VK_PIPELINE_CREATE_DERIVATIVE_BIT)
+        .setBasePipeline(opaquePipeline_)
         .build(device, vkCtx_->getPipelineCache());
 
     if (!transparentPipeline_) {
         core::Logger::getInstance().warning("WMORenderer: transparent pipeline not available");
     }
 
-    // --- Build glass pipeline (alpha blend WITH depth write for windows) ---
+    // --- Build glass pipeline (derivative — alpha blend WITH depth write for windows) ---
     glassPipeline_ = PipelineBuilder()
         .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
@@ -225,9 +228,11 @@ bool WMORenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
+        .setFlags(VK_PIPELINE_CREATE_DERIVATIVE_BIT)
+        .setBasePipeline(opaquePipeline_)
         .build(device, vkCtx_->getPipelineCache());
 
-    // --- Build wireframe pipeline ---
+    // --- Build wireframe pipeline (derivative of opaque) ---
     wireframePipeline_ = PipelineBuilder()
         .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
@@ -240,6 +245,8 @@ bool WMORenderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayou
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
+        .setFlags(VK_PIPELINE_CREATE_DERIVATIVE_BIT)
+        .setBasePipeline(opaquePipeline_)
         .build(device, vkCtx_->getPipelineCache());
 
     if (!wireframePipeline_) {
@@ -1434,7 +1441,7 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
                 if (doDistanceCull) {
                     glm::vec3 closestPoint = glm::clamp(camPos, gMin, gMax);
                     float distSq = glm::dot(closestPoint - camPos, closestPoint - camPos);
-                    if (distSq > 250000.0f) {
+                    if (distSq > 1440000.0f) { // 1200 units — matches terrain view distance
                         result.distanceCulled++;
                         continue;
                     }
@@ -3733,6 +3740,7 @@ void WMORenderer::recreatePipelines() {
 
     VkRenderPass mainPass = vkCtx_->getImGuiRenderPass();
 
+    // Pipeline derivatives — opaque is the base, others derive for shared state optimization
     opaquePipeline_ = PipelineBuilder()
         .setShaders(vertShader.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                     fragShader.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
@@ -3745,6 +3753,7 @@ void WMORenderer::recreatePipelines() {
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
+        .setFlags(VK_PIPELINE_CREATE_ALLOW_DERIVATIVES_BIT)
         .build(device, vkCtx_->getPipelineCache());
 
     transparentPipeline_ = PipelineBuilder()
@@ -3759,6 +3768,8 @@ void WMORenderer::recreatePipelines() {
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
+        .setFlags(VK_PIPELINE_CREATE_DERIVATIVE_BIT)
+        .setBasePipeline(opaquePipeline_)
         .build(device, vkCtx_->getPipelineCache());
 
     glassPipeline_ = PipelineBuilder()
@@ -3773,6 +3784,8 @@ void WMORenderer::recreatePipelines() {
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
+        .setFlags(VK_PIPELINE_CREATE_DERIVATIVE_BIT)
+        .setBasePipeline(opaquePipeline_)
         .build(device, vkCtx_->getPipelineCache());
 
     wireframePipeline_ = PipelineBuilder()
@@ -3787,6 +3800,8 @@ void WMORenderer::recreatePipelines() {
         .setLayout(pipelineLayout_)
         .setRenderPass(mainPass)
         .setDynamicStates({ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR })
+        .setFlags(VK_PIPELINE_CREATE_DERIVATIVE_BIT)
+        .setBasePipeline(opaquePipeline_)
         .build(device, vkCtx_->getPipelineCache());
 
     vertShader.destroy();

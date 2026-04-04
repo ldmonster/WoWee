@@ -334,7 +334,7 @@ bool VkContext::selectPhysicalDevice() {
 
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(physicalDevice, &props);
-    uint32_t apiVersion = props.apiVersion;
+    (void)props.apiVersion; // Available if needed for version checks
     gpuVendorId_ = props.vendorID;
     std::strncpy(gpuName_, props.deviceName, sizeof(gpuName_) - 1);
     gpuName_[sizeof(gpuName_) - 1] = '\0';

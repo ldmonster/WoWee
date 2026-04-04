@@ -111,13 +111,13 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
         _NSGetExecutablePath(nullptr, &bufSize);
         std::string exePath(bufSize, '\0');
         _NSGetExecutablePath(exePath.data(), &bufSize);
-        chdir(dirname(exePath.data()));
+        if (chdir(dirname(exePath.data())) != 0) {}
     }
 #elif defined(__linux__)
     {
         char buf[4096];
         ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-        if (len > 0) { buf[len] = '\0'; chdir(dirname(buf)); }
+        if (len > 0) { buf[len] = '\0'; if (chdir(dirname(buf)) != 0) {} }
     }
 #endif
 

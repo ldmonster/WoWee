@@ -75,6 +75,10 @@ public:
     // Dynamic state
     PipelineBuilder& setDynamicStates(const std::vector<VkDynamicState>& states);
 
+    // Pipeline derivatives — hint driver to share compiled state between similar pipelines
+    PipelineBuilder& setFlags(VkPipelineCreateFlags flags);
+    PipelineBuilder& setBasePipeline(VkPipeline basePipeline);
+
     // Build the pipeline (pass a VkPipelineCache for faster creation)
     VkPipeline build(VkDevice device, VkPipelineCache cache = VK_NULL_HANDLE) const;
 
@@ -106,6 +110,8 @@ private:
     VkRenderPass renderPass_ = VK_NULL_HANDLE;
     uint32_t subpass_ = 0;
     std::vector<VkDynamicState> dynamicStates_;
+    VkPipelineCreateFlags flags_ = 0;
+    VkPipeline basePipelineHandle_ = VK_NULL_HANDLE;
 };
 
 // Helper to create a pipeline layout from descriptor set layouts and push constant ranges

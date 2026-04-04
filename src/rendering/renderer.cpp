@@ -61,6 +61,7 @@
 #include "rendering/spell_visual_system.hpp"
 #include "rendering/post_process_pipeline.hpp"
 #include "rendering/animation_controller.hpp"
+#include "rendering/render_graph.hpp"
 #include <imgui.h>
 #include <imgui_impl_vulkan.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -458,7 +459,9 @@ void Renderer::updatePerFrameUBO() {
     }
 
     currentFrameData.lightSpaceMatrix = lightSpaceMatrix;
-    currentFrameData.shadowParams = glm::vec4(shadowsEnabled ? 1.0f : 0.0f, 0.8f, 0.0f, 0.0f);
+    // Scale shadow bias proportionally to ortho extent to avoid acne at close range / gaps at far range
+    float shadowBias = 0.8f * (shadowDistance_ / 300.0f);
+    currentFrameData.shadowParams = glm::vec4(shadowsEnabled ? 1.0f : 0.0f, shadowBias, 0.0f, 0.0f);
 
     // Player water ripple data: pack player XY into shadowParams.zw, ripple strength into fogParams.w
     if (cameraController) {
@@ -562,6 +565,15 @@ bool Renderer::initialize(core::Window* win) {
     // Create PostProcessPipeline (§4.3 — owns FSR/FXAA/FSR2/FSR3/brightness)
     postProcessPipeline_ = std::make_unique<PostProcessPipeline>();
     postProcessPipeline_->initialize(vkCtx);
+
+    // Phase 2.5: Create render graph and register virtual resources
+    renderGraph_ = std::make_unique<RenderGraph>();
+    renderGraph_->registerResource("shadow_depth");
+    renderGraph_->registerResource("reflection_texture");
+    renderGraph_->registerResource("cull_visibility");
+    renderGraph_->registerResource("scene_color");
+    renderGraph_->registerResource("scene_depth");
+    renderGraph_->registerResource("final_image");
 
     LOG_INFO("Renderer initialized");
     return true;
@@ -674,6 +686,10 @@ void Renderer::shutdown() {
         postProcessPipeline_->shutdown();
         postProcessPipeline_.reset();
     }
+
+    // Phase 2.5: Destroy render graph
+    renderGraph_.reset();
+
     destroyPerFrameResources();
 
     zoneManager.reset();
@@ -839,36 +855,19 @@ void Renderer::beginFrame() {
     // FSR2 jitter pattern (§4.3 — delegates to PostProcessPipeline)
     if (postProcessPipeline_ && camera) postProcessPipeline_->applyJitter(camera.get());
 
+    // Compute fresh shadow matrix BEFORE UBO update so shaders get current-frame data.
+    lightSpaceMatrix = computeLightSpaceMatrix();
+
     // Update per-frame UBO with current camera/lighting state
     updatePerFrameUBO();
 
-    // --- Off-screen pre-passes (before main render pass) ---
-    // Minimap composite (renders 3x3 tile grid into 768x768 render target)
-    if (minimap && minimap->isEnabled() && camera) {
-        glm::vec3 minimapCenter = camera->getPosition();
-        if (cameraController && cameraController->isThirdPerson())
-            minimapCenter = characterPosition;
-        minimap->compositePass(currentCmd, minimapCenter);
+    // --- Off-screen pre-passes (Phase 2.5: render graph) ---
+    // Build frame graph: registers pre-passes as graph nodes with dependencies.
+    // compile() topologically sorts; execute() runs them with auto barriers.
+    buildFrameGraph(nullptr);
+    if (renderGraph_) {
+        renderGraph_->execute(currentCmd);
     }
-    // World map composite (renders zone tiles into 1024x768 render target)
-    if (worldMap) {
-        worldMap->compositePass(currentCmd);
-    }
-
-    // Character preview composite passes
-    for (auto* preview : activePreviews_) {
-        if (preview && preview->isModelLoaded()) {
-            preview->compositePass(currentCmd, vkCtx->getCurrentFrame());
-        }
-    }
-
-    // Shadow pre-pass (before main render pass)
-    if (shadowsEnabled && shadowDepthImage[0] != VK_NULL_HANDLE) {
-        renderShadowPass();
-    }
-
-    // Water reflection pre-pass (renders scene from mirrored camera into 512x512 texture)
-    renderReflectionPass();
 
     // --- Begin render pass ---
     // Select framebuffer: PP off-screen target or swapchain (§4.3 — PostProcessPipeline)
@@ -3063,17 +3062,10 @@ void Renderer::renderShadowPass() {
 
     // Shadows render every frame — throttling causes visible flicker on player/NPCs
 
-    // Compute and store light space matrix; write to per-frame UBO
-    lightSpaceMatrix = computeLightSpaceMatrix();
+    // lightSpaceMatrix was already computed at frame start (before updatePerFrameUBO).
     // Zero matrix means character position isn't set yet — skip shadow pass entirely.
     if (lightSpaceMatrix == glm::mat4(0.0f)) return;
     uint32_t frame = vkCtx->getCurrentFrame();
-    auto* ubo = reinterpret_cast<GPUPerFrameData*>(perFrameUBOMapped[frame]);
-    if (ubo) {
-        ubo->lightSpaceMatrix = lightSpaceMatrix;
-        ubo->shadowParams.x = shadowsEnabled ? 1.0f : 0.0f;
-        ubo->shadowParams.y = 0.8f;
-    }
 
     // Barrier 1: transition this frame's shadow map into writable depth layout.
     VkImageMemoryBarrier b1{};
@@ -3145,6 +3137,70 @@ void Renderer::renderShadowPass() {
         VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         0, 0, nullptr, 0, nullptr, 1, &b2);
     shadowDepthLayout_[frame] = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+}
+
+// Phase 2.5: Build the per-frame render graph for off-screen pre-passes.
+// Declares passes as graph nodes with input/output dependencies.
+// compile() performs topological sort; execute() runs them with auto barriers.
+void Renderer::buildFrameGraph(game::GameHandler* gameHandler) {
+    (void)gameHandler;
+    if (!renderGraph_) return;
+
+    renderGraph_->reset();
+
+    auto shadowDepth = renderGraph_->findResource("shadow_depth");
+    auto reflTex = renderGraph_->findResource("reflection_texture");
+    auto cullVis = renderGraph_->findResource("cull_visibility");
+
+    // Minimap composites (no dependencies — standalone off-screen render target)
+    renderGraph_->addPass("minimap_composite", {}, {},
+        [this](VkCommandBuffer cmd) {
+            if (minimap && minimap->isEnabled() && camera) {
+                glm::vec3 minimapCenter = camera->getPosition();
+                if (cameraController && cameraController->isThirdPerson())
+                    minimapCenter = characterPosition;
+                minimap->compositePass(cmd, minimapCenter);
+            }
+        });
+
+    // World map composite (standalone)
+    renderGraph_->addPass("worldmap_composite", {}, {},
+        [this](VkCommandBuffer cmd) {
+            if (worldMap) worldMap->compositePass(cmd);
+        });
+
+    // Character preview composites (standalone)
+    renderGraph_->addPass("preview_composite", {}, {},
+        [this](VkCommandBuffer cmd) {
+            uint32_t frame = vkCtx->getCurrentFrame();
+            for (auto* preview : activePreviews_) {
+                if (preview && preview->isModelLoaded())
+                    preview->compositePass(cmd, frame);
+            }
+        });
+
+    // Shadow pre-pass → outputs shadow_depth
+    renderGraph_->addPass("shadow_pass", {}, {shadowDepth},
+        [this](VkCommandBuffer) {
+            if (shadowsEnabled && shadowDepthImage[0] != VK_NULL_HANDLE)
+                renderShadowPass();
+        });
+    renderGraph_->setPassEnabled("shadow_pass", shadowsEnabled && shadowDepthImage[0] != VK_NULL_HANDLE);
+
+    // Reflection pre-pass → outputs reflection_texture (reads scene, so after shadow)
+    renderGraph_->addPass("reflection_pass", {shadowDepth}, {reflTex},
+        [this](VkCommandBuffer) {
+            renderReflectionPass();
+        });
+
+    // GPU frustum cull compute → outputs cull_visibility
+    renderGraph_->addPass("compute_cull", {}, {cullVis},
+        [this](VkCommandBuffer cmd) {
+            if (m2Renderer && camera)
+                m2Renderer->dispatchCullCompute(cmd, vkCtx->getCurrentFrame(), *camera);
+        });
+
+    renderGraph_->compile();
 }
 
 } // namespace rendering

@@ -56,6 +56,7 @@ class AnimationController;
 class LevelUpEffect;
 class ChargeEffect;
 class SwimEffects;
+class RenderGraph;
 
 class Renderer {
 public:
@@ -432,6 +433,10 @@ private:
     bool terrainLoaded = false;
 
     bool ghostMode_ = false;  // set each frame from gameHandler->isPlayerGhost()
+
+    // Phase 2.5: Render Graph — declarative pass ordering with automatic barriers
+    std::unique_ptr<RenderGraph> renderGraph_;
+    void buildFrameGraph(game::GameHandler* gameHandler);
 
     // CPU timing stats (last frame/update).
     double lastUpdateMs = 0.0;

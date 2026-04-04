@@ -219,11 +219,14 @@ struct M2Instance {
     uint8_t frameSkipCounter = 0;
     bool bonesDirty[2] = {false, false};  // Per-frame-index: set when bones recomputed, cleared after upload
 
-    // Per-instance bone SSBO (double-buffered)
+    // Per-instance bone SSBO (double-buffered) — legacy; see mega bone SSBO in M2Renderer
     ::VkBuffer boneBuffer[2] = {};
     VmaAllocation boneAlloc[2] = {};
     void* boneMapped[2] = {};
     VkDescriptorSet boneSet[2] = {};
+
+    // Mega bone SSBO offset — base bone index for this instance (set per-frame in prepareRender)
+    uint32_t megaBoneOffset = 0;
 
     void updateModelMatrix();
 };
@@ -292,6 +295,8 @@ public:
      */
     /** Pre-allocate GPU resources (bone SSBOs, descriptors) on main thread before parallel render. */
     void prepareRender(uint32_t frameIndex, const Camera& camera);
+    /** Phase 2.3: Dispatch GPU frustum culling compute shader on primary cmd before render pass. */
+    void dispatchCullCompute(VkCommandBuffer cmd, uint32_t frameIndex, const Camera& camera);
     void render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera);
 
     /**
@@ -424,6 +429,65 @@ private:
     ::VkBuffer dummyBoneBuffer_ = VK_NULL_HANDLE;
     VmaAllocation dummyBoneAlloc_ = VK_NULL_HANDLE;
     VkDescriptorSet dummyBoneSet_ = VK_NULL_HANDLE;
+
+    // Mega bone SSBO — consolidates all per-instance bone matrices into a single buffer per frame.
+    // Replaces per-instance bone SSBOs for fewer descriptor binds and enables GPU instancing.
+    static constexpr uint32_t MEGA_BONE_MAX_INSTANCES = 2048;
+    static constexpr uint32_t MAX_BONES_PER_INSTANCE = 128;
+    ::VkBuffer megaBoneBuffer_[2] = {};
+    VmaAllocation megaBoneAlloc_[2] = {};
+    void* megaBoneMapped_[2] = {};
+    VkDescriptorSet megaBoneSet_[2] = {};
+
+    // Phase 2.1: GPU instance data SSBO — per-instance transforms, fade, bones for instanced draws.
+    // Shader reads instanceData[push.instanceDataOffset + gl_InstanceIndex].
+    struct M2InstanceGPU {
+        glm::mat4 model;           // 64 bytes @ offset 0
+        glm::vec2 uvOffset;        //  8 bytes @ offset 64
+        float fadeAlpha;           //  4 bytes @ offset 72
+        int32_t useBones;          //  4 bytes @ offset 76
+        int32_t boneBase;          //  4 bytes @ offset 80
+        int32_t _pad[3] = {};      // 12 bytes @ offset 84 — align to 96 (std430)
+    };
+    static constexpr uint32_t MAX_INSTANCE_DATA = 16384;
+    VkDescriptorSetLayout instanceSetLayout_ = VK_NULL_HANDLE;
+    VkDescriptorPool instanceDescPool_ = VK_NULL_HANDLE;
+    ::VkBuffer instanceBuffer_[2] = {};
+    VmaAllocation instanceAlloc_[2] = {};
+    void* instanceMapped_[2] = {};
+    VkDescriptorSet instanceSet_[2] = {};
+    uint32_t instanceDataCount_ = 0; // reset each frame in render()
+
+    // Phase 2.3: GPU Frustum Culling via Compute Shader
+    // Compute shader tests each M2 instance against frustum planes + distance, writes visibility[].
+    // CPU reads back visibility to build sortedVisible_ without per-instance frustum/distance tests.
+    struct CullInstanceGPU {        // matches CullInstance in m2_cull.comp.glsl (32 bytes, std430)
+        glm::vec4 sphere;           // xyz = world position, w = padded radius
+        float effectiveMaxDistSq;   // adaptive distance cull threshold
+        uint32_t flags;             // bit 0 = valid, bit 1 = smoke, bit 2 = invisibleTrap
+        float _pad[2] = {};
+    };
+    struct CullUniformsGPU {        // matches CullUniforms in m2_cull.comp.glsl (128 bytes, std140)
+        glm::vec4 frustumPlanes[6]; // xyz = normal, w = distance
+        glm::vec4 cameraPos;        // xyz = camera position, w = maxPossibleDistSq
+        uint32_t instanceCount;
+        uint32_t _pad[3] = {};
+    };
+    static constexpr uint32_t MAX_CULL_INSTANCES = 16384;
+    VkPipeline cullPipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout cullPipelineLayout_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout cullSetLayout_ = VK_NULL_HANDLE;
+    VkDescriptorPool cullDescPool_ = VK_NULL_HANDLE;
+    VkDescriptorSet cullSet_[2] = {};               // double-buffered
+    ::VkBuffer cullUniformBuffer_[2] = {};           // frustum planes + camera (UBO)
+    VmaAllocation cullUniformAlloc_[2] = {};
+    void* cullUniformMapped_[2] = {};
+    ::VkBuffer cullInputBuffer_[2] = {};             // per-instance bounding sphere + flags (SSBO)
+    VmaAllocation cullInputAlloc_[2] = {};
+    void* cullInputMapped_[2] = {};
+    ::VkBuffer cullOutputBuffer_[2] = {};            // uint visibility[] (SSBO, host-readable)
+    VmaAllocation cullOutputAlloc_[2] = {};
+    void* cullOutputMapped_[2] = {};
 
     // Dynamic ribbon vertex buffer (CPU-written triangle strip)
     static constexpr size_t MAX_RIBBON_VERTS = 2048;  // 9 floats each
