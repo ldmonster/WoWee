@@ -448,11 +448,12 @@ static std::vector<std::string> discoverArchives(const std::string& mpqDir,
         if (actualLocaleDir.empty()) {
             actualLocaleDir = locale;
         }
-        std::string localeDir = mpqDir + "/" + actualLocaleDir;
-        std::cout << "Locale directory: " << localeDir << "\n";
+        fs::path localeDirPath = fs::path(mpqDir) / actualLocaleDir;
+        std::string localeDir = localeDirPath.string();
         auto localeMap = buildCaseMap(localeDir);
         for (auto& [name, realName] : localeMap) {
-            caseMap[lowerLocale + "/" + name] = actualLocaleDir + "/" + realName;
+            fs::path fullPath = fs::path(actualLocaleDir) / realName;
+            caseMap[lowerLocale + "/" + name] = fullPath.string();
         }
     }
 
@@ -520,7 +521,8 @@ static std::vector<std::string> discoverArchives(const std::string& mpqDir,
     auto addIfPresent = [&](const std::string& expected) {
         auto it = caseMap.find(toLowerStr(expected));
         if (it != caseMap.end()) {
-            result.push_back(mpqDir + "/" + it->second);
+            fs::path fullPath = fs::path(mpqDir) / it->second;
+            result.push_back(fullPath.string());
         }
     };
 
@@ -733,7 +735,7 @@ bool Extractor::run(const Options& opts) {
 
             // Map to new filesystem path
             std::string mappedPath = PathMapper::mapPath(wowPath);
-            std::string fullOutputPath = effectiveOutputDir + "/" + mappedPath;
+            fs::path fullOutputPath = fs::path(effectiveOutputDir) / mappedPath;
 
             // Read file data from MPQ under lock
             std::vector<uint8_t> data;
@@ -862,7 +864,7 @@ bool Extractor::run(const Options& opts) {
     }
 
     // Merge with existing manifest so partial extractions don't nuke prior entries
-    std::string manifestPath = effectiveOutputDir + "/manifest.json";
+    fs::path manifestPath = fs::path(effectiveOutputDir) / "manifest.json";
     if (fs::exists(manifestPath)) {
         auto existing = loadManifestEntries(manifestPath);
         if (!existing.empty()) {
@@ -899,7 +901,7 @@ bool Extractor::run(const Options& opts) {
         std::cout << "Verifying extracted files...\n";
         uint64_t verified = 0, verifyFailed = 0;
         for (const auto& entry : manifestEntries) {
-            std::string fsPath = effectiveOutputDir + "/" + entry.filesystemPath;
+            fs::path fsPath = fs::path(effectiveOutputDir) / entry.filesystemPath;
             std::ifstream f(fsPath, std::ios::binary | std::ios::ate);
             if (!f.is_open()) {
                 std::cerr << "  MISSING: " << fsPath << "\n";
