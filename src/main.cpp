@@ -27,10 +27,6 @@ static void releaseMouseGrab() {
 static void releaseMouseGrab() {}
 #endif
 
-// Render-phase marker set by GameScreen::render() — lets crash handler
-// identify which render call was active when backtrace is incomplete.
-extern volatile const char* g_crashRenderPhase;
-
 #ifdef __linux__
 static void crashHandlerSigaction(int sig, siginfo_t* info, void* /*ucontext*/) {
     releaseMouseGrab();
@@ -39,15 +35,14 @@ static void crashHandlerSigaction(int sig, siginfo_t* info, void* /*ucontext*/) 
     const char* sigName = (sig == SIGSEGV) ? "SIGSEGV" :
                           (sig == SIGABRT) ? "SIGABRT" :
                           (sig == SIGFPE)  ? "SIGFPE"  : "UNKNOWN";
-    const char* phase = (const char*)g_crashRenderPhase;
     void* faultAddr = info ? info->si_addr : nullptr;
-    fprintf(stderr, "\n=== CRASH: signal %s (%d) renderPhase=%s faultAddr=%p ===\n",
-            sigName, sig, phase ? phase : "?", faultAddr);
+    fprintf(stderr, "\n=== CRASH: signal %s (%d) faultAddr=%p ===\n",
+            sigName, sig, faultAddr);
     backtrace_symbols_fd(frames, n, STDERR_FILENO);
     FILE* f = fopen("/tmp/wowee_debug.log", "a");
     if (f) {
-        fprintf(f, "\n=== CRASH: signal %s (%d) renderPhase=%s faultAddr=%p ===\n",
-                sigName, sig, phase ? phase : "?", faultAddr);
+        fprintf(f, "\n=== CRASH: signal %s (%d) faultAddr=%p ===\n",
+                sigName, sig, faultAddr);
         fflush(f);
         backtrace_symbols_fd(frames, n, fileno(f));
         fclose(f);

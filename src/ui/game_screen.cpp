@@ -48,10 +48,6 @@
 #include <chrono>
 #include <ctime>
 
-// Signal-safe render-phase marker — crash handler reads this to identify which
-// render call was active when a SIGSEGV occurs (backtrace is unreliable with
-// -fomit-frame-pointer).
-volatile const char* g_crashRenderPhase = "idle";
 #include <unordered_set>
 
 namespace {
@@ -303,7 +299,6 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     // Process targeting input before UI windows
     processTargetInput(gameHandler);
 
-    g_crashRenderPhase = "playerFrame";
     renderPlayerFrame(gameHandler);
 
     // Pet frame (below player frame, only when player has an active pet)
@@ -358,7 +353,6 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     }
 
     // ---- New UI elements ----
-    g_crashRenderPhase = "actionBar";
     actionBarPanel_.renderActionBar(gameHandler, settingsPanel_, chatPanel_,
         inventoryScreen, spellbookScreen, questLogScreen,
         [this](uint32_t id, pipeline::AssetManager* am) { return getSpellIcon(id, am); });
@@ -368,43 +362,31 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     actionBarPanel_.renderXpBar(gameHandler, settingsPanel_);
     actionBarPanel_.renderRepBar(gameHandler, settingsPanel_);
     auto spellIconFn = [this](uint32_t id, pipeline::AssetManager* am) { return getSpellIcon(id, am); };
-    g_crashRenderPhase = "castBar";
     combatUI_.renderCastBar(gameHandler, spellIconFn);
     renderMirrorTimers(gameHandler);
     combatUI_.renderCooldownTracker(gameHandler, settingsPanel_, spellIconFn);
     renderQuestObjectiveTracker(gameHandler);
-    g_crashRenderPhase = "nameplates";
     renderNameplates(gameHandler);  // player names always shown; NPC plates gated by showNameplates_
-    g_crashRenderPhase = "bgScore";
     combatUI_.renderBattlegroundScore(gameHandler);
     combatUI_.renderRaidWarningOverlay(gameHandler);
     combatUI_.renderCombatText(gameHandler);
     combatUI_.renderDPSMeter(gameHandler, settingsPanel_);
-    g_crashRenderPhase = "durability";
     renderDurabilityWarning(gameHandler);
     renderUIErrors(gameHandler, ImGui::GetIO().DeltaTime);
     toastManager_.renderEarlyToasts(ImGui::GetIO().DeltaTime, gameHandler);
-    g_crashRenderPhase = "partyFrames";
     if (socialPanel_.showRaidFrames_) {
         socialPanel_.renderPartyFrames(gameHandler, chatPanel_, spellIconFn);
     }
-    g_crashRenderPhase = "bossFrames";
     socialPanel_.renderBossFrames(gameHandler, spellbookScreen, spellIconFn);
-    g_crashRenderPhase = "dialogs";
     dialogManager_.renderDialogs(gameHandler, inventoryScreen, chatPanel_);
-    g_crashRenderPhase = "guildRoster";
     socialPanel_.renderGuildRoster(gameHandler, chatPanel_);
     socialPanel_.renderSocialFrame(gameHandler, chatPanel_);
-    g_crashRenderPhase = "buffBar";
     combatUI_.renderBuffBar(gameHandler, spellbookScreen, spellIconFn);
-    g_crashRenderPhase = "lootWindow";
     windowManager_.renderLootWindow(gameHandler, inventoryScreen, chatPanel_);
     windowManager_.renderGossipWindow(gameHandler, chatPanel_);
-    g_crashRenderPhase = "questWindows";
     windowManager_.renderQuestDetailsWindow(gameHandler, chatPanel_, inventoryScreen);
     windowManager_.renderQuestRequestItemsWindow(gameHandler, chatPanel_, inventoryScreen);
     windowManager_.renderQuestOfferRewardWindow(gameHandler, chatPanel_, inventoryScreen);
-    g_crashRenderPhase = "vendorTrainer";
     windowManager_.renderVendorWindow(gameHandler, inventoryScreen, chatPanel_);
     windowManager_.renderTrainerWindow(gameHandler,
         [this](uint32_t id, pipeline::AssetManager* am) { return getSpellIcon(id, am); });
@@ -416,48 +398,36 @@ void GameScreen::render(game::GameHandler& gameHandler) {
     windowManager_.renderBankWindow(gameHandler, inventoryScreen, chatPanel_);
     windowManager_.renderGuildBankWindow(gameHandler, inventoryScreen, chatPanel_);
     windowManager_.renderAuctionHouseWindow(gameHandler, inventoryScreen, chatPanel_);
-    g_crashRenderPhase = "dungeonFinder";
     socialPanel_.renderDungeonFinderWindow(gameHandler, chatPanel_);
     windowManager_.renderInstanceLockouts(gameHandler);
     socialPanel_.renderWhoWindow(gameHandler, chatPanel_);
-    g_crashRenderPhase = "combatLog";
     combatUI_.renderCombatLog(gameHandler, spellbookScreen);
-    g_crashRenderPhase = "achievementSkills";
     windowManager_.renderAchievementWindow(gameHandler);
     windowManager_.renderSkillsWindow(gameHandler);
     windowManager_.renderTitlesWindow(gameHandler);
     windowManager_.renderEquipSetWindow(gameHandler);
     windowManager_.renderGmTicketWindow(gameHandler);
-    g_crashRenderPhase = "inspectBook";
     socialPanel_.renderInspectWindow(gameHandler, inventoryScreen);
     windowManager_.renderBookWindow(gameHandler);
-    g_crashRenderPhase = "threatBg";
     combatUI_.renderThreatWindow(gameHandler);
     combatUI_.renderBgScoreboard(gameHandler);
-    g_crashRenderPhase = "minimap";
     if (showMinimap_) {
         renderMinimapMarkers(gameHandler);
     }
-    g_crashRenderPhase = "deathLogout";
     windowManager_.renderLogoutCountdown(gameHandler);
     windowManager_.renderDeathScreen(gameHandler);
     windowManager_.renderReclaimCorpseButton(gameHandler);
     dialogManager_.renderLateDialogs(gameHandler);
     chatPanel_.renderBubbles(gameHandler);
     windowManager_.renderEscapeMenu(settingsPanel_);
-    g_crashRenderPhase = "settings";
     settingsPanel_.renderSettingsWindow(inventoryScreen, chatPanel_, [this]() { saveSettings(); });
     toastManager_.renderLateToasts(gameHandler);
-    g_crashRenderPhase = "weather";
     renderWeatherOverlay(gameHandler);
 
-    g_crashRenderPhase = "worldMap";
     renderWorldMap(gameHandler);
 
-    g_crashRenderPhase = "questLog";
     questLogScreen.render(gameHandler, inventoryScreen);
 
-    g_crashRenderPhase = "spellbook";
     spellbookScreen.render(gameHandler, services_.assetManager);
 
     // Insert spell link into chat if player shift-clicked a spellbook entry
@@ -510,7 +480,6 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         windowManager_.vendorBagsOpened_ = false;
     }
 
-    g_crashRenderPhase = "inventory";
     inventoryScreen.setGameHandler(&gameHandler);
     inventoryScreen.render(gameHandler.getInventory(), gameHandler.getMoneyCopper());
 

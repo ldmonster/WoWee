@@ -1,5 +1,3 @@
-extern volatile const char* g_crashRenderPhase;
-
 #include "rendering/renderer.hpp"
 #include "rendering/camera.hpp"
 #include "rendering/camera_controller.hpp"
@@ -734,13 +732,10 @@ void Renderer::applyMsaaChange() {
     VkSampleCountFlagBits current = vkCtx->getMsaaSamples();
     if (samples == current) return;
 
-    LOG_WARNING("MSAA change: ", static_cast<int>(current), "x → ", static_cast<int>(samples), "x");
-
     // Single GPU wait — all subsequent operations are CPU-side object creation
     vkDeviceWaitIdle(vkCtx->getDevice());
 
     // Set new MSAA and recreate swapchain (render pass, depth, MSAA image, framebuffers)
-    LOG_WARNING("MSAA: recreating swapchain");
     vkCtx->setMsaaSamples(samples);
     if (!vkCtx->recreateSwapchain(window->getWidth(), window->getHeight())) {
         LOG_ERROR("MSAA change failed — reverting to 1x");
@@ -749,7 +744,6 @@ void Renderer::applyMsaaChange() {
     }
 
     // Recreate all sub-renderer pipelines (they embed sample count from render pass)
-    LOG_WARNING("MSAA: recreating terrain/water/wmo/m2/char pipelines");
     if (terrainRenderer) terrainRenderer->recreatePipelines();
     if (waterRenderer) {
         waterRenderer->recreatePipelines();
@@ -758,7 +752,6 @@ void Renderer::applyMsaaChange() {
     if (wmoRenderer) wmoRenderer->recreatePipelines();
     if (m2Renderer) m2Renderer->recreatePipelines();
     if (characterRenderer) characterRenderer->recreatePipelines();
-    LOG_WARNING("MSAA: recreating quest/weather/sky pipelines");
     if (questMarkerRenderer) questMarkerRenderer->recreatePipelines();
     if (weather) weather->recreatePipelines();
     if (lightning) lightning->recreatePipelines();
@@ -775,7 +768,6 @@ void Renderer::applyMsaaChange() {
         if (auto* lf = skySystem->getLensFlare()) lf->recreatePipelines();
     }
 
-    LOG_WARNING("MSAA: recreating minimap/postprocess/imgui");
     if (minimap) minimap->recreatePipelines();
 
     // Selection circle + overlay + FSR use lazy init, just destroy them
@@ -804,7 +796,6 @@ void Renderer::applyMsaaChange() {
     };
     ImGui_ImplVulkan_Init(&initInfo);
 
-    LOG_WARNING("MSAA change complete");
 }
 
 void Renderer::beginFrame() {
@@ -812,26 +803,15 @@ void Renderer::beginFrame() {
     if (!vkCtx) return;
     if (vkCtx->isDeviceLost()) return;
 
-    // Diagnostic: log pointer state to detect corrupt this/members
-    LOG_WARNING("beginFrame: this=", (void*)this,
-                " vkCtx=", (void*)vkCtx,
-                " msaaP=", msaaChangePending_,
-                " ppPipe=", (void*)postProcessPipeline_.get(),
-                " cam=", (void*)camera.get(),
-                " swDirty=", vkCtx->isSwapchainDirty());
-
     // Apply deferred MSAA change between frames (before any rendering state is used)
-    g_crashRenderPhase = "bf:msaa";
     if (msaaChangePending_) {
         applyMsaaChange();
     }
 
     // Post-process resource management (§4.3 — delegates to PostProcessPipeline)
-    g_crashRenderPhase = "bf:pp";
     if (postProcessPipeline_) postProcessPipeline_->manageResources();
 
     // Handle swapchain recreation if needed
-    g_crashRenderPhase = "bf:swap";
     if (vkCtx->isSwapchainDirty()) {
         (void)vkCtx->recreateSwapchain(window->getWidth(), window->getHeight());
         // Rebuild water resources that reference swapchain extent/views
@@ -843,7 +823,6 @@ void Renderer::beginFrame() {
     }
 
     // Acquire swapchain image and begin command buffer
-    g_crashRenderPhase = "bf:acquire";
     currentCmd = vkCtx->beginFrame(currentImageIndex);
     if (currentCmd == VK_NULL_HANDLE) {
         // Swapchain out of date, will retry next frame
@@ -851,20 +830,13 @@ void Renderer::beginFrame() {
     }
 
     // FSR2 jitter pattern (§4.3 — delegates to PostProcessPipeline)
-    g_crashRenderPhase = "bf:jitter";
     if (postProcessPipeline_ && camera) postProcessPipeline_->applyJitter(camera.get());
 
     // Update per-frame UBO with current camera/lighting state
-    g_crashRenderPhase = "bf:ubo";
     updatePerFrameUBO();
 
-    // GPU crash diagnostic: skip all pre-passes to isolate crash source
-    static const bool skipPrePasses = (std::getenv("WOWEE_SKIP_PREPASSES") != nullptr);
-
-    if (!skipPrePasses) {
     // --- Off-screen pre-passes (before main render pass) ---
     // Minimap composite (renders 3x3 tile grid into 768x768 render target)
-    g_crashRenderPhase = "bf:minimap";
     if (minimap && minimap->isEnabled() && camera) {
         glm::vec3 minimapCenter = camera->getPosition();
         if (cameraController && cameraController->isThirdPerson())
@@ -872,13 +844,11 @@ void Renderer::beginFrame() {
         minimap->compositePass(currentCmd, minimapCenter);
     }
     // World map composite (renders zone tiles into 1024x768 render target)
-    g_crashRenderPhase = "bf:worldmap";
     if (worldMap) {
         worldMap->compositePass(currentCmd);
     }
 
     // Character preview composite passes
-    g_crashRenderPhase = "bf:preview";
     for (auto* preview : activePreviews_) {
         if (preview && preview->isModelLoaded()) {
             preview->compositePass(currentCmd, vkCtx->getCurrentFrame());
@@ -886,18 +856,14 @@ void Renderer::beginFrame() {
     }
 
     // Shadow pre-pass (before main render pass)
-    g_crashRenderPhase = "bf:shadow";
     if (shadowsEnabled && shadowDepthImage[0] != VK_NULL_HANDLE) {
         renderShadowPass();
     }
 
     // Water reflection pre-pass (renders scene from mirrored camera into 512x512 texture)
-    g_crashRenderPhase = "bf:reflection";
     renderReflectionPass();
-    } // !skipPrePasses
 
     // --- Begin render pass ---
-    g_crashRenderPhase = "bf:renderpass";
     // Select framebuffer: PP off-screen target or swapchain (§4.3 — PostProcessPipeline)
     VkRenderPassBeginInfo rpInfo{};
     rpInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;

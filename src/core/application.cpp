@@ -2133,22 +2133,15 @@ void Application::update(float deltaTime) {
     }
 }
 
-// Render-phase marker from game_screen.cpp — updated here for 3D/submit phases
-} } // close wowee::core temporarily
-extern volatile const char* g_crashRenderPhase;
-namespace wowee { namespace core {
-
 void Application::render() {
     if (!renderer) {
         return;
     }
 
-    g_crashRenderPhase = "beginFrame";
     renderer->beginFrame();
 
     // Only render 3D world when in-game
     if (state == AppState::IN_GAME) {
-        g_crashRenderPhase = "renderWorld";
         if (world) {
             renderer->renderWorld(world.get(), gameHandler.get());
         } else {
@@ -2158,19 +2151,15 @@ void Application::render() {
 
     // Render performance HUD (within ImGui frame, before UI ends the frame)
     if (renderer) {
-        g_crashRenderPhase = "renderHUD";
         renderer->renderHUD();
     }
 
     // Render UI on top (ends ImGui frame with ImGui::Render())
     if (uiManager) {
-        g_crashRenderPhase = "uiRender";
         uiManager->render(state, authHandler.get(), gameHandler.get());
     }
 
-    g_crashRenderPhase = "endFrame";
     renderer->endFrame();
-    g_crashRenderPhase = "idle";
 }
 
 void Application::setupUICallbacks() {

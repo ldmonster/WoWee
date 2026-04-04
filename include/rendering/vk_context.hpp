@@ -246,6 +246,9 @@ private:
     bool createDepthResolveImage();
     void destroyDepthResolveImage();
 
+    // Actual Vulkan API version the instance was created with (gates core 1.2 calls)
+    uint32_t instanceApiVersion_ = VK_API_VERSION_1_1;
+
     // MSAA depth resolve support (for sampling/copying resolved depth)
     bool depthResolveSupported_ = false;
     VkResolveModeFlagBits depthResolveMode_ = VK_RESOLVE_MODE_NONE;

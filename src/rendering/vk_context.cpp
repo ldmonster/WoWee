@@ -270,7 +270,8 @@ bool VkContext::createInstance(SDL_Window* window) {
     vkb::InstanceBuilder builder;
     builder.set_app_name("Wowee")
            .set_app_version(VK_MAKE_VERSION(1, 0, 0))
-           .require_api_version(1, 1, 0);
+           .require_api_version(1, 2, 0)
+           .set_minimum_instance_version(1, 1, 0);
 
     for (auto ext : sdlExts) {
         builder.enable_extension(ext);
@@ -291,7 +292,14 @@ bool VkContext::createInstance(SDL_Window* window) {
     instance = vkbInstance_.instance;
     debugMessenger = vkbInstance_.debug_messenger;
 
-    LOG_INFO("Vulkan instance created");
+    // Query the actual instance API version for gating core 1.2+ calls
+    uint32_t instVer = VK_API_VERSION_1_1;
+    if (vkEnumerateInstanceVersion(&instVer) != VK_SUCCESS)
+        instVer = VK_API_VERSION_1_1;
+    instanceApiVersion_ = instVer;
+    LOG_INFO("Vulkan instance created (instance API version: ",
+             VK_VERSION_MAJOR(instVer), ".", VK_VERSION_MINOR(instVer), ".",
+             VK_VERSION_PATCH(instVer), ")");
     return true;
 }
 
@@ -337,7 +345,10 @@ bool VkContext::selectPhysicalDevice() {
     props2.pNext = &dsResolveProps;
     vkGetPhysicalDeviceProperties2(physicalDevice, &props2);
 
-    if (apiVersion >= VK_API_VERSION_1_2) {
+    // Gate on instance API version — vkCreateRenderPass2 is core 1.2 and only
+    // available when the instance was created with apiVersion >= 1.2.
+    // The device may report 1.2+ but a 1.1 instance won't have the function pointer.
+    if (instanceApiVersion_ >= VK_API_VERSION_1_2) {
         VkResolveModeFlags modes = dsResolveProps.supportedDepthResolveModes;
         if (modes & VK_RESOLVE_MODE_SAMPLE_ZERO_BIT) {
             depthResolveMode_ = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
@@ -467,7 +478,7 @@ bool VkContext::createAllocator() {
     allocInfo.instance = instance;
     allocInfo.physicalDevice = physicalDevice;
     allocInfo.device = device;
-    allocInfo.vulkanApiVersion = VK_API_VERSION_1_1;
+    allocInfo.vulkanApiVersion = instanceApiVersion_;
 
     if (vmaCreateAllocator(&allocInfo, &allocator) != VK_SUCCESS) {
         LOG_ERROR("Failed to create VMA allocator");
