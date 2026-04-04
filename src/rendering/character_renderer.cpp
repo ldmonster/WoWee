@@ -1851,6 +1851,27 @@ int CharacterRenderer::findKeyframeIndex(const std::vector<uint32_t>& timestamps
     return static_cast<int>(std::min(idx, timestamps.size() - 2));
 }
 
+// Resolve sequence index and time for a track, handling global sequences.
+static void resolveTrackTime(const pipeline::M2AnimationTrack& track,
+                              int seqIdx, float time,
+                              const std::vector<uint32_t>& globalSeqDurations,
+                              int& outSeqIdx, float& outTime) {
+    if (track.globalSequence >= 0 &&
+        static_cast<size_t>(track.globalSequence) < globalSeqDurations.size()) {
+        outSeqIdx = 0;
+        float dur = static_cast<float>(globalSeqDurations[track.globalSequence]);
+        if (dur > 0.0f) {
+            outTime = std::fmod(time, dur);
+            if (outTime < 0.0f) outTime += dur;
+        } else {
+            outTime = 0.0f;
+        }
+    } else {
+        outSeqIdx = seqIdx;
+        outTime = time;
+    }
+}
+
 glm::vec3 CharacterRenderer::interpolateVec3(const pipeline::M2AnimationTrack& track,
                                               int seqIdx, float time, const glm::vec3& defaultVal) {
     if (!track.hasData()) return defaultVal;
@@ -1931,12 +1952,14 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
     size_t numBones = model.bones.size();
     instance.boneMatrices.resize(numBones);
 
+    const auto& gsd = model.globalSequenceDurations;
+
     for (size_t i = 0; i < numBones; i++) {
         const auto& bone = model.bones[i];
 
         // Local transform includes pivot bracket: T(pivot)*T*R*S*T(-pivot)
         // At rest this is identity, so no separate bind pose is needed
-        glm::mat4 localTransform = getBoneTransform(bone, instance.animationTime, instance.currentSequenceIndex);
+        glm::mat4 localTransform = getBoneTransform(bone, instance.animationTime, instance.currentSequenceIndex, gsd);
 
         // Compose with parent
         if (bone.parentBone >= 0 && static_cast<size_t>(bone.parentBone) < numBones) {
@@ -1947,10 +1970,20 @@ void CharacterRenderer::calculateBoneMatrices(CharacterInstance& instance) {
     }
 }
 
-glm::mat4 CharacterRenderer::getBoneTransform(const pipeline::M2Bone& bone, float time, int sequenceIndex) {
-    glm::vec3 translation = interpolateVec3(bone.translation, sequenceIndex, time, glm::vec3(0.0f));
-    glm::quat rotation = interpolateQuat(bone.rotation, sequenceIndex, time);
-    glm::vec3 scale = interpolateVec3(bone.scale, sequenceIndex, time, glm::vec3(1.0f));
+glm::mat4 CharacterRenderer::getBoneTransform(const pipeline::M2Bone& bone, float time, int sequenceIndex,
+                                               const std::vector<uint32_t>& globalSeqDurations) {
+    // Resolve global sequences: bones with globalSequence >= 0 use sequence 0
+    // with time wrapped at the global sequence duration, independent of the
+    // character's current animation.
+    int tSeq, rSeq, sSeq;
+    float tTime, rTime, sTime;
+    resolveTrackTime(bone.translation, sequenceIndex, time, globalSeqDurations, tSeq, tTime);
+    resolveTrackTime(bone.rotation, sequenceIndex, time, globalSeqDurations, rSeq, rTime);
+    resolveTrackTime(bone.scale, sequenceIndex, time, globalSeqDurations, sSeq, sTime);
+
+    glm::vec3 translation = interpolateVec3(bone.translation, tSeq, tTime, glm::vec3(0.0f));
+    glm::quat rotation = interpolateQuat(bone.rotation, rSeq, rTime);
+    glm::vec3 scale = interpolateVec3(bone.scale, sSeq, sTime, glm::vec3(1.0f));
 
     // M2 bone transform: T(pivot) * T(trans) * R(rot) * S(scale) * T(-pivot)
     // At rest (no animation): T(pivot) * I * I * I * T(-pivot) = identity
