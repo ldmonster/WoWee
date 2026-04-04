@@ -729,6 +729,13 @@ void Renderer::applyMsaaChange() {
     VkSampleCountFlagBits samples = pendingMsaaSamples_;
     msaaChangePending_ = false;
 
+    // FSR2 requires non-MSAA render pass — if FSR2 was enabled after the MSAA
+    // change was queued (startup race), force 1x to avoid framebuffer mismatch.
+    if (samples > VK_SAMPLE_COUNT_1_BIT &&
+        postProcessPipeline_ && postProcessPipeline_->isFsr2BlockingMsaa()) {
+        samples = VK_SAMPLE_COUNT_1_BIT;
+    }
+
     VkSampleCountFlagBits current = vkCtx->getMsaaSamples();
     if (samples == current) return;
 
@@ -1915,6 +1922,11 @@ void Renderer::setFSR2Enabled(bool enabled) {
     if (req.requested) {
         pendingMsaaSamples_ = req.samples;
         msaaChangePending_ = true;
+    }
+    // If enabling FSR2 and there's already a pending MSAA change to >1x
+    // (e.g. startup settings loaded MSAA before FSR2), override it to 1x.
+    if (enabled && msaaChangePending_ && pendingMsaaSamples_ > VK_SAMPLE_COUNT_1_BIT) {
+        pendingMsaaSamples_ = VK_SAMPLE_COUNT_1_BIT;
     }
 }
 bool Renderer::isFSR2Enabled() const {
