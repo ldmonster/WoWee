@@ -1158,14 +1158,10 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
             vertexData.push_back(w1);
             vertexData.push_back(w2);
             vertexData.push_back(w3);
-            // Remap bone indices through the bone lookup table.
-            // M2 vertex bone indices are lookup table indices, not direct bone indices.
-            for (int j = 0; j < 4; j++) {
-                uint8_t idx = v.boneIndices[j];
-                uint16_t actual = (idx < model.boneLookupTable.size())
-                    ? model.boneLookupTable[idx] : 0;
-                vertexData.push_back(static_cast<float>(std::min(actual, uint16_t(127))));
-            }
+            vertexData.push_back(static_cast<float>(std::min(v.boneIndices[0], uint8_t(127))));
+            vertexData.push_back(static_cast<float>(std::min(v.boneIndices[1], uint8_t(127))));
+            vertexData.push_back(static_cast<float>(std::min(v.boneIndices[2], uint8_t(127))));
+            vertexData.push_back(static_cast<float>(std::min(v.boneIndices[3], uint8_t(127))));
         }
 
         // Upload vertex buffer to GPU

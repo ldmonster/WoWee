@@ -1486,17 +1486,7 @@ void CharacterRenderer::setupModelBuffers(M2ModelGPU& gpuModel) {
         auto& dst = gpuVerts[i];
         dst.position = src.position;
         std::memcpy(dst.boneWeights, src.boneWeights, 4);
-        // Remap bone indices through the bone lookup table.
-        // M2 vertex bone indices are lookup table indices, not direct bone indices.
-        for (int j = 0; j < 4; j++) {
-            uint8_t idx = src.boneIndices[j];
-            if (idx < model.boneLookupTable.size()) {
-                dst.boneIndices[j] = static_cast<uint8_t>(
-                    std::min<uint16_t>(model.boneLookupTable[idx], 255));
-            } else {
-                dst.boneIndices[j] = 0;
-            }
-        }
+        std::memcpy(dst.boneIndices, src.boneIndices, 4);
         dst.normal = src.normal;
         dst.texCoords = src.texCoords[0]; // Use first UV set
         dst.tangent = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f); // default
