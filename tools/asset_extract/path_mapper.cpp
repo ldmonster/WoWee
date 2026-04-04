@@ -35,7 +35,12 @@ std::string PathMapper::extractAfterPrefix(const std::string& path, size_t prefi
 }
 
 std::string PathMapper::mapPath(const std::string& wowPath) {
-    // Preserve original casing in the remainder for filesystem readability
+    // Lowercase entire output path — WoW archives contain mixed-case variants
+    // of the same path which create duplicate directories on case-sensitive filesystems.
+    return toLower(mapPathImpl(wowPath));
+}
+
+std::string PathMapper::mapPathImpl(const std::string& wowPath) {
     std::string rest;
 
     // DBFilesClient\ → db/
@@ -63,21 +68,16 @@ std::string PathMapper::mapPath(const std::string& wowPath) {
         return "creature/" + fwd;
     }
 
-    // Item\ObjectComponents\{Type}\ → item/{type}/
+    // Item\ObjectComponents\ → item/objectcomponents/
     if (startsWithCI(wowPath, "Item\\ObjectComponents\\")) {
         rest = extractAfterPrefix(wowPath, 22);
-        std::string fwd = toForwardSlash(rest);
-        auto slash = fwd.find('/');
-        if (slash != std::string::npos) {
-            return "item/" + toLower(fwd.substr(0, slash)) + "/" + fwd.substr(slash + 1);
-        }
-        return "item/" + fwd;
+        return "item/objectcomponents/" + toForwardSlash(rest);
     }
 
-    // Item\TextureComponents\ → item/texture/
+    // Item\TextureComponents\ → item/texturecomponents/
     if (startsWithCI(wowPath, "Item\\TextureComponents\\")) {
         rest = extractAfterPrefix(wowPath, 23);
-        return "item/texture/" + toForwardSlash(rest);
+        return "item/texturecomponents/" + toForwardSlash(rest);
     }
 
     // Interface\Icons\ → interface/icons/

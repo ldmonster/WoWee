@@ -16,11 +16,12 @@ public:
     /**
      * Map a WoW virtual path to a reorganized filesystem path.
      * @param wowPath Original WoW virtual path (backslash-separated)
-     * @return Reorganized relative path (forward-slash separated, original casing preserved)
+     * @return Reorganized relative path (forward-slash separated, fully lowercased)
      */
     static std::string mapPath(const std::string& wowPath);
 
 private:
+    static std::string mapPathImpl(const std::string& wowPath);
     // Helpers for prefix matching (case-insensitive)
     static bool startsWithCI(const std::string& str, const std::string& prefix);
     static std::string toLower(const std::string& str);
