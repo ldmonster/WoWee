@@ -537,10 +537,56 @@ static std::vector<ArchiveDesc> discoverArchives(const std::string& mpqDir,
     return result;
 }
 
+// Read a text file into a vector of lines (for external listfile loading)
+static std::vector<std::string> readLines(const std::string& path) {
+    std::vector<std::string> lines;
+    std::ifstream f(path);
+    if (!f) return lines;
+    std::string line;
+    while (std::getline(f, line)) {
+        // Trim trailing \r
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!line.empty()) lines.push_back(std::move(line));
+    }
+    return lines;
+}
+
+// Extract the (listfile) from an MPQ archive into a set of filenames
+static void extractInternalListfile(HANDLE hMpq, std::set<std::string>& out) {
+    HANDLE hFile = nullptr;
+    if (!SFileOpenFileEx(hMpq, "(listfile)", 0, &hFile)) return;
+
+    DWORD size = SFileGetFileSize(hFile, nullptr);
+    if (size == SFILE_INVALID_SIZE || size == 0) {
+        SFileCloseFile(hFile);
+        return;
+    }
+
+    std::vector<char> buf(size);
+    DWORD bytesRead = 0;
+    if (!SFileReadFile(hFile, buf.data(), size, &bytesRead, nullptr)) {
+        SFileCloseFile(hFile);
+        return;
+    }
+    SFileCloseFile(hFile);
+
+    // Parse newline/CR-delimited entries
+    std::string entry;
+    for (DWORD i = 0; i < bytesRead; ++i) {
+        if (buf[i] == '\n' || buf[i] == '\r') {
+            if (!entry.empty()) {
+                out.insert(std::move(entry));
+                entry.clear();
+            }
+        } else {
+            entry += buf[i];
+        }
+    }
+    if (!entry.empty()) out.insert(std::move(entry));
+}
+
 bool Extractor::enumerateFiles(const Options& opts,
                                std::vector<std::string>& outFiles) {
-    // Open all archives, enumerate files from highest priority to lowest.
-    // Use a set to deduplicate (highest-priority version wins).
     auto archives = discoverArchives(opts.mpqDir, opts.expansion, opts.locale);
     if (archives.empty()) {
         std::cerr << "No MPQ archives found in: " << opts.mpqDir << "\n";
@@ -549,17 +595,33 @@ bool Extractor::enumerateFiles(const Options& opts,
 
     std::cout << "Found " << archives.size() << " MPQ archives\n";
 
+    // Load external listfile into memory once (avoids repeated file I/O)
+    std::vector<std::string> externalEntries;
+    std::vector<const char*> externalPtrs;
+    if (!opts.listFile.empty()) {
+        externalEntries = readLines(opts.listFile);
+        externalPtrs.reserve(externalEntries.size());
+        for (const auto& e : externalEntries) externalPtrs.push_back(e.c_str());
+        std::cout << "  Loaded external listfile: " << externalEntries.size() << " entries\n";
+    }
+
     const auto wantedDbcs = buildWantedDbcSet(opts);
+    std::set<std::string> seenNormalized;
 
     // Enumerate from highest priority first so first-seen files win
-    std::set<std::string> seenNormalized;
-    std::vector<std::pair<std::string, std::string>> fileList; // (original name, archive path)
-
     for (auto it = archives.rbegin(); it != archives.rend(); ++it) {
         HANDLE hMpq = nullptr;
         if (!SFileOpenArchive(it->path.c_str(), 0, 0, &hMpq)) {
             std::cerr << "  Failed to open: " << it->path << "\n";
             continue;
+        }
+
+        // Inject external listfile entries into archive's in-memory name table.
+        // SFileAddListFileEntries is fast — it only hashes the names against the
+        // archive's hash table, no file I/O involved.
+        if (!externalPtrs.empty()) {
+            SFileAddListFileEntries(hMpq, externalPtrs.data(),
+                                   static_cast<DWORD>(externalPtrs.size()));
         }
 
         if (opts.verbose) {
@@ -571,28 +633,20 @@ bool Extractor::enumerateFiles(const Options& opts,
         if (hFind) {
             do {
                 std::string fileName = findData.cFileName;
-                // Skip internal listfile/attributes
                 if (fileName == "(listfile)" || fileName == "(attributes)" ||
                     fileName == "(signature)" || fileName == "(patch_metadata)") {
                     continue;
                 }
 
-                if (shouldSkipFile(opts, fileName)) {
-                    continue;
-                }
+                if (shouldSkipFile(opts, fileName)) continue;
 
-                // Verify file actually exists in this archive's hash table
-                // (listfiles can reference files from other archives)
-                if (!SFileHasFile(hMpq, fileName.c_str())) {
-                    continue;
-                }
+                if (!SFileHasFile(hMpq, fileName.c_str())) continue;
 
                 std::string norm = normalizeWowPath(fileName);
                 if (opts.onlyUsedDbcs && !wantedDbcs.empty() && !wantedDbcs.contains(norm)) {
                     continue;
                 }
                 if (seenNormalized.insert(norm).second) {
-                    // First time seeing this file — this is the highest-priority version
                     outFiles.push_back(fileName);
                 }
             } while (SFileFindNextFile(hFind, &findData));
@@ -674,6 +728,9 @@ bool Extractor::run(const Options& opts) {
     for (const auto& ad : archives) {
         HANDLE h = nullptr;
         if (SFileOpenArchive(ad.path.c_str(), 0, 0, &h)) {
+            if (!opts.listFile.empty()) {
+                SFileAddListFile(h, opts.listFile.c_str());
+            }
             sharedHandles.push_back({h, ad.priority, ad.path});
         } else {
             std::cerr << "  Failed to open archive: " << ad.path << "\n";
