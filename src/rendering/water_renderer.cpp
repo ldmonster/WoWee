@@ -1405,8 +1405,8 @@ void WaterRenderer::destroyWaterMesh(WaterSurface& surface) {
     surface.materialAlloc = VK_NULL_HANDLE;
     surface.materialSet = VK_NULL_HANDLE;
 
-    vkCtx->deferAfterFrameFence([device, allocator, vertexBuffer, vertexAlloc, indexBuffer, indexAlloc,
-                                 materialUBO, materialAlloc, pool, materialSet]() {
+    vkCtx->deferAfterAllFrameFences([device, allocator, vertexBuffer, vertexAlloc, indexBuffer, indexAlloc,
+                                     materialUBO, materialAlloc, pool, materialSet]() {
         if (vertexBuffer) {
             AllocatedBuffer ab{}; ab.buffer = vertexBuffer; ab.allocation = vertexAlloc;
             destroyBuffer(allocator, ab);

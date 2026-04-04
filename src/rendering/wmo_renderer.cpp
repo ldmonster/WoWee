@@ -1972,7 +1972,7 @@ void WMORenderer::destroyGroupGPU(GroupResources& group, bool defer) {
         }
 
         VkDescriptorPool pool = materialDescPool_;
-        vkCtx_->deferAfterFrameFence([device, allocator, pool, vb, vbAlloc, ib, ibAlloc,
+        vkCtx_->deferAfterAllFrameFences([device, allocator, pool, vb, vbAlloc, ib, ibAlloc,
                                       mats = std::move(mats)]() {
             if (vb) vmaDestroyBuffer(allocator, vb, vbAlloc);
             if (ib) vmaDestroyBuffer(allocator, ib, ibAlloc);

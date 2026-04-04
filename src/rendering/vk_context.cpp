@@ -194,6 +194,23 @@ void VkContext::deferAfterFrameFence(std::function<void()>&& fn) {
     deferredCleanup_[currentFrame].push_back(std::move(fn));
 }
 
+void VkContext::deferAfterAllFrameFences(std::function<void()>&& fn) {
+    // Shared resources (material descriptor sets, vertex/index buffers) are
+    // bound by every in-flight frame's command buffer.  deferAfterFrameFence
+    // only waits for ONE slot's fence — the other slot may still be executing.
+    // Add to every slot; a shared counter ensures the lambda runs exactly once,
+    // after the LAST slot has been fenced.
+    auto counter  = std::make_shared<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    auto sharedFn = std::make_shared<std::function<void()>>(std::move(fn));
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        deferredCleanup_[i].push_back([counter, sharedFn]() {
+            if (--(*counter) == 0) {
+                (*sharedFn)();
+            }
+        });
+    }
+}
+
 void VkContext::runDeferredCleanup(uint32_t frameIndex) {
     auto& q = deferredCleanup_[frameIndex];
     if (q.empty()) return;

@@ -65,6 +65,10 @@ public:
     // be referenced by command buffers submitted in the previous frame(s),
     // such as descriptor sets and buffers freed during streaming/unload.
     void deferAfterFrameFence(std::function<void()>&& fn);
+    // Like deferAfterFrameFence, but waits until ALL in-flight frame slots have
+    // been fenced — safe for shared resources bound by multiple frames' command
+    // buffers (material descriptor sets, vertex/index buffers, etc.).
+    void deferAfterAllFrameFences(std::function<void()>&& fn);
 
     // Accessors
     VkInstance getInstance() const { return instance; }

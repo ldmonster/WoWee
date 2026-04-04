@@ -1061,8 +1061,8 @@ void TerrainRenderer::destroyChunkGPU(TerrainChunkGPU& chunk) {
     chunk.materialSet = VK_NULL_HANDLE;
     chunk.ownedAlphaTextures.clear();
 
-    vkCtx->deferAfterFrameFence([device, allocator, vertexBuffer, vertexAlloc, indexBuffer, indexAlloc,
-                                 paramsUBO, paramsAlloc, pool, materialSet, alphaTextures]() {
+    vkCtx->deferAfterAllFrameFences([device, allocator, vertexBuffer, vertexAlloc, indexBuffer, indexAlloc,
+                                     paramsUBO, paramsAlloc, pool, materialSet, alphaTextures]() {
         if (vertexBuffer) {
             AllocatedBuffer ab{}; ab.buffer = vertexBuffer; ab.allocation = vertexAlloc;
             destroyBuffer(allocator, ab);
