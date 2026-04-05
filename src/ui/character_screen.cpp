@@ -351,7 +351,11 @@ void CharacterScreen::render(game::GameHandler& gameHandler) {
         }
 
         if (character.hasGuild()) {
-            ImGui::Text("Guild ID: %d", character.guildId);
+            const std::string& guildName = gameHandler.lookupGuildName(character.guildId);
+            if (!guildName.empty())
+                ImGui::Text("<%s>", guildName.c_str());
+            else
+                ImGui::TextDisabled("<Guild %u>", character.guildId);
         } else {
             ImGui::TextDisabled("No Guild");
         }

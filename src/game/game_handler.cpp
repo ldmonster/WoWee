@@ -7036,25 +7036,42 @@ void GameHandler::loadAreaNameCache() const {
     auto* am = services_.assetManager;
     if (!am || !am->isInitialized()) return;
 
-    auto dbc = am->loadDBC("WorldMapArea.dbc");
-    if (!dbc || !dbc->isLoaded()) return;
-
-    const auto* layout = pipeline::getActiveDBCLayout()
-        ? pipeline::getActiveDBCLayout()->getLayout("WorldMapArea") : nullptr;
-    const uint32_t areaIdField   = layout ? (*layout)["AreaID"]   : 2;
-    const uint32_t areaNameField = layout ? (*layout)["AreaName"] : 3;
-
-    if (dbc->getFieldCount() <= areaNameField) return;
-
-    for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
-        uint32_t areaId = dbc->getUInt32(i, areaIdField);
-        if (areaId == 0) continue;
-        std::string name = dbc->getString(i, areaNameField);
-        if (!name.empty() && !areaNameCache_.count(areaId)) {
-            areaNameCache_[areaId] = std::move(name);
+    // AreaTable.dbc has the canonical zone/area names keyed by AreaID.
+    // Field 0 = ID, field 11 = AreaName (enUS locale).
+    auto areaDbc = am->loadDBC("AreaTable.dbc");
+    if (areaDbc && areaDbc->isLoaded() && areaDbc->getFieldCount() > 11) {
+        for (uint32_t i = 0; i < areaDbc->getRecordCount(); ++i) {
+            uint32_t areaId = areaDbc->getUInt32(i, 0);
+            if (areaId == 0) continue;
+            std::string name = areaDbc->getString(i, 11);
+            if (!name.empty()) {
+                areaNameCache_[areaId] = std::move(name);
+            }
         }
     }
-    LOG_INFO("WorldMapArea.dbc: loaded ", areaNameCache_.size(), " area names");
+
+    // WorldMapArea.dbc supplements with map-UI area names (different ID space).
+    auto dbc = am->loadDBC("WorldMapArea.dbc");
+    if (dbc && dbc->isLoaded()) {
+        const auto* layout = pipeline::getActiveDBCLayout()
+            ? pipeline::getActiveDBCLayout()->getLayout("WorldMapArea") : nullptr;
+        const uint32_t areaIdField   = layout ? (*layout)["AreaID"]   : 2;
+        const uint32_t areaNameField = layout ? (*layout)["AreaName"] : 3;
+
+        if (dbc->getFieldCount() > areaNameField) {
+            for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
+                uint32_t areaId = dbc->getUInt32(i, areaIdField);
+                if (areaId == 0) continue;
+                std::string name = dbc->getString(i, areaNameField);
+                // Don't overwrite AreaTable names — those are authoritative
+                if (!name.empty() && !areaNameCache_.count(areaId)) {
+                    areaNameCache_[areaId] = std::move(name);
+                }
+            }
+        }
+    }
+
+    LOG_INFO("Area name cache: loaded ", areaNameCache_.size(), " entries");
 }
 
 std::string GameHandler::getAreaName(uint32_t areaId) const {
