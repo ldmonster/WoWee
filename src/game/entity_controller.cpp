@@ -1257,7 +1257,7 @@ void EntityController::updateItemOnValuesUpdate(const UpdateBlock& block,
         }
     }
     // Update container slot GUIDs on bag content changes
-    if (entity->getType() == ObjectType::CONTAINER) {
+    if (entity && entity->getType() == ObjectType::CONTAINER) {
         for (const auto& [key, _] : block.fields) {
             if ((containerNumSlotsField != 0xFFFF && key == containerNumSlotsField) ||
                 (containerSlot1Field != 0xFFFF && key >= containerSlot1Field && key < containerSlot1Field + 72)) {
@@ -1725,7 +1725,18 @@ void EntityController::handleCreateObject(const UpdateBlock& block, bool& newIte
 
 void EntityController::handleValuesUpdate(const UpdateBlock& block) {
     auto entity = entityManager.getEntity(block.guid);
-    if (!entity) return;
+    if (!entity) {
+        // Item/container entities may be absent from entityManager (e.g. server
+        // only sent a partial update) but we still track them in onlineItems_.
+        // Process field updates so durability/stack changes from repair aren't lost.
+        if (owner_.onlineItems_.count(block.guid)) {
+            pendingEvents_.clear();
+            updateItemOnValuesUpdate(block, entity);
+            flushPendingEvents();
+            LOG_DEBUG("Updated orphan item fields: 0x", std::hex, block.guid, std::dec);
+        }
+        return;
+    }
     pendingEvents_.clear();
 
     // Position update (common)

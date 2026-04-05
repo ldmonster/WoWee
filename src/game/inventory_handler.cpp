@@ -1043,6 +1043,8 @@ void InventoryHandler::repairAll(uint64_t vendorGuid, bool useGuildBank) {
     packet.writeUInt64(0);
     packet.writeUInt8(useGuildBank ? 1 : 0);
     owner_.socket->send(packet);
+    LOG_INFO("Sent CMSG_REPAIR_ITEM repairAll vendor=0x", std::hex, vendorGuid,
+             std::dec, " guildBank=", useGuildBank ? 1 : 0);
 }
 
 void InventoryHandler::autoEquipItemBySlot(int backpackIndex) {
