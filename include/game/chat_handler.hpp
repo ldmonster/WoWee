@@ -8,6 +8,7 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace wowee {
@@ -67,6 +68,10 @@ private:
     std::deque<MessageChatData> chatHistory_;
     size_t maxChatHistory_ = 100;
     std::vector<std::string> joinedChannels_;
+
+    // Track senders we've already auto-replied to (AFK/DND) this session
+    // to prevent infinite reply loops. Cleared when AFK/DND is toggled off.
+    std::unordered_set<std::string> afkAutoRepliedSenders_;
 };
 
 } // namespace game

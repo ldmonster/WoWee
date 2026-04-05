@@ -264,10 +264,11 @@ void ChatHandler::handleMessageChat(network::Packet& packet) {
             owner_.lastWhisperSender_ = data.senderName;
 
         if (!data.senderName.empty()) {
-            if (owner_.afkStatus_) {
+            // Only auto-reply once per sender per AFK/DND session to prevent loops
+            if (owner_.afkStatus_ && afkAutoRepliedSenders_.insert(data.senderName).second) {
                 std::string reply = owner_.afkMessage_.empty() ? "Away from Keyboard" : owner_.afkMessage_;
                 sendChatMessage(ChatType::WHISPER, "<AFK> " + reply, data.senderName);
-            } else if (owner_.dndStatus_) {
+            } else if (owner_.dndStatus_ && afkAutoRepliedSenders_.insert(data.senderName).second) {
                 std::string reply = owner_.dndMessage_.empty() ? "Do Not Disturb" : owner_.dndMessage_;
                 sendChatMessage(ChatType::WHISPER, "<DND> " + reply, data.senderName);
             }
@@ -621,6 +622,7 @@ void ChatHandler::toggleAfk(const std::string& message) {
     } else {
         addSystemChatMessage("You are no longer AFK.");
         owner_.afkMessage_.clear();
+        afkAutoRepliedSenders_.clear();
     }
 
     LOG_INFO("AFK status: ", owner_.afkStatus_, ", message: ", message);
@@ -644,6 +646,7 @@ void ChatHandler::toggleDnd(const std::string& message) {
     } else {
         addSystemChatMessage("You are no longer DND.");
         owner_.dndMessage_.clear();
+        afkAutoRepliedSenders_.clear();
     }
 
     LOG_INFO("DND status: ", owner_.dndStatus_, ", message: ", message);
