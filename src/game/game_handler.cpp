@@ -7091,11 +7091,12 @@ void GameHandler::loadMapNameCache() const {
     auto dbc = am->loadDBC("Map.dbc");
     if (!dbc || !dbc->isLoaded()) return;
 
+    // Map.dbc layout: 0=ID, 1=InternalName, 2=InstanceType, 3=Flags,
+    // 4=MapName_enUS (display name), fields 5+ = other locales
     for (uint32_t i = 0; i < dbc->getRecordCount(); ++i) {
         uint32_t id = dbc->getUInt32(i, 0);
-        // Field 2 = MapName_enUS (first localized); field 1 = InternalName fallback
-        std::string name = dbc->getString(i, 2);
-        if (name.empty()) name = dbc->getString(i, 1);
+        std::string name = dbc->getString(i, 4);
+        if (name.empty()) name = dbc->getString(i, 1); // internal name fallback
         if (!name.empty() && !mapNameCache_.count(id)) {
             mapNameCache_[id] = std::move(name);
         }
