@@ -1087,12 +1087,14 @@ void SocialHandler::handleDuelWinner(network::Packet& packet) {
 
 void SocialHandler::inviteToGroup(const std::string& playerName) {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.socket) return;
+    LOG_WARNING(">>> Sending CMSG_GROUP_INVITE to '", playerName, "'");
     auto packet = GroupInvitePacket::build(playerName);
     owner_.socket->send(packet);
 }
 
 void SocialHandler::acceptGroupInvite() {
     if (owner_.getState() != WorldState::IN_WORLD || !owner_.socket) return;
+    LOG_WARNING(">>> Sending CMSG_GROUP_ACCEPT");
     pendingGroupInvite = false;
     auto packet = GroupAcceptPacket::build();
     owner_.socket->send(packet);
@@ -1244,8 +1246,15 @@ void SocialHandler::handleGroupList(network::Packet& packet) {
     const bool nowInGroup = !partyData.isEmpty();
     if (!nowInGroup && wasInGroup) {
         owner_.addSystemChatMessage("You are no longer in a group.");
+        LOG_INFO("Left group");
     } else if (nowInGroup && !wasInGroup) {
-        owner_.addSystemChatMessage("You are now in a group.");
+        std::string members;
+        for (const auto& m : partyData.members) {
+            if (!members.empty()) members += ", ";
+            members += m.name.empty() ? "?" : m.name;
+        }
+        owner_.addSystemChatMessage("You joined a group with: " + members);
+        LOG_INFO("Joined group with ", partyData.memberCount, " members: ", members);
     }
     // Loot method change notification
     if (wasInGroup && nowInGroup && partyData.lootMethod != prevLootMethod) {
