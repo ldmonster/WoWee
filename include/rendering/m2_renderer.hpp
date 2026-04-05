@@ -478,7 +478,7 @@ private:
         uint32_t instanceCount;
         uint32_t _pad[3] = {};
     };
-    static constexpr uint32_t MAX_CULL_INSTANCES = 32768;
+    static constexpr uint32_t MAX_CULL_INSTANCES = 24576;
     VkPipeline cullPipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout cullPipelineLayout_ = VK_NULL_HANDLE;
     VkDescriptorSetLayout cullSetLayout_ = VK_NULL_HANDLE;
