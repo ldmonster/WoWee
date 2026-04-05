@@ -1202,6 +1202,8 @@ void EntityController::updateItemOnValuesUpdate(const UpdateBlock& block,
                 const uint32_t prevDur = it->second.curDurability;
                 it->second.curDurability = val;
                 inventoryChanged = true;
+                LOG_DEBUG("Item durability update: guid=0x", std::hex, block.guid,
+                          std::dec, " dur ", prevDur, "->", val, "/", it->second.maxDurability);
                 // Warn once when durability drops below 20% for an equipped item.
                 const uint32_t maxDur = it->second.maxDurability;
                 if (maxDur > 0 && val < maxDur / 5u && prevDur >= maxDur / 5u) {

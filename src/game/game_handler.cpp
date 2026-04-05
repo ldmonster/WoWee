@@ -5936,6 +5936,11 @@ void GameHandler::repairAll(uint64_t vendorGuid, bool useGuildBank) {
     if (inventoryHandler_) inventoryHandler_->repairAll(vendorGuid, useGuildBank);
 }
 
+uint32_t GameHandler::estimateRepairAllCost() const {
+    if (inventoryHandler_) return inventoryHandler_->estimateRepairAllCost();
+    return 0;
+}
+
 void GameHandler::sellItem(uint64_t vendorGuid, uint64_t itemGuid, uint32_t count) {
     if (inventoryHandler_) inventoryHandler_->sellItem(vendorGuid, itemGuid, count);
 }

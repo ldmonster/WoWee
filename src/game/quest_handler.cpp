@@ -948,8 +948,7 @@ void QuestHandler::selectGossipOption(uint32_t optionId) {
             }
             auto pkt = ListInventoryPacket::build(currentGossip_.npcGuid);
             owner_.socket->send(pkt);
-            LOG_INFO("Sent CMSG_LIST_INVENTORY (gossip) to npc=0x", std::hex, currentGossip_.npcGuid, std::dec,
-                     " vendor=", (int)isVendor, " repair=", (int)isArmorer);
+            LOG_DEBUG("Sent CMSG_LIST_INVENTORY (gossip) to npc=0x", std::hex, currentGossip_.npcGuid, std::dec);
         }
 
         if (textLower.find("make this inn your home") != std::string::npos ||

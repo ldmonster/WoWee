@@ -113,6 +113,7 @@ public:
     void buyBackItem(uint32_t buybackSlot);
     void repairItem(uint64_t vendorGuid, uint64_t itemGuid);
     void repairAll(uint64_t vendorGuid, bool useGuildBank = false);
+    uint32_t estimateRepairAllCost() const;
     const std::deque<BuybackItem>& getBuybackItems() const { return buybackItems_; }
     void autoEquipItemBySlot(int backpackIndex);
     void autoEquipItemInBag(int bagIndex, int slotIndex);
@@ -397,6 +398,15 @@ private:
     std::string pendingSaveSetName_;
     std::string pendingSaveSetIcon_;
     std::vector<EquipmentSetInfo> equipmentSetInfo_;
+
+    // ---- Repair cost DBC cache ----
+    mutable bool repairDbcLoaded_ = false;
+    // DurabilityCosts.dbc: [itemLevel] -> multiplier[29] (weapon subclass 0-20, armor subclass+21)
+    mutable std::unordered_map<uint32_t, std::array<uint32_t, 29>> durabilityCosts_;
+    // DurabilityQuality.dbc: [id] -> quality_mod float
+    mutable std::unordered_map<uint32_t, float> durabilityQuality_;
+    void loadRepairDbc() const;
+    uint32_t estimateItemRepairCost(uint64_t itemGuid) const;
 };
 
 } // namespace game

@@ -896,10 +896,15 @@ void WindowManager::renderVendorWindow(game::GameHandler& gameHandler,
         renderCoinsFromCopper(money);
 
         if (vendor.canRepair) {
+            uint32_t repairCost = gameHandler.estimateRepairAllCost();
             ImGui::SameLine();
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8.0f);
             if (ImGui::SmallButton("Repair All")) {
                 gameHandler.repairAll(vendor.vendorGuid, false);
+            }
+            if (repairCost > 0) {
+                ImGui::SameLine(0, 4);
+                renderCoinsFromCopper(repairCost);
             }
             if (ImGui::IsItemHovered()) {
                 // Show durability summary of all equipment
@@ -925,7 +930,7 @@ void WindowManager::renderVendorWindow(game::GameHandler& gameHandler,
                     gameHandler.repairAll(vendor.vendorGuid, true);
                 }
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Repair all equipped items using guild bank funds");
+                    ImGui::SetTooltip("Repair all items using guild bank funds");
                 }
             }
         }

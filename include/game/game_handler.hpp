@@ -1953,6 +1953,7 @@ public:
     void buyBackItem(uint32_t buybackSlot);
     void repairItem(uint64_t vendorGuid, uint64_t itemGuid);
     void repairAll(uint64_t vendorGuid, bool useGuildBank = false);
+    uint32_t estimateRepairAllCost() const;
     const std::deque<BuybackItem>& getBuybackItems() const;
     void autoEquipItemBySlot(int backpackIndex);
     void autoEquipItemInBag(int bagIndex, int slotIndex);

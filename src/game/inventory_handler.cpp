@@ -10,6 +10,8 @@
 #include "core/logger.hpp"
 #include "network/world_socket.hpp"
 #include "network/packet.hpp"
+#include "pipeline/asset_manager.hpp"
+#include "pipeline/dbc_loader.hpp"
 #include "pipeline/dbc_layout.hpp"
 #include <algorithm>
 #include <cmath>
@@ -697,9 +699,8 @@ void InventoryHandler::handleLootResponse(network::Packet& packet) {
     const bool wotlkLoot = isActiveExpansion("wotlk");
     if (!LootResponseParser::parse(packet, currentLoot_, wotlkLoot)) return;
     const bool hasLoot = !currentLoot_.items.empty() || currentLoot_.gold > 0;
-    LOG_WARNING("[GO-DIAG] SMSG_LOOT_RESPONSE: guid=0x", std::hex, currentLoot_.lootGuid, std::dec,
-                " items=", currentLoot_.items.size(), " gold=", currentLoot_.gold,
-                " hasLoot=", hasLoot);
+    LOG_DEBUG("SMSG_LOOT_RESPONSE: guid=0x", std::hex, currentLoot_.lootGuid, std::dec,
+              " items=", currentLoot_.items.size(), " gold=", currentLoot_.gold);
     if (!hasLoot && owner_.isCasting() && owner_.getCurrentCastSpellId() != 0 && lastInteractedGoGuid_ != 0) {
         LOG_DEBUG("Ignoring empty SMSG_LOOT_RESPONSE during gather cast");
         return;
@@ -1029,22 +1030,58 @@ void InventoryHandler::buyBackItem(uint32_t buybackSlot) {
 
 void InventoryHandler::repairItem(uint64_t vendorGuid, uint64_t itemGuid) {
     if (owner_.state != WorldState::IN_WORLD || !owner_.socket) return;
+
+    uint32_t cost = estimateItemRepairCost(itemGuid);
+    if (cost > 0 && owner_.getMoneyCopper() < cost) {
+        owner_.addUIError("Not enough money");
+        return;
+    }
+
     network::Packet packet(wireOpcode(Opcode::CMSG_REPAIR_ITEM));
     packet.writeUInt64(vendorGuid);
     packet.writeUInt64(itemGuid);
-    packet.writeUInt8(0);
+    if (!isClassicLikeExpansion()) packet.writeUInt8(0);
     owner_.socket->send(packet);
+
+    // Only do optimistic update if we verified the player can afford it
+    if (cost > 0) {
+        owner_.playerMoneyCopper_ -= cost;
+        auto it = owner_.onlineItems_.find(itemGuid);
+        if (it != owner_.onlineItems_.end()) {
+            it->second.curDurability = it->second.maxDurability;
+            rebuildOnlineInventory();
+        }
+    }
 }
 
 void InventoryHandler::repairAll(uint64_t vendorGuid, bool useGuildBank) {
     if (owner_.state != WorldState::IN_WORLD || !owner_.socket) return;
+
+    uint32_t totalCost = estimateRepairAllCost();
+
+    if (!useGuildBank && totalCost > 0 && owner_.getMoneyCopper() < totalCost) {
+        owner_.addUIError("Not enough money");
+        return;
+    }
+
     network::Packet packet(wireOpcode(Opcode::CMSG_REPAIR_ITEM));
     packet.writeUInt64(vendorGuid);
     packet.writeUInt64(0);
-    packet.writeUInt8(useGuildBank ? 1 : 0);
+    if (!isClassicLikeExpansion()) packet.writeUInt8(useGuildBank ? 1 : 0);
     owner_.socket->send(packet);
-    LOG_INFO("Sent CMSG_REPAIR_ITEM repairAll vendor=0x", std::hex, vendorGuid,
-             std::dec, " guildBank=", useGuildBank ? 1 : 0);
+
+    // Only do optimistic update if we verified the player can afford it
+    if (totalCost > 0) {
+        if (!useGuildBank) {
+            owner_.playerMoneyCopper_ -= totalCost;
+        }
+        for (auto& [guid, info] : owner_.onlineItems_) {
+            if (info.maxDurability > 0 && info.curDurability < info.maxDurability) {
+                info.curDurability = info.maxDurability;
+            }
+        }
+        rebuildOnlineInventory();
+    }
 }
 
 void InventoryHandler::autoEquipItemBySlot(int backpackIndex) {
@@ -1088,9 +1125,8 @@ void InventoryHandler::useItemBySlot(int backpackIndex) {
                     break;
                 }
             }
-            LOG_WARNING("useItemBySlot: item='", slot.item.name, "' entry=", slot.item.itemId,
-                        " guid=0x", std::hex, itemGuid, std::dec,
-                        " spellId=", useSpellId, " spellCount=", info->spells.size());
+            LOG_DEBUG("useItemBySlot: entry=", slot.item.itemId,
+                      " spellId=", useSpellId);
         }
         auto packet = owner_.packetParsers_
             ? owner_.packetParsers_->buildUseItem(0xFF, static_cast<uint8_t>(Inventory::NUM_EQUIP_SLOTS + backpackIndex), itemGuid, useSpellId)
@@ -1300,7 +1336,6 @@ void InventoryHandler::handleListInventory(network::Packet& packet) {
             }
         }
     }
-
     vendorWindowOpen_ = true;
     owner_.closeGossip();
     if (owner_.addonEventCallback_) owner_.addonEventCallback_("MERCHANT_SHOW", {});
@@ -3253,6 +3288,95 @@ void InventoryHandler::addMoneyCopper(uint32_t amount) {
     msg += std::to_string(copper) + "c.";
     owner_.addSystemChatMessage(msg);
     owner_.fireAddonEvent("CHAT_MSG_MONEY", {msg});
+}
+
+// ============================================================
+// Repair cost estimation from DBC data
+// ============================================================
+
+void InventoryHandler::loadRepairDbc() const {
+    if (repairDbcLoaded_) return;
+    repairDbcLoaded_ = true;
+
+    auto* am = owner_.services().assetManager;
+    if (!am || !am->isInitialized()) return;
+
+    // DurabilityCosts.dbc: field 0 = itemLevel (key), fields 1-29 = cost multipliers
+    // Columns 1-21 = weapon subclass (0-20), columns 22-29 = armor subclass (0-7)
+    auto costsDbc = am->loadDBC("DurabilityCosts.dbc");
+    if (costsDbc && costsDbc->isLoaded()) {
+        uint32_t count = costsDbc->getRecordCount();
+        for (uint32_t i = 0; i < count; ++i) {
+            uint32_t itemLevel = costsDbc->getUInt32(i, 0);
+            std::array<uint32_t, 29> mults{};
+            for (uint32_t f = 0; f < 29; ++f)
+                mults[f] = costsDbc->getUInt32(i, f + 1);
+            durabilityCosts_[itemLevel] = mults;
+        }
+    }
+
+    // DurabilityQuality.dbc: field 0 = id (key), field 1 = quality_mod (float)
+    auto qualDbc = am->loadDBC("DurabilityQuality.dbc");
+    if (qualDbc && qualDbc->isLoaded()) {
+        uint32_t count = qualDbc->getRecordCount();
+        for (uint32_t i = 0; i < count; ++i) {
+            uint32_t id = qualDbc->getUInt32(i, 0);
+            float mod = qualDbc->getFloat(i, 1);
+            durabilityQuality_[id] = mod;
+        }
+    }
+}
+
+uint32_t InventoryHandler::estimateItemRepairCost(uint64_t itemGuid) const {
+    auto itemIt = owner_.onlineItems_.find(itemGuid);
+    if (itemIt == owner_.onlineItems_.end()) return 0;
+    const auto& item = itemIt->second;
+
+    if (item.maxDurability == 0 || item.curDurability >= item.maxDurability) return 0;
+    uint32_t lostDur = item.maxDurability - item.curDurability;
+
+    auto infoIt = owner_.itemInfoCache_.find(item.entry);
+    if (infoIt == owner_.itemInfoCache_.end()) return 0;
+    const auto& info = infoIt->second;
+
+    loadRepairDbc();
+
+    // Look up DurabilityCosts multiplier for this itemLevel
+    auto costIt = durabilityCosts_.find(info.itemLevel);
+    if (costIt == durabilityCosts_.end()) return 0;
+
+    // Determine column index: weapon (class=2) uses subClass directly,
+    // armor (class=4) uses subClass + 21
+    uint32_t colIndex = 0;
+    if (info.itemClass == 2) { // ITEM_CLASS_WEAPON
+        colIndex = info.subClass;
+    } else if (info.itemClass == 4) { // ITEM_CLASS_ARMOR
+        colIndex = info.subClass + 21;
+    } else {
+        return 0; // only weapons and armor have durability
+    }
+    if (colIndex >= 29) return 0;
+
+    uint32_t dmultiplier = costIt->second[colIndex];
+    if (dmultiplier == 0) return 0;
+
+    // Quality modifier lookup: index is (quality + 1) * 2
+    uint32_t qualIndex = (info.quality + 1) * 2;
+    auto qualIt = durabilityQuality_.find(qualIndex);
+    if (qualIt == durabilityQuality_.end()) return 0;
+    float qualMod = qualIt->second;
+
+    uint32_t cost = static_cast<uint32_t>(lostDur * dmultiplier * qualMod);
+    if (cost == 0 && lostDur > 0) cost = 1; // minimum 1 copper
+    return cost;
+}
+
+uint32_t InventoryHandler::estimateRepairAllCost() const {
+    uint32_t total = 0;
+    for (const auto& [guid, info] : owner_.onlineItems_) {
+        total += estimateItemRepairCost(guid);
+    }
+    return total;
 }
 
 } // namespace game
