@@ -231,9 +231,8 @@ inline glm::vec3 closestPointOnTriangle(const glm::vec3& p,
 }
 
 // ---- Thread-local scratch buffers for collision queries ----
-inline thread_local std::vector<size_t> tl_m2_candidateScratch;
-inline thread_local std::unordered_set<uint32_t> tl_m2_candidateIdScratch;
-inline thread_local std::vector<uint32_t> tl_m2_collisionTriScratch;
+// Defined in m2_renderer_instance.cpp (inline thread_local causes LLD linker
+// errors on Windows ARM64, so the definitions live in the single TU that uses them).
 
 // ---- Bone animation helpers ----
 

@@ -24,6 +24,14 @@
 namespace wowee {
 namespace rendering {
 
+// Thread-local scratch buffers for collision queries (moved from header to
+// avoid inline thread_local TLS init linker errors on Windows ARM64 / LLD).
+namespace m2_internal {
+thread_local std::vector<size_t> tl_m2_candidateScratch;
+thread_local std::unordered_set<uint32_t> tl_m2_candidateIdScratch;
+thread_local std::vector<uint32_t> tl_m2_collisionTriScratch;
+} // namespace m2_internal
+
 void M2Renderer::setInstancePosition(uint32_t instanceId, const glm::vec3& position) {
     auto idxIt = instanceIndexById.find(instanceId);
     if (idxIt == instanceIndexById.end()) return;
