@@ -9,6 +9,10 @@
 [submodule "extern/FidelityFX-SDK"]
 	path = extern/FidelityFX-SDK
 	url = https://github.com/Kelsidavis/FidelityFX-SDK.git
+        shallow = true
+        update = none
 [submodule "extern/FidelityFX-FSR2"]
-	path = extern/FidelityFX-FSR2
-	url = https://github.com/Kelsidavis/FidelityFX-FSR2.git
+        path = extern/FidelityFX-FSR2
+        url = https://github.com/Kelsidavis/FidelityFX-FSR2.git
+        shallow = true
+        update = none
