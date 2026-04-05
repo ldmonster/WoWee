@@ -60,7 +60,7 @@ public:
     uint32_t getHeight() const { return image_.extent.height; }
     VkFormat getFormat() const { return image_.format; }
     uint32_t getMipLevels() const { return mipLevels_; }
-    bool isValid() const { return image_.image != VK_NULL_HANDLE; }
+    bool isValid() const { return image_.image != VK_NULL_HANDLE && sampler_ != VK_NULL_HANDLE; }
 
     // Write descriptor info for binding
     VkDescriptorImageInfo descriptorInfo(VkImageLayout layout =
