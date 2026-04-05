@@ -13,17 +13,27 @@ layout(set = 0, binding = 0) uniform PerFrame {
     vec4 shadowParams;
 };
 
+// Phase 2.1: Per-draw push constants (batch-level data only)
 layout(push_constant) uniform Push {
-    mat4 model;
-    vec2 uvOffset;
-    int texCoordSet;
-    int useBones;
-    int isFoliage;
-    float fadeAlpha;
+    int texCoordSet;         // UV set index (0 or 1)
+    int isFoliage;           // Foliage wind animation flag
+    int instanceDataOffset;  // Base index into InstanceSSBO for this draw group
 } push;
 
 layout(set = 2, binding = 0) readonly buffer BoneSSBO {
     mat4 bones[];
+};
+
+// Phase 2.1: Per-instance data read via gl_InstanceIndex (GPU instancing)
+struct InstanceData {
+    mat4 model;
+    vec2 uvOffset;
+    float fadeAlpha;
+    int useBones;
+    int boneBase;
+};
+layout(set = 3, binding = 0) readonly buffer InstanceSSBO {
+    InstanceData instanceData[];
 };
 
 layout(location = 0) in vec3 aPos;
@@ -41,15 +51,23 @@ layout(location = 4) out float ModelHeight;
 layout(location = 5) out float vFadeAlpha;
 
 void main() {
+    // Phase 2.1: Fetch per-instance data from SSBO
+    int instIdx = push.instanceDataOffset + gl_InstanceIndex;
+    mat4 model = instanceData[instIdx].model;
+    vec2 uvOff = instanceData[instIdx].uvOffset;
+    float fade = instanceData[instIdx].fadeAlpha;
+    int uBones = instanceData[instIdx].useBones;
+    int bBase  = instanceData[instIdx].boneBase;
+
     vec4 pos = vec4(aPos, 1.0);
     vec4 norm = vec4(aNormal, 0.0);
 
-    if (push.useBones != 0) {
+    if (uBones != 0) {
         ivec4 bi = ivec4(aBoneIndicesF);
-        mat4 skinMat = bones[bi.x] * aBoneWeights.x
-                     + bones[bi.y] * aBoneWeights.y
-                     + bones[bi.z] * aBoneWeights.z
-                     + bones[bi.w] * aBoneWeights.w;
+        mat4 skinMat = bones[bBase + bi.x] * aBoneWeights.x
+                     + bones[bBase + bi.y] * aBoneWeights.y
+                     + bones[bBase + bi.z] * aBoneWeights.z
+                     + bones[bBase + bi.w] * aBoneWeights.w;
         pos = skinMat * pos;
         norm = skinMat * norm;
     }
@@ -57,7 +75,7 @@ void main() {
     // Wind animation for foliage
     if (push.isFoliage != 0) {
         float windTime = fogParams.z;
-        vec3 worldRef = push.model[3].xyz;
+        vec3 worldRef = model[3].xyz;
         float heightFactor = clamp(pos.z / 20.0, 0.0, 1.0);
         heightFactor *= heightFactor; // quadratic — base stays grounded
 
@@ -80,15 +98,15 @@ void main() {
         pos.y += trunkSwayY + branchSwayY + leafFlutterY;
     }
 
-    vec4 worldPos = push.model * pos;
+    vec4 worldPos = model * pos;
     FragPos = worldPos.xyz;
-    Normal = mat3(push.model) * norm.xyz;
+    Normal = mat3(model) * norm.xyz;
 
-    TexCoord = (push.texCoordSet == 1 ? aTexCoord2 : aTexCoord) + push.uvOffset;
+    TexCoord = (push.texCoordSet == 1 ? aTexCoord2 : aTexCoord) + uvOff;
 
-    InstanceOrigin = push.model[3].xyz;
+    InstanceOrigin = model[3].xyz;
     ModelHeight = pos.z;
-    vFadeAlpha = push.fadeAlpha;
+    vFadeAlpha = fade;
 
     gl_Position = projection * view * worldPos;
 }

@@ -349,6 +349,20 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
         vkCreateDescriptorSetLayout(device, &ci, nullptr, &boneSetLayout_);
     }
 
+    // Phase 2.1: Instance data set layout (set 3): binding 0 = STORAGE_BUFFER (per-instance data)
+    {
+        VkDescriptorSetLayoutBinding binding{};
+        binding.binding = 0;
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        binding.descriptorCount = 1;
+        binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        VkDescriptorSetLayoutCreateInfo ci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        ci.bindingCount = 1;
+        ci.pBindings = &binding;
+        vkCreateDescriptorSetLayout(device, &ci, nullptr, &instanceSetLayout_);
+    }
+
     // Particle texture set layout (set 1 for particles): binding 0 = sampler2D
     {
         VkDescriptorSetLayoutBinding binding{};
@@ -423,19 +437,244 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
         }
     }
 
+    // Mega bone SSBO — consolidates all animated instance bones into one buffer per frame.
+    // Slot 0 = identity matrix (for non-animated instances), slots 1..N = animated instances.
+    {
+        const VkDeviceSize megaSize = MEGA_BONE_MAX_INSTANCES * MAX_BONES_PER_INSTANCE * sizeof(glm::mat4);
+        glm::mat4 identity(1.0f);
+        for (int i = 0; i < 2; i++) {
+            VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            bci.size = megaSize;
+            bci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+            VmaAllocationCreateInfo aci{};
+            aci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+            aci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            VmaAllocationInfo allocInfo{};
+            vmaCreateBuffer(ctx->getAllocator(), &bci, &aci,
+                            &megaBoneBuffer_[i], &megaBoneAlloc_[i], &allocInfo);
+            megaBoneMapped_[i] = allocInfo.pMappedData;
+
+            // Slot 0: identity matrix (for non-animated instances)
+            if (megaBoneMapped_[i]) {
+                memcpy(megaBoneMapped_[i], &identity, sizeof(identity));
+            }
+
+            megaBoneSet_[i] = allocateBoneSet();
+            if (megaBoneSet_[i]) {
+                VkDescriptorBufferInfo bufInfo{};
+                bufInfo.buffer = megaBoneBuffer_[i];
+                bufInfo.offset = 0;
+                bufInfo.range = megaSize;
+                VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                write.dstSet = megaBoneSet_[i];
+                write.dstBinding = 0;
+                write.descriptorCount = 1;
+                write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                write.pBufferInfo = &bufInfo;
+                vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+            }
+        }
+    }
+
+    // Phase 2.1: Instance data SSBO — per-frame buffer holding per-instance transforms, fade, bones.
+    // Shader reads instanceData[push.instanceDataOffset + gl_InstanceIndex].
+    {
+        static_assert(sizeof(M2InstanceGPU) == 96, "M2InstanceGPU must be 96 bytes (std430)");
+        const VkDeviceSize instBufSize = MAX_INSTANCE_DATA * sizeof(M2InstanceGPU);
+
+        // Descriptor pool for 2 sets (double-buffered)
+        VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2};
+        VkDescriptorPoolCreateInfo poolCi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        poolCi.maxSets = 2;
+        poolCi.poolSizeCount = 1;
+        poolCi.pPoolSizes = &poolSize;
+        vkCreateDescriptorPool(device, &poolCi, nullptr, &instanceDescPool_);
+
+        for (int i = 0; i < 2; i++) {
+            VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            bci.size = instBufSize;
+            bci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+            VmaAllocationCreateInfo aci{};
+            aci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+            aci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            VmaAllocationInfo allocInfo{};
+            vmaCreateBuffer(ctx->getAllocator(), &bci, &aci,
+                            &instanceBuffer_[i], &instanceAlloc_[i], &allocInfo);
+            instanceMapped_[i] = allocInfo.pMappedData;
+
+            VkDescriptorSetAllocateInfo setAi{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            setAi.descriptorPool = instanceDescPool_;
+            setAi.descriptorSetCount = 1;
+            setAi.pSetLayouts = &instanceSetLayout_;
+            vkAllocateDescriptorSets(device, &setAi, &instanceSet_[i]);
+
+            VkDescriptorBufferInfo bufInfo{};
+            bufInfo.buffer = instanceBuffer_[i];
+            bufInfo.offset = 0;
+            bufInfo.range = instBufSize;
+            VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            write.dstSet = instanceSet_[i];
+            write.dstBinding = 0;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            write.pBufferInfo = &bufInfo;
+            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        }
+    }
+
+    // Phase 2.3: GPU frustum culling — compute pipeline, buffers, descriptors.
+    // Compute shader tests each instance bounding sphere against 6 frustum planes + distance.
+    // Output: uint visibility[] read back by CPU to skip culled instances in sortedVisible_ build.
+    {
+        static_assert(sizeof(CullInstanceGPU) == 32, "CullInstanceGPU must be 32 bytes (std430)");
+        static_assert(sizeof(CullUniformsGPU) == 128, "CullUniformsGPU must be 128 bytes (std140)");
+
+        // Descriptor set layout: binding 0 = UBO (frustum+camera), 1 = SSBO (input), 2 = SSBO (output)
+        VkDescriptorSetLayoutBinding bindings[3] = {};
+        bindings[0].binding = 0;
+        bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        bindings[0].descriptorCount = 1;
+        bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        bindings[1].binding = 1;
+        bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        bindings[1].descriptorCount = 1;
+        bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        bindings[2].binding = 2;
+        bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        bindings[2].descriptorCount = 1;
+        bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+        VkDescriptorSetLayoutCreateInfo layoutCi{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        layoutCi.bindingCount = 3;
+        layoutCi.pBindings = bindings;
+        vkCreateDescriptorSetLayout(device, &layoutCi, nullptr, &cullSetLayout_);
+
+        // Pipeline layout (no push constants — everything via UBO)
+        VkPipelineLayoutCreateInfo plCi{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        plCi.setLayoutCount = 1;
+        plCi.pSetLayouts = &cullSetLayout_;
+        vkCreatePipelineLayout(device, &plCi, nullptr, &cullPipelineLayout_);
+
+        // Load compute shader
+        rendering::VkShaderModule cullComp;
+        if (!cullComp.loadFromFile(device, "assets/shaders/m2_cull.comp.spv")) {
+            LOG_ERROR("M2Renderer: failed to load m2_cull.comp.spv — GPU culling disabled");
+        } else {
+            VkComputePipelineCreateInfo cpCi{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+            cpCi.stage = cullComp.stageInfo(VK_SHADER_STAGE_COMPUTE_BIT);
+            cpCi.layout = cullPipelineLayout_;
+            if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cpCi, nullptr, &cullPipeline_) != VK_SUCCESS) {
+                LOG_ERROR("M2Renderer: failed to create cull compute pipeline");
+                cullPipeline_ = VK_NULL_HANDLE;
+            }
+            cullComp.destroy();
+        }
+
+        // Descriptor pool: 2 sets × 3 descriptors each (1 UBO + 2 SSBO)
+        VkDescriptorPoolSize poolSizes[2] = {};
+        poolSizes[0] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2};
+        poolSizes[1] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4};  // 2 input + 2 output
+        VkDescriptorPoolCreateInfo poolCi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        poolCi.maxSets = 2;
+        poolCi.poolSizeCount = 2;
+        poolCi.pPoolSizes = poolSizes;
+        vkCreateDescriptorPool(device, &poolCi, nullptr, &cullDescPool_);
+
+        const VkDeviceSize uniformSize = sizeof(CullUniformsGPU);
+        const VkDeviceSize inputSize   = MAX_CULL_INSTANCES * sizeof(CullInstanceGPU);
+        const VkDeviceSize outputSize  = MAX_CULL_INSTANCES * sizeof(uint32_t);
+
+        for (int i = 0; i < 2; i++) {
+            // Uniform buffer (frustum planes + camera)
+            {
+                VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+                bci.size = uniformSize;
+                bci.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+                VmaAllocationCreateInfo aci{};
+                aci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+                aci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+                VmaAllocationInfo ai{};
+                vmaCreateBuffer(ctx->getAllocator(), &bci, &aci,
+                                &cullUniformBuffer_[i], &cullUniformAlloc_[i], &ai);
+                cullUniformMapped_[i] = ai.pMappedData;
+            }
+            // Input SSBO (per-instance cull data)
+            {
+                VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+                bci.size = inputSize;
+                bci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+                VmaAllocationCreateInfo aci{};
+                aci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+                aci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+                VmaAllocationInfo ai{};
+                vmaCreateBuffer(ctx->getAllocator(), &bci, &aci,
+                                &cullInputBuffer_[i], &cullInputAlloc_[i], &ai);
+                cullInputMapped_[i] = ai.pMappedData;
+            }
+            // Output SSBO (visibility flags — GPU writes, CPU reads)
+            {
+                VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+                bci.size = outputSize;
+                bci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+                VmaAllocationCreateInfo aci{};
+                aci.usage = VMA_MEMORY_USAGE_GPU_TO_CPU;
+                aci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+                VmaAllocationInfo ai{};
+                vmaCreateBuffer(ctx->getAllocator(), &bci, &aci,
+                                &cullOutputBuffer_[i], &cullOutputAlloc_[i], &ai);
+                cullOutputMapped_[i] = ai.pMappedData;
+            }
+
+            // Allocate and write descriptor set
+            VkDescriptorSetAllocateInfo setAi{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            setAi.descriptorPool = cullDescPool_;
+            setAi.descriptorSetCount = 1;
+            setAi.pSetLayouts = &cullSetLayout_;
+            vkAllocateDescriptorSets(device, &setAi, &cullSet_[i]);
+
+            VkDescriptorBufferInfo uboInfo{cullUniformBuffer_[i], 0, uniformSize};
+            VkDescriptorBufferInfo inputInfo{cullInputBuffer_[i], 0, inputSize};
+            VkDescriptorBufferInfo outputInfo{cullOutputBuffer_[i], 0, outputSize};
+
+            VkWriteDescriptorSet writes[3] = {};
+            writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            writes[0].dstSet = cullSet_[i];
+            writes[0].dstBinding = 0;
+            writes[0].descriptorCount = 1;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[0].pBufferInfo = &uboInfo;
+
+            writes[1] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            writes[1].dstSet = cullSet_[i];
+            writes[1].dstBinding = 1;
+            writes[1].descriptorCount = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[1].pBufferInfo = &inputInfo;
+
+            writes[2] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            writes[2].dstSet = cullSet_[i];
+            writes[2].dstBinding = 2;
+            writes[2].descriptorCount = 1;
+            writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[2].pBufferInfo = &outputInfo;
+
+            vkUpdateDescriptorSets(device, 3, writes, 0, nullptr);
+        }
+    }
+
     // --- Pipeline layouts ---
 
-    // Main M2 pipeline layout: set 0 = perFrame, set 1 = material, set 2 = bones
-    // Push constant: mat4 model + vec2 uvOffset + int texCoordSet + int useBones = 80 bytes
+    // Main M2 pipeline layout: set 0 = perFrame, set 1 = material, set 2 = bones, set 3 = instances
+    // Push constant: int texCoordSet + int isFoliage + int instanceDataOffset (12 bytes)
     {
-        VkDescriptorSetLayout setLayouts[] = {perFrameLayout, materialSetLayout_, boneSetLayout_};
+        VkDescriptorSetLayout setLayouts[] = {perFrameLayout, materialSetLayout_, boneSetLayout_, instanceSetLayout_};
         VkPushConstantRange pushRange{};
         pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
         pushRange.offset = 0;
-        pushRange.size = 88; // mat4(64) + vec2(8) + int(4) + int(4) + int(4) + float(4)
+        pushRange.size = 12; // int texCoordSet + int isFoliage + int instanceDataOffset
 
         VkPipelineLayoutCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        ci.setLayoutCount = 3;
+        ci.setLayoutCount = 4;
         ci.pSetLayouts = setLayouts;
         ci.pushConstantRangeCount = 1;
         ci.pPushConstantRanges = &pushRange;
@@ -513,7 +752,9 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
         {4, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 14 * sizeof(float)}, // boneIndices (float)
     };
 
-    auto buildM2Pipeline = [&](VkPipelineColorBlendAttachmentState blendState, bool depthWrite) -> VkPipeline {
+    // Pipeline derivatives — opaque is the base, others derive from it for shared state optimization
+    auto buildM2Pipeline = [&](VkPipelineColorBlendAttachmentState blendState, bool depthWrite,
+                               VkPipelineCreateFlags flags = 0, VkPipeline basePipeline = VK_NULL_HANDLE) -> VkPipeline {
         return PipelineBuilder()
             .setShaders(m2Vert.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                         m2Frag.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
@@ -526,13 +767,19 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
             .setLayout(pipelineLayout_)
             .setRenderPass(mainPass)
             .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
+            .setFlags(flags)
+            .setBasePipeline(basePipeline)
             .build(device, vkCtx_->getPipelineCache());
     };
 
-    opaquePipeline_ = buildM2Pipeline(PipelineBuilder::blendDisabled(), true);
-    alphaTestPipeline_ = buildM2Pipeline(PipelineBuilder::blendAlpha(), true);
-    alphaPipeline_ = buildM2Pipeline(PipelineBuilder::blendAlpha(), false);
-    additivePipeline_ = buildM2Pipeline(PipelineBuilder::blendAdditive(), false);
+    opaquePipeline_ = buildM2Pipeline(PipelineBuilder::blendDisabled(), true,
+                                      VK_PIPELINE_CREATE_ALLOW_DERIVATIVES_BIT);
+    alphaTestPipeline_ = buildM2Pipeline(PipelineBuilder::blendAlpha(), true,
+                                         VK_PIPELINE_CREATE_DERIVATIVE_BIT, opaquePipeline_);
+    alphaPipeline_ = buildM2Pipeline(PipelineBuilder::blendAlpha(), false,
+                                     VK_PIPELINE_CREATE_DERIVATIVE_BIT, opaquePipeline_);
+    additivePipeline_ = buildM2Pipeline(PipelineBuilder::blendAdditive(), false,
+                                        VK_PIPELINE_CREATE_DERIVATIVE_BIT, opaquePipeline_);
 
     // --- Build particle pipelines ---
     if (particleVert.isValid() && particleFrag.isValid()) {
@@ -805,10 +1052,38 @@ void M2Renderer::shutdown() {
     if (dummyBoneBuffer_) { vmaDestroyBuffer(alloc, dummyBoneBuffer_, dummyBoneAlloc_); dummyBoneBuffer_ = VK_NULL_HANDLE; }
     // dummyBoneSet_ is freed implicitly when boneDescPool_ is destroyed
     dummyBoneSet_ = VK_NULL_HANDLE;
+    // Mega bone SSBO cleanup (sets freed implicitly with boneDescPool_)
+    for (int i = 0; i < 2; i++) {
+        if (megaBoneBuffer_[i]) { vmaDestroyBuffer(alloc, megaBoneBuffer_[i], megaBoneAlloc_[i]); megaBoneBuffer_[i] = VK_NULL_HANDLE; }
+        megaBoneMapped_[i] = nullptr;
+        megaBoneSet_[i] = VK_NULL_HANDLE;
+    }
     if (materialDescPool_) { vkDestroyDescriptorPool(device, materialDescPool_, nullptr); materialDescPool_ = VK_NULL_HANDLE; }
     if (boneDescPool_) { vkDestroyDescriptorPool(device, boneDescPool_, nullptr); boneDescPool_ = VK_NULL_HANDLE; }
+    // Phase 2.1: Instance data SSBO cleanup (sets freed with instanceDescPool_)
+    for (int i = 0; i < 2; i++) {
+        if (instanceBuffer_[i]) { vmaDestroyBuffer(alloc, instanceBuffer_[i], instanceAlloc_[i]); instanceBuffer_[i] = VK_NULL_HANDLE; }
+        instanceMapped_[i] = nullptr;
+        instanceSet_[i] = VK_NULL_HANDLE;
+    }
+    if (instanceDescPool_) { vkDestroyDescriptorPool(device, instanceDescPool_, nullptr); instanceDescPool_ = VK_NULL_HANDLE; }
+
+    // Phase 2.3: GPU frustum culling compute pipeline + buffers cleanup
+    if (cullPipeline_) { vkDestroyPipeline(device, cullPipeline_, nullptr); cullPipeline_ = VK_NULL_HANDLE; }
+    if (cullPipelineLayout_) { vkDestroyPipelineLayout(device, cullPipelineLayout_, nullptr); cullPipelineLayout_ = VK_NULL_HANDLE; }
+    for (int i = 0; i < 2; i++) {
+        if (cullUniformBuffer_[i]) { vmaDestroyBuffer(alloc, cullUniformBuffer_[i], cullUniformAlloc_[i]); cullUniformBuffer_[i] = VK_NULL_HANDLE; }
+        if (cullInputBuffer_[i])   { vmaDestroyBuffer(alloc, cullInputBuffer_[i], cullInputAlloc_[i]); cullInputBuffer_[i] = VK_NULL_HANDLE; }
+        if (cullOutputBuffer_[i])  { vmaDestroyBuffer(alloc, cullOutputBuffer_[i], cullOutputAlloc_[i]); cullOutputBuffer_[i] = VK_NULL_HANDLE; }
+        cullUniformMapped_[i] = cullInputMapped_[i] = cullOutputMapped_[i] = nullptr;
+        cullSet_[i] = VK_NULL_HANDLE;
+    }
+    if (cullDescPool_) { vkDestroyDescriptorPool(device, cullDescPool_, nullptr); cullDescPool_ = VK_NULL_HANDLE; }
+    if (cullSetLayout_) { vkDestroyDescriptorSetLayout(device, cullSetLayout_, nullptr); cullSetLayout_ = VK_NULL_HANDLE; }
+
     if (materialSetLayout_) { vkDestroyDescriptorSetLayout(device, materialSetLayout_, nullptr); materialSetLayout_ = VK_NULL_HANDLE; }
     if (boneSetLayout_) { vkDestroyDescriptorSetLayout(device, boneSetLayout_, nullptr); boneSetLayout_ = VK_NULL_HANDLE; }
+    if (instanceSetLayout_) { vkDestroyDescriptorSetLayout(device, instanceSetLayout_, nullptr); instanceSetLayout_ = VK_NULL_HANDLE; }
     if (particleTexLayout_) { vkDestroyDescriptorSetLayout(device, particleTexLayout_, nullptr); particleTexLayout_ = VK_NULL_HANDLE; }
 
     // Destroy shadow resources
@@ -2212,47 +2487,117 @@ void M2Renderer::prepareRender(uint32_t frameIndex, const Camera& camera) {
     if (!initialized_ || instances.empty()) return;
     (void)camera;  // reserved for future frustum-based culling
 
-    // Pre-allocate bone SSBOs + descriptor sets on main thread (pool ops not thread-safe).
-    // Only iterate animated instances — static doodads don't need bone buffers.
+    // --- Mega bone SSBO: assign slots and upload all animated instance bones ---
+    // Slot 0 = identity (non-animated), slots 1..N = animated instances.
+    uint32_t nextSlot = 1;
     for (size_t idx : animatedInstanceIndices_) {
         if (idx >= instances.size()) continue;
         auto& instance = instances[idx];
 
-        if (instance.boneMatrices.empty()) continue;
+        if (instance.boneMatrices.empty()) {
+            instance.megaBoneOffset = 0;  // Use identity slot
+            continue;
+        }
 
-        if (!instance.boneBuffer[frameIndex]) {
-            VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-            bci.size = 128 * sizeof(glm::mat4);
-            bci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-            VmaAllocationCreateInfo aci{};
-            aci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-            aci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
-            VmaAllocationInfo allocInfo{};
-            vmaCreateBuffer(vkCtx_->getAllocator(), &bci, &aci,
-                            &instance.boneBuffer[frameIndex], &instance.boneAlloc[frameIndex], &allocInfo);
-            instance.boneMapped[frameIndex] = allocInfo.pMappedData;
+        if (nextSlot >= MEGA_BONE_MAX_INSTANCES) {
+            instance.megaBoneOffset = 0;  // Overflow — use identity
+            continue;
+        }
 
-            // Force dirty so current boneMatrices get copied into this
-            // newly-allocated buffer during render (prevents garbage/zero
-            // bones when the other frame index already cleared bonesDirty).
-            instance.bonesDirty[frameIndex] = true;
+        instance.megaBoneOffset = nextSlot * MAX_BONES_PER_INSTANCE;
 
-            instance.boneSet[frameIndex] = allocateBoneSet();
-            if (instance.boneSet[frameIndex]) {
-                VkDescriptorBufferInfo bufInfo{};
-                bufInfo.buffer = instance.boneBuffer[frameIndex];
-                bufInfo.offset = 0;
-                bufInfo.range = bci.size;
-                VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-                write.dstSet = instance.boneSet[frameIndex];
-                write.dstBinding = 0;
-                write.descriptorCount = 1;
-                write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-                write.pBufferInfo = &bufInfo;
-                vkUpdateDescriptorSets(vkCtx_->getDevice(), 1, &write, 0, nullptr);
+        // Upload bone matrices to mega buffer
+        if (megaBoneMapped_[frameIndex]) {
+            int numBones = std::min(static_cast<int>(instance.boneMatrices.size()),
+                                    static_cast<int>(MAX_BONES_PER_INSTANCE));
+            auto* dst = static_cast<glm::mat4*>(megaBoneMapped_[frameIndex]) + instance.megaBoneOffset;
+            memcpy(dst, instance.boneMatrices.data(), numBones * sizeof(glm::mat4));
+        }
+
+        nextSlot++;
+    }
+}
+
+// Phase 2.3: Dispatch GPU frustum culling compute shader.
+// Called on the primary command buffer BEFORE the render pass begins so that
+// compute dispatch and memory barrier complete before secondary command buffers
+// read the visibility output in render().
+void M2Renderer::dispatchCullCompute(VkCommandBuffer cmd, uint32_t frameIndex, const Camera& camera) {
+    if (!cullPipeline_ || instances.empty()) return;
+
+    const uint32_t numInstances = std::min(static_cast<uint32_t>(instances.size()), MAX_CULL_INSTANCES);
+
+    // --- Compute per-instance adaptive distances (same formula as old CPU cull) ---
+    const float targetRenderDist = (instances.size() > 2000) ? 300.0f
+                                 : (instances.size() > 1000) ? 500.0f
+                                 : 1000.0f;
+    const float shrinkRate = 0.005f;
+    const float growRate   = 0.05f;
+    float blendRate = (targetRenderDist < smoothedRenderDist_) ? shrinkRate : growRate;
+    smoothedRenderDist_ = glm::mix(smoothedRenderDist_, targetRenderDist, blendRate);
+    const float maxRenderDistance = smoothedRenderDist_;
+    const float maxRenderDistanceSq = maxRenderDistance * maxRenderDistance;
+    const float maxPossibleDistSq = maxRenderDistanceSq * 4.0f; // 2x safety margin
+
+    // --- Upload frustum planes + camera (UBO, binding 0) ---
+    const glm::mat4 vp = camera.getProjectionMatrix() * camera.getViewMatrix();
+    Frustum frustum;
+    frustum.extractFromMatrix(vp);
+    const glm::vec3 camPos = camera.getPosition();
+
+    if (cullUniformMapped_[frameIndex]) {
+        auto* ubo = static_cast<CullUniformsGPU*>(cullUniformMapped_[frameIndex]);
+        for (int i = 0; i < 6; i++) {
+            const auto& p = frustum.getPlane(static_cast<Frustum::Side>(i));
+            ubo->frustumPlanes[i] = glm::vec4(p.normal, p.distance);
+        }
+        ubo->cameraPos = glm::vec4(camPos, maxPossibleDistSq);
+        ubo->instanceCount = numInstances;
+    }
+
+    // --- Upload per-instance cull data (SSBO, binding 1) ---
+    if (cullInputMapped_[frameIndex]) {
+        auto* input = static_cast<CullInstanceGPU*>(cullInputMapped_[frameIndex]);
+        for (uint32_t i = 0; i < numInstances; i++) {
+            const auto& inst = instances[i];
+            float worldRadius = inst.cachedBoundRadius * inst.scale;
+            float cullRadius = worldRadius;
+            if (inst.cachedDisableAnimation) {
+                cullRadius = std::max(cullRadius, 3.0f);
             }
+            float effectiveMaxDistSq = maxRenderDistanceSq * std::max(1.0f, cullRadius / 12.0f);
+            if (inst.cachedDisableAnimation)  effectiveMaxDistSq *= 2.6f;
+            if (inst.cachedIsGroundDetail)     effectiveMaxDistSq *= 0.9f;
+
+            float paddedRadius = std::max(cullRadius * 1.5f, cullRadius + 3.0f);
+
+            uint32_t flags = 0;
+            if (inst.cachedIsValid)          flags |= 1u;
+            if (inst.cachedIsSmoke)           flags |= 2u;
+            if (inst.cachedIsInvisibleTrap)   flags |= 4u;
+
+            input[i].sphere = glm::vec4(inst.position, paddedRadius);
+            input[i].effectiveMaxDistSq = effectiveMaxDistSq;
+            input[i].flags = flags;
         }
     }
+
+    // --- Dispatch compute shader ---
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cullPipeline_);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                            cullPipelineLayout_, 0, 1, &cullSet_[frameIndex], 0, nullptr);
+
+    const uint32_t groupCount = (numInstances + 63) / 64;
+    vkCmdDispatch(cmd, groupCount, 1, 1);
+
+    // --- Memory barrier: compute writes → host reads ---
+    VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_HOST_BIT,
+        0, 1, &barrier, 0, nullptr, 0, nullptr);
 }
 
 void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const Camera& camera) {
@@ -2267,71 +2612,86 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         LOG_INFO("M2 render: ", instances.size(), " instances, ", models.size(), " models");
     }
 
-    // Build frustum for culling
-    const glm::mat4 view = camera.getViewMatrix();
-    const glm::mat4 projection = camera.getProjectionMatrix();
-    Frustum frustum;
-    frustum.extractFromMatrix(projection * view);
-
     // Reuse persistent buffers (clear instead of reallocating)
     glowSprites_.clear();
 
     lastDrawCallCount = 0;
 
-    // Adaptive render distance: smoothed to prevent pop-in/pop-out flickering
-    const float targetRenderDist = (instances.size() > 2000) ? 300.0f
-                                 : (instances.size() > 1000) ? 500.0f
-                                 : 1000.0f;
-    // Smooth transitions: shrink slowly (avoid popping out nearby objects)
-    const float shrinkRate = 0.005f;  // very slow decrease
-    const float growRate = 0.05f;     // faster increase
-    float blendRate = (targetRenderDist < smoothedRenderDist_) ? shrinkRate : growRate;
-    smoothedRenderDist_ = glm::mix(smoothedRenderDist_, targetRenderDist, blendRate);
-    const float maxRenderDistance = smoothedRenderDist_;
-    const float maxRenderDistanceSq = maxRenderDistance * maxRenderDistance;
+    // Phase 2.3: GPU cull results — dispatchCullCompute() already updated smoothedRenderDist_.
+    // Use the cached value (set by dispatchCullCompute or fallback below).
+    const uint32_t frameIndex = vkCtx_->getCurrentFrame();
+    const uint32_t numInstances = std::min(static_cast<uint32_t>(instances.size()), MAX_CULL_INSTANCES);
+    const uint32_t* visibility = static_cast<const uint32_t*>(cullOutputMapped_[frameIndex]);
+    const bool gpuCullAvailable = (cullPipeline_ != VK_NULL_HANDLE && visibility != nullptr);
+
+    // If GPU culling was not dispatched, fallback: compute distances on CPU
+    float maxRenderDistanceSq;
+    if (!gpuCullAvailable) {
+        const float targetRenderDist = (instances.size() > 2000) ? 300.0f
+                                     : (instances.size() > 1000) ? 500.0f
+                                     : 1000.0f;
+        const float shrinkRate = 0.005f;
+        const float growRate = 0.05f;
+        float blendRate = (targetRenderDist < smoothedRenderDist_) ? shrinkRate : growRate;
+        smoothedRenderDist_ = glm::mix(smoothedRenderDist_, targetRenderDist, blendRate);
+        maxRenderDistanceSq = smoothedRenderDist_ * smoothedRenderDist_;
+    } else {
+        maxRenderDistanceSq = smoothedRenderDist_ * smoothedRenderDist_;
+    }
+
     const float fadeStartFraction = 0.75f;
     const glm::vec3 camPos = camera.getPosition();
 
-    // Build sorted visible instance list: cull then sort by modelId to batch VAO binds
-    // Reuse persistent vector to avoid allocation
+    // Build sorted visible instance list
     sortedVisible_.clear();
-    // Reserve based on expected visible count (roughly 30% of total instances in dense areas)
     const size_t expectedVisible = std::min(instances.size() / 3, size_t(600));
     if (sortedVisible_.capacity() < expectedVisible) {
         sortedVisible_.reserve(expectedVisible);
     }
 
-    // Early distance rejection: max possible render distance (tight but safe upper bound)
-    const float maxPossibleDistSq = maxRenderDistance * maxRenderDistance * 4.0f;  // 2x safety margin (reduced from 4x)
+    // Phase 2.3: GPU frustum culling — build frustum only for CPU fallback path
+    Frustum frustum;
+    if (!gpuCullAvailable) {
+        const glm::mat4 vp = camera.getProjectionMatrix() * camera.getViewMatrix();
+        frustum.extractFromMatrix(vp);
+    }
+    const float maxPossibleDistSq = maxRenderDistanceSq * 4.0f;
 
-    for (uint32_t i = 0; i < static_cast<uint32_t>(instances.size()); ++i) {
+    for (uint32_t i = 0; i < numInstances; ++i) {
         const auto& instance = instances[i];
 
-        // Use cached model flags — no hash lookup needed
-        if (!instance.cachedIsValid || instance.cachedIsSmoke || instance.cachedIsInvisibleTrap) continue;
+        if (gpuCullAvailable) {
+            // Phase 2.3: GPU already tested flags + distance + frustum
+            if (!visibility[i]) continue;
+        } else {
+            // CPU fallback: same culling logic as before Phase 2.3
+            if (!instance.cachedIsValid || instance.cachedIsSmoke || instance.cachedIsInvisibleTrap) continue;
 
+            glm::vec3 toCam = instance.position - camPos;
+            float distSqTest = glm::dot(toCam, toCam);
+            if (distSqTest > maxPossibleDistSq) continue;
+
+            float worldRadius = instance.cachedBoundRadius * instance.scale;
+            float cullRadius = worldRadius;
+            if (instance.cachedDisableAnimation) cullRadius = std::max(cullRadius, 3.0f);
+            float effDistSq = maxRenderDistanceSq * std::max(1.0f, cullRadius / 12.0f);
+            if (instance.cachedDisableAnimation) effDistSq *= 2.6f;
+            if (instance.cachedIsGroundDetail) effDistSq *= 0.9f;
+            if (distSqTest > effDistSq) continue;
+
+            float paddedRadius = std::max(cullRadius * 1.5f, cullRadius + 3.0f);
+            if (cullRadius > 0.0f && !frustum.intersectsSphere(instance.position, paddedRadius)) continue;
+        }
+
+        // Compute distSq + effectiveMaxDistSq for sorting and fade alpha (cheap for visible-only)
         glm::vec3 toCam = instance.position - camPos;
         float distSq = glm::dot(toCam, toCam);
-        if (distSq > maxPossibleDistSq) continue;
-
         float worldRadius = instance.cachedBoundRadius * instance.scale;
         float cullRadius = worldRadius;
-        if (instance.cachedDisableAnimation) {
-            cullRadius = std::max(cullRadius, 3.0f);
-        }
+        if (instance.cachedDisableAnimation) cullRadius = std::max(cullRadius, 3.0f);
         float effectiveMaxDistSq = maxRenderDistanceSq * std::max(1.0f, cullRadius / 12.0f);
-        if (instance.cachedDisableAnimation) {
-            effectiveMaxDistSq *= 2.6f;
-        }
-        if (instance.cachedIsGroundDetail) {
-            effectiveMaxDistSq *= 0.75f;
-        }
-
-        if (distSq > effectiveMaxDistSq) continue;
-
-        // Frustum cull with padding
-        float paddedRadius = std::max(cullRadius * 1.5f, cullRadius + 3.0f);
-        if (cullRadius > 0.0f && !frustum.intersectsSphere(instance.position, paddedRadius)) continue;
+        if (instance.cachedDisableAnimation)  effectiveMaxDistSq *= 2.6f;
+        if (instance.cachedIsGroundDetail)     effectiveMaxDistSq *= 0.9f;
 
         sortedVisible_.push_back({i, instance.modelId, distSq, effectiveMaxDistSq});
     }
@@ -2351,17 +2711,12 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     // State tracking
     VkPipeline currentPipeline = VK_NULL_HANDLE;
     VkDescriptorSet currentMaterialSet = VK_NULL_HANDLE;
-    VkDescriptorSet currentBoneSet = VK_NULL_HANDLE;
-    uint32_t frameIndex = vkCtx_->getCurrentFrame();
 
-    // Push constants struct matching m2.vert.glsl push_constant block
+    // Phase 2.1: Push constants now carry per-batch data only; per-instance data is in instance SSBO.
     struct M2PushConstants {
-        glm::mat4 model;
-        glm::vec2 uvOffset;
-        int texCoordSet;
-        int useBones;
-        int isFoliage;
-        float fadeAlpha;
+        int32_t texCoordSet;        // UV set index (0 or 1)
+        int32_t isFoliage;          // Foliage wind animation flag
+        int32_t instanceDataOffset; // Base index into instance SSBO for this draw group
     };
 
     // Validate per-frame descriptor set before any Vulkan commands
@@ -2377,311 +2732,338 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     // Start with opaque pipeline
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, opaquePipeline_);
     currentPipeline = opaquePipeline_;
-    bool opaquePass = true; // Pass 1 = opaque, pass 2 = transparent (set below for second pass)
 
     // Bind dummy bone set (set 2) so non-animated draws have a valid binding.
-    // Animated instances override this with their real bone set per-instance.
-    if (dummyBoneSet_) {
+    // Phase 2.4: Bind mega bone SSBO instead — all instances index into one buffer via boneBase.
+    if (megaBoneSet_[frameIndex]) {
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipelineLayout_, 2, 1, &megaBoneSet_[frameIndex], 0, nullptr);
+    } else if (dummyBoneSet_) {
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 pipelineLayout_, 2, 1, &dummyBoneSet_, 0, nullptr);
     }
 
-    for (const auto& entry : sortedVisible_) {
-        if (entry.index >= instances.size()) continue;
-        auto& instance = instances[entry.index];
+    // Phase 2.1: Bind instance data SSBO (set 3) — per-instance transforms, fade, bones
+    if (instanceSet_[frameIndex]) {
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                pipelineLayout_, 3, 1, &instanceSet_[frameIndex], 0, nullptr);
+    }
 
-        // Bind vertex + index buffers once per model group
-        if (entry.modelId != currentModelId) {
-            currentModelId = entry.modelId;
-            currentModelValid = false;
-            auto mdlIt = models.find(currentModelId);
-            if (mdlIt == models.end()) continue;
-            currentModel = &mdlIt->second;
-            if (!currentModel->vertexBuffer || !currentModel->indexBuffer) continue;
-            currentModelValid = true;
-            VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &currentModel->vertexBuffer, &offset);
-            vkCmdBindIndexBuffer(cmd, currentModel->indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-        }
-        if (!currentModelValid) continue;
+    // Phase 2.1: Reset instance SSBO write cursor for this frame
+    instanceDataCount_ = 0;
+    auto* instSSBO = static_cast<M2InstanceGPU*>(instanceMapped_[frameIndex]);
 
-        const M2ModelGPU& model = *currentModel;
+    // =====================================================================
+    // Phase 2.1: Opaque pass — instanced draws grouped by (modelId, LOD)
+    // =====================================================================
+    // sortedVisible_ is already sorted by modelId so consecutive entries share
+    // the same vertex/index buffer.  Within each model group we sub-group by
+    // targetLOD to guarantee all instances in one vkCmdDrawIndexed use the
+    // same batch set.  Per-instance data (model matrix, fade, bones) is
+    // written to the instance SSBO; the shader reads it via gl_InstanceIndex.
+    {
+        struct PendingInstance {
+            uint32_t instanceIdx;
+            float fadeAlpha;
+            bool useBones;
+            uint16_t targetLOD;
+        };
+        std::vector<PendingInstance> pending;
+        pending.reserve(128);
 
-        // Distance-based fade alpha for smooth pop-in (squared-distance, no sqrt)
-        float fadeAlpha = 1.0f;
-        float fadeFrac = model.disableAnimation ? 0.55f : fadeStartFraction;
-        float fadeStartDistSq = entry.effectiveMaxDistSq * fadeFrac * fadeFrac;
-        if (entry.distSq > fadeStartDistSq) {
-            fadeAlpha = std::clamp((entry.effectiveMaxDistSq - entry.distSq) /
-                                  (entry.effectiveMaxDistSq - fadeStartDistSq), 0.0f, 1.0f);
-        }
+        size_t visStart = 0;
+        while (visStart < sortedVisible_.size()) {
+            // Find group of consecutive entries with same modelId
+            uint32_t groupModelId = sortedVisible_[visStart].modelId;
+            size_t groupEnd = visStart;
+            while (groupEnd < sortedVisible_.size() && sortedVisible_[groupEnd].modelId == groupModelId)
+                groupEnd++;
 
-        float instanceFadeAlpha = fadeAlpha;
-        if (model.isGroundDetail) {
-            instanceFadeAlpha *= 0.82f;
-        }
-        if (model.isInstancePortal) {
-            // Render mesh at low alpha + emit glow sprite at center
-            instanceFadeAlpha *= 0.12f;
-            if (entry.distSq < 400.0f * 400.0f) {
-                glm::vec3 center = glm::vec3(instance.modelMatrix * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-                GlowSprite gs;
-                gs.worldPos = center;
-                gs.color = glm::vec4(0.35f, 0.5f, 1.0f, 1.1f);
-                gs.size = instance.scale * 5.0f;
-                glowSprites_.push_back(gs);
-                GlowSprite halo = gs;
-                halo.color.a *= 0.3f;
-                halo.size *= 2.2f;
-                glowSprites_.push_back(halo);
-            }
-        }
-
-        // Upload bone matrices to SSBO if model has skeletal animation.
-        // Skip animated instances entirely until bones are computed + buffers allocated
-        // to prevent bind-pose/T-pose flash on first appearance.
-        bool modelNeedsAnimation = model.hasAnimation && !model.disableAnimation;
-        if (modelNeedsAnimation && instance.boneMatrices.empty()) {
-            continue;  // Bones not yet computed — skip to avoid bind-pose flash
-        }
-        bool needsBones = modelNeedsAnimation && !instance.boneMatrices.empty();
-        if (needsBones && (!instance.boneBuffer[frameIndex] || !instance.boneSet[frameIndex])) {
-            continue;  // Bone buffers not yet allocated — skip to avoid bind-pose flash
-        }
-        bool useBones = needsBones;
-        if (useBones) {
-            // Upload bone matrices only when recomputed (per-frame-index tracking
-            // ensures both double-buffered SSBOs get the latest bone data)
-            if (instance.bonesDirty[frameIndex] && instance.boneMapped[frameIndex]) {
-                int numBones = std::min(static_cast<int>(instance.boneMatrices.size()), 128);
-                memcpy(instance.boneMapped[frameIndex], instance.boneMatrices.data(),
-                       numBones * sizeof(glm::mat4));
-                instance.bonesDirty[frameIndex] = false;
-            }
-
-            // Bind bone descriptor set (set 2) — skip if already bound
-            if (instance.boneSet[frameIndex] && instance.boneSet[frameIndex] != currentBoneSet) {
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        pipelineLayout_, 2, 1, &instance.boneSet[frameIndex], 0, nullptr);
-                currentBoneSet = instance.boneSet[frameIndex];
-            }
-        }
-
-        // LOD selection based on squared distance (avoid sqrt)
-        uint16_t desiredLOD = 0;
-        if (entry.distSq > 150.0f * 150.0f) desiredLOD = 3;
-        else if (entry.distSq > 80.0f * 80.0f) desiredLOD = 2;
-        else if (entry.distSq > 40.0f * 40.0f) desiredLOD = 1;
-
-        uint16_t targetLOD = desiredLOD;
-        if (desiredLOD > 0 && !(model.availableLODs & (1u << desiredLOD))) {
-            targetLOD = 0;
-        }
-
-        const bool foliageLikeModel = model.isFoliageLike;
-        // Particle-dominant spell effects: mesh is emission geometry, render dim
-        const bool particleDominantEffect = model.isSpellEffect &&
-            !model.particleEmitters.empty() && model.batches.size() <= 2;
-        for (const auto& batch : model.batches) {
-            if (batch.indexCount == 0) continue;
-            if (!model.isGroundDetail && batch.submeshLevel != targetLOD) continue;
-            if (batch.batchOpacity < 0.01f) continue;
-
-            // Two-pass gate: pass 1 = opaque/cutout only, pass 2 = transparent/additive only.
-            // Alpha-test (blendMode==1) and spell effects that force-additive are handled
-            // by their effective blend mode below; gate on raw blendMode here.
-            {
-                const bool rawTransparent = (batch.blendMode >= 2) || model.isSpellEffect;
-                if (opaquePass && rawTransparent) continue;   // skip transparent in opaque pass
-                if (!opaquePass && !rawTransparent) continue; // skip opaque in transparent pass
-            }
-
-            const bool koboldFlameCard = batch.colorKeyBlack && model.isKoboldFlame;
-            const bool smallCardLikeBatch =
-                (batch.glowSize <= 1.35f) ||
-                (batch.lanternGlowHint && batch.glowSize <= 6.0f);
-            const bool batchUnlit = (batch.materialFlags & 0x01) != 0;
-            const bool elvenLikeModel = model.isElvenLike;
-            const bool lanternLikeModel = model.isLanternLike;
-            const bool shouldUseGlowSprite =
-                !koboldFlameCard &&
-                (elvenLikeModel || (lanternLikeModel && batch.lanternGlowHint)) &&
-                !model.isSpellEffect &&
-                smallCardLikeBatch &&
-                (batch.lanternGlowHint ||
-                 (batch.blendMode >= 3) ||
-                 (batch.colorKeyBlack && batchUnlit && batch.blendMode >= 1));
-            if (shouldUseGlowSprite) {
-                if (entry.distSq < 180.0f * 180.0f) {
-                    glm::vec3 worldPos = glm::vec3(instance.modelMatrix * glm::vec4(batch.center, 1.0f));
-                    GlowSprite gs;
-                    gs.worldPos = worldPos;
-                    if (batch.glowTint == 1 || elvenLikeModel) {
-                        gs.color = glm::vec4(0.48f, 0.72f, 1.0f, 1.05f);
-                    } else if (batch.glowTint == 2) {
-                        gs.color = glm::vec4(1.0f, 0.28f, 0.22f, 1.10f);
-                    } else {
-                        gs.color = glm::vec4(1.0f, 0.82f, 0.46f, 1.15f);
-                    }
-                    gs.size = batch.glowSize * instance.scale * 1.45f;
-                    glowSprites_.push_back(gs);
-                    GlowSprite halo = gs;
-                    halo.color.a *= 0.42f;
-                    halo.size *= 1.8f;
-                    glowSprites_.push_back(halo);
-                }
-                const bool cardLikeSkipMesh =
-                    (batch.blendMode >= 3) ||
-                    batch.colorKeyBlack ||
-                    ((batch.materialFlags & 0x01) != 0);
-                const bool lanternGlowCardSkip =
-                    lanternLikeModel &&
-                    batch.lanternGlowHint &&
-                    smallCardLikeBatch &&
-                    cardLikeSkipMesh;
-                if (lanternGlowCardSkip || (cardLikeSkipMesh && !lanternLikeModel)) {
-                    continue;
-                }
-            }
-
-            // Compute UV offset for texture animation
-            glm::vec2 uvOffset(0.0f, 0.0f);
-            if (batch.textureAnimIndex != 0xFFFF && model.hasTextureAnimation) {
-                uint16_t lookupIdx = batch.textureAnimIndex;
-                if (lookupIdx < model.textureTransformLookup.size()) {
-                    uint16_t transformIdx = model.textureTransformLookup[lookupIdx];
-                    if (transformIdx < model.textureTransforms.size()) {
-                        const auto& tt = model.textureTransforms[transformIdx];
-                        glm::vec3 trans = interpVec3(tt.translation,
-                            instance.currentSequenceIndex, instance.animTime,
-                            glm::vec3(0.0f), model.globalSequenceDurations);
-                        uvOffset = glm::vec2(trans.x, trans.y);
-                    }
-                }
-            }
-            // Lava M2 models: fallback UV scroll if no texture animation.
-            // Uses kLavaAnimStart (file-scope) for consistent timing across passes.
-            if (model.isLavaModel && uvOffset == glm::vec2(0.0f)) {
-                float t = std::chrono::duration<float>(std::chrono::steady_clock::now() - kLavaAnimStart).count();
-                uvOffset = glm::vec2(t * 0.03f, -t * 0.08f);
-            }
-
-            // Foliage/card-like batches render more stably as cutout (depth-write on)
-            // instead of alpha-blended sorting.
-            const bool foliageCutout =
-                foliageLikeModel &&
-                !model.isSpellEffect &&
-                batch.blendMode <= 3;
-            const bool forceCutout =
-                !model.isSpellEffect &&
-                (model.isGroundDetail ||
-                 foliageCutout ||
-                 batch.blendMode == 1 ||
-                 (batch.blendMode >= 2 && !batch.hasAlpha) ||
-                 batch.colorKeyBlack);
-
-            // Select pipeline based on blend mode
-            uint8_t effectiveBlendMode = batch.blendMode;
-            if (model.isSpellEffect) {
-                // Effect models: force additive blend for opaque/cutout batches
-                // so the mesh renders as a transparent glow, not a solid object
-                if (effectiveBlendMode <= 1) {
-                    effectiveBlendMode = 3;  // additive
-                } else if (effectiveBlendMode == 4 || effectiveBlendMode == 5) {
-                    effectiveBlendMode = 3;
-                }
-            }
-            if (forceCutout) {
-                effectiveBlendMode = 1;
-            }
-
-            VkPipeline desiredPipeline;
-            if (forceCutout) {
-                // Use opaque pipeline + shader discard for stable foliage cards.
-                desiredPipeline = opaquePipeline_;
-            } else {
-                switch (effectiveBlendMode) {
-                    case 0: desiredPipeline = opaquePipeline_; break;
-                    case 1: desiredPipeline = alphaTestPipeline_; break;
-                    case 2: desiredPipeline = alphaPipeline_; break;
-                    default: desiredPipeline = additivePipeline_; break;
-                }
-            }
-            if (desiredPipeline != currentPipeline) {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
-                currentPipeline = desiredPipeline;
-            }
-
-            // Update material UBO with per-draw dynamic values (interiorDarken, forceCutout overrides)
-            // Note: fadeAlpha is in push constants (per-draw) to avoid shared-UBO race
-            if (batch.materialUBOMapped) {
-                auto* mat = static_cast<M2MaterialUBO*>(batch.materialUBOMapped);
-                mat->interiorDarken = insideInterior ? 1.0f : 0.0f;
-                if (batch.colorKeyBlack) {
-                    mat->colorKeyThreshold = (effectiveBlendMode == 4 || effectiveBlendMode == 5) ? 0.7f : 0.08f;
-                }
-                if (forceCutout) {
-                    mat->alphaTest = model.isGroundDetail ? 3 : (foliageCutout ? 2 : 1);
-                    if (model.isGroundDetail) {
-                        mat->unlit = 0;
-                    }
-                }
-            }
-
-            // Bind material descriptor set (set 1) — skip batch if missing
-            // to avoid inheriting a stale descriptor set from a prior renderer
-            if (!batch.materialSet) continue;
-            if (batch.materialSet != currentMaterialSet) {
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        pipelineLayout_, 1, 1, &batch.materialSet, 0, nullptr);
-                currentMaterialSet = batch.materialSet;
-            }
-
-            // Push constants
-            M2PushConstants pc;
-            pc.model = instance.modelMatrix;
-            pc.uvOffset = uvOffset;
-            pc.texCoordSet = static_cast<int>(batch.textureUnit);
-            pc.useBones = useBones ? 1 : 0;
-            pc.isFoliage = model.shadowWindFoliage ? 1 : 0;
-            pc.fadeAlpha = instanceFadeAlpha;
-            // Particle-dominant effects: mesh is emission geometry, don't render
-            if (particleDominantEffect && batch.blendMode <= 1) {
+            auto mdlIt = models.find(groupModelId);
+            if (mdlIt == models.end() || !mdlIt->second.vertexBuffer || !mdlIt->second.indexBuffer) {
+                visStart = groupEnd;
                 continue;
             }
-            vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
-            vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
-            lastDrawCallCount++;
+            const M2ModelGPU& model = mdlIt->second;
+
+            bool modelNeedsAnimation = model.hasAnimation && !model.disableAnimation;
+            const bool foliageLikeModel = model.isFoliageLike;
+            const bool particleDominantEffect = model.isSpellEffect &&
+                !model.particleEmitters.empty() && model.batches.size() <= 2;
+
+            // Collect per-instance data for this model group
+            pending.clear();
+            for (size_t vi = visStart; vi < groupEnd; vi++) {
+                const auto& entry = sortedVisible_[vi];
+                if (entry.index >= instances.size()) continue;
+                auto& instance = instances[entry.index];
+
+                // Distance-based fade alpha
+                float fadeFrac = model.disableAnimation ? 0.55f : fadeStartFraction;
+                float fadeStartDistSq = entry.effectiveMaxDistSq * fadeFrac * fadeFrac;
+                float fadeAlpha = 1.0f;
+                if (entry.distSq > fadeStartDistSq) {
+                    fadeAlpha = std::clamp((entry.effectiveMaxDistSq - entry.distSq) /
+                                          (entry.effectiveMaxDistSq - fadeStartDistSq), 0.0f, 1.0f);
+                }
+                float instanceFadeAlpha = fadeAlpha;
+                if (model.isGroundDetail) instanceFadeAlpha *= 0.82f;
+                if (model.isInstancePortal) {
+                    instanceFadeAlpha *= 0.12f;
+                    if (entry.distSq < 400.0f * 400.0f) {
+                        glm::vec3 center = glm::vec3(instance.modelMatrix * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+                        GlowSprite gs;
+                        gs.worldPos = center;
+                        gs.color = glm::vec4(0.35f, 0.5f, 1.0f, 1.1f);
+                        gs.size = instance.scale * 5.0f;
+                        glowSprites_.push_back(gs);
+                        GlowSprite halo = gs;
+                        halo.color.a *= 0.3f;
+                        halo.size *= 2.2f;
+                        glowSprites_.push_back(halo);
+                    }
+                }
+
+                // Bone readiness check
+                if (modelNeedsAnimation && instance.boneMatrices.empty()) continue;
+                bool needsBones = modelNeedsAnimation && !instance.boneMatrices.empty();
+                if (needsBones && instance.megaBoneOffset == 0) continue;
+
+                // LOD selection
+                uint16_t desiredLOD = 0;
+                if (entry.distSq > 150.0f * 150.0f) desiredLOD = 3;
+                else if (entry.distSq > 80.0f * 80.0f) desiredLOD = 2;
+                else if (entry.distSq > 40.0f * 40.0f) desiredLOD = 1;
+                uint16_t targetLOD = desiredLOD;
+                if (desiredLOD > 0 && !(model.availableLODs & (1u << desiredLOD))) targetLOD = 0;
+
+                pending.push_back({entry.index, instanceFadeAlpha, needsBones, targetLOD});
+            }
+
+            if (pending.empty()) { visStart = groupEnd; continue; }
+
+            // Sort by targetLOD so each sub-group occupies a contiguous SSBO range
+            std::sort(pending.begin(), pending.end(),
+                      [](const PendingInstance& a, const PendingInstance& b) { return a.targetLOD < b.targetLOD; });
+
+            // Bind vertex/index buffers once per model group
+            VkDeviceSize vbOffset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &model.vertexBuffer, &vbOffset);
+            vkCmdBindIndexBuffer(cmd, model.indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
+            // Write base instance data to SSBO (uvOffset=0 — overridden for tex-anim batches)
+            uint32_t baseSSBOOffset = instanceDataCount_;
+            for (const auto& p : pending) {
+                if (instanceDataCount_ >= MAX_INSTANCE_DATA) break;
+                auto& inst = instances[p.instanceIdx];
+                auto& e = instSSBO[instanceDataCount_];
+                e.model = inst.modelMatrix;
+                e.uvOffset = glm::vec2(0.0f);
+                e.fadeAlpha = p.fadeAlpha;
+                e.useBones = p.useBones ? 1 : 0;
+                e.boneBase = p.useBones ? static_cast<int32_t>(inst.megaBoneOffset) : 0;
+                std::memset(e._pad, 0, sizeof(e._pad));
+                instanceDataCount_++;
+            }
+
+            // Process LOD sub-groups within this model group
+            size_t lodIdx = 0;
+            while (lodIdx < pending.size()) {
+                uint16_t lod = pending[lodIdx].targetLOD;
+                size_t lodEnd = lodIdx + 1;
+                while (lodEnd < pending.size() && pending[lodEnd].targetLOD == lod) lodEnd++;
+                uint32_t groupSize = static_cast<uint32_t>(lodEnd - lodIdx);
+                uint32_t groupSSBOOffset = baseSSBOOffset + static_cast<uint32_t>(lodIdx);
+
+                for (size_t bi = 0; bi < model.batches.size(); bi++) {
+                    const auto& batch = model.batches[bi];
+                    if (batch.indexCount == 0) continue;
+                    if (!model.isGroundDetail && batch.submeshLevel != lod) continue;
+                    if (batch.batchOpacity < 0.01f) continue;
+
+                    // Opaque gate — skip transparent batches
+                    const bool rawTransparent = (batch.blendMode >= 2) || model.isSpellEffect;
+                    if (rawTransparent) continue;
+
+                    // Particle-dominant effects: emission geometry — skip opaque
+                    if (particleDominantEffect && batch.blendMode <= 1) continue;
+
+                    // Glow sprite check (per model+batch, sprites generated per instance)
+                    const bool koboldFlameCard = batch.colorKeyBlack && model.isKoboldFlame;
+                    const bool smallCardLikeBatch =
+                        (batch.glowSize <= 1.35f) ||
+                        (batch.lanternGlowHint && batch.glowSize <= 6.0f);
+                    const bool batchUnlit = (batch.materialFlags & 0x01) != 0;
+                    const bool shouldUseGlowSprite =
+                        !koboldFlameCard &&
+                        (model.isElvenLike || (model.isLanternLike && batch.lanternGlowHint)) &&
+                        !model.isSpellEffect &&
+                        smallCardLikeBatch &&
+                        (batch.lanternGlowHint ||
+                         (batch.blendMode >= 3) ||
+                         (batch.colorKeyBlack && batchUnlit && batch.blendMode >= 1));
+                    if (shouldUseGlowSprite) {
+                        // Generate glow sprites for each instance in the group
+                        for (size_t j = lodIdx; j < lodEnd; j++) {
+                            auto& inst = instances[pending[j].instanceIdx];
+                            float distSq = sortedVisible_[visStart].distSq; // approximate with group
+                            if (distSq < 180.0f * 180.0f) {
+                                glm::vec3 worldPos = glm::vec3(inst.modelMatrix * glm::vec4(batch.center, 1.0f));
+                                GlowSprite gs;
+                                gs.worldPos = worldPos;
+                                if (batch.glowTint == 1 || model.isElvenLike)
+                                    gs.color = glm::vec4(0.48f, 0.72f, 1.0f, 1.05f);
+                                else if (batch.glowTint == 2)
+                                    gs.color = glm::vec4(1.0f, 0.28f, 0.22f, 1.10f);
+                                else
+                                    gs.color = glm::vec4(1.0f, 0.82f, 0.46f, 1.15f);
+                                gs.size = batch.glowSize * inst.scale * 1.45f;
+                                glowSprites_.push_back(gs);
+                                GlowSprite halo = gs;
+                                halo.color.a *= 0.42f;
+                                halo.size *= 1.8f;
+                                glowSprites_.push_back(halo);
+                            }
+                        }
+                        const bool cardLikeSkipMesh =
+                            (batch.blendMode >= 3) || batch.colorKeyBlack || batchUnlit;
+                        const bool lanternGlowCardSkip =
+                            model.isLanternLike && batch.lanternGlowHint &&
+                            smallCardLikeBatch && cardLikeSkipMesh;
+                        if (lanternGlowCardSkip || (cardLikeSkipMesh && !model.isLanternLike))
+                            continue;
+                    }
+
+                    // Handle texture animation: if this batch has per-instance uvOffset,
+                    // write a separate SSBO range with the correct offsets.
+                    bool hasBatchTexAnim = (batch.textureAnimIndex != 0xFFFF && model.hasTextureAnimation)
+                                           || model.isLavaModel;
+                    uint32_t drawOffset = groupSSBOOffset;
+                    if (hasBatchTexAnim && instanceDataCount_ + groupSize <= MAX_INSTANCE_DATA) {
+                        drawOffset = instanceDataCount_;
+                        for (size_t j = lodIdx; j < lodEnd; j++) {
+                            auto& inst = instances[pending[j].instanceIdx];
+                            glm::vec2 uvOffset(0.0f);
+                            if (batch.textureAnimIndex != 0xFFFF && model.hasTextureAnimation) {
+                                uint16_t lookupIdx = batch.textureAnimIndex;
+                                if (lookupIdx < model.textureTransformLookup.size()) {
+                                    uint16_t transformIdx = model.textureTransformLookup[lookupIdx];
+                                    if (transformIdx < model.textureTransforms.size()) {
+                                        const auto& tt = model.textureTransforms[transformIdx];
+                                        glm::vec3 trans = interpVec3(tt.translation,
+                                            inst.currentSequenceIndex, inst.animTime,
+                                            glm::vec3(0.0f), model.globalSequenceDurations);
+                                        uvOffset = glm::vec2(trans.x, trans.y);
+                                    }
+                                }
+                            }
+                            if (model.isLavaModel && uvOffset == glm::vec2(0.0f)) {
+                                float t = std::chrono::duration<float>(
+                                    std::chrono::steady_clock::now() - kLavaAnimStart).count();
+                                uvOffset = glm::vec2(t * 0.03f, -t * 0.08f);
+                            }
+                            // Copy base entry and override uvOffset
+                            instSSBO[instanceDataCount_] = instSSBO[groupSSBOOffset + (j - lodIdx)];
+                            instSSBO[instanceDataCount_].uvOffset = uvOffset;
+                            instanceDataCount_++;
+                        }
+                    }
+
+                    // Pipeline selection (per-model/batch, not per-instance)
+                    const bool foliageCutout = foliageLikeModel && !model.isSpellEffect && batch.blendMode <= 3;
+                    const bool forceCutout =
+                        !model.isSpellEffect &&
+                        (model.isGroundDetail || foliageCutout ||
+                         batch.blendMode == 1 ||
+                         (batch.blendMode >= 2 && !batch.hasAlpha) ||
+                         batch.colorKeyBlack);
+
+                    uint8_t effectiveBlendMode = batch.blendMode;
+                    if (model.isSpellEffect) {
+                        if (effectiveBlendMode <= 1) effectiveBlendMode = 3;
+                        else if (effectiveBlendMode == 4 || effectiveBlendMode == 5) effectiveBlendMode = 3;
+                    }
+                    if (forceCutout) effectiveBlendMode = 1;
+
+                    VkPipeline desiredPipeline;
+                    if (forceCutout) {
+                        desiredPipeline = opaquePipeline_;
+                    } else {
+                        switch (effectiveBlendMode) {
+                            case 0: desiredPipeline = opaquePipeline_; break;
+                            case 1: desiredPipeline = alphaTestPipeline_; break;
+                            case 2: desiredPipeline = alphaPipeline_; break;
+                            default: desiredPipeline = additivePipeline_; break;
+                        }
+                    }
+                    if (desiredPipeline != currentPipeline) {
+                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, desiredPipeline);
+                        currentPipeline = desiredPipeline;
+                    }
+
+                    // Update material UBO
+                    if (batch.materialUBOMapped) {
+                        auto* mat = static_cast<M2MaterialUBO*>(batch.materialUBOMapped);
+                        mat->interiorDarken = insideInterior ? 1.0f : 0.0f;
+                        if (batch.colorKeyBlack)
+                            mat->colorKeyThreshold = (effectiveBlendMode == 4 || effectiveBlendMode == 5) ? 0.7f : 0.08f;
+                        if (forceCutout) {
+                            mat->alphaTest = model.isGroundDetail ? 3 : (foliageCutout ? 2 : 1);
+                            if (model.isGroundDetail) mat->unlit = 0;
+                        }
+                    }
+
+                    // Bind material descriptor set (set 1)
+                    if (!batch.materialSet) continue;
+                    if (batch.materialSet != currentMaterialSet) {
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                                pipelineLayout_, 1, 1, &batch.materialSet, 0, nullptr);
+                        currentMaterialSet = batch.materialSet;
+                    }
+
+                    // Push constants + instanced draw
+                    M2PushConstants pc;
+                    pc.texCoordSet = static_cast<int32_t>(batch.textureUnit);
+                    pc.isFoliage = model.shadowWindFoliage ? 1 : 0;
+                    pc.instanceDataOffset = static_cast<int32_t>(drawOffset);
+                    vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+                    vkCmdDrawIndexed(cmd, batch.indexCount, groupSize, batch.indexStart, 0, 0);
+                    lastDrawCallCount++;
+                }
+
+                lodIdx = lodEnd;
+            }
+
+            visStart = groupEnd;
         }
     }
 
-    // Pass 2: transparent/additive batches — sort back-to-front by distance so
-    // overlapping transparent geometry composites in the correct painter's order.
-    opaquePass = false;
+    // =====================================================================
+    // Pass 2: Transparent/additive batches — back-to-front per instance
+    // =====================================================================
+    // Transparent geometry must be drawn individually per instance in back-to-
+    // front order for correct alpha compositing.  Each draw writes one
+    // M2InstanceGPU entry and issues a single-instance indexed draw.
     std::sort(sortedVisible_.begin(), sortedVisible_.end(),
               [](const VisibleEntry& a, const VisibleEntry& b) { return a.distSq > b.distSq; });
 
     currentModelId = UINT32_MAX;
     currentModel = nullptr;
     currentModelValid = false;
-    // Reset state so the first transparent bind always sets explicitly
     currentPipeline = opaquePipeline_;
     currentMaterialSet = VK_NULL_HANDLE;
-    currentBoneSet = VK_NULL_HANDLE;
 
     for (const auto& entry : sortedVisible_) {
         if (entry.index >= instances.size()) continue;
         auto& instance = instances[entry.index];
 
-        // Quick skip: if model has no transparent batches at all, skip it entirely
+        // Quick skip: if model has no transparent batches at all
         if (entry.modelId != currentModelId) {
             auto mdlIt = models.find(entry.modelId);
             if (mdlIt == models.end()) continue;
             if (!mdlIt->second.hasTransparentBatches && !mdlIt->second.isSpellEffect) continue;
         }
 
-        // Reuse the same rendering logic as pass 1 (via fallthrough — the batch gate
-        // `!opaquePass && !rawTransparent → continue` handles opaque skipping)
         if (entry.modelId != currentModelId) {
             currentModelId = entry.modelId;
             currentModelValid = false;
@@ -2690,15 +3072,15 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
             currentModel = &mdlIt->second;
             if (!currentModel->vertexBuffer || !currentModel->indexBuffer) continue;
             currentModelValid = true;
-            VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &currentModel->vertexBuffer, &offset);
+            VkDeviceSize vbOff = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &currentModel->vertexBuffer, &vbOff);
             vkCmdBindIndexBuffer(cmd, currentModel->indexBuffer, 0, VK_INDEX_TYPE_UINT16);
         }
         if (!currentModelValid) continue;
 
         const M2ModelGPU& model = *currentModel;
 
-        // Distance-based fade alpha (same as pass 1)
+        // Fade alpha
         float fadeAlpha = 1.0f;
         float fadeFrac = model.disableAnimation ? 0.55f : fadeStartFraction;
         float fadeStartDistSq = entry.effectiveMaxDistSq * fadeFrac * fadeFrac;
@@ -2713,13 +3095,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         bool modelNeedsAnimation = model.hasAnimation && !model.disableAnimation;
         if (modelNeedsAnimation && instance.boneMatrices.empty()) continue;
         bool needsBones = modelNeedsAnimation && !instance.boneMatrices.empty();
-        if (needsBones && (!instance.boneBuffer[frameIndex] || !instance.boneSet[frameIndex])) continue;
-        bool useBones = needsBones;
-        if (useBones && instance.boneSet[frameIndex] && instance.boneSet[frameIndex] != currentBoneSet) {
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    pipelineLayout_, 2, 1, &instance.boneSet[frameIndex], 0, nullptr);
-            currentBoneSet = instance.boneSet[frameIndex];
-        }
+        if (needsBones && instance.megaBoneOffset == 0) continue;
 
         uint16_t desiredLOD = 0;
         if (entry.distSq > 150.0f * 150.0f) desiredLOD = 3;
@@ -2742,7 +3118,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 if (!rawTransparent) continue;
             }
 
-            // Skip glow sprites (handled after loop)
+            // Skip glow sprites (handled in opaque pass)
             const bool batchUnlit = (batch.materialFlags & 0x01) != 0;
             const bool koboldFlameCard = batch.colorKeyBlack && model.isKoboldFlame;
             const bool smallCardLikeBatch =
@@ -2766,7 +3142,10 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                     continue;
             }
 
-            glm::vec2 uvOffset(0.0f, 0.0f);
+            if (particleDominantEffect) continue; // emission-only mesh
+
+            // Compute UV offset for this instance + batch
+            glm::vec2 uvOffset(0.0f);
             if (batch.textureAnimIndex != 0xFFFF && model.hasTextureAnimation) {
                 uint16_t lookupIdx = batch.textureAnimIndex;
                 if (lookupIdx < model.textureTransformLookup.size()) {
@@ -2785,6 +3164,19 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 uvOffset = glm::vec2(t * 0.03f, -t * 0.08f);
             }
 
+            // Write single instance entry to SSBO
+            if (instanceDataCount_ >= MAX_INSTANCE_DATA) continue;
+            uint32_t drawOffset = instanceDataCount_;
+            auto& e = instSSBO[instanceDataCount_];
+            e.model = instance.modelMatrix;
+            e.uvOffset = uvOffset;
+            e.fadeAlpha = instanceFadeAlpha;
+            e.useBones = needsBones ? 1 : 0;
+            e.boneBase = needsBones ? static_cast<int32_t>(instance.megaBoneOffset) : 0;
+            std::memset(e._pad, 0, sizeof(e._pad));
+            instanceDataCount_++;
+
+            // Pipeline selection
             uint8_t effectiveBlendMode = batch.blendMode;
             if (model.isSpellEffect) {
                 if (effectiveBlendMode <= 1) effectiveBlendMode = 3;
@@ -2815,14 +3207,11 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                 currentMaterialSet = batch.materialSet;
             }
 
+            // Push constants + single-instance draw
             M2PushConstants pc;
-            pc.model = instance.modelMatrix;
-            pc.uvOffset = uvOffset;
-            pc.texCoordSet = static_cast<int>(batch.textureUnit);
-            pc.useBones = useBones ? 1 : 0;
+            pc.texCoordSet = static_cast<int32_t>(batch.textureUnit);
             pc.isFoliage = model.shadowWindFoliage ? 1 : 0;
-            pc.fadeAlpha = instanceFadeAlpha;
-            if (particleDominantEffect) continue; // emission-only mesh
+            pc.instanceDataOffset = static_cast<int32_t>(drawOffset);
             vkCmdPushConstants(cmd, pipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
             vkCmdDrawIndexed(cmd, batch.indexCount, 1, batch.indexStart, 0, 0);
             lastDrawCallCount++;
@@ -4842,7 +5231,9 @@ void M2Renderer::recreatePipelines() {
         {4, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 14 * sizeof(float)}, // boneIndices (float)
     };
 
-    auto buildM2Pipeline = [&](VkPipelineColorBlendAttachmentState blendState, bool depthWrite) -> VkPipeline {
+    // Pipeline derivatives — opaque is the base, others derive from it for shared state optimization
+    auto buildM2Pipeline = [&](VkPipelineColorBlendAttachmentState blendState, bool depthWrite,
+                               VkPipelineCreateFlags flags = 0, VkPipeline basePipeline = VK_NULL_HANDLE) -> VkPipeline {
         return PipelineBuilder()
             .setShaders(m2Vert.stageInfo(VK_SHADER_STAGE_VERTEX_BIT),
                         m2Frag.stageInfo(VK_SHADER_STAGE_FRAGMENT_BIT))
@@ -4855,13 +5246,19 @@ void M2Renderer::recreatePipelines() {
             .setLayout(pipelineLayout_)
             .setRenderPass(mainPass)
             .setDynamicStates({VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR})
+            .setFlags(flags)
+            .setBasePipeline(basePipeline)
             .build(device, vkCtx_->getPipelineCache());
     };
 
-    opaquePipeline_ = buildM2Pipeline(PipelineBuilder::blendDisabled(), true);
-    alphaTestPipeline_ = buildM2Pipeline(PipelineBuilder::blendAlpha(), true);
-    alphaPipeline_ = buildM2Pipeline(PipelineBuilder::blendAlpha(), false);
-    additivePipeline_ = buildM2Pipeline(PipelineBuilder::blendAdditive(), false);
+    opaquePipeline_ = buildM2Pipeline(PipelineBuilder::blendDisabled(), true,
+                                      VK_PIPELINE_CREATE_ALLOW_DERIVATIVES_BIT);
+    alphaTestPipeline_ = buildM2Pipeline(PipelineBuilder::blendAlpha(), true,
+                                         VK_PIPELINE_CREATE_DERIVATIVE_BIT, opaquePipeline_);
+    alphaPipeline_ = buildM2Pipeline(PipelineBuilder::blendAlpha(), false,
+                                     VK_PIPELINE_CREATE_DERIVATIVE_BIT, opaquePipeline_);
+    additivePipeline_ = buildM2Pipeline(PipelineBuilder::blendAdditive(), false,
+                                        VK_PIPELINE_CREATE_DERIVATIVE_BIT, opaquePipeline_);
 
     // --- Particle pipelines ---
     if (particleVert.isValid() && particleFrag.isValid()) {

@@ -537,20 +537,6 @@ static std::vector<ArchiveDesc> discoverArchives(const std::string& mpqDir,
     return result;
 }
 
-// Read a text file into a vector of lines (for external listfile loading)
-static std::vector<std::string> readLines(const std::string& path) {
-    std::vector<std::string> lines;
-    std::ifstream f(path);
-    if (!f) return lines;
-    std::string line;
-    while (std::getline(f, line)) {
-        // Trim trailing \r
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (!line.empty()) lines.push_back(std::move(line));
-    }
-    return lines;
-}
-
 // Extract the (listfile) from an MPQ archive into a set of filenames
 static void extractInternalListfile(HANDLE hMpq, std::set<std::string>& out) {
     HANDLE hFile = nullptr;
@@ -595,14 +581,9 @@ bool Extractor::enumerateFiles(const Options& opts,
 
     std::cout << "Found " << archives.size() << " MPQ archives\n";
 
-    // Load external listfile into memory once (avoids repeated file I/O)
-    std::vector<std::string> externalEntries;
-    std::vector<const char*> externalPtrs;
-    if (!opts.listFile.empty()) {
-        externalEntries = readLines(opts.listFile);
-        externalPtrs.reserve(externalEntries.size());
-        for (const auto& e : externalEntries) externalPtrs.push_back(e.c_str());
-        std::cout << "  Loaded external listfile: " << externalEntries.size() << " entries\n";
+    const bool haveExternalListFile = !opts.listFile.empty();
+    if (haveExternalListFile) {
+        std::cout << "  Using external listfile: " << opts.listFile << "\n";
     }
 
     const auto wantedDbcs = buildWantedDbcSet(opts);
@@ -616,12 +597,11 @@ bool Extractor::enumerateFiles(const Options& opts,
             continue;
         }
 
-        // Inject external listfile entries into archive's in-memory name table.
-        // SFileAddListFileEntries is fast — it only hashes the names against the
-        // archive's hash table, no file I/O involved.
-        if (!externalPtrs.empty()) {
-            SFileAddListFileEntries(hMpq, externalPtrs.data(),
-                                   static_cast<DWORD>(externalPtrs.size()));
+        // Inject external listfile into archive's in-memory name table.
+        // SFileAddListFile reads the file and hashes names against the
+        // archive's hash table.
+        if (haveExternalListFile) {
+            SFileAddListFile(hMpq, opts.listFile.c_str());
         }
 
         if (opts.verbose) {

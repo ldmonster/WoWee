@@ -111,6 +111,17 @@ PipelineBuilder& PipelineBuilder::setDynamicStates(const std::vector<VkDynamicSt
     return *this;
 }
 
+// Pipeline derivatives — hint driver to share compiled state between similar pipelines
+PipelineBuilder& PipelineBuilder::setFlags(VkPipelineCreateFlags flags) {
+    flags_ = flags;
+    return *this;
+}
+
+PipelineBuilder& PipelineBuilder::setBasePipeline(VkPipeline basePipeline) {
+    basePipelineHandle_ = basePipeline;
+    return *this;
+}
+
 VkPipeline PipelineBuilder::build(VkDevice device, VkPipelineCache cache) const {
     // Vertex input
     VkPipelineVertexInputStateCreateInfo vertexInput{};
@@ -188,6 +199,9 @@ VkPipeline PipelineBuilder::build(VkDevice device, VkPipelineCache cache) const 
     pipelineInfo.pColorBlendState = colorBlendAttachments_.empty() ? nullptr : &colorBlending;
     pipelineInfo.pDynamicState = dynamicStates_.empty() ? nullptr : &dynamicState;
     pipelineInfo.layout = pipelineLayout_;
+    pipelineInfo.flags = flags_;
+    pipelineInfo.basePipelineHandle = basePipelineHandle_;
+    pipelineInfo.basePipelineIndex = -1;
     pipelineInfo.renderPass = renderPass_;
     pipelineInfo.subpass = subpass_;
 
