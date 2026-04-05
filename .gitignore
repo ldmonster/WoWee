@@ -91,27 +91,9 @@ saves/
 wowee_[0-9][0-9][0-9][0-9]
 
 # Extracted assets (run ./extract_assets.sh or .\extract_assets.ps1 to generate)
-Data/db/
-Data/character/
-Data/creature/
-Data/terrain/
-Data/world/
-Data/interface/
-Data/item/
-Data/sound/
-Data/spell/
-Data/environment/
-Data/misc/
-Data/enUS/
-Data/Character/
-Data/Creature/
-Data/World/
-Data/manifest.json
-Data/expansions/*/manifest.json
-Data/expansions/*/assets/
-Data/expansions/*/overlay/
-Data/expansions/*/db/*.csv
-Data/hd/
+Data/*
+!Data/opcodes
+
 ingest/
 
 # Asset pipeline state and texture packs
