@@ -2,7 +2,7 @@
 // animation_ids.cpp — Inverse lookup & DBC validation
 // Generated from animation_ids.hpp (452 constants, IDs 0–451)
 // ============================================================================
-#include "rendering/animation_ids.hpp"
+#include "rendering/animation/animation_ids.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "core/logger.hpp"
 

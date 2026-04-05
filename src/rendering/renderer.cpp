@@ -867,7 +867,7 @@ void Renderer::beginFrame() {
     // Update per-frame UBO with current camera/lighting state
     updatePerFrameUBO();
 
-    // --- Off-screen pre-passes (Phase 2.5: render graph) ---
+    // --- Off-screen pre-passes ---
     // Build frame graph: registers pre-passes as graph nodes with dependencies.
     // compile() topologically sorts; execute() runs them with auto barriers.
     buildFrameGraph(nullptr);

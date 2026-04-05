@@ -1,7 +1,7 @@
 #include "core/application.hpp"
 #include "core/coordinates.hpp"
 #include "core/profiler.hpp"
-#include "rendering/animation_ids.hpp"
+#include "rendering/animation/animation_ids.hpp"
 #include "rendering/animation_controller.hpp"
 #include <unordered_set>
 #include <cmath>
@@ -944,6 +944,16 @@ void Application::setState(AppState newState) {
                 cc->setStandUpCallback([this]() {
                     if (gameHandler) {
                         gameHandler->setStandState(rendering::AnimationController::STAND_STATE_STAND);
+                    }
+                });
+                cc->setSitDownCallback([this]() {
+                    if (gameHandler) {
+                        gameHandler->setStandState(rendering::AnimationController::STAND_STATE_SIT);
+                    }
+                    if (renderer) {
+                        if (auto* ac = renderer->getAnimationController()) {
+                            ac->setStandState(rendering::AnimationController::STAND_STATE_SIT);
+                        }
                     }
                 });
                 cc->setAutoFollowCancelCallback([this]() {
@@ -3488,13 +3498,17 @@ void Application::setupUICallbacks() {
     });
 
     // Spell cast animation callback — play cast animation on caster (player or NPC/other player)
-    // Probes the model for the best available spell animation with fallback chain:
-    //   Regular cast: SPELL_CAST_DIRECTED(53) → SPELL_CAST_OMNI(54) → SPELL_CAST(32) → SPELL(2)
-    //   Channel:      CHANNEL_CAST_DIRECTED(124) → CHANNEL_CAST_OMNI(125) → SPELL_CAST_DIRECTED(53) → SPELL(2)
-    // For the local player, uses AnimationController state machine to prevent
-    // COMBAT_IDLE from overriding the spell animation.  For NPCs/other players,
-    // calls playAnimation directly (they don't share the player state machine).
-    gameHandler->setSpellCastAnimCallback([this](uint64_t guid, bool start, bool isChannel) {
+    // WoW-accurate 3-phase spell animation sequence:
+    //   Phase 1: SPELL_PRECAST (31)              — one-shot wind-up
+    //   Phase 2: READY_SPELL_DIRECTED/OMNI (51/52) — looping hold while cast bar fills
+    //   Phase 3: SPELL_CAST_DIRECTED/OMNI/AREA (53/54/33) — one-shot release at completion
+    // Channels use CHANNEL_CAST_DIRECTED/OMNI (124/125) or SPELL_CHANNEL_DIRECTED_OMNI (201).
+    // castType comes from the spell packet's targetGuid:
+    //   DIRECTED — spell targets a specific unit  (Frostbolt, Heal)
+    //   OMNI     — self-cast / no explicit target (Arcane Explosion, buffs)
+    //   AREA     — ground-targeted AoE           (Blizzard, Rain of Fire)
+    gameHandler->setSpellCastAnimCallback([this](uint64_t guid, bool start, bool isChannel,
+                                                  game::SpellCastType castType) {
         if (!entitySpawner_) return;
         if (!renderer) return;
         auto* cr = renderer->getCharacterRenderer();
@@ -3514,6 +3528,9 @@ void Application::setupUICallbacks() {
         if (instanceId == 0) instanceId = entitySpawner_->getPlayerInstanceId(guid);
         if (instanceId == 0) return;
 
+        const bool isDirected = (castType == game::SpellCastType::DIRECTED);
+        const bool isArea     = (castType == game::SpellCastType::AREA);
+
         if (start) {
             // Detect fishing spells (channeled) — use FISHING_LOOP instead of generic cast
             auto isFishingSpell = [](uint32_t spellId) {
@@ -3532,74 +3549,94 @@ void Application::setupUICallbacks() {
                     cr->playAnimation(instanceId, rendering::anim::FISHING_LOOP, true);
                 }
             } else {
-            // Spell animation sequence: PRECAST (one-shot) → CAST (loop) → FINALIZE (one-shot) → idle
-            // Probe model for best available animations with fallback chains:
-            //   Regular cast: SPELL_CAST_DIRECTED → SPELL_CAST_OMNI → SPELL_CAST → SPELL
-            //   Channel:      CHANNEL_CAST_DIRECTED → CHANNEL_CAST_OMNI → SPELL_CAST_DIRECTED → SPELL
-            bool hasTarget = gameHandler->hasTarget();
+            // Helper: pick first animation the model supports from a list
+            auto pickFirst = [&](std::initializer_list<uint32_t> ids) -> uint32_t {
+                for (uint32_t id : ids)
+                    if (cr->hasAnimation(instanceId, id)) return id;
+                return 0;
+            };
 
             // Phase 1: Precast wind-up (one-shot, non-channels only)
             uint32_t precastAnim = 0;
-            if (!isChannel && cr->hasAnimation(instanceId, rendering::anim::SPELL_PRECAST)) {
-                precastAnim = rendering::anim::SPELL_PRECAST;
+            if (!isChannel) {
+                precastAnim = pickFirst({rendering::anim::SPELL_PRECAST});
             }
 
-            // Phase 2: Cast hold (looping until stopSpellCast)
-            static const uint32_t castDirected[] = {
-                rendering::anim::SPELL_CAST_DIRECTED,
-                rendering::anim::SPELL_CAST_OMNI,
-                rendering::anim::SPELL_CAST,
-                rendering::anim::SPELL
-            };
-            static const uint32_t castOmni[] = {
-                rendering::anim::SPELL_CAST_OMNI,
-                rendering::anim::SPELL_CAST_DIRECTED,
-                rendering::anim::SPELL_CAST,
-                rendering::anim::SPELL
-            };
-            static const uint32_t channelDirected[] = {
-                rendering::anim::CHANNEL_CAST_DIRECTED,
-                rendering::anim::CHANNEL_CAST_OMNI,
-                rendering::anim::SPELL_CAST_DIRECTED,
-                rendering::anim::SPELL
-            };
-            static const uint32_t channelOmni[] = {
-                rendering::anim::CHANNEL_CAST_OMNI,
-                rendering::anim::CHANNEL_CAST_DIRECTED,
-                rendering::anim::SPELL_CAST_DIRECTED,
-                rendering::anim::SPELL
-            };
-            const uint32_t* chain;
+            // Phase 2: Cast hold (looping while cast bar fills / channel active)
+            uint32_t castAnim = 0;
             if (isChannel) {
-                chain = hasTarget ? channelDirected : channelOmni;
+                // Channel hold: prefer DIRECTED/OMNI based on spell target classification
+                if (isDirected) {
+                    castAnim = pickFirst({
+                        rendering::anim::CHANNEL_CAST_DIRECTED,
+                        rendering::anim::CHANNEL_CAST_OMNI,
+                        rendering::anim::SPELL_CHANNEL_DIRECTED_OMNI,
+                        rendering::anim::READY_SPELL_DIRECTED,
+                        rendering::anim::SPELL
+                    });
+                } else {
+                    // OMNI or AREA channels (Blizzard channel, Tranquility, etc.)
+                    castAnim = pickFirst({
+                        rendering::anim::CHANNEL_CAST_OMNI,
+                        rendering::anim::CHANNEL_CAST_DIRECTED,
+                        rendering::anim::SPELL_CHANNEL_DIRECTED_OMNI,
+                        rendering::anim::READY_SPELL_OMNI,
+                        rendering::anim::SPELL
+                    });
+                }
             } else {
-                chain = hasTarget ? castDirected : castOmni;
-            }
-            uint32_t castAnim = rendering::anim::SPELL;
-            for (size_t i = 0; i < 4; ++i) {
-                if (cr->hasAnimation(instanceId, chain[i])) {
-                    castAnim = chain[i];
-                    break;
+                // Regular cast hold: READY_SPELL_DIRECTED/OMNI while cast bar fills
+                if (isDirected) {
+                    castAnim = pickFirst({
+                        rendering::anim::READY_SPELL_DIRECTED,
+                        rendering::anim::READY_SPELL_OMNI,
+                        rendering::anim::SPELL_CAST_DIRECTED,
+                        rendering::anim::SPELL_CAST,
+                        rendering::anim::SPELL
+                    });
+                } else {
+                    // OMNI (self-buff) or AREA (AoE targeting)
+                    castAnim = pickFirst({
+                        rendering::anim::READY_SPELL_OMNI,
+                        rendering::anim::READY_SPELL_DIRECTED,
+                        rendering::anim::SPELL_CAST_OMNI,
+                        rendering::anim::SPELL_CAST,
+                        rendering::anim::SPELL
+                    });
                 }
             }
+            if (castAnim == 0) castAnim = rendering::anim::SPELL;
 
-            // Phase 3: Finalization release (one-shot after cast ends)
-            // Pick a different animation from the cast loop for visual variety
-            static const uint32_t finalizeChain[] = {
-                rendering::anim::SPELL_CAST_OMNI,
-                rendering::anim::SPELL_CAST,
-                rendering::anim::SPELL
-            };
+            // Phase 3: Finalization release (one-shot after cast completes)
+            // Animation chosen by spell target type: AREA → SPELL_CAST_AREA,
+            // DIRECTED → SPELL_CAST_DIRECTED, OMNI → SPELL_CAST_OMNI
             uint32_t finalizeAnim = 0;
             if (isLocalPlayer && !isChannel) {
-                for (uint32_t fa : finalizeChain) {
-                    if (fa != castAnim && cr->hasAnimation(instanceId, fa)) {
-                        finalizeAnim = fa;
-                        break;
-                    }
+                if (isArea) {
+                    // Ground-targeted AoE: SPELL_CAST_AREA → SPELL_CAST_OMNI
+                    finalizeAnim = pickFirst({
+                        rendering::anim::SPELL_CAST_AREA,
+                        rendering::anim::SPELL_CAST_OMNI,
+                        rendering::anim::SPELL_CAST,
+                        rendering::anim::SPELL
+                    });
+                } else if (isDirected) {
+                    // Single-target: SPELL_CAST_DIRECTED → SPELL_CAST_OMNI
+                    finalizeAnim = pickFirst({
+                        rendering::anim::SPELL_CAST_DIRECTED,
+                        rendering::anim::SPELL_CAST_OMNI,
+                        rendering::anim::SPELL_CAST,
+                        rendering::anim::SPELL
+                    });
+                } else {
+                    // OMNI (self-buff, Arcane Explosion): SPELL_CAST_OMNI → SPELL_CAST_AREA
+                    finalizeAnim = pickFirst({
+                        rendering::anim::SPELL_CAST_OMNI,
+                        rendering::anim::SPELL_CAST_AREA,
+                        rendering::anim::SPELL_CAST,
+                        rendering::anim::SPELL
+                    });
                 }
-                if (finalizeAnim == 0 && cr->hasAnimation(instanceId, rendering::anim::SPELL))
-                    finalizeAnim = rendering::anim::SPELL;
             }
 
             if (isLocalPlayer) {

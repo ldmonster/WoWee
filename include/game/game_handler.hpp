@@ -940,7 +940,9 @@ public:
 
     // Spell cast animation callbacks — true=start cast/channel, false=finish/cancel
     // guid: caster (may be player or another unit), isChannel: channel vs regular cast
-    using SpellCastAnimCallback = std::function<void(uint64_t guid, bool start, bool isChannel)>;
+    // castType: DIRECTED (unit target), OMNI (self/no target), AREA (ground AoE)
+    using SpellCastAnimCallback = std::function<void(uint64_t guid, bool start, bool isChannel,
+                                                      SpellCastType castType)>;
     void setSpellCastAnimCallback(SpellCastAnimCallback cb) { spellCastAnimCallback_ = std::move(cb); }
 
     // Fired when the player's own spell cast fails (spellId of the failed spell).

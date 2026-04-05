@@ -258,7 +258,7 @@ void EntityController::processOutOfRangeObjects(const std::vector<uint64_t>& gui
 }
 
 // ============================================================
-// Phase 1: Extracted helper methods
+// Extracted helper methods
 // ============================================================
 
 bool EntityController::extractPlayerAppearance(const std::map<uint16_t, uint32_t>& fields,
@@ -383,7 +383,7 @@ void EntityController::maybeDetectCoinageIndex(const std::map<uint16_t, uint32_t
 }
 
 // ============================================================
-// Phase 2: Update type dispatch
+// Update type dispatch
 // ============================================================
 
 void EntityController::applyUpdateObjectBlock(const UpdateBlock& block, bool& newItemCreated) {
@@ -404,10 +404,10 @@ void EntityController::applyUpdateObjectBlock(const UpdateBlock& block, bool& ne
 }
 
 // ============================================================
-// Phase 3: Concern-specific helpers
+// Concern-specific helpers
 // ============================================================
 
-// 3i: Non-player transport child attachment — identical in CREATE/VALUES/MOVEMENT
+// Non-player transport child attachment — identical in CREATE/VALUES/MOVEMENT
 void EntityController::updateNonPlayerTransportAttachment(const UpdateBlock& block,
                                                            const std::shared_ptr<Entity>& entity,
                                                            ObjectType entityType) {
@@ -430,7 +430,7 @@ void EntityController::updateNonPlayerTransportAttachment(const UpdateBlock& blo
     }
 }
 
-// 3f: Rebuild playerAuras from UNIT_FIELD_AURAS (Classic/vanilla only).
+//     Rebuild playerAuras from UNIT_FIELD_AURAS (Classic/vanilla only).
 //     blockFields is used to check if any aura field was updated in this packet.
 //     entity->getFields() is used for reading the full accumulated state.
 //     Normalises Classic harmful bit (0x02) to WotLK debuff bit (0x80) so
@@ -481,7 +481,7 @@ void EntityController::syncClassicAurasFromFields(const std::shared_ptr<Entity>&
     pendingEvents_.emit("UNIT_AURA", {"player"});
 }
 
-// 3h: Detect player mount/dismount from UNIT_FIELD_MOUNTDISPLAYID changes
+// Detect player mount/dismount from UNIT_FIELD_MOUNTDISPLAYID changes
 void EntityController::detectPlayerMountChange(uint32_t newMountDisplayId,
                                                 const std::map<uint16_t, uint32_t>& blockFields) {
     uint32_t old = owner_.currentMountDisplayId_;
@@ -528,7 +528,7 @@ void EntityController::detectPlayerMountChange(uint32_t newMountDisplayId,
     }
 }
 
-// Phase 4: Resolve cached field indices once per handler call.
+// Resolve cached field indices once per handler call.
 EntityController::UnitFieldIndices EntityController::UnitFieldIndices::resolve() {
     return UnitFieldIndices{
         fieldIndex(UF::UNIT_FIELD_HEALTH),
@@ -579,7 +579,7 @@ EntityController::PlayerFieldIndices EntityController::PlayerFieldIndices::resol
     };
 }
 
-// 3a: Create the appropriate Entity subclass from the block's object type.
+// Create the appropriate Entity subclass from the block's object type.
 std::shared_ptr<Entity> EntityController::createEntityFromBlock(const UpdateBlock& block) {
     switch (block.objectType) {
         case ObjectType::PLAYER:
@@ -596,7 +596,7 @@ std::shared_ptr<Entity> EntityController::createEntityFromBlock(const UpdateBloc
     }
 }
 
-// 3b: Track player-on-transport state from movement blocks.
+//     Track player-on-transport state from movement blocks.
 //     Consolidates near-identical logic from CREATE and MOVEMENT handlers.
 //     When updateMovementInfoPos is true (MOVEMENT), movementInfo.x/y/z are set
 //     to the raw canonical position when not on a resolved transport.
@@ -644,7 +644,7 @@ void EntityController::applyPlayerTransportState(const UpdateBlock& block,
     }
 }
 
-// 3c: Apply unit fields during CREATE — sets health/power/level/flags/displayId/etc.
+//     Apply unit fields during CREATE — sets health/power/level/flags/displayId/etc.
 //     Returns true if the entity is initially dead (health=0 or DYNFLAG_DEAD).
 bool EntityController::applyUnitFieldsOnCreate(const UpdateBlock& block,
                                                  std::shared_ptr<Unit>& unit,
@@ -928,7 +928,7 @@ EntityController::UnitFieldUpdateResult EntityController::applyUnitFieldsOnUpdat
     return result;
 }
 
-// 3d: Apply player stat fields (XP, coinage, combat stats, etc.).
+//     Apply player stat fields (XP, coinage, combat stats, etc.).
 //     Shared between CREATE and VALUES — isCreate controls event firing differences.
 bool EntityController::applyPlayerStatFields(const std::map<uint16_t, uint32_t>& fields,
                                                const PlayerFieldIndices& pfi,
@@ -1081,7 +1081,7 @@ bool EntityController::applyPlayerStatFields(const std::map<uint16_t, uint32_t>&
     return slotsChanged;
 }
 
-// 3e: Dispatch entity spawn callbacks for units/players.
+//     Dispatch entity spawn callbacks for units/players.
 //     Consolidates player/creature spawn callback invocation from CREATE and VALUES handlers.
 //     isDead = unitInitiallyDead (CREATE) or computed isDeadNow && !npcDeathNotified (VALUES).
 void EntityController::dispatchEntitySpawn(uint64_t guid, ObjectType objectType,
@@ -1133,7 +1133,7 @@ void EntityController::dispatchEntitySpawn(uint64_t guid, ObjectType objectType,
     }
 }
 
-// 3g: Track online item/container objects during CREATE.
+// Track online item/container objects during CREATE.
 void EntityController::trackItemOnCreate(const UpdateBlock& block, bool& newItemCreated) {
     auto entryIt = block.fields.find(fieldIndex(UF::OBJECT_FIELD_ENTRY));
     auto stackIt = block.fields.find(fieldIndex(UF::ITEM_FIELD_STACK_COUNT));
@@ -1169,7 +1169,7 @@ void EntityController::trackItemOnCreate(const UpdateBlock& block, bool& newItem
     }
 }
 
-// 3g: Update item stack count / durability / enchants for existing items during VALUES.
+// Update item stack count / durability / enchants for existing items during VALUES.
 void EntityController::updateItemOnValuesUpdate(const UpdateBlock& block,
                                                   const std::shared_ptr<Entity>& entity) {
     bool inventoryChanged = false;
@@ -1275,7 +1275,7 @@ void EntityController::updateItemOnValuesUpdate(const UpdateBlock& block,
 }
 
 // ============================================================
-// Phase 5: Object-type handler struct definitions
+// Object-type handler struct definitions
 // ============================================================
 
 struct EntityController::UnitTypeHandler : EntityController::IObjectTypeHandler {
@@ -1313,7 +1313,7 @@ struct EntityController::CorpseTypeHandler : EntityController::IObjectTypeHandle
 };
 
 // ============================================================
-// Phase 5: Handler registry infrastructure
+// Handler registry infrastructure
 // ============================================================
 
 void EntityController::initTypeHandlers() {
@@ -1331,7 +1331,7 @@ EntityController::IObjectTypeHandler* EntityController::getTypeHandler(ObjectTyp
 }
 
 // ============================================================
-// Phase 6: Deferred event bus flush
+// Deferred event bus flush
 // ============================================================
 
 void EntityController::flushPendingEvents() {
@@ -1342,7 +1342,7 @@ void EntityController::flushPendingEvents() {
 }
 
 // ============================================================
-// Phase 5: Type-specific CREATE handlers
+// Type-specific CREATE handlers
 // ============================================================
 
 void EntityController::onCreateUnit(const UpdateBlock& block, std::shared_ptr<Entity>& entity) {
@@ -1432,7 +1432,7 @@ void EntityController::onCreatePlayer(const UpdateBlock& block, std::shared_ptr<
             }
         }
     }
-    // 3f: Classic aura sync on initial object create
+    // Classic aura sync on initial object create
     if (block.guid == owner_.playerGuid) {
         syncClassicAurasFromFields(entity);
     }
@@ -1449,7 +1449,7 @@ void EntityController::onCreatePlayer(const UpdateBlock& block, std::shared_ptr<
         }
     }
 
-    // 3d: Player stat fields (self only)
+    // Player stat fields (self only)
     if (block.guid == owner_.playerGuid) {
         // Auto-detect coinage index using the previous snapshot vs this full snapshot.
         maybeDetectCoinageIndex(owner_.lastPlayerFields_, block.fields);
@@ -1557,7 +1557,7 @@ void EntityController::onCreateCorpse(const UpdateBlock& block) {
 }
 
 // ============================================================
-// Phase 5: Type-specific VALUES UPDATE handlers
+// Type-specific VALUES UPDATE handlers
 // ============================================================
 
 void EntityController::handleDisplayIdChange(const UpdateBlock& block,
@@ -1602,15 +1602,15 @@ void EntityController::onValuesUpdatePlayer(const UpdateBlock& block, std::share
     UnitFieldIndices ufi = UnitFieldIndices::resolve();
     UnitFieldUpdateResult result = applyUnitFieldsOnUpdate(block, entity, unit, ufi);
 
-    // 3f: Classic aura sync from UNIT_FIELD_AURAS when those fields are updated
+    // Classic aura sync from UNIT_FIELD_AURAS when those fields are updated
     if (block.guid == owner_.playerGuid) {
         syncClassicAurasFromFields(entity);
     }
 
-    // 3e: Display ID changed — re-spawn/model-change
+    // Display ID changed — re-spawn/model-change
     handleDisplayIdChange(block, entity, unit, result);
 
-    // 3d: Self-player stat/inventory/quest field updates
+    // Self-player stat/inventory/quest field updates
     if (block.guid == owner_.playerGuid) {
         const bool needCoinageDetectSnapshot =
             (owner_.pendingMoneyDelta_ != 0 && owner_.pendingMoneyDeltaTimer_ > 0.0f);
@@ -1682,7 +1682,7 @@ void EntityController::onValuesUpdateGameObject(const UpdateBlock& block, std::s
 }
 
 // ============================================================
-// Phase 2: Update type handlers (refactored with Phase 5 dispatch)
+// Update type handlers
 // ============================================================
 
 void EntityController::handleCreateObject(const UpdateBlock& block, bool& newItemCreated) {
@@ -1716,7 +1716,7 @@ void EntityController::handleCreateObject(const UpdateBlock& block, bool& newIte
     // Add to manager
     entityManager.addEntity(block.guid, entity);
 
-    // Phase 5: Dispatch to type-specific handler
+    // Dispatch to type-specific handler
     auto* handler = getTypeHandler(block.objectType);
     if (handler) handler->onCreate(block, entity, newItemCreated);
 
@@ -1741,7 +1741,7 @@ void EntityController::handleValuesUpdate(const UpdateBlock& block) {
         entity->setField(field.first, field.second);
     }
 
-    // Phase 5: Dispatch to type-specific handler
+    // Dispatch to type-specific handler
     auto* handler = getTypeHandler(entity->getType());
     if (handler) handler->onValuesUpdate(block, entity);
 

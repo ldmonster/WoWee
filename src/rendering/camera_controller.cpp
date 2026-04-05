@@ -472,6 +472,11 @@ void CameraController::update(float deltaTime) {
         standUpCallback_();
     }
 
+    // Notify server when the player sits down via local input
+    if (!prevSitting && sitting && sitDownCallback_) {
+        sitDownCallback_();
+    }
+
     // Update eye height based on crouch state (smooth transition)
     float targetEyeHeight = sitting ? CROUCH_EYE_HEIGHT : STAND_EYE_HEIGHT;
     float heightLerpSpeed = 10.0f * deltaTime;
@@ -1364,9 +1369,14 @@ void CameraController::update(float deltaTime) {
                 // Only snap when:
                 // 1. Near ground (within step-up range above) - handles walking
                 // 2. Actually falling from height (was airborne + falling fast)
+                //    Scale snap range with fall speed so slow falls don't teleport
+                //    while extreme speeds still catch geometry penetration.
                 // 3. Was grounded + ground is close (grace for slopes)
                 bool nearGround = (dz >= 0.0f && dz <= stepUp);
-                bool airFalling = (!grounded && verticalVelocity < -5.0f);
+                float airSnapRange = std::min(fallCatch,
+                    std::max(0.5f, std::abs(verticalVelocity) * physicsDeltaTime * 2.0f));
+                bool airFalling = (!grounded && verticalVelocity < -5.0f
+                                   && dz >= -airSnapRange);
                 bool slopeGrace = (grounded && verticalVelocity > -1.0f &&
                                    dz >= -0.25f && dz <= stepUp * 1.5f);
 

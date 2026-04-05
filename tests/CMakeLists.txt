@@ -1,4 +1,4 @@
-# Phase 0: Unit test infrastructure using Catch2 v3 (amalgamated)
+# Unit test infrastructure using Catch2 v3 (amalgamated)
 
 # Catch2 amalgamated as a library target
 add_library(catch2_main STATIC
@@ -139,7 +139,7 @@ register_test_target(test_frustum)
 add_executable(test_animation_ids
     test_animation_ids.cpp
     ${TEST_COMMON_SOURCES}
-    ${CMAKE_SOURCE_DIR}/src/rendering/animation_ids.cpp
+    ${CMAKE_SOURCE_DIR}/src/rendering/animation/animation_ids.cpp
     ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
 )
 target_include_directories(test_animation_ids PRIVATE ${TEST_INCLUDE_DIRS})
@@ -147,6 +147,55 @@ target_include_directories(test_animation_ids SYSTEM PRIVATE ${TEST_SYSTEM_INCLU
 target_link_libraries(test_animation_ids PRIVATE catch2_main)
 add_test(NAME animation_ids COMMAND test_animation_ids)
 register_test_target(test_animation_ids)
+
+# ── test_locomotion_fsm ──────────────────────────────────────
+add_executable(test_locomotion_fsm
+    test_locomotion_fsm.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/rendering/animation/locomotion_fsm.cpp
+)
+target_include_directories(test_locomotion_fsm PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_locomotion_fsm SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_locomotion_fsm PRIVATE catch2_main)
+add_test(NAME locomotion_fsm COMMAND test_locomotion_fsm)
+register_test_target(test_locomotion_fsm)
+
+# ── test_combat_fsm ──────────────────────────────────────────
+add_executable(test_combat_fsm
+    test_combat_fsm.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/rendering/animation/combat_fsm.cpp
+)
+target_include_directories(test_combat_fsm PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_combat_fsm SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_combat_fsm PRIVATE catch2_main)
+add_test(NAME combat_fsm COMMAND test_combat_fsm)
+register_test_target(test_combat_fsm)
+
+# ── test_activity_fsm ────────────────────────────────────────
+add_executable(test_activity_fsm
+    test_activity_fsm.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/rendering/animation/activity_fsm.cpp
+)
+target_include_directories(test_activity_fsm PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_activity_fsm SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_activity_fsm PRIVATE catch2_main)
+add_test(NAME activity_fsm COMMAND test_activity_fsm)
+register_test_target(test_activity_fsm)
+
+# NPC animator tests removed — NpcAnimator replaced by generic CharacterAnimator
+
+# ── test_anim_capability ─────────────────────────────────────
+# Header-only struct tests — no source files needed
+add_executable(test_anim_capability
+    test_anim_capability.cpp
+)
+target_include_directories(test_anim_capability PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_anim_capability SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_anim_capability PRIVATE catch2_main)
+add_test(NAME anim_capability COMMAND test_anim_capability)
+register_test_target(test_anim_capability)
 
 # ── ASAN / UBSan for test targets ────────────────────────────
 if(WOWEE_ENABLE_ASAN AND NOT MSVC)

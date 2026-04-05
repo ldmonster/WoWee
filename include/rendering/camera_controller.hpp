@@ -98,6 +98,10 @@ public:
     using StandUpCallback = std::function<void()>;
     void setStandUpCallback(StandUpCallback cb) { standUpCallback_ = std::move(cb); }
 
+    // Callback invoked when the player sits down via local input (X key).
+    using SitDownCallback = std::function<void()>;
+    void setSitDownCallback(SitDownCallback cb) { sitDownCallback_ = std::move(cb); }
+
     // Callback invoked when auto-follow is cancelled by user movement input.
     using AutoFollowCancelCallback = std::function<void()>;
     void setAutoFollowCancelCallback(AutoFollowCancelCallback cb) { autoFollowCancelCallback_ = std::move(cb); }
@@ -310,6 +314,7 @@ private:
     // Movement callback
     MovementCallback movementCallback;
     StandUpCallback standUpCallback_;
+    SitDownCallback sitDownCallback_;
     AutoFollowCancelCallback autoFollowCancelCallback_;
 
     // Movement speeds

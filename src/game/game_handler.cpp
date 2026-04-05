@@ -31,7 +31,7 @@
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "core/logger.hpp"
-#include "rendering/animation_ids.hpp"
+#include "rendering/animation/animation_ids.hpp"
 #include <glm/gtx/quaternion.hpp>
 #include <algorithm>
 #include <cmath>
@@ -5145,7 +5145,7 @@ const std::vector<std::string>& GameHandler::getJoinedChannels() const {
 }
 
 // ============================================================
-// Phase 1: Name Queries (delegated to EntityController)
+// Name Queries (delegated to EntityController)
 // ============================================================
 
 void GameHandler::queryPlayerName(uint64_t guid) {
@@ -5217,7 +5217,7 @@ void GameHandler::emitAllOtherPlayerEquipment() {
 }
 
 // ============================================================
-// Phase 2: Combat (delegated to CombatHandler)
+// Combat (delegated to CombatHandler)
 // ============================================================
 
 void GameHandler::startAutoAttack(uint64_t targetGuid) {
@@ -5372,7 +5372,7 @@ void GameHandler::requestPvpLog() {
 }
 
 // ============================================================
-// Phase 3: Spells
+// Spells
 // ============================================================
 
 void GameHandler::castSpell(uint32_t spellId, uint64_t targetGuid) {
@@ -5489,7 +5489,7 @@ void GameHandler::sendAlterAppearance(uint32_t hairStyle, uint32_t hairColor, ui
 }
 
 // ============================================================
-// Phase 4: Group/Party
+// Group/Party
 // ============================================================
 
 void GameHandler::inviteToGroup(const std::string& playerName) {
@@ -5606,7 +5606,7 @@ void GameHandler::turnInPetition(uint64_t petitionGuid) {
 }
 
 // ============================================================
-// Phase 5: Loot, Gossip, Vendor
+// Loot, Gossip, Vendor
 // ============================================================
 
 void GameHandler::lootTarget(uint64_t guid) {

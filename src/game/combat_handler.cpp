@@ -1070,7 +1070,7 @@ void CombatHandler::setTarget(uint64_t guid) {
     // Clear previous target's cast bar on target change
     // (the new target's cast state is naturally fetched from spellHandler_->unitCastStates_ by GUID)
 
-    // Inform server of target selection (Phase 1)
+    // Inform server of target selection
     if (owner_.isInWorld()) {
         auto packet = SetSelectionPacket::build(guid);
         owner_.socket->send(packet);

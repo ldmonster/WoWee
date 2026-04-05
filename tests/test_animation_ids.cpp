@@ -1,6 +1,6 @@
 // Animation ID validation tests — covers nameFromId() and validateAgainstDBC()
 #include <catch_amalgamated.hpp>
-#include "rendering/animation_ids.hpp"
+#include "rendering/animation/animation_ids.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include <cstring>
 #include <vector>

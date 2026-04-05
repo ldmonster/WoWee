@@ -616,7 +616,17 @@ set(WOWEE_SOURCES
     src/rendering/spell_visual_system.cpp
     src/rendering/post_process_pipeline.cpp
     src/rendering/animation_controller.cpp
-    src/rendering/animation_ids.cpp
+    src/rendering/animation/animation_ids.cpp
+    src/rendering/animation/emote_registry.cpp
+    src/rendering/animation/footstep_driver.cpp
+    src/rendering/animation/sfx_state_driver.cpp
+    src/rendering/animation/anim_capability_probe.cpp
+    src/rendering/animation/locomotion_fsm.cpp
+    src/rendering/animation/combat_fsm.cpp
+    src/rendering/animation/activity_fsm.cpp
+    src/rendering/animation/mount_fsm.cpp
+    src/rendering/animation/character_animator.cpp  # Renamed from player_animator.cpp; npc_animator.cpp removed
+    src/rendering/animation/animation_manager.cpp
     src/rendering/loading_screen.cpp
 
     # UI

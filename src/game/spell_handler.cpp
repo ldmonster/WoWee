@@ -845,7 +845,19 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
         return;
     }
     LOG_DEBUG("SMSG_SPELL_START: caster=0x", std::hex, data.casterUnit, std::dec,
-              " spell=", data.spellId, " castTime=", data.castTime);
+              " spell=", data.spellId, " castTime=", data.castTime,
+              " target=0x", std::hex, data.targetGuid, std::dec);
+
+    // Classify spell targeting for animation selection:
+    //   DIRECTED — targets a specific other unit (Frostbolt, Heal)
+    //   OMNI     — self-cast or no explicit target (Arcane Explosion, buffs)
+    //   AREA     — ground-targeted AoE with no unit target (Blizzard, Rain of Fire)
+    auto classifyCast = [](uint64_t targetGuid, uint64_t casterGuid) -> SpellCastType {
+        if (targetGuid == 0)            return SpellCastType::AREA;
+        if (targetGuid == casterGuid)   return SpellCastType::OMNI;
+        return SpellCastType::DIRECTED;
+    };
+    const SpellCastType castType = classifyCast(data.targetGuid, data.casterUnit);
 
     // Track cast bar for any non-player caster
     if (data.casterUnit != owner_.playerGuid && data.castTime > 0) {
@@ -856,8 +868,9 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
         s.timeTotal      = data.castTime / 1000.0f;
         s.timeRemaining  = s.timeTotal;
         s.interruptible  = owner_.isSpellInterruptible(data.spellId);
+        s.castType       = castType;
         if (owner_.spellCastAnimCallback_) {
-            owner_.spellCastAnimCallback_(data.casterUnit, true, false);
+            owner_.spellCastAnimCallback_(data.casterUnit, true, false, castType);
         }
     }
 
@@ -891,7 +904,7 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
         }
 
         if (owner_.spellCastAnimCallback_) {
-            owner_.spellCastAnimCallback_(owner_.playerGuid, true, false);
+            owner_.spellCastAnimCallback_(owner_.playerGuid, true, false, castType);
         }
 
         // Hearthstone: pre-load terrain at bind point
@@ -954,8 +967,14 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         // Instant spell cast animation — if this wasn't a timed cast and isn't a
         // melee ability, play a brief spell cast animation (one-shot)
         if (!wasInTimedCast && !isMeleeAbility && !owner_.isProfessionSpell(data.spellId)) {
+            // Classify instant spell from SPELL_GO packet target info
+            SpellCastType goType = SpellCastType::OMNI;
+            if (data.targetGuid != 0 && data.targetGuid != data.casterUnit)
+                goType = SpellCastType::DIRECTED;
+            else if (data.targetGuid == 0 && data.hitCount > 1)
+                goType = SpellCastType::AREA;
             if (owner_.spellCastAnimCallback_) {
-                owner_.spellCastAnimCallback_(owner_.playerGuid, true, false);
+                owner_.spellCastAnimCallback_(owner_.playerGuid, true, false, goType);
             }
         }
 
@@ -983,7 +1002,7 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         owner_.pendingGameObjectInteractGuid_ = 0;
 
         if (owner_.spellCastAnimCallback_) {
-            owner_.spellCastAnimCallback_(owner_.playerGuid, false, false);
+            owner_.spellCastAnimCallback_(owner_.playerGuid, false, false, SpellCastType::OMNI);
         }
 
         if (owner_.addonEventCallback_)
@@ -1003,11 +1022,17 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         // instant cast — play a brief one-shot spell animation before stopping
         auto castIt = unitCastStates_.find(data.casterUnit);
         bool wasTrackedCast = (castIt != unitCastStates_.end());
+        // Classify NPC instant spell from SPELL_GO target info
+        SpellCastType npcGoType = SpellCastType::OMNI;
+        if (data.targetGuid != 0 && data.targetGuid != data.casterUnit)
+            npcGoType = SpellCastType::DIRECTED;
+        else if (data.targetGuid == 0 && data.hitCount > 1)
+            npcGoType = SpellCastType::AREA;
         if (!wasTrackedCast && owner_.spellCastAnimCallback_) {
-            owner_.spellCastAnimCallback_(data.casterUnit, true, false);
+            owner_.spellCastAnimCallback_(data.casterUnit, true, false, npcGoType);
         }
         if (owner_.spellCastAnimCallback_) {
-            owner_.spellCastAnimCallback_(data.casterUnit, false, false);
+            owner_.spellCastAnimCallback_(data.casterUnit, false, false, SpellCastType::OMNI);
         }
         bool targetsPlayer = false;
         for (const auto& tgt : data.hitTargets) {
@@ -2400,13 +2425,13 @@ void SpellHandler::handleSpellFailure(network::Packet& packet) {
             }
         }
         if (owner_.spellCastAnimCallback_) {
-            owner_.spellCastAnimCallback_(owner_.playerGuid, false, false);
+            owner_.spellCastAnimCallback_(owner_.playerGuid, false, false, SpellCastType::OMNI);
         }
     } else {
         // Another unit's cast failed — clear their tracked cast bar
         unitCastStates_.erase(failGuid);
         if (owner_.spellCastAnimCallback_) {
-            owner_.spellCastAnimCallback_(failGuid, false, false);
+            owner_.spellCastAnimCallback_(failGuid, false, false, SpellCastType::OMNI);
         }
     }
 }
@@ -3219,8 +3244,12 @@ void SpellHandler::handleChannelStart(network::Packet& packet) {
                   " spell=", chanSpellId, " total=", chanTotalMs, "ms");
 
         // Play channeling animation (looping)
+        // Channel packets don't carry targetGuid — use player's current target as hint
+        SpellCastType chanType = SpellCastType::OMNI;
+        if (chanCaster == owner_.playerGuid && owner_.targetGuid != 0)
+            chanType = SpellCastType::DIRECTED;
         if (owner_.spellCastAnimCallback_) {
-            owner_.spellCastAnimCallback_(chanCaster, true, true);
+            owner_.spellCastAnimCallback_(chanCaster, true, true, chanType);
         }
 
         // Fire UNIT_SPELLCAST_CHANNEL_START for Lua addons
@@ -3260,7 +3289,7 @@ void SpellHandler::handleChannelUpdate(network::Packet& packet) {
     if (chanRemainMs == 0) {
         // Stop channeling animation — return to idle
         if (owner_.spellCastAnimCallback_) {
-            owner_.spellCastAnimCallback_(chanCaster2, false, true);
+            owner_.spellCastAnimCallback_(chanCaster2, false, true, SpellCastType::OMNI);
         }
         auto unitId = owner_.guidToUnitId(chanCaster2);
         if (!unitId.empty())

@@ -349,7 +349,7 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
         vkCreateDescriptorSetLayout(device, &ci, nullptr, &boneSetLayout_);
     }
 
-    // Phase 2.1: Instance data set layout (set 3): binding 0 = STORAGE_BUFFER (per-instance data)
+    // Instance data set layout (set 3): binding 0 = STORAGE_BUFFER (per-instance data)
     {
         VkDescriptorSetLayoutBinding binding{};
         binding.binding = 0;
@@ -476,7 +476,7 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
         }
     }
 
-    // Phase 2.1: Instance data SSBO — per-frame buffer holding per-instance transforms, fade, bones.
+    // Instance data SSBO — per-frame buffer holding per-instance transforms, fade, bones.
     // Shader reads instanceData[push.instanceDataOffset + gl_InstanceIndex].
     {
         static_assert(sizeof(M2InstanceGPU) == 96, "M2InstanceGPU must be 96 bytes (std430)");
@@ -522,7 +522,7 @@ bool M2Renderer::initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout
         }
     }
 
-    // Phase 2.3: GPU frustum culling — compute pipeline, buffers, descriptors.
+    // GPU frustum culling — compute pipeline, buffers, descriptors.
     // Compute shader tests each instance bounding sphere against 6 frustum planes + distance.
     // Output: uint visibility[] read back by CPU to skip culled instances in sortedVisible_ build.
     {
@@ -1060,7 +1060,7 @@ void M2Renderer::shutdown() {
     }
     if (materialDescPool_) { vkDestroyDescriptorPool(device, materialDescPool_, nullptr); materialDescPool_ = VK_NULL_HANDLE; }
     if (boneDescPool_) { vkDestroyDescriptorPool(device, boneDescPool_, nullptr); boneDescPool_ = VK_NULL_HANDLE; }
-    // Phase 2.1: Instance data SSBO cleanup (sets freed with instanceDescPool_)
+    // Instance data SSBO cleanup (sets freed with instanceDescPool_)
     for (int i = 0; i < 2; i++) {
         if (instanceBuffer_[i]) { vmaDestroyBuffer(alloc, instanceBuffer_[i], instanceAlloc_[i]); instanceBuffer_[i] = VK_NULL_HANDLE; }
         instanceMapped_[i] = nullptr;
@@ -1068,7 +1068,7 @@ void M2Renderer::shutdown() {
     }
     if (instanceDescPool_) { vkDestroyDescriptorPool(device, instanceDescPool_, nullptr); instanceDescPool_ = VK_NULL_HANDLE; }
 
-    // Phase 2.3: GPU frustum culling compute pipeline + buffers cleanup
+    // GPU frustum culling compute pipeline + buffers cleanup
     if (cullPipeline_) { vkDestroyPipeline(device, cullPipeline_, nullptr); cullPipeline_ = VK_NULL_HANDLE; }
     if (cullPipelineLayout_) { vkDestroyPipelineLayout(device, cullPipelineLayout_, nullptr); cullPipelineLayout_ = VK_NULL_HANDLE; }
     for (int i = 0; i < 2; i++) {
@@ -2404,7 +2404,7 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         boneWorkIndices_.push_back(idx);
     }
 
-    // Phase 2: Compute bone matrices (expensive, parallel if enough work)
+    // Compute bone matrices (expensive, parallel if enough work)
     const size_t animCount = boneWorkIndices_.size();
     if (animCount > 0) {
         static const size_t minParallelAnimInstances = std::max<size_t>(
@@ -2464,7 +2464,7 @@ void M2Renderer::update(float deltaTime, const glm::vec3& cameraPos, const glm::
         }
     }
 
-    // Phase 3: Particle update (sequential — uses RNG, not thread-safe)
+    // Particle update (sequential — uses RNG, not thread-safe)
     // Only iterate instances that have particle emitters (pre-built list).
     for (size_t idx : particleInstanceIndices_) {
         if (idx >= instances.size()) continue;
@@ -2518,7 +2518,7 @@ void M2Renderer::prepareRender(uint32_t frameIndex, const Camera& camera) {
     }
 }
 
-// Phase 2.3: Dispatch GPU frustum culling compute shader.
+// Dispatch GPU frustum culling compute shader.
 // Called on the primary command buffer BEFORE the render pass begins so that
 // compute dispatch and memory barrier complete before secondary command buffers
 // read the visibility output in render().
@@ -2617,7 +2617,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
 
     lastDrawCallCount = 0;
 
-    // Phase 2.3: GPU cull results — dispatchCullCompute() already updated smoothedRenderDist_.
+    // GPU cull results — dispatchCullCompute() already updated smoothedRenderDist_.
     // Use the cached value (set by dispatchCullCompute or fallback below).
     const uint32_t frameIndex = vkCtx_->getCurrentFrame();
     const uint32_t numInstances = std::min(static_cast<uint32_t>(instances.size()), MAX_CULL_INSTANCES);
@@ -2649,7 +2649,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         sortedVisible_.reserve(expectedVisible);
     }
 
-    // Phase 2.3: GPU frustum culling — build frustum only for CPU fallback path
+    // GPU frustum culling — build frustum only for CPU fallback path
     Frustum frustum;
     if (!gpuCullAvailable) {
         const glm::mat4 vp = camera.getProjectionMatrix() * camera.getViewMatrix();
@@ -2661,10 +2661,10 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
         const auto& instance = instances[i];
 
         if (gpuCullAvailable) {
-            // Phase 2.3: GPU already tested flags + distance + frustum
+            // GPU already tested flags + distance + frustum
             if (!visibility[i]) continue;
         } else {
-            // CPU fallback: same culling logic as before Phase 2.3
+            // CPU fallback: same culling logic as before
             if (!instance.cachedIsValid || instance.cachedIsSmoke || instance.cachedIsInvisibleTrap) continue;
 
             glm::vec3 toCam = instance.position - camPos;
@@ -2712,7 +2712,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     VkPipeline currentPipeline = VK_NULL_HANDLE;
     VkDescriptorSet currentMaterialSet = VK_NULL_HANDLE;
 
-    // Phase 2.1: Push constants now carry per-batch data only; per-instance data is in instance SSBO.
+    // Push constants now carry per-batch data only; per-instance data is in instance SSBO.
     struct M2PushConstants {
         int32_t texCoordSet;        // UV set index (0 or 1)
         int32_t isFoliage;          // Foliage wind animation flag
@@ -2734,7 +2734,7 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     currentPipeline = opaquePipeline_;
 
     // Bind dummy bone set (set 2) so non-animated draws have a valid binding.
-    // Phase 2.4: Bind mega bone SSBO instead — all instances index into one buffer via boneBase.
+    // Bind mega bone SSBO instead — all instances index into one buffer via boneBase.
     if (megaBoneSet_[frameIndex]) {
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 pipelineLayout_, 2, 1, &megaBoneSet_[frameIndex], 0, nullptr);
@@ -2743,18 +2743,18 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
                                 pipelineLayout_, 2, 1, &dummyBoneSet_, 0, nullptr);
     }
 
-    // Phase 2.1: Bind instance data SSBO (set 3) — per-instance transforms, fade, bones
+    // Bind instance data SSBO (set 3) — per-instance transforms, fade, bones
     if (instanceSet_[frameIndex]) {
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 pipelineLayout_, 3, 1, &instanceSet_[frameIndex], 0, nullptr);
     }
 
-    // Phase 2.1: Reset instance SSBO write cursor for this frame
+    // Reset instance SSBO write cursor for this frame
     instanceDataCount_ = 0;
     auto* instSSBO = static_cast<M2InstanceGPU*>(instanceMapped_[frameIndex]);
 
     // =====================================================================
-    // Phase 2.1: Opaque pass — instanced draws grouped by (modelId, LOD)
+    // Opaque pass — instanced draws grouped by (modelId, LOD)
     // =====================================================================
     // sortedVisible_ is already sorted by modelId so consecutive entries share
     // the same vertex/index buffer.  Within each model group we sub-group by

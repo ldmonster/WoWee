@@ -1,6 +1,6 @@
 #include "rendering/character_preview.hpp"
 #include "rendering/character_renderer.hpp"
-#include "rendering/animation_ids.hpp"
+#include "rendering/animation/animation_ids.hpp"
 #include "rendering/vk_render_target.hpp"
 #include "rendering/vk_texture.hpp"
 #include "rendering/vk_context.hpp"

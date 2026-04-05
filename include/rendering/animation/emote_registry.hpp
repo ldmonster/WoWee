@@ -1,0 +1,77 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <optional>
+#include <unordered_map>
+#include <vector>
+
+namespace wowee {
+namespace rendering {
+
+// ============================================================================
+// EmoteRegistry — extracted from AnimationController
+//
+// Owns all static emote data, DBC loading, emote text lookup, and
+// animation ID resolution.  Singleton — loaded once on first use.
+// ============================================================================
+
+struct EmoteInfo {
+    uint32_t animId = 0;
+    uint32_t dbcId = 0;
+    bool loop = false;
+    std::string textNoTarget;
+    std::string textTarget;
+    std::string othersNoTarget;
+    std::string othersTarget;
+    std::string command;
+};
+
+class EmoteRegistry {
+public:
+    static EmoteRegistry& instance();
+
+    /// Load emotes from DBC files (called once on first use).
+    void loadFromDbc();
+
+    struct EmoteResult { uint32_t animId; bool loop; };
+
+    /// Look up an emote by chat command (e.g. "dance", "wave").
+    std::optional<EmoteResult> findEmote(const std::string& command) const;
+
+    /// Get the animation ID for a DBC emote ID.
+    uint32_t animByDbcId(uint32_t dbcId) const;
+
+    /// Get the emote state variant (looping) for a one-shot emote animation.
+    uint32_t getStateVariant(uint32_t oneShotAnimId) const;
+
+    /// Get first-person emote text for a command.
+    std::string textFor(const std::string& emoteName,
+                        const std::string* targetName = nullptr) const;
+
+    /// Get DBC ID for an emote command.
+    uint32_t dbcIdFor(const std::string& emoteName) const;
+
+    /// Get third-person emote text by DBC ID.
+    std::string textByDbcId(uint32_t dbcId,
+                            const std::string& senderName,
+                            const std::string* targetName = nullptr) const;
+
+    /// Get the full EmoteInfo for a command (nullptr if not found).
+    const EmoteInfo* findInfo(const std::string& command) const;
+
+private:
+    EmoteRegistry() = default;
+    EmoteRegistry(const EmoteRegistry&) = delete;
+    EmoteRegistry& operator=(const EmoteRegistry&) = delete;
+
+    void loadFallbackEmotes();
+    void buildDbcIdIndex();
+
+    bool loaded_ = false;
+    std::unordered_map<std::string, EmoteInfo> emoteTable_;
+    std::unordered_map<uint32_t, const EmoteInfo*> emoteByDbcId_;
+};
+
+} // namespace rendering
+} // namespace wowee

@@ -3,7 +3,7 @@
 
 #include "core/world_loader.hpp"
 #include "core/application.hpp"
-#include "rendering/animation_ids.hpp"
+#include "rendering/animation/animation_ids.hpp"
 #include "core/entity_spawner.hpp"
 #include "core/appearance_composer.hpp"
 #include "core/window.hpp"
