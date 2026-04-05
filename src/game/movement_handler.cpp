@@ -2583,26 +2583,14 @@ void MovementHandler::checkAreaTriggers() {
                     // This prevents the exit portal from immediately sending us back.
                     LOG_WARNING("AreaTrigger suppressed (post-transfer): AT", at.id);
                 } else {
-                    // Temporarily move player to trigger center so the server's distance
-                    // check passes, then restore to actual position so the server doesn't
-                    // persist the fake position on disconnect.
-                    float savedX = movementInfo.x, savedY = movementInfo.y, savedZ = movementInfo.z;
-                    movementInfo.x = at.x;
-                    movementInfo.y = at.y;
-                    movementInfo.z = at.z;
-                    sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
-
+                    // Send CMSG_AREATRIGGER — the player is already inside the
+                    // trigger radius so the server's distance check should pass.
+                    // Do NOT spoof position to the trigger center; that tells the
+                    // server we're somewhere we're not and can cause rogue teleports.
                     network::Packet pkt(wireOpcode(Opcode::CMSG_AREATRIGGER));
                     pkt.writeUInt32(at.id);
                     owner_.socket->send(pkt);
-                    LOG_WARNING("Fired CMSG_AREATRIGGER: id=", at.id,
-                             " at (", at.x, ", ", at.y, ", ", at.z, ")");
-
-                    // Restore actual player position
-                    movementInfo.x = savedX;
-                    movementInfo.y = savedY;
-                    movementInfo.z = savedZ;
-                    sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
+                    LOG_DEBUG("Fired CMSG_AREATRIGGER: id=", at.id);
                 }
             }
         } else {
