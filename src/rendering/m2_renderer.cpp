@@ -1371,6 +1371,11 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
     gpuModel.boundMin = tightMin;
     gpuModel.boundMax = tightMax;
     gpuModel.boundRadius = model.boundRadius;
+    // Fallback: compute bound radius from vertex extents when M2 header reports 0
+    if (gpuModel.boundRadius < 0.01f && !model.vertices.empty()) {
+        glm::vec3 extent = tightMax - tightMin;
+        gpuModel.boundRadius = glm::length(extent) * 0.5f;
+    }
     gpuModel.indexCount = static_cast<uint32_t>(model.indices.size());
     gpuModel.vertexCount = static_cast<uint32_t>(model.vertices.size());
 
@@ -1915,12 +1920,14 @@ uint32_t M2Renderer::createInstance(uint32_t modelId, const glm::vec3& position,
 
     // Initialize animation: play first sequence (usually Stand/Idle)
     const auto& mdl = mdlRef;
-    if (mdl.hasAnimation && !mdl.disableAnimation && !mdl.sequences.empty()) {
-        instance.currentSequenceIndex = 0;
-        instance.idleSequenceIndex = 0;
-        instance.animDuration = static_cast<float>(mdl.sequences[0].duration);
-        instance.animTime = static_cast<float>(randRange(std::max(1u, mdl.sequences[0].duration)));
-        instance.variationTimer = randFloat(3000.0f, 11000.0f);
+    if (mdl.hasAnimation && !mdl.disableAnimation) {
+        if (!mdl.sequences.empty()) {
+            instance.currentSequenceIndex = 0;
+            instance.idleSequenceIndex = 0;
+            instance.animDuration = static_cast<float>(mdl.sequences[0].duration);
+            instance.animTime = static_cast<float>(randRange(std::max(1u, mdl.sequences[0].duration)));
+            instance.variationTimer = randFloat(3000.0f, 11000.0f);
+        }
 
         // Seed bone matrices from an existing instance of the same model so the
         // new instance renders immediately instead of being invisible until the
@@ -2022,12 +2029,14 @@ uint32_t M2Renderer::createInstanceWithMatrix(uint32_t modelId, const glm::mat4&
     instance.cachedModel = &mdl2;
 
     // Initialize animation
-    if (mdl2.hasAnimation && !mdl2.disableAnimation && !mdl2.sequences.empty()) {
-        instance.currentSequenceIndex = 0;
-        instance.idleSequenceIndex = 0;
-        instance.animDuration = static_cast<float>(mdl2.sequences[0].duration);
-        instance.animTime = static_cast<float>(randRange(std::max(1u, mdl2.sequences[0].duration)));
-        instance.variationTimer = randFloat(3000.0f, 11000.0f);
+    if (mdl2.hasAnimation && !mdl2.disableAnimation) {
+        if (!mdl2.sequences.empty()) {
+            instance.currentSequenceIndex = 0;
+            instance.idleSequenceIndex = 0;
+            instance.animDuration = static_cast<float>(mdl2.sequences[0].duration);
+            instance.animTime = static_cast<float>(randRange(std::max(1u, mdl2.sequences[0].duration)));
+            instance.variationTimer = randFloat(3000.0f, 11000.0f);
+        }
 
         // Seed bone matrices from an existing sibling so the instance renders immediately
         for (const auto& existing : instances) {
@@ -2610,6 +2619,28 @@ void M2Renderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const 
     if (!loggedOnce) {
         loggedOnce = true;
         LOG_INFO("M2 render: ", instances.size(), " instances, ", models.size(), " models");
+    }
+
+    // Periodic diagnostic: report render pipeline stats every 10 seconds
+    static int diagCounter = 0;
+    if (++diagCounter == 600) { // ~10s at 60fps
+        diagCounter = 0;
+        uint32_t totalValid = 0, totalAnimated = 0, totalBonesReady = 0, totalMegaBoneOk = 0;
+        for (const auto& inst : instances) {
+            if (inst.cachedIsValid) totalValid++;
+            if (inst.cachedHasAnimation && !inst.cachedDisableAnimation) {
+                totalAnimated++;
+                if (!inst.boneMatrices.empty()) totalBonesReady++;
+                if (inst.megaBoneOffset != 0) totalMegaBoneOk++;
+            }
+        }
+        LOG_INFO("M2 diag: total=", instances.size(),
+                 " valid=", totalValid,
+                 " animated=", totalAnimated,
+                 " bonesReady=", totalBonesReady,
+                 " megaBoneOk=", totalMegaBoneOk,
+                 " visible=", sortedVisible_.size(),
+                 " draws=", lastDrawCallCount);
     }
 
     // Reuse persistent buffers (clear instead of reallocating)

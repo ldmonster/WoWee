@@ -757,6 +757,12 @@ void EntitySpawner::buildGameObjectDisplayLookups() {
             gameObjectDisplayIdToPath_[displayId] = modelName;
         }
         LOG_INFO("Loaded ", gameObjectDisplayIdToPath_.size(), " gameobject display mappings");
+    } else {
+        LOG_WARNING("GameObjectDisplayInfo.dbc failed to load — no GO display mappings available");
+    }
+
+    if (gameObjectDisplayIdToPath_.empty()) {
+        LOG_WARNING("GO display mapping table is EMPTY — game objects will not render");
     }
 
     gameObjectLookupsBuilt_ = true;
@@ -3102,6 +3108,10 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
     }
     if (!gameObjectLookupsBuilt_) return;
 
+    LOG_DEBUG("GO spawn attempt: guid=0x", std::hex, guid, std::dec,
+             " displayId=", displayId, " entry=", entry,
+             " pos=(", x, ", ", y, ", ", z, ")");
+
     auto goIt = gameObjectInstances_.find(guid);
     if (goIt != gameObjectInstances_.end()) {
         // Already have a render instance — update its position (e.g. transport re-creation)
@@ -3363,7 +3373,16 @@ void EntitySpawner::spawnOnlineGameObject(uint64_t guid, uint32_t entry, uint32_
             auto skinData = assetManager_->readFile(skinPath);
             if (!skinData.empty() && model.version >= 264) {
                 pipeline::M2Loader::loadSkin(skinData, model);
+            } else if (skinData.empty() && model.version >= 264) {
+                LOG_WARNING("GO skin file MISSING for WotLK M2 (no indices/batches): ", skinPath);
             }
+
+            LOG_DEBUG("GO model: ", modelPath, " v=", model.version,
+                     " verts=", model.vertices.size(),
+                     " idx=", model.indices.size(),
+                     " batches=", model.batches.size(),
+                     " bones=", model.bones.size(),
+                     " skin=", (skinData.empty() ? "MISSING" : "ok"));
 
             if (!m2Renderer->loadModel(model, modelId)) {
                 LOG_WARNING("Failed to load gameobject model: ", modelPath);
@@ -4221,6 +4240,13 @@ void EntitySpawner::processGameObjectSpawnQueue() {
     processAsyncGameObjectResults();
 
     if (pendingGameObjectSpawns_.empty()) return;
+
+    static int goQueueLogCounter = 0;
+    if (++goQueueLogCounter % 60 == 1) {
+        LOG_DEBUG("GO queue: ", pendingGameObjectSpawns_.size(), " pending, ",
+                 gameObjectInstances_.size(), " spawned, ",
+                 gameObjectDisplayIdFailedCache_.size(), " failed");
+    }
 
     // Process spawns: cached WMOs and M2s go sync (cheap), uncached WMOs go async
     auto startTime = std::chrono::steady_clock::now();
