@@ -12,4 +12,5 @@
 [submodule "extern/FidelityFX-FSR2"]
 	path = extern/FidelityFX-FSR2
 	url = https://github.com/Kelsidavis/FidelityFX-FSR2.git
+	shallow = true
 	ignore = dirty
