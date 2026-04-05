@@ -490,6 +490,13 @@ set(WOWEE_SOURCES
     src/core/entity_spawner.cpp
     src/core/appearance_composer.cpp
     src/core/world_loader.cpp
+    src/core/npc_interaction_callback_handler.cpp
+    src/core/audio_callback_handler.cpp
+    src/core/entity_spawn_callback_handler.cpp
+    src/core/animation_callback_handler.cpp
+    src/core/transport_callback_handler.cpp
+    src/core/world_entry_callback_handler.cpp
+    src/core/ui_screen_callback_handler.cpp
     src/core/window.cpp
     src/core/input.cpp
     src/core/logger.cpp

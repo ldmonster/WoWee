@@ -3,6 +3,7 @@
 
 #include "core/world_loader.hpp"
 #include "core/application.hpp"
+#include "core/world_entry_callback_handler.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "core/entity_spawner.hpp"
 #include "core/appearance_composer.hpp"
@@ -173,9 +174,11 @@ void WorldLoader::processPendingEntry() {
     auto entry = *pendingWorldEntry_;
     pendingWorldEntry_.reset();
     LOG_WARNING("Processing deferred world entry: map ", entry.mapId);
-    app_.worldEntryMovementGraceTimer_ = 2.0f;
-    app_.taxiLandingClampTimer_ = 0.0f;
-    app_.lastTaxiFlight_ = false;
+    if (app_.worldEntryCallbacks_) {
+        app_.worldEntryCallbacks_->setWorldEntryMovementGraceTimer(2.0f);
+        app_.worldEntryCallbacks_->setTaxiLandingClampTimer(0.0f);
+        app_.worldEntryCallbacks_->setLastTaxiFlight(false);
+    }
     // Clear camera movement inputs before loading terrain
     if (renderer_ && renderer_->getCameraController()) {
         renderer_->getCameraController()->clearMovementInputs();
@@ -1075,9 +1078,11 @@ void WorldLoader::loadOnlineWorldTerrain(uint32_t mapId, float x, float y, float
         auto entry = *pendingWorldEntry_;
         pendingWorldEntry_.reset();
         LOG_WARNING("Processing deferred world entry: map ", entry.mapId);
-        app_.worldEntryMovementGraceTimer_ = 2.0f;
-        app_.taxiLandingClampTimer_ = 0.0f;
-        app_.lastTaxiFlight_ = false;
+        if (app_.worldEntryCallbacks_) {
+            app_.worldEntryCallbacks_->setWorldEntryMovementGraceTimer(2.0f);
+            app_.worldEntryCallbacks_->setTaxiLandingClampTimer(0.0f);
+            app_.worldEntryCallbacks_->setLastTaxiFlight(false);
+        }
         // Recursive call — sets loadedMapId_ and IN_GAME state for the final map.
         loadOnlineWorldTerrain(entry.mapId, entry.x, entry.y, entry.z);
         return;  // The recursive call handles setState(IN_GAME).

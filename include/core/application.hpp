@@ -34,6 +34,15 @@ namespace addons { class AddonManager; }
 
 namespace core {
 
+// Handler forward declarations
+class NPCInteractionCallbackHandler;
+class AudioCallbackHandler;
+class EntitySpawnCallbackHandler;
+class AnimationCallbackHandler;
+class TransportCallbackHandler;
+class WorldEntryCallbackHandler;
+class UIScreenCallbackHandler;
+
 enum class AppState {
     AUTHENTICATION,
     REALM_SELECTION,
@@ -134,9 +143,17 @@ private:
     std::unique_ptr<WorldLoader> worldLoader_;
     std::unique_ptr<audio::AudioCoordinator> audioCoordinator_;
 
+    // Callback handlers (extracted from setupUICallbacks)
+    std::unique_ptr<NPCInteractionCallbackHandler> npcInteractionCallbacks_;
+    std::unique_ptr<AudioCallbackHandler> audioCallbacks_;
+    std::unique_ptr<EntitySpawnCallbackHandler> entitySpawnCallbacks_;
+    std::unique_ptr<AnimationCallbackHandler> animationCallbacks_;
+    std::unique_ptr<TransportCallbackHandler> transportCallbacks_;
+    std::unique_ptr<WorldEntryCallbackHandler> worldEntryCallbacks_;
+    std::unique_ptr<UIScreenCallbackHandler> uiScreenCallbacks_;
+
     AppState state = AppState::AUTHENTICATION;
     bool running = false;
-    std::string pendingCreatedCharacterName_;  // Auto-select after character creation
     bool playerCharacterSpawned = false;
     bool npcsSpawned = false;
     bool spawnSnapToGround = true;
@@ -154,26 +171,10 @@ private:
     static inline const std::string emptyString_;
     static inline const std::vector<std::string> emptyStringVec_;
 
-    bool lastTaxiFlight_ = false;
-    float taxiLandingClampTimer_ = 0.0f;
-    float worldEntryMovementGraceTimer_ = 0.0f;
-
-    // Hearth teleport: freeze player until terrain loads at destination
-    bool hearthTeleportPending_ = false;
-    glm::vec3 hearthTeleportPos_{0.0f};  // render coords
-    float hearthTeleportTimer_ = 0.0f;   // timeout safety
     float facingSendCooldown_ = 0.0f;        // Rate-limits MSG_MOVE_SET_FACING
     float lastSentCanonicalYaw_ = 1000.0f;   // Sentinel — triggers first send
     float taxiStreamCooldown_ = 0.0f;
     bool idleYawned_ = false;
-
-    // Charge rush state
-    bool chargeActive_ = false;
-    float chargeTimer_ = 0.0f;
-    float chargeDuration_ = 0.0f;
-    glm::vec3 chargeStartPos_{0.0f};  // Render coordinates
-    glm::vec3 chargeEndPos_{0.0f};    // Render coordinates
-    uint64_t chargeTargetGuid_ = 0;
 
     bool wasAutoAttacking_ = false;
 
