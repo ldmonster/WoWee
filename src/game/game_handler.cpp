@@ -6587,7 +6587,11 @@ void GameHandler::mailMarkAsRead(uint32_t mailId) {
 
 glm::vec3 GameHandler::getComposedWorldPosition() {
     if (playerTransportGuid_ != 0 && transportManager_) {
-        return transportManager_->getPlayerWorldPosition(playerTransportGuid_, playerTransportOffset_);
+        auto* tr = transportManager_->getTransport(playerTransportGuid_);
+        if (tr) {
+            return transportManager_->getPlayerWorldPosition(playerTransportGuid_, playerTransportOffset_);
+        }
+        // Transport not tracked — fall through to normal position
     }
     // Not on transport, return normal movement position
     return glm::vec3(movementInfo.x, movementInfo.y, movementInfo.z);

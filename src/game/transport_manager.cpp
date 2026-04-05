@@ -141,7 +141,9 @@ ActiveTransport* TransportManager::getTransport(uint64_t guid) {
 glm::vec3 TransportManager::getPlayerWorldPosition(uint64_t transportGuid, const glm::vec3& localOffset) {
     auto* transport = getTransport(transportGuid);
     if (!transport) {
-        return localOffset;  // Fallback
+        LOG_WARNING("getPlayerWorldPosition: transport 0x", std::hex, transportGuid, std::dec,
+                    " not found — returning localOffset as-is (callers should guard)");
+        return localOffset;
     }
 
     if (transport->isM2) {

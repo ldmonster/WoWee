@@ -516,10 +516,15 @@ void MovementHandler::sendMovement(Opcode opcode) {
     // Add transport data if player is on a server-recognized transport
     if (includeTransportInWire) {
         if (owner_.transportManager_) {
-            glm::vec3 composed = owner_.transportManager_->getPlayerWorldPosition(owner_.playerTransportGuid_, owner_.playerTransportOffset_);
-            movementInfo.x = composed.x;
-            movementInfo.y = composed.y;
-            movementInfo.z = composed.z;
+            auto* tr = owner_.transportManager_->getTransport(owner_.playerTransportGuid_);
+            if (tr) {
+                glm::vec3 composed = owner_.transportManager_->getPlayerWorldPosition(owner_.playerTransportGuid_, owner_.playerTransportOffset_);
+                movementInfo.x = composed.x;
+                movementInfo.y = composed.y;
+                movementInfo.z = composed.z;
+            }
+            // If transport not found, keep current movementInfo position —
+            // the localOffset fallback would place us near map origin (0,0,0).
         }
         movementInfo.flags |= static_cast<uint32_t>(MovementFlags::ONTRANSPORT);
         movementInfo.transportGuid = owner_.playerTransportGuid_;
