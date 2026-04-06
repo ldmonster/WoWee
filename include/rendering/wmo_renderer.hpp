@@ -49,7 +49,7 @@ public:
      * @param perFrameLayout Descriptor set layout for set 0 (per-frame UBO)
      * @param assetManager Asset manager for loading textures (optional)
      */
-    bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout,
+    [[nodiscard]] bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout,
                     pipeline::AssetManager* assetManager = nullptr);
 
     /**
@@ -163,7 +163,7 @@ public:
     /**
      * Initialize shadow pipeline (Phase 7)
      */
-    bool initializeShadow(VkRenderPass shadowRenderPass);
+    [[nodiscard]] bool initializeShadow(VkRenderPass shadowRenderPass);
 
     /**
      * Render depth-only for shadow casting

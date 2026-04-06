@@ -25,7 +25,7 @@ public:
     QuestMarkerRenderer();
     ~QuestMarkerRenderer();
 
-    bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout, pipeline::AssetManager* assetManager);
+    [[nodiscard]] bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout, pipeline::AssetManager* assetManager);
     void shutdown();
     void recreatePipelines();
 

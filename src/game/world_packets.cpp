@@ -141,7 +141,7 @@ network::Packet AuthSessionPacket::build(uint32_t build,
             "Blizzard_InspectUI", "Blizzard_MacroUI", "Blizzard_RaidUI",
             "Blizzard_TalentUI", "Blizzard_TradeSkillUI", "Blizzard_TrainerUI"
         };
-        static const uint32_t standardModulusCRC = 0x4C1C776D;
+        static constexpr uint32_t standardModulusCRC = 0x4C1C776D;
         for (const char* name : vanillaAddons) {
             // string (null-terminated)
             size_t len = strlen(name);

@@ -62,6 +62,33 @@ static audio::SpellSoundManager::MagicSchool schoolMaskToMagicSchool(uint32_t ma
     return audio::SpellSoundManager::MagicSchool::ARCANE;
 }
 
+// ---- Extracted helpers to reduce nesting in handleSpellGo ----
+
+audio::SpellSoundManager::MagicSchool SpellHandler::resolveSpellSchool(uint32_t spellId) {
+    owner_.loadSpellNameCache();
+    auto it = owner_.spellNameCacheRef().find(spellId);
+    if (it != owner_.spellNameCacheRef().end() && it->second.schoolMask)
+        return schoolMaskToMagicSchool(it->second.schoolMask);
+    return audio::SpellSoundManager::MagicSchool::ARCANE;
+}
+
+void SpellHandler::playSpellCastSound(uint32_t spellId) {
+    auto* ac = owner_.services().audioCoordinator;
+    if (!ac) return;
+    auto* ssm = ac->getSpellSoundManager();
+    if (!ssm) return;
+    ssm->playCast(resolveSpellSchool(spellId));
+}
+
+void SpellHandler::playSpellImpactSound(uint32_t spellId) {
+    auto* ac = owner_.services().audioCoordinator;
+    if (!ac) return;
+    auto* ssm = ac->getSpellSoundManager();
+    if (!ssm) return;
+    ssm->playImpact(resolveSpellSchool(spellId),
+                     audio::SpellSoundManager::SpellPower::MEDIUM);
+}
+
 
 static std::string displaySpellName(GameHandler& handler, uint32_t spellId) {
     if (spellId == 0) return {};
@@ -929,18 +956,8 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
 
     if (data.casterUnit == owner_.getPlayerGuid()) {
         // Play cast-complete sound
-        if (!owner_.isProfessionSpell(data.spellId)) {
-            if (auto* ac = owner_.services().audioCoordinator) {
-                if (auto* ssm = ac->getSpellSoundManager()) {
-                    owner_.loadSpellNameCache();
-                    auto it = owner_.spellNameCacheRef().find(data.spellId);
-                    auto school = (it != owner_.spellNameCacheRef().end() && it->second.schoolMask)
-                        ? schoolMaskToMagicSchool(it->second.schoolMask)
-                        : audio::SpellSoundManager::MagicSchool::ARCANE;
-                    ssm->playCast(school);
-                }
-            }
-        }
+        if (!owner_.isProfessionSpell(data.spellId))
+            playSpellCastSound(data.spellId);
 
         // Instant melee abilities → trigger attack animation
         uint32_t sid = data.spellId;
@@ -1039,18 +1056,8 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         for (const auto& tgt : data.hitTargets) {
             if (tgt == owner_.getPlayerGuid()) { targetsPlayer = true; break; }
         }
-        if (targetsPlayer) {
-            if (auto* ac = owner_.services().audioCoordinator) {
-                if (auto* ssm = ac->getSpellSoundManager()) {
-                    owner_.loadSpellNameCache();
-                    auto it = owner_.spellNameCacheRef().find(data.spellId);
-                    auto school = (it != owner_.spellNameCacheRef().end() && it->second.schoolMask)
-                        ? schoolMaskToMagicSchool(it->second.schoolMask)
-                        : audio::SpellSoundManager::MagicSchool::ARCANE;
-                    ssm->playCast(school);
-                }
-            }
-        }
+        if (targetsPlayer)
+            playSpellCastSound(data.spellId);
     }
 
     // Clear unit cast bar
@@ -1085,18 +1092,8 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
             owner_.addonEventCallbackRef()("UNIT_SPELLCAST_SUCCEEDED", {unitId, std::to_string(data.spellId)});
     }
 
-    if (playerIsHit || playerHitEnemy) {
-        if (auto* ac = owner_.services().audioCoordinator) {
-            if (auto* ssm = ac->getSpellSoundManager()) {
-                owner_.loadSpellNameCache();
-                auto it = owner_.spellNameCacheRef().find(data.spellId);
-                auto school = (it != owner_.spellNameCacheRef().end() && it->second.schoolMask)
-                    ? schoolMaskToMagicSchool(it->second.schoolMask)
-                    : audio::SpellSoundManager::MagicSchool::ARCANE;
-                ssm->playImpact(school, audio::SpellSoundManager::SpellPower::MEDIUM);
-            }
-        }
-    }
+    if (playerIsHit || playerHitEnemy)
+        playSpellImpactSound(data.spellId);
 }
 
 void SpellHandler::handleSpellCooldown(network::Packet& packet) {
@@ -1225,7 +1222,7 @@ void SpellHandler::handleAuraUpdate(network::Packet& packet, bool isAll) {
 
         // Sprint aura detection — check if any sprint/dash speed buff is active
         if (data.guid == owner_.getPlayerGuid() && owner_.sprintAuraCallbackRef()) {
-            static const uint32_t sprintSpells[] = {
+            static constexpr uint32_t sprintSpells[] = {
                 2983, 8696, 11305,   // Rogue Sprint (ranks 1-3)
                 1850, 9821, 33357,   // Druid Dash (ranks 1-3)
                 36554,               // Shadowstep (speed component)
@@ -1816,7 +1813,7 @@ void SpellHandler::loadSpellNameCache() const {
             if (hasSchoolMask) {
                 entry.schoolMask = dbc->getUInt32(i, schoolMaskField);
             } else if (hasSchoolEnum) {
-                static const uint32_t enumToBitmask[] = {0x01,0x02,0x04,0x08,0x10,0x20,0x40};
+                static constexpr uint32_t enumToBitmask[] = {0x01,0x02,0x04,0x08,0x10,0x20,0x40};
                 uint32_t e = dbc->getUInt32(i, schoolEnumField);
                 entry.schoolMask = (e < 7) ? enumToBitmask[e] : 0;
             }
@@ -2941,6 +2938,163 @@ void SpellHandler::handleSpellInstaKillLog(network::Packet& packet) {
     packet.skipAll();
 }
 
+// ---- handleSpellLogExecute per-effect parsers (extracted to reduce nesting) ----
+
+void SpellHandler::parseEffectPowerDrain(network::Packet& packet, uint32_t effectLogCount,
+                                          uint64_t caster, uint32_t spellId,
+                                          bool isPlayerCaster, bool usesFullGuid) {
+    // SPELL_EFFECT_POWER_DRAIN: packed_guid target + uint32 amount + uint32 powerType + float multiplier
+    const uint64_t playerGuid = owner_.getPlayerGuid();
+    for (uint32_t li = 0; li < effectLogCount; ++li) {
+        if (!packet.hasRemaining(usesFullGuid ? 8u : 1u)
+            || (!usesFullGuid && !packet.hasFullPackedGuid())) {
+            packet.skipAll(); break;
+        }
+        uint64_t drainTarget = usesFullGuid ? packet.readUInt64() : packet.readPackedGuid();
+        if (!packet.hasRemaining(12)) { packet.skipAll(); break; }
+        uint32_t drainAmount = packet.readUInt32();
+        uint32_t drainPower  = packet.readUInt32(); // 0=mana,1=rage,3=energy,6=runic
+        float    drainMult   = packet.readFloat();
+
+        LOG_DEBUG("SMSG_SPELLLOGEXECUTE POWER_DRAIN: spell=", spellId,
+                  " power=", drainPower, " amount=", drainAmount,
+                  " multiplier=", drainMult);
+        if (drainAmount == 0) continue;
+
+        const auto powerByte = static_cast<uint8_t>(drainPower);
+        if (drainTarget == playerGuid)
+            owner_.addCombatText(CombatTextEntry::POWER_DRAIN,
+                                 static_cast<int32_t>(drainAmount), spellId, false,
+                                 powerByte, caster, drainTarget);
+        if (!isPlayerCaster) continue;
+        if (drainTarget != playerGuid)
+            owner_.addCombatText(CombatTextEntry::POWER_DRAIN,
+                                 static_cast<int32_t>(drainAmount), spellId, true,
+                                 powerByte, caster, drainTarget);
+        if (drainMult <= 0.0f || !std::isfinite(drainMult)) continue;
+        const uint32_t gained = static_cast<uint32_t>(
+            std::lround(static_cast<double>(drainAmount) * static_cast<double>(drainMult)));
+        if (gained > 0)
+            owner_.addCombatText(CombatTextEntry::ENERGIZE,
+                                 static_cast<int32_t>(gained), spellId, true,
+                                 powerByte, caster, caster);
+    }
+}
+
+void SpellHandler::parseEffectHealthLeech(network::Packet& packet, uint32_t effectLogCount,
+                                           uint64_t caster, uint32_t spellId,
+                                           bool isPlayerCaster, bool usesFullGuid) {
+    // SPELL_EFFECT_HEALTH_LEECH: packed_guid target + uint32 amount + float multiplier
+    const uint64_t playerGuid = owner_.getPlayerGuid();
+    for (uint32_t li = 0; li < effectLogCount; ++li) {
+        if (!packet.hasRemaining(usesFullGuid ? 8u : 1u)
+            || (!usesFullGuid && !packet.hasFullPackedGuid())) {
+            packet.skipAll(); break;
+        }
+        uint64_t leechTarget = usesFullGuid ? packet.readUInt64() : packet.readPackedGuid();
+        if (!packet.hasRemaining(8)) { packet.skipAll(); break; }
+        uint32_t leechAmount = packet.readUInt32();
+        float    leechMult   = packet.readFloat();
+
+        LOG_DEBUG("SMSG_SPELLLOGEXECUTE HEALTH_LEECH: spell=", spellId,
+                  " amount=", leechAmount, " multiplier=", leechMult);
+        if (leechAmount == 0) continue;
+
+        if (leechTarget == playerGuid) {
+            owner_.addCombatText(CombatTextEntry::SPELL_DAMAGE,
+                                 static_cast<int32_t>(leechAmount), spellId, false, 0,
+                                 caster, leechTarget);
+        } else if (isPlayerCaster) {
+            owner_.addCombatText(CombatTextEntry::SPELL_DAMAGE,
+                                 static_cast<int32_t>(leechAmount), spellId, true, 0,
+                                 caster, leechTarget);
+        }
+        if (!isPlayerCaster || leechMult <= 0.0f || !std::isfinite(leechMult)) continue;
+        const uint32_t gained = static_cast<uint32_t>(
+            std::lround(static_cast<double>(leechAmount) * static_cast<double>(leechMult)));
+        if (gained > 0)
+            owner_.addCombatText(CombatTextEntry::HEAL,
+                                 static_cast<int32_t>(gained), spellId, true, 0,
+                                 caster, caster);
+    }
+}
+
+void SpellHandler::parseEffectCreateItem(network::Packet& packet, uint32_t effectLogCount,
+                                          uint64_t /*caster*/, uint32_t spellId,
+                                          bool isPlayerCaster) {
+    // SPELL_EFFECT_CREATE_ITEM / CREATE_ITEM2: uint32 itemEntry per log entry
+    for (uint32_t li = 0; li < effectLogCount; ++li) {
+        if (!packet.hasRemaining(4)) break;
+        uint32_t itemEntry = packet.readUInt32();
+        if (!isPlayerCaster || itemEntry == 0) continue;
+
+        owner_.ensureItemInfo(itemEntry);
+        const ItemQueryResponseData* info = owner_.getItemInfo(itemEntry);
+        std::string itemName = (info && !info->name.empty())
+            ? info->name : ("item #" + std::to_string(itemEntry));
+        const auto& spellName = owner_.getSpellName(spellId);
+        std::string msg = spellName.empty()
+            ? ("You create: " + itemName + ".")
+            : ("You create " + itemName + " using " + spellName + ".");
+        owner_.addSystemChatMessage(msg);
+        LOG_DEBUG("SMSG_SPELLLOGEXECUTE CREATE_ITEM: spell=", spellId,
+                  " item=", itemEntry, " name=", itemName);
+
+        // Repeat-craft queue: re-cast if more crafts remaining
+        if (craftQueueRemaining_ > 0 && craftQueueSpellId_ == spellId) {
+            --craftQueueRemaining_;
+            if (craftQueueRemaining_ > 0)
+                castSpell(craftQueueSpellId_, 0);
+            else
+                craftQueueSpellId_ = 0;
+        }
+    }
+}
+
+void SpellHandler::parseEffectInterruptCast(network::Packet& packet, uint32_t effectLogCount,
+                                             uint64_t caster, uint32_t spellId,
+                                             bool isPlayerCaster, bool usesFullGuid) {
+    // SPELL_EFFECT_INTERRUPT_CAST: packed_guid target + uint32 interrupted_spell_id
+    const uint64_t playerGuid = owner_.getPlayerGuid();
+    for (uint32_t li = 0; li < effectLogCount; ++li) {
+        if (!packet.hasRemaining(usesFullGuid ? 8u : 1u)
+            || (!usesFullGuid && !packet.hasFullPackedGuid())) {
+            packet.skipAll(); break;
+        }
+        uint64_t icTarget = usesFullGuid ? packet.readUInt64() : packet.readPackedGuid();
+        if (!packet.hasRemaining(4)) { packet.skipAll(); break; }
+        uint32_t icSpellId = packet.readUInt32();
+        // Clear the interrupted unit's cast bar immediately
+        unitCastStates_.erase(icTarget);
+        // Record interrupt in combat log when player is involved
+        if (isPlayerCaster || icTarget == playerGuid)
+            owner_.addCombatText(CombatTextEntry::INTERRUPT, 0, icSpellId, isPlayerCaster, 0,
+                                 caster, icTarget);
+        LOG_DEBUG("SMSG_SPELLLOGEXECUTE INTERRUPT_CAST: spell=", spellId,
+                  " interrupted=", icSpellId, " target=0x", std::hex, icTarget, std::dec);
+    }
+}
+
+void SpellHandler::parseEffectFeedPet(network::Packet& packet, uint32_t effectLogCount,
+                                       uint64_t /*caster*/, uint32_t /*spellId*/,
+                                       bool isPlayerCaster) {
+    // SPELL_EFFECT_FEED_PET: uint32 itemEntry per log entry
+    for (uint32_t li = 0; li < effectLogCount; ++li) {
+        if (!packet.hasRemaining(4)) break;
+        uint32_t feedItem = packet.readUInt32();
+        if (!isPlayerCaster || feedItem == 0) continue;
+
+        owner_.ensureItemInfo(feedItem);
+        const ItemQueryResponseData* info = owner_.getItemInfo(feedItem);
+        std::string itemName = (info && !info->name.empty())
+            ? info->name : ("item #" + std::to_string(feedItem));
+        uint32_t feedQuality = info ? info->quality : 1u;
+        owner_.addSystemChatMessage("You feed your pet " +
+                                     buildItemLink(feedItem, feedQuality, itemName) + ".");
+        LOG_DEBUG("SMSG_SPELLLOGEXECUTE FEED_PET: item=", feedItem, " name=", itemName);
+    }
+}
+
 void SpellHandler::handleSpellLogExecute(network::Packet& packet) {
     // WotLK/Classic/Turtle: packed_guid caster + uint32 spellId + uint32 effectCount
     // TBC:                  uint64 caster + uint32 spellId + uint32 effectCount
@@ -2973,142 +3127,22 @@ void SpellHandler::handleSpellLogExecute(network::Packet& packet) {
         uint8_t  effectType     = packet.readUInt8();
         uint32_t effectLogCount = packet.readUInt32();
         effectLogCount = std::min(effectLogCount, 64u); // sanity
-        if (effectType == SpellEffect::POWER_DRAIN) {
-            // SPELL_EFFECT_POWER_DRAIN: packed_guid target + uint32 amount + uint32 powerType + float multiplier
-            for (uint32_t li = 0; li < effectLogCount; ++li) {
-                if (!packet.hasRemaining(exeUsesFullGuid ? 8u : 1u)
-                    || (!exeUsesFullGuid && !packet.hasFullPackedGuid())) {
-                    packet.skipAll(); break;
-                }
-                uint64_t drainTarget = exeUsesFullGuid
-                    ? packet.readUInt64()
-                    : packet.readPackedGuid();
-                if (!packet.hasRemaining(12)) { packet.skipAll(); break; }
-                uint32_t drainAmount = packet.readUInt32();
-                uint32_t drainPower  = packet.readUInt32(); // 0=mana,1=rage,3=energy,6=runic
-                float drainMult = packet.readFloat();
-                if (drainAmount > 0) {
-                    if (drainTarget == owner_.getPlayerGuid())
-                        owner_.addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(drainAmount), exeSpellId, false,
-                                      static_cast<uint8_t>(drainPower),
-                                      exeCaster, drainTarget);
-                    if (isPlayerCaster) {
-                        if (drainTarget != owner_.getPlayerGuid()) {
-                            owner_.addCombatText(CombatTextEntry::POWER_DRAIN, static_cast<int32_t>(drainAmount), exeSpellId, true,
-                                          static_cast<uint8_t>(drainPower), exeCaster, drainTarget);
-                        }
-                        if (drainMult > 0.0f && std::isfinite(drainMult)) {
-                            const uint32_t gainedAmount = static_cast<uint32_t>(
-                                std::lround(static_cast<double>(drainAmount) * static_cast<double>(drainMult)));
-                            if (gainedAmount > 0) {
-                                owner_.addCombatText(CombatTextEntry::ENERGIZE, static_cast<int32_t>(gainedAmount), exeSpellId, true,
-                                              static_cast<uint8_t>(drainPower), exeCaster, exeCaster);
-                            }
-                        }
-                    }
-                }
-                LOG_DEBUG("SMSG_SPELLLOGEXECUTE POWER_DRAIN: spell=", exeSpellId,
-                          " power=", drainPower, " amount=", drainAmount,
-                          " multiplier=", drainMult);
-            }
-        } else if (effectType == SpellEffect::HEALTH_LEECH) {
-            // SPELL_EFFECT_HEALTH_LEECH: packed_guid target + uint32 amount + float multiplier
-            for (uint32_t li = 0; li < effectLogCount; ++li) {
-                if (!packet.hasRemaining(exeUsesFullGuid ? 8u : 1u)
-                    || (!exeUsesFullGuid && !packet.hasFullPackedGuid())) {
-                    packet.skipAll(); break;
-                }
-                uint64_t leechTarget = exeUsesFullGuid
-                    ? packet.readUInt64()
-                    : packet.readPackedGuid();
-                if (!packet.hasRemaining(8)) { packet.skipAll(); break; }
-                uint32_t leechAmount = packet.readUInt32();
-                float leechMult = packet.readFloat();
-                if (leechAmount > 0) {
-                    if (leechTarget == owner_.getPlayerGuid()) {
-                        owner_.addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(leechAmount), exeSpellId, false, 0,
-                                      exeCaster, leechTarget);
-                    } else if (isPlayerCaster) {
-                        owner_.addCombatText(CombatTextEntry::SPELL_DAMAGE, static_cast<int32_t>(leechAmount), exeSpellId, true, 0,
-                                      exeCaster, leechTarget);
-                    }
-                    if (isPlayerCaster && leechMult > 0.0f && std::isfinite(leechMult)) {
-                        const uint32_t gainedAmount = static_cast<uint32_t>(
-                            std::lround(static_cast<double>(leechAmount) * static_cast<double>(leechMult)));
-                        if (gainedAmount > 0) {
-                            owner_.addCombatText(CombatTextEntry::HEAL, static_cast<int32_t>(gainedAmount), exeSpellId, true, 0,
-                                          exeCaster, exeCaster);
-                        }
-                    }
-                }
-                LOG_DEBUG("SMSG_SPELLLOGEXECUTE HEALTH_LEECH: spell=", exeSpellId,
-                          " amount=", leechAmount, " multiplier=", leechMult);
-            }
-        } else if (effectType == SpellEffect::CREATE_ITEM || effectType == SpellEffect::CREATE_ITEM2) {
-            // SPELL_EFFECT_CREATE_ITEM / CREATE_ITEM2: uint32 itemEntry per log entry
-            for (uint32_t li = 0; li < effectLogCount; ++li) {
-                if (!packet.hasRemaining(4)) break;
-                uint32_t itemEntry = packet.readUInt32();
-                if (isPlayerCaster && itemEntry != 0) {
-                    owner_.ensureItemInfo(itemEntry);
-                    const ItemQueryResponseData* info = owner_.getItemInfo(itemEntry);
-                    std::string itemName = info && !info->name.empty()
-                        ? info->name : ("item #" + std::to_string(itemEntry));
-                    const auto& spellName = owner_.getSpellName(exeSpellId);
-                    std::string msg = spellName.empty()
-                        ? ("You create: " + itemName + ".")
-                        : ("You create " + itemName + " using " + spellName + ".");
-                    owner_.addSystemChatMessage(msg);
-                    LOG_DEBUG("SMSG_SPELLLOGEXECUTE CREATE_ITEM: spell=", exeSpellId,
-                              " item=", itemEntry, " name=", itemName);
 
-                    // Repeat-craft queue: re-cast if more crafts remaining
-                    if (craftQueueRemaining_ > 0 && craftQueueSpellId_ == exeSpellId) {
-                        --craftQueueRemaining_;
-                        if (craftQueueRemaining_ > 0) {
-                            castSpell(craftQueueSpellId_, 0);
-                        } else {
-                            craftQueueSpellId_ = 0;
-                        }
-                    }
-                }
-            }
+        if (effectType == SpellEffect::POWER_DRAIN) {
+            parseEffectPowerDrain(packet, effectLogCount, exeCaster, exeSpellId,
+                                  isPlayerCaster, exeUsesFullGuid);
+        } else if (effectType == SpellEffect::HEALTH_LEECH) {
+            parseEffectHealthLeech(packet, effectLogCount, exeCaster, exeSpellId,
+                                   isPlayerCaster, exeUsesFullGuid);
+        } else if (effectType == SpellEffect::CREATE_ITEM || effectType == SpellEffect::CREATE_ITEM2) {
+            parseEffectCreateItem(packet, effectLogCount, exeCaster, exeSpellId,
+                                  isPlayerCaster);
         } else if (effectType == SpellEffect::INTERRUPT_CAST) {
-            // SPELL_EFFECT_INTERRUPT_CAST: packed_guid target + uint32 interrupted_spell_id
-            for (uint32_t li = 0; li < effectLogCount; ++li) {
-                if (!packet.hasRemaining(exeUsesFullGuid ? 8u : 1u)
-                    || (!exeUsesFullGuid && !packet.hasFullPackedGuid())) {
-                    packet.skipAll(); break;
-                }
-                uint64_t icTarget = exeUsesFullGuid
-                    ? packet.readUInt64()
-                    : packet.readPackedGuid();
-                if (!packet.hasRemaining(4)) { packet.skipAll(); break; }
-                uint32_t icSpellId = packet.readUInt32();
-                // Clear the interrupted unit's cast bar immediately
-                unitCastStates_.erase(icTarget);
-                // Record interrupt in combat log when player is involved
-                if (isPlayerCaster || icTarget == owner_.getPlayerGuid())
-                    owner_.addCombatText(CombatTextEntry::INTERRUPT, 0, icSpellId, isPlayerCaster, 0,
-                                  exeCaster, icTarget);
-                LOG_DEBUG("SMSG_SPELLLOGEXECUTE INTERRUPT_CAST: spell=", exeSpellId,
-                          " interrupted=", icSpellId, " target=0x", std::hex, icTarget, std::dec);
-            }
+            parseEffectInterruptCast(packet, effectLogCount, exeCaster, exeSpellId,
+                                     isPlayerCaster, exeUsesFullGuid);
         } else if (effectType == SpellEffect::FEED_PET) {
-            // SPELL_EFFECT_FEED_PET: uint32 itemEntry per log entry
-            for (uint32_t li = 0; li < effectLogCount; ++li) {
-                if (!packet.hasRemaining(4)) break;
-                uint32_t feedItem = packet.readUInt32();
-                if (isPlayerCaster && feedItem != 0) {
-                    owner_.ensureItemInfo(feedItem);
-                    const ItemQueryResponseData* info = owner_.getItemInfo(feedItem);
-                    std::string itemName = info && !info->name.empty()
-                        ? info->name : ("item #" + std::to_string(feedItem));
-                    uint32_t feedQuality = info ? info->quality : 1u;
-                    owner_.addSystemChatMessage("You feed your pet " + buildItemLink(feedItem, feedQuality, itemName) + ".");
-                    LOG_DEBUG("SMSG_SPELLLOGEXECUTE FEED_PET: item=", feedItem, " name=", itemName);
-                }
-            }
+            parseEffectFeedPet(packet, effectLogCount, exeCaster, exeSpellId,
+                               isPlayerCaster);
         } else {
             // Unknown effect type — stop parsing to avoid misalignment
             packet.skipAll();

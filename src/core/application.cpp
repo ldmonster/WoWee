@@ -137,7 +137,8 @@ bool Application::initialize() {
 
     // Create and initialize audio coordinator (owns all audio managers)
     audioCoordinator_ = std::make_unique<audio::AudioCoordinator>();
-    audioCoordinator_->initialize();
+    if (!audioCoordinator_->initialize())
+        LOG_WARNING("Audio coordinator initialization failed — game will run without audio");
     renderer->setAudioCoordinator(audioCoordinator_.get());
 
     // Create UI manager
@@ -2549,7 +2550,8 @@ void Application::loadQuestMarkerModels() {
         if (auto* vkCtx = renderer->getVkContext()) {
             VkDescriptorSetLayout pfl = renderer->getPerFrameSetLayout();
             if (pfl != VK_NULL_HANDLE) {
-                qmr->initialize(vkCtx, pfl, assetManager.get());
+                if (!qmr->initialize(vkCtx, pfl, assetManager.get()))
+                    LOG_WARNING("Quest marker renderer re-init failed (non-fatal)");
             }
         }
     }

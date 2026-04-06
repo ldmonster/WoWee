@@ -276,7 +276,7 @@ public:
     M2Renderer();
     ~M2Renderer();
 
-    bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout,
+    [[nodiscard]] bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout,
                     pipeline::AssetManager* assets);
     void shutdown();
 
@@ -310,7 +310,7 @@ public:
     /**
      * Initialize shadow pipeline (Phase 7)
      */
-    bool initializeShadow(VkRenderPass shadowRenderPass);
+    [[nodiscard]] bool initializeShadow(VkRenderPass shadowRenderPass);
     bool hasShadowPipeline() const { return shadowPipeline_ != VK_NULL_HANDLE; }
 
     /**

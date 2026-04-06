@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace wowee {
@@ -19,9 +20,11 @@ struct PinProof {
 // - Compute: pin_hash = SHA1(client_salt || SHA1(server_salt || randomized_pin_ascii))
 //
 // PIN must be 4-10 ASCII digits.
-PinProof computePinProof(const std::string& pinDigits,
-                         uint32_t pinGridSeed,
-                         const std::array<uint8_t, 16>& serverSalt);
+// Returns std::nullopt on invalid input (bad length, non-digit chars, or grid corruption).
+[[nodiscard]] std::optional<PinProof> computePinProof(
+    const std::string& pinDigits,
+    uint32_t pinGridSeed,
+    const std::array<uint8_t, 16>& serverSalt);
 
 } // namespace auth
 } // namespace wowee

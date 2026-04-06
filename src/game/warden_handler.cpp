@@ -10,6 +10,7 @@
 #include "core/application.hpp"
 #include "pipeline/asset_manager.hpp"
 #include "core/logger.hpp"
+#include "game/warden_constants.hpp"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -355,7 +356,7 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
     };
 
     switch (wardenOpcode) {
-        case 0x00: { // WARDEN_SMSG_MODULE_USE
+        case WARDEN_SMSG_MODULE_USE: { // MODULE_USE
             // Format: [1 opcode][16 moduleHash][16 moduleKey][4 moduleSize]
             if (decrypted.size() < 37) {
                 LOG_ERROR("Warden: MODULE_USE too short (", decrypted.size(), " bytes, need 37)");
@@ -379,15 +380,15 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
                 loadWardenCRFile(hashHex);
             }
 
-            // Respond with MODULE_MISSING (opcode 0x00) to request the module data
-            std::vector<uint8_t> resp = { 0x00 }; // WARDEN_CMSG_MODULE_MISSING
+            // Respond with MODULE_MISSING to request the module data
+            std::vector<uint8_t> resp = { WARDEN_CMSG_MODULE_MISSING };
             sendWardenResponse(resp);
             wardenState_ = WardenState::WAIT_MODULE_CACHE;
             LOG_DEBUG("Warden: Sent MODULE_MISSING for module size=", wardenModuleSize_, ", waiting for data chunks");
             break;
         }
 
-        case 0x01: { // WARDEN_SMSG_MODULE_CACHE (module data chunk)
+        case WARDEN_SMSG_MODULE_CACHE: { // MODULE_CACHE (module data chunk)
             // Format: [1 opcode][2 chunkSize LE][chunkSize bytes data]
             if (decrypted.size() < 3) {
                 LOG_ERROR("Warden: MODULE_CACHE too short");
@@ -463,8 +464,8 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
                     wardenLoadedModule_.reset();
                 }
 
-                // Send MODULE_OK (opcode 0x01)
-                std::vector<uint8_t> resp = { 0x01 }; // WARDEN_CMSG_MODULE_OK
+                // Send MODULE_OK
+                std::vector<uint8_t> resp = { WARDEN_CMSG_MODULE_OK };
                 sendWardenResponse(resp);
                 LOG_DEBUG("Warden: Sent MODULE_OK");
             }
@@ -472,7 +473,7 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
             break;
         }
 
-        case 0x05: { // WARDEN_SMSG_HASH_REQUEST
+        case WARDEN_SMSG_HASH_REQUEST: { // HASH_REQUEST
             // Format: [1 opcode][16 seed]
             if (decrypted.size() < 17) {
                 LOG_ERROR("Warden: HASH_REQUEST too short (", decrypted.size(), " bytes, need 17)");
@@ -506,9 +507,9 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
                 if (match) {
                     LOG_DEBUG("Warden: HASH_REQUEST — CR entry MATCHED, sending pre-computed reply");
 
-                    // Send HASH_RESULT (opcode 0x04 + 20-byte reply)
+                    // Send HASH_RESULT
                     std::vector<uint8_t> resp;
-                    resp.push_back(0x04);
+                    resp.push_back(WARDEN_CMSG_HASH_RESULT);
                     resp.insert(resp.end(), match->reply, match->reply + 20);
                     sendWardenResponse(resp);
 
@@ -576,7 +577,7 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
             break;
         }
 
-        case 0x02: { // WARDEN_SMSG_CHEAT_CHECKS_REQUEST
+        case WARDEN_SMSG_CHEAT_CHECKS_REQUEST: { // CHEAT_CHECKS_REQUEST
             LOG_DEBUG("Warden: CHEAT_CHECKS_REQUEST (", decrypted.size(), " bytes)");
 
             if (decrypted.size() < 3) {
@@ -660,9 +661,9 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
                                     HMAC(EVP_sha1(), seed, 4, pat, patLen, out, &outLen);
                                     return outLen == SHA_DIGEST_LENGTH && !std::memcmp(out, hash, SHA_DIGEST_LENGTH);
                                 };
-                                static const uint8_t p1[] = {0x33,0xD2,0x33,0xC9,0xE8,0x87,0x07,0x1B,0x00,0xE8};
+                                static constexpr uint8_t p1[] = {0x33,0xD2,0x33,0xC9,0xE8,0x87,0x07,0x1B,0x00,0xE8};
                                 if (off == 13856 && len == sizeof(p1) && tryMatch(p1, sizeof(p1))) return true;
-                                static const uint8_t p2[] = {0x56,0x57,0xFC,0x8B,0x54,0x24,0x14,0x8B,
+                                static constexpr uint8_t p2[] = {0x56,0x57,0xFC,0x8B,0x54,0x24,0x14,0x8B,
                                     0x74,0x24,0x10,0x8B,0x44,0x24,0x0C,0x8B,0xCA,0x8B,0xF8,0xC1,
                                     0xE9,0x02,0x74,0x02,0xF3,0xA5,0xB1,0x03,0x23,0xCA,0x74,0x02,
                                     0xF3,0xA4,0x5F,0x5E,0xC3};
@@ -706,7 +707,7 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
                                     LOG_WARNING("Warden:   MEM offset=0x", [&]{char s[12];snprintf(s,12,"%08x",offset);return std::string(s);}(),
                                              " len=", (int)readLen,
                                              (strIdx ? " module=\"" + moduleName + "\"" : ""));
-                                    if (offset == 0x00CF0BC8 && readLen == 4 && wardenMemory_ && wardenMemory_->isLoaded()) {
+                                    if (offset == WARDEN_TICKCOUNT_ADDRESS && readLen == 4 && wardenMemory_ && wardenMemory_->isLoaded()) {
                                         uint32_t now = static_cast<uint32_t>(
                                             std::chrono::duration_cast<std::chrono::milliseconds>(
                                                 std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -717,25 +718,25 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
                                                  wardenMemory_->readMemory(offset, readLen, memBuf.data());
                                     if (memOk) {
                                         const char* region = "?";
-                                        if (offset >= 0x7FFE0000 && offset < 0x7FFF0000) region = "KUSER";
-                                        else if (offset >= 0x400000 && offset < 0x800000) region = ".text/.code";
-                                        else if (offset >= 0x7FF000 && offset < 0x827000) region = ".rdata";
-                                        else if (offset >= 0x827000 && offset < 0x883000) region = ".data(raw)";
-                                        else if (offset >= 0x883000 && offset < 0xD06000) region = ".data(BSS)";
+                                        if (offset >= KUSER_SHARED_DATA_BASE && offset < KUSER_SHARED_DATA_END) region = "KUSER";
+                                        else if (offset >= PE_TEXT_SECTION_BASE && offset < PE_TEXT_SECTION_END) region = ".text/.code";
+                                        else if (offset >= PE_RDATA_SECTION_BASE && offset < PE_DATA_RAW_SECTION_BASE) region = ".rdata";
+                                        else if (offset >= PE_DATA_RAW_SECTION_BASE && offset < PE_BSS_SECTION_BASE) region = ".data(raw)";
+                                        else if (offset >= PE_BSS_SECTION_BASE && offset < PE_BSS_SECTION_END) region = ".data(BSS)";
                                         bool allZero = true;
                                         for (int i = 0; i < (int)readLen; i++) { if (memBuf[i] != 0) { allZero = false; break; } }
                                         std::string hexDump;
                                         for (int i = 0; i < (int)readLen; i++) { char hx[4]; snprintf(hx,4,"%02x ",memBuf[i]); hexDump += hx; }
                                         LOG_WARNING("Warden:   MEM_CHECK served: [", hexDump, "] region=", region,
-                                                    (allZero && offset >= 0x883000 ? " \xe2\x98\x85""BSS_ZERO\xe2\x98\x85" : ""));
-                                        if (offset == 0x7FFE026C && readLen == 12)
+                                                    (allZero && offset >= PE_BSS_SECTION_BASE ? " \xe2\x98\x85""BSS_ZERO\xe2\x98\x85" : ""));
+                                        if (offset == WARDEN_WIN_VERSION_ADDRESS && readLen == 12)
                                             LOG_WARNING("Warden:   Applying 4-byte ULONG alignment padding for WinVersionGet");
-                                        resultData.push_back(0x00);
+                                        resultData.push_back(WARDEN_MEM_CHECK_SUCCESS);
                                         resultData.insert(resultData.end(), memBuf.begin(), memBuf.end());
                                     } else {
                                         LOG_WARNING("Warden:   MEM_CHECK -> 0xE9 (unmapped 0x",
                                                     [&]{char s[12];snprintf(s,12,"%08x",offset);return std::string(s);}(), ")");
-                                        resultData.push_back(0xE9);
+                                        resultData.push_back(WARDEN_MEM_CHECK_UNMAPPED);
                                     }
                                     break;
                                 }
@@ -936,7 +937,7 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
                 };
 
                 // DB sanity check: "Warden packet process code search sanity check" (id=85)
-                static const uint8_t kPacketProcessSanityPattern[] = {
+                static constexpr uint8_t kPacketProcessSanityPattern[] = {
                     0x33, 0xD2, 0x33, 0xC9, 0xE8, 0x87, 0x07, 0x1B, 0x00, 0xE8
                 };
                 if (offset == 13856 && length == sizeof(kPacketProcessSanityPattern) &&
@@ -945,7 +946,7 @@ void WardenHandler::handleWardenData(network::Packet& packet) {
                 }
 
                 // Scripted sanity check: "Warden Memory Read check" in wardenwin.cpp
-                static const uint8_t kWardenMemoryReadPattern[] = {
+                static constexpr uint8_t kWardenMemoryReadPattern[] = {
                     0x56, 0x57, 0xFC, 0x8B, 0x54, 0x24, 0x14, 0x8B,
                     0x74, 0x24, 0x10, 0x8B, 0x44, 0x24, 0x0C, 0x8B,
                     0xCA, 0x8B, 0xF8, 0xC1, 0xE9, 0x02, 0x74, 0x02,

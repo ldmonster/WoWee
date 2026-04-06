@@ -41,7 +41,7 @@ public:
      * @param perFrameLayout Descriptor set layout for the per-frame UBO (set 0)
      * @return true if initialization succeeded
      */
-    bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout);
+    [[nodiscard]] bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout);
     void recreatePipelines();
 
     /**

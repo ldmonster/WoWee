@@ -1282,14 +1282,14 @@ uint32_t TransportManager::pickFallbackMovingPath(uint32_t entry, uint32_t displ
         (displayId == 3031u || displayId == 7546u || displayId == 1587u || displayId == 807u || displayId == 808u);
 
     if (looksLikeShip) {
-        static const uint32_t kShipCandidates[] = {176080u, 176081u, 176082u, 176083u, 176084u, 176085u, 194675u};
+        static constexpr uint32_t kShipCandidates[] = {176080u, 176081u, 176082u, 176083u, 176084u, 176085u, 194675u};
         for (uint32_t id : kShipCandidates) {
             if (isUsableMovingPath(id)) return id;
         }
     }
 
     if (looksLikeZeppelin) {
-        static const uint32_t kZeppelinCandidates[] = {193182u, 193183u, 188360u, 190587u};
+        static constexpr uint32_t kZeppelinCandidates[] = {193182u, 193183u, 188360u, 190587u};
         for (uint32_t id : kZeppelinCandidates) {
             if (isUsableMovingPath(id)) return id;
         }

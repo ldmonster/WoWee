@@ -2130,7 +2130,9 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
     }
     const float renderRadius = static_cast<float>(envSizeOrDefault("WOWEE_CHAR_RENDER_RADIUS", 130));
     const float renderRadiusSq = renderRadius * renderRadius;
-    const float characterCullRadius = 2.0f;  // Estimate character radius for frustum testing
+    // Default frustum-cull radius when model bounds aren't available.
+    // 4.0 covers Tauren, mounted characters, and most creature models.
+    constexpr float kDefaultCharacterCullRadius = 4.0f;
     const glm::vec3 camPos = camera.getPosition();
 
     // Extract frustum planes for per-instance visibility testing
@@ -2175,8 +2177,17 @@ void CharacterRenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet,
             // Distance cull: skip if beyond render radius
             if (distSq > renderRadiusSq) continue;
 
+            // Compute per-instance bounding radius from model data when available.
+            float cullRadius = kDefaultCharacterCullRadius;
+            auto mIt = models.find(instance.modelId);
+            if (mIt != models.end()) {
+                float modelR = mIt->second.data.boundRadius;
+                if (modelR > 0.01f)
+                    cullRadius = std::max(kDefaultCharacterCullRadius, modelR * std::max(0.001f, instance.scale));
+            }
+
             // Frustum cull: skip if outside view frustum
-            if (!frustum.intersectsSphere(instance.position, characterCullRadius)) continue;
+            if (!frustum.intersectsSphere(instance.position, cullRadius)) continue;
         }
 
         if (!instance.cachedModel) continue;

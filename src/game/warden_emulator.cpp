@@ -203,7 +203,7 @@ uint32_t WardenEmulator::hookAPI(const std::string& dllName,
     // Write a RET (0xC3) at the stub address as a safe fallback in case
     // the code hook fires after EIP has already advanced past our intercept.
     if (uc_) {
-        static const uint8_t retInstr = 0xC3;
+        static constexpr uint8_t retInstr = 0xC3;
         uc_mem_write(uc_, stubAddr, &retInstr, 1);
     }
 

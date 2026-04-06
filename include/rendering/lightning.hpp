@@ -26,7 +26,7 @@ public:
     Lightning();
     ~Lightning();
 
-    bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout);
+    [[nodiscard]] bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout);
     void shutdown();
     void recreatePipelines();
 

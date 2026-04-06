@@ -40,7 +40,7 @@ public:
     ~AuthHandler();
 
     // Connection
-    bool connect(const std::string& host, uint16_t port = 3724);
+    [[nodiscard]] bool connect(const std::string& host, uint16_t port = 3724);
     void disconnect();
     bool isConnected() const;
 

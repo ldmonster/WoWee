@@ -4,6 +4,7 @@
 #include "game/opcode_table.hpp"
 #include "game/spell_defines.hpp"
 #include "game/handler_types.hpp"
+#include "audio/spell_sound_manager.hpp"
 #include "network/packet.hpp"
 #include <array>
 #include <chrono>
@@ -273,6 +274,30 @@ private:
     void handleChannelUpdate(network::Packet& packet);
 
     // --- Internal helpers ---
+
+    // Resolve the magic school for a spell (for audio playback).
+    // Returns MagicSchool from the spell name cache, defaulting to ARCANE.
+    audio::SpellSoundManager::MagicSchool resolveSpellSchool(uint32_t spellId);
+
+    // Play a spell cast or impact sound via audioCoordinator, if available.
+    void playSpellCastSound(uint32_t spellId);
+    void playSpellImpactSound(uint32_t spellId);
+
+    // --- handleSpellLogExecute per-effect parsers (extracted to reduce nesting) ---
+    void parseEffectPowerDrain(network::Packet& packet, uint32_t effectLogCount,
+                               uint64_t caster, uint32_t spellId, bool isPlayerCaster,
+                               bool usesFullGuid);
+    void parseEffectHealthLeech(network::Packet& packet, uint32_t effectLogCount,
+                                uint64_t caster, uint32_t spellId, bool isPlayerCaster,
+                                bool usesFullGuid);
+    void parseEffectCreateItem(network::Packet& packet, uint32_t effectLogCount,
+                               uint64_t caster, uint32_t spellId, bool isPlayerCaster);
+    void parseEffectInterruptCast(network::Packet& packet, uint32_t effectLogCount,
+                                  uint64_t caster, uint32_t spellId, bool isPlayerCaster,
+                                  bool usesFullGuid);
+    void parseEffectFeedPet(network::Packet& packet, uint32_t effectLogCount,
+                            uint64_t caster, uint32_t spellId, bool isPlayerCaster);
+
     // Find the on-use spell for an item (trigger=0 Use or trigger=5 NoDelay).
     // CMSG_USE_ITEM requires a valid spellId or the server silently ignores it.
     uint32_t findOnUseSpellId(uint32_t itemId) const;

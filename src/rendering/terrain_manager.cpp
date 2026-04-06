@@ -868,7 +868,8 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
 
         // Ensure M2 renderer has asset manager
         if (m2Renderer && assetManager) {
-            m2Renderer->initialize(nullptr, VK_NULL_HANDLE, assetManager);
+            if (!m2Renderer->initialize(nullptr, VK_NULL_HANDLE, assetManager))
+                LOG_WARNING("M2Renderer terrain re-init failed");
         }
 
         ft.phase = FinalizationPhase::M2_MODELS;
@@ -952,7 +953,8 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
     case FinalizationPhase::WMO_MODELS: {
         // Upload multiple WMO models per call (batched GPU uploads)
         if (wmoRenderer && assetManager) {
-            wmoRenderer->initialize(nullptr, VK_NULL_HANDLE, assetManager);
+            if (!wmoRenderer->initialize(nullptr, VK_NULL_HANDLE, assetManager))
+                LOG_WARNING("WMORenderer terrain re-init failed");
             // Set pre-decoded BLP cache and defer normal maps during streaming
             wmoRenderer->setPredecodedBLPCache(&pending->preloadedWMOTextures);
             wmoRenderer->setDeferNormalMaps(true);

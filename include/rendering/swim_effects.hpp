@@ -19,7 +19,7 @@ public:
     SwimEffects();
     ~SwimEffects();
 
-    bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout);
+    [[nodiscard]] bool initialize(VkContext* ctx, VkDescriptorSetLayout perFrameLayout);
     void shutdown();
     void recreatePipelines();
     void update(const Camera& camera, const CameraController& cc,

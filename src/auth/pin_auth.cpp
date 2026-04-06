@@ -1,8 +1,9 @@
 #include "auth/pin_auth.hpp"
 #include "auth/crypto.hpp"
+#include "core/logger.hpp"
 #include <algorithm>
+#include <optional>
 #include <random>
-#include <stdexcept>
 #include <vector>
 
 namespace wowee {
@@ -46,7 +47,7 @@ static std::array<uint8_t, 10> remapPinGrid(uint32_t seed) {
     return remapped;
 }
 
-static std::vector<uint8_t> randomizePinDigits(const std::string& pinDigits,
+static std::optional<std::vector<uint8_t>> randomizePinDigits(const std::string& pinDigits,
                                                const std::array<uint8_t, 10>& remapped) {
     // Transforms each pin digit into an index in the remapped permutation.
     // Based on:
@@ -61,7 +62,8 @@ static std::vector<uint8_t> randomizePinDigits(const std::string& pinDigits,
             if (remapped[j] == d) { idx = j; break; }
         }
         if (idx == 0xFF) {
-            throw std::runtime_error("PIN digit not found in remapped grid");
+            LOG_ERROR("PIN digit not found in remapped grid");
+            return std::nullopt;
         }
         // PIN grid encodes each digit as its ASCII character ('0'..'9') for the
         // server-side HMAC computation — this matches Blizzard's auth protocol.
@@ -71,25 +73,28 @@ static std::vector<uint8_t> randomizePinDigits(const std::string& pinDigits,
     return out;
 }
 
-PinProof computePinProof(const std::string& pinDigits,
+std::optional<PinProof> computePinProof(const std::string& pinDigits,
                          uint32_t pinGridSeed,
                          const std::array<uint8_t, 16>& serverSalt) {
     if (pinDigits.size() < 4 || pinDigits.size() > 10) {
-        throw std::runtime_error("PIN must be 4-10 digits");
+        LOG_ERROR("PIN must be 4-10 digits, got ", pinDigits.size());
+        return std::nullopt;
     }
     if (!std::all_of(pinDigits.begin(), pinDigits.end(),
                      [](unsigned char c) { return c >= '0' && c <= '9'; })) {
-        throw std::runtime_error("PIN must contain only digits");
+        LOG_ERROR("PIN must contain only digits");
+        return std::nullopt;
     }
 
     const auto remapped = remapPinGrid(pinGridSeed);
     const auto randomizedAsciiDigits = randomizePinDigits(pinDigits, remapped);
+    if (!randomizedAsciiDigits) return std::nullopt;
 
     // server_hash = SHA1(server_salt || randomized_pin_ascii)
     std::vector<uint8_t> serverHashInput;
-    serverHashInput.reserve(serverSalt.size() + randomizedAsciiDigits.size());
+    serverHashInput.reserve(serverSalt.size() + randomizedAsciiDigits->size());
     serverHashInput.insert(serverHashInput.end(), serverSalt.begin(), serverSalt.end());
-    serverHashInput.insert(serverHashInput.end(), randomizedAsciiDigits.begin(), randomizedAsciiDigits.end());
+    serverHashInput.insert(serverHashInput.end(), randomizedAsciiDigits->begin(), randomizedAsciiDigits->end());
     const auto serverHash = Crypto::sha1(serverHashInput); // 20 bytes
 
     PinProof proof;

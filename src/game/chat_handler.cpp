@@ -378,7 +378,7 @@ void ChatHandler::sendTextEmote(uint32_t textEmoteId, uint64_t targetGuid) {
 }
 
 void ChatHandler::handleTextEmote(network::Packet& packet) {
-    const bool legacyFormat = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool legacyFormat = isPreWotlk();
     TextEmoteData data;
     if (!TextEmoteParser::parse(packet, data, legacyFormat)) {
         LOG_WARNING("Failed to parse SMSG_TEXT_EMOTE");

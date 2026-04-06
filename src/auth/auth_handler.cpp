@@ -265,16 +265,15 @@ void AuthHandler::sendLogonProof() {
     const std::array<uint8_t, 20>* crcHashPtr = nullptr;
 
     if (securityFlags_ & kSecurityFlagPin) {
-        try {
-            PinProof proof = computePinProof(pendingSecurityCode_, pinGridSeed_, pinServerSalt_);
-            pinClientSalt = proof.clientSalt;
-            pinHash = proof.hash;
-            pinClientSaltPtr = &pinClientSalt;
-            pinHashPtr = &pinHash;
-        } catch (const std::exception& e) {
-            fail(std::string("PIN required but invalid: ") + e.what());
+        auto proof = computePinProof(pendingSecurityCode_, pinGridSeed_, pinServerSalt_);
+        if (!proof) {
+            fail("PIN required but invalid input");
             return;
         }
+        pinClientSalt = proof->clientSalt;
+        pinHash = proof->hash;
+        pinClientSaltPtr = &pinClientSalt;
+        pinHashPtr = &pinHash;
     }
 
     // Legacy client integrity hash (aka "CRC hash"). Some servers enforce this for classic builds.

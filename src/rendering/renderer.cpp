@@ -531,19 +531,24 @@ bool Renderer::initialize(core::Window* win) {
     lensFlare = nullptr;
 
     weather = std::make_unique<Weather>();
-    weather->initialize(vkCtx, perFrameSetLayout);
+    if (!weather->initialize(vkCtx, perFrameSetLayout))
+        LOG_WARNING("Weather effect initialization failed (non-fatal)");
 
     lightning = std::make_unique<Lightning>();
-    lightning->initialize(vkCtx, perFrameSetLayout);
+    if (!lightning->initialize(vkCtx, perFrameSetLayout))
+        LOG_WARNING("Lightning effect initialization failed (non-fatal)");
 
     swimEffects = std::make_unique<SwimEffects>();
-    swimEffects->initialize(vkCtx, perFrameSetLayout);
+    if (!swimEffects->initialize(vkCtx, perFrameSetLayout))
+        LOG_WARNING("Swim effect initialization failed (non-fatal)");
 
     mountDust = std::make_unique<MountDust>();
-    mountDust->initialize(vkCtx, perFrameSetLayout);
+    if (!mountDust->initialize(vkCtx, perFrameSetLayout))
+        LOG_WARNING("Mount dust effect initialization failed (non-fatal)");
 
     chargeEffect = std::make_unique<ChargeEffect>();
-    chargeEffect->initialize(vkCtx, perFrameSetLayout);
+    if (!chargeEffect->initialize(vkCtx, perFrameSetLayout))
+        LOG_WARNING("Charge effect initialization failed (non-fatal)");
 
     levelUpEffect = std::make_unique<LevelUpEffect>();
 
@@ -1451,7 +1456,8 @@ void Renderer::runDeferredWorldInitStep(float deltaTime) {
             if (audioCoordinator_->getMovementSoundManager()) audioCoordinator_->getMovementSoundManager()->initialize(cachedAssetManager);
             break;
         case 5:
-            if (questMarkerRenderer) questMarkerRenderer->initialize(vkCtx, perFrameSetLayout, cachedAssetManager);
+            if (questMarkerRenderer && !questMarkerRenderer->initialize(vkCtx, perFrameSetLayout, cachedAssetManager))
+                LOG_WARNING("Quest marker renderer re-init failed (non-fatal)");
             break;
         default:
             deferredWorldInitPending_ = false;
@@ -1930,7 +1936,8 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
     // Create M2, WMO, and Character renderers
     if (!m2Renderer) {
         m2Renderer = std::make_unique<M2Renderer>();
-        m2Renderer->initialize(vkCtx, perFrameSetLayout, assetManager);
+        if (!m2Renderer->initialize(vkCtx, perFrameSetLayout, assetManager))
+            LOG_ERROR("M2Renderer initialization failed");
         if (swimEffects) {
             swimEffects->setM2Renderer(m2Renderer.get());
         }
@@ -1959,21 +1966,26 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
     }
     if (!wmoRenderer) {
         wmoRenderer = std::make_unique<WMORenderer>();
-        wmoRenderer->initialize(vkCtx, perFrameSetLayout, assetManager);
+        if (!wmoRenderer->initialize(vkCtx, perFrameSetLayout, assetManager))
+            LOG_ERROR("WMORenderer initialization failed");
         if (shadowRenderPass != VK_NULL_HANDLE) {
-            wmoRenderer->initializeShadow(shadowRenderPass);
+            if (!wmoRenderer->initializeShadow(shadowRenderPass))
+                LOG_WARNING("WMO shadow pipeline initialization failed");
         }
     }
 
     // Initialize shadow pipelines for M2 if not yet done
     if (m2Renderer && shadowRenderPass != VK_NULL_HANDLE && !m2Renderer->hasShadowPipeline()) {
-        m2Renderer->initializeShadow(shadowRenderPass);
+        if (!m2Renderer->initializeShadow(shadowRenderPass))
+            LOG_WARNING("M2 shadow pipeline initialization failed");
     }
     if (!characterRenderer) {
         characterRenderer = std::make_unique<CharacterRenderer>();
-        characterRenderer->initialize(vkCtx, perFrameSetLayout, assetManager);
+        if (!characterRenderer->initialize(vkCtx, perFrameSetLayout, assetManager))
+            LOG_ERROR("CharacterRenderer initialization failed");
         if (shadowRenderPass != VK_NULL_HANDLE) {
-            characterRenderer->initializeShadow(shadowRenderPass);
+            if (!characterRenderer->initializeShadow(shadowRenderPass))
+                LOG_WARNING("Character shadow pipeline initialization failed");
         }
     }
 
@@ -2068,7 +2080,8 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
                 audioCoordinator_->getMovementSoundManager()->initialize(assetManager);
             }
             if (questMarkerRenderer) {
-                questMarkerRenderer->initialize(vkCtx, perFrameSetLayout, assetManager);
+                if (!questMarkerRenderer->initialize(vkCtx, perFrameSetLayout, assetManager))
+                    LOG_WARNING("Quest marker renderer initialization failed (non-fatal)");
             }
 
             if (envFlagEnabled("WOWEE_PREWARM_ZONE_MUSIC", false)) {
@@ -2261,7 +2274,8 @@ bool Renderer::loadTerrainArea(const std::string& mapName, int centerX, int cent
             audioCoordinator_->getMovementSoundManager()->initialize(cachedAssetManager);
         }
         if (questMarkerRenderer && cachedAssetManager) {
-            questMarkerRenderer->initialize(vkCtx, perFrameSetLayout, cachedAssetManager);
+            if (!questMarkerRenderer->initialize(vkCtx, perFrameSetLayout, cachedAssetManager))
+                LOG_WARNING("Quest marker renderer re-init failed (non-fatal)");
         }
     } else {
         deferredWorldInitPending_ = true;

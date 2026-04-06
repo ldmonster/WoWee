@@ -612,7 +612,7 @@ void SocialHandler::handleInspectResults(network::Packet& packet) {
     }
 
     // talentType == 1: inspect result
-    const bool talentTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool talentTbc = isPreWotlk();
     if (packet.getRemainingSize() < (talentTbc ? 8u : 2u)) return;
     uint64_t guid = talentTbc
         ? packet.readUInt64() : packet.readPackedGuid();

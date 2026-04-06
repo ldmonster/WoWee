@@ -4172,7 +4172,7 @@ void WindowManager::renderSkillsWindow(game::GameHandler& gameHandler) {
     };
 
     // Collect handled categories to fall back to "Other" for unknowns
-    static const uint32_t kKnownCats[] = {11, 9, 7, 6, 8, 5};
+    static constexpr uint32_t kKnownCats[] = {11, 9, 7, 6, 8, 5};
 
     // Redirect unknown categories into bucket 0
     for (auto& [cat, vec] : byCategory) {

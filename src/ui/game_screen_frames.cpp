@@ -689,7 +689,7 @@ void GameScreen::renderPetFrame(game::GameHandler& gameHandler) {
 
             // Find each react-type slot in the action bar by known built-in IDs:
             // 1=Passive, 4=Defensive, 6=Aggressive (WoW wire protocol)
-            static const uint32_t kReactActionIds[] = { 1u, 4u, 6u };
+            static constexpr uint32_t kReactActionIds[] = { 1u, 4u, 6u };
             uint32_t reactSlotVals[3] = { 0, 0, 0 };
             const int slotTotal = game::GameHandler::PET_ACTION_BAR_SLOTS;
             for (int i = 0; i < slotTotal; ++i) {

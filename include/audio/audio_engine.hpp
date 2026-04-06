@@ -25,7 +25,7 @@ public:
     ~AudioEngine();
 
     // Initialization
-    bool initialize();
+    [[nodiscard]] bool initialize();
     void shutdown();
     bool isInitialized() const { return initialized_; }
 

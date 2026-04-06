@@ -426,7 +426,7 @@ void WardenMemory::patchRuntimeGlobals() {
     // FIND_CODE_BY_HASH (PAGE_B) brute-force search can find it.
     // This is the pattern VMaNGOS's "Warden Memory Read check" looks for.
     constexpr uint32_t MEMCPY_PATTERN_VA = 0xCE8700;
-    static const uint8_t kWardenMemcpyPattern[37] = {
+    static constexpr uint8_t kWardenMemcpyPattern[37] = {
         0x56, 0x57, 0xFC, 0x8B, 0x54, 0x24, 0x14, 0x8B,
         0x74, 0x24, 0x10, 0x8B, 0x44, 0x24, 0x0C, 0x8B,
         0xCA, 0x8B, 0xF8, 0xC1, 0xE9, 0x02, 0x74, 0x02,

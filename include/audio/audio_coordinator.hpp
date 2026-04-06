@@ -51,7 +51,7 @@ public:
 
     /// Initialize the audio engine and all managers.
     /// @return true if audio is available (engine initialized successfully)
-    bool initialize();
+    [[nodiscard]] bool initialize();
 
     /// Initialize managers that need AssetManager (music lookups, sound banks).
     void initializeWithAssets(pipeline::AssetManager* assetManager);

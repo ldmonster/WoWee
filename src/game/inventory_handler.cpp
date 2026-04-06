@@ -308,33 +308,37 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
     };
 
     table[Opcode::SMSG_INVENTORY_CHANGE_FAILURE] = [this](network::Packet& packet) {
-        if ((packet.getRemainingSize()) >= 1) {
-            uint8_t error = packet.readUInt8();
-            if (error != 0) {
-                LOG_WARNING("SMSG_INVENTORY_CHANGE_FAILURE: error=", (int)error);
-                uint32_t requiredLevel = 0;
-                if (packet.hasRemaining(17)) {
-                    packet.readUInt64();
-                    packet.readUInt64();
-                    packet.readUInt8();
-                    if (error == 1 && packet.hasRemaining(4))
-                        requiredLevel = packet.readUInt32();
-                }
-                const char* errMsg = nullptr;
-                char levelBuf[64];
-                switch (error) {
-                    case 1:
-                        if (requiredLevel > 0) {
-                            std::snprintf(levelBuf, sizeof(levelBuf),
-                                          "You must reach level %u to use that item.", requiredLevel);
-                            owner_.addUIError(levelBuf);
-                            owner_.addSystemChatMessage(levelBuf);
-                        } else {
-                            owner_.addUIError("You must reach a higher level to use that item.");
-                            owner_.addSystemChatMessage("You must reach a higher level to use that item.");
-                        }
-                        return;
-                    case 2:  errMsg = "You don't have the required skill."; break;
+        if (packet.getRemainingSize() < 1) return;
+        uint8_t error = packet.readUInt8();
+        if (error == 0) return;
+
+        LOG_WARNING("SMSG_INVENTORY_CHANGE_FAILURE: error=", (int)error);
+        uint32_t requiredLevel = 0;
+        if (packet.hasRemaining(17)) {
+            packet.readUInt64();
+            packet.readUInt64();
+            packet.readUInt8();
+            if (error == 1 && packet.hasRemaining(4))
+                requiredLevel = packet.readUInt32();
+        }
+
+        // Level requirement has its own formatting
+        if (error == 1) {
+            char levelBuf[64];
+            if (requiredLevel > 0) {
+                std::snprintf(levelBuf, sizeof(levelBuf),
+                              "You must reach level %u to use that item.", requiredLevel);
+            } else {
+                std::snprintf(levelBuf, sizeof(levelBuf),
+                              "You must reach a higher level to use that item.");
+            }
+            owner_.addUIError(levelBuf);
+            owner_.addSystemChatMessage(levelBuf);
+            return;
+        }
+
+        const char* errMsg = nullptr;
+        switch (error) {
                     case 3:  errMsg = "That item doesn't go in that slot."; break;
                     case 4:  errMsg = "That bag is full."; break;
                     case 5:  errMsg = "Can't put bags in bags."; break;
@@ -392,14 +396,12 @@ void InventoryHandler::registerOpcodes(DispatchTable& table) {
                     case 88: errMsg = "Requires the right talent."; break;
                     default: break;
                 }
-                std::string msg = errMsg ? errMsg : "Inventory error (" + std::to_string(error) + ").";
-                owner_.addUIError(msg);
-                owner_.addSystemChatMessage(msg);
-                if (auto* ac = owner_.services().audioCoordinator) {
-                    if (auto* sfx = ac->getUiSoundManager())
-                        sfx->playError();
-                }
-            }
+        std::string msg = errMsg ? errMsg : "Inventory error (" + std::to_string(error) + ").";
+        owner_.addUIError(msg);
+        owner_.addSystemChatMessage(msg);
+        if (auto* ac = owner_.services().audioCoordinator) {
+            if (auto* sfx = ac->getUiSoundManager())
+                sfx->playError();
         }
     };
 

@@ -98,6 +98,31 @@ namespace {
         return "Unknown";
     }
 
+    // Draw a four-edge screen vignette (gradient overlay along each edge).
+    // Used for damage flash, low-health pulse, and level-up golden burst.
+    void drawScreenEdgeVignette(uint8_t r, uint8_t g, uint8_t b,
+                                int alpha, float thicknessRatio) {
+        if (alpha <= 0) return;
+        ImDrawList* fg = ImGui::GetForegroundDrawList();
+        const float W = ImGui::GetIO().DisplaySize.x;
+        const float H = ImGui::GetIO().DisplaySize.y;
+        const float thickness = std::min(W, H) * thicknessRatio;
+        const ImU32 edgeCol = IM_COL32(r, g, b, alpha);
+        const ImU32 fadeCol = IM_COL32(r, g, b, 0);
+        // Top
+        fg->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(W, thickness),
+                                    edgeCol, edgeCol, fadeCol, fadeCol);
+        // Bottom
+        fg->AddRectFilledMultiColor(ImVec2(0, H - thickness), ImVec2(W, H),
+                                    fadeCol, fadeCol, edgeCol, edgeCol);
+        // Left
+        fg->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(thickness, H),
+                                    edgeCol, fadeCol, fadeCol, edgeCol);
+        // Right
+        fg->AddRectFilledMultiColor(ImVec2(W - thickness, 0), ImVec2(W, H),
+                                    fadeCol, edgeCol, edgeCol, fadeCol);
+    }
+
 }
 
 namespace wowee { namespace ui {
@@ -660,29 +685,8 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         if (damageFlashAlpha_ > 0.0f) {
             damageFlashAlpha_ -= ImGui::GetIO().DeltaTime * 2.0f;
             if (damageFlashAlpha_ < 0.0f) damageFlashAlpha_ = 0.0f;
-
-            // Draw four red gradient rectangles along each screen edge (vignette style)
-            ImDrawList* fg = ImGui::GetForegroundDrawList();
-            ImGuiIO& io = ImGui::GetIO();
-            const float W = io.DisplaySize.x;
-            const float H = io.DisplaySize.y;
-            const int alpha = static_cast<int>(damageFlashAlpha_ * 100.0f);
-            const ImU32 edgeCol  = IM_COL32(200, 0, 0, alpha);
-            const ImU32 fadeCol  = IM_COL32(200, 0, 0, 0);
-            const float thickness = std::min(W, H) * 0.12f;
-
-            // Top
-            fg->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(W, thickness),
-                                        edgeCol, edgeCol, fadeCol, fadeCol);
-            // Bottom
-            fg->AddRectFilledMultiColor(ImVec2(0, H - thickness), ImVec2(W, H),
-                                        fadeCol, fadeCol, edgeCol, edgeCol);
-            // Left
-            fg->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(thickness, H),
-                                        edgeCol, fadeCol, fadeCol, edgeCol);
-            // Right
-            fg->AddRectFilledMultiColor(ImVec2(W - thickness, 0), ImVec2(W, H),
-                                        fadeCol, edgeCol, edgeCol, fadeCol);
+            drawScreenEdgeVignette(200, 0, 0,
+                                   static_cast<int>(damageFlashAlpha_ * 100.0f), 0.12f);
         }
     }
 
@@ -705,23 +709,7 @@ void GameScreen::render(game::GameHandler& gameHandler) {
             float danger = (0.20f - hpPct) / 0.20f;
             float pulse  = 0.55f + 0.45f * std::sin(static_cast<float>(ImGui::GetTime()) * 9.4f);
             int   alpha  = static_cast<int>(danger * pulse * 90.0f);  // max ~90 alpha, subtle
-            if (alpha > 0) {
-                ImDrawList* fg = ImGui::GetForegroundDrawList();
-                ImGuiIO& io = ImGui::GetIO();
-                const float W = io.DisplaySize.x;
-                const float H = io.DisplaySize.y;
-                const float thickness = std::min(W, H) * 0.15f;
-                const ImU32 edgeCol = IM_COL32(200, 0, 0, alpha);
-                const ImU32 fadeCol = IM_COL32(200, 0, 0, 0);
-                fg->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(W, thickness),
-                                            edgeCol, edgeCol, fadeCol, fadeCol);
-                fg->AddRectFilledMultiColor(ImVec2(0, H - thickness), ImVec2(W, H),
-                                            fadeCol, fadeCol, edgeCol, edgeCol);
-                fg->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(thickness, H),
-                                            edgeCol, fadeCol, fadeCol, edgeCol);
-                fg->AddRectFilledMultiColor(ImVec2(W - thickness, 0), ImVec2(W, H),
-                                            fadeCol, edgeCol, edgeCol, fadeCol);
-            }
+            drawScreenEdgeVignette(200, 0, 0, alpha, 0.15f);
         }
     }
 
@@ -730,27 +718,14 @@ void GameScreen::render(game::GameHandler& gameHandler) {
         toastManager_.levelUpFlashAlpha -= ImGui::GetIO().DeltaTime * 1.0f;  // fade over ~1 second
         if (toastManager_.levelUpFlashAlpha < 0.0f) toastManager_.levelUpFlashAlpha = 0.0f;
 
-        ImDrawList* fg = ImGui::GetForegroundDrawList();
-        ImGuiIO& io = ImGui::GetIO();
-        const float W = io.DisplaySize.x;
-        const float H = io.DisplaySize.y;
         const int alpha = static_cast<int>(toastManager_.levelUpFlashAlpha * 160.0f);
-        const ImU32 goldEdge = IM_COL32(255, 210, 50, alpha);
-        const ImU32 goldFade = IM_COL32(255, 210, 50, 0);
-        const float thickness = std::min(W, H) * 0.18f;
-
-        // Four golden gradient edges
-        fg->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(W, thickness),
-                                    goldEdge, goldEdge, goldFade, goldFade);
-        fg->AddRectFilledMultiColor(ImVec2(0, H - thickness), ImVec2(W, H),
-                                    goldFade, goldFade, goldEdge, goldEdge);
-        fg->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2(thickness, H),
-                                    goldEdge, goldFade, goldFade, goldEdge);
-        fg->AddRectFilledMultiColor(ImVec2(W - thickness, 0), ImVec2(W, H),
-                                    goldFade, goldEdge, goldEdge, goldFade);
+        drawScreenEdgeVignette(255, 210, 50, alpha, 0.18f);
 
         // "Level X!" text in the center during the first half of the animation
         if (toastManager_.levelUpFlashAlpha > 0.5f && toastManager_.levelUpDisplayLevel > 0) {
+            ImDrawList* fg = ImGui::GetForegroundDrawList();
+            const float W = ImGui::GetIO().DisplaySize.x;
+            const float H = ImGui::GetIO().DisplaySize.y;
             char lvlText[32];
             snprintf(lvlText, sizeof(lvlText), "Level %u!", toastManager_.levelUpDisplayLevel);
             ImVec2 ts = ImGui::CalcTextSize(lvlText);
@@ -1053,11 +1028,11 @@ void GameScreen::processTargetInput(game::GameHandler& gameHandler) {
             // Only fires for classes that use a stance bar; same slot ordering as
             // renderStanceBar: Warrior, DK, Druid, Rogue, Priest.
             if (ctrlDown) {
-                static const uint32_t warriorStances[]  = { 2457, 71, 2458 };
-                static const uint32_t dkPresences[]     = { 48266, 48263, 48265 };
-                static const uint32_t druidForms[]      = { 5487, 9634, 768, 783, 1066, 24858, 33891, 33943, 40120 };
-                static const uint32_t rogueForms[]      = { 1784 };
-                static const uint32_t priestForms[]     = { 15473 };
+                static constexpr uint32_t warriorStances[]  = { 2457, 71, 2458 };
+                static constexpr uint32_t dkPresences[]     = { 48266, 48263, 48265 };
+                static constexpr uint32_t druidForms[]      = { 5487, 9634, 768, 783, 1066, 24858, 33891, 33943, 40120 };
+                static constexpr uint32_t rogueForms[]      = { 1784 };
+                static constexpr uint32_t priestForms[]     = { 15473 };
                 const uint32_t* stArr = nullptr; int stCnt = 0;
                 switch (gameHandler.getPlayerClass()) {
                     case 1:  stArr = warriorStances; stCnt = 3; break;

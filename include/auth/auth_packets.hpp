@@ -53,7 +53,7 @@ struct LogonChallengeResponse {
 // LOGON_CHALLENGE response parser
 class LogonChallengeResponseParser {
 public:
-    static bool parse(network::Packet& packet, LogonChallengeResponse& response);
+    [[nodiscard]] static bool parse(network::Packet& packet, LogonChallengeResponse& response);
 };
 
 // LOGON_PROOF packet builder
@@ -92,7 +92,7 @@ struct LogonProofResponse {
 // LOGON_PROOF response parser
 class LogonProofResponseParser {
 public:
-    static bool parse(network::Packet& packet, LogonProofResponse& response);
+    [[nodiscard]] static bool parse(network::Packet& packet, LogonProofResponse& response);
 };
 
 // Realm data structure
@@ -131,7 +131,7 @@ struct RealmListResponse {
 class RealmListResponseParser {
 public:
     // protocolVersion: 3 = vanilla (uint8 realmCount, uint32 icon), 8 = WotLK (uint16 realmCount, uint8 icon)
-    static bool parse(network::Packet& packet, RealmListResponse& response, uint8_t protocolVersion = 8);
+    [[nodiscard]] static bool parse(network::Packet& packet, RealmListResponse& response, uint8_t protocolVersion = 8);
 };
 
 } // namespace auth

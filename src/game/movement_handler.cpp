@@ -354,7 +354,7 @@ void MovementHandler::sendMovement(Opcode opcode) {
     movementInfo.time = movementTime;
 
     if (opcode == Opcode::MSG_MOVE_SET_FACING &&
-        (isClassicLikeExpansion() || isActiveExpansion("tbc"))) {
+        isPreWotlk()) {
         const float facingDelta = core::coords::normalizeAngleRad(
             movementInfo.orientation - lastFacingSentOrientation_);
         const uint32_t sinceLastFacingMs =
@@ -833,7 +833,7 @@ network::Packet MovementHandler::buildForceAck(Opcode ackOpcode, uint32_t counte
 
 void MovementHandler::handleForceSpeedChange(network::Packet& packet, const char* name,
                                               Opcode ackOpcode, float* speedStorage) {
-    const bool fscTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool fscTbcLike = isPreWotlk();
     uint64_t guid = fscTbcLike
         ? packet.readUInt64() : packet.readPackedGuid();
     uint32_t counter = packet.readUInt32();
@@ -881,7 +881,7 @@ void MovementHandler::handleForceRunSpeedChange(network::Packet& packet) {
 }
 
 void MovementHandler::handleForceMoveRootState(network::Packet& packet, bool rooted) {
-    const bool rootTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool rootTbc = isPreWotlk();
     if (packet.getRemainingSize() < (rootTbc ? 8u : 2u)) return;
     uint64_t guid = rootTbc
         ? packet.readUInt64() : packet.readPackedGuid();
@@ -907,7 +907,7 @@ void MovementHandler::handleForceMoveRootState(network::Packet& packet, bool roo
 
 void MovementHandler::handleForceMoveFlagChange(network::Packet& packet, const char* name,
                                                   Opcode ackOpcode, uint32_t flag, bool set) {
-    const bool fmfTbcLike = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool fmfTbcLike = isPreWotlk();
     if (packet.getRemainingSize() < (fmfTbcLike ? 8u : 2u)) return;
     uint64_t guid = fmfTbcLike
         ? packet.readUInt64() : packet.readPackedGuid();
@@ -932,7 +932,7 @@ void MovementHandler::handleForceMoveFlagChange(network::Packet& packet, const c
 }
 
 void MovementHandler::handleMoveSetCollisionHeight(network::Packet& packet) {
-    const bool legacyGuid = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool legacyGuid = isPreWotlk();
     if (packet.getRemainingSize() < (legacyGuid ? 8u : 2u)) return;
     uint64_t guid = legacyGuid ? packet.readUInt64() : packet.readPackedGuid();
     if (!packet.hasRemaining(8)) return;
@@ -954,7 +954,7 @@ void MovementHandler::handleMoveSetCollisionHeight(network::Packet& packet) {
 }
 
 void MovementHandler::handleMoveKnockBack(network::Packet& packet) {
-    const bool mkbTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool mkbTbc = isPreWotlk();
     if (packet.getRemainingSize() < (mkbTbc ? 8u : 2u)) return;
     uint64_t guid = mkbTbc
         ? packet.readUInt64() : packet.readPackedGuid();
@@ -985,7 +985,7 @@ void MovementHandler::handleMoveKnockBack(network::Packet& packet) {
 // ============================================================
 
 void MovementHandler::handleMoveSetSpeed(network::Packet& packet) {
-    const bool useFull = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool useFull = isPreWotlk();
     uint64_t moverGuid = useFull
         ? packet.readUInt64() : packet.readPackedGuid();
 
@@ -1010,7 +1010,7 @@ void MovementHandler::handleMoveSetSpeed(network::Packet& packet) {
 }
 
 void MovementHandler::handleOtherPlayerMovement(network::Packet& packet) {
-    const bool otherMoveTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool otherMoveTbc = isPreWotlk();
     uint64_t moverGuid = otherMoveTbc
         ? packet.readUInt64() : packet.readPackedGuid();
     if (moverGuid == owner_.getPlayerGuid() || moverGuid == 0) {
@@ -1646,7 +1646,7 @@ void MovementHandler::handleMonsterMoveTransport(network::Packet& packet) {
 // ============================================================
 
 void MovementHandler::handleTeleportAck(network::Packet& packet) {
-    const bool taTbc = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool taTbc = isPreWotlk();
     if (packet.getRemainingSize() < (taTbc ? 8u : 4u)) {
         LOG_WARNING("MSG_MOVE_TELEPORT_ACK too short");
         return;
@@ -1657,7 +1657,7 @@ void MovementHandler::handleTeleportAck(network::Packet& packet) {
     if (!packet.hasRemaining(4)) return;
     uint32_t counter = packet.readUInt32();
 
-    const bool taNoFlags2 = isClassicLikeExpansion() || isActiveExpansion("tbc");
+    const bool taNoFlags2 = isPreWotlk();
     const size_t minMoveSz = taNoFlags2 ? (4 + 4 + 4 * 4) : (4 + 2 + 4 + 4 * 4);
     if (packet.getRemainingSize() < minMoveSz) {
         LOG_WARNING("MSG_MOVE_TELEPORT_ACK: not enough data for movement info");
@@ -2048,8 +2048,8 @@ void MovementHandler::applyTaxiMountForCurrentNode() {
         else if (it->second.mountDisplayIdHorde != 0) mountId = it->second.mountDisplayIdHorde;
     }
     if (mountId == 0) {
-        static const uint32_t kAllianceTaxiDisplays[] = {1210u, 1211u, 1212u, 1213u};
-        static const uint32_t kHordeTaxiDisplays[] = {1310u, 1311u, 1312u};
+        static constexpr uint32_t kAllianceTaxiDisplays[] = {1210u, 1211u, 1212u, 1213u};
+        static constexpr uint32_t kHordeTaxiDisplays[] = {1310u, 1311u, 1312u};
         mountId = isAlliance ? kAllianceTaxiDisplays[0] : kHordeTaxiDisplays[0];
     }
     if (mountId == 0) {

@@ -32,6 +32,7 @@
 #include "pipeline/asset_manager.hpp"
 #include "pipeline/dbc_loader.hpp"
 #include "core/logger.hpp"
+#include "game/protocol_constants.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include <glm/gtx/quaternion.hpp>
 #include <algorithm>
@@ -79,9 +80,9 @@ const char* worldStateName(WorldState state) {
 } // end anonymous namespace
 
 std::string formatCopperAmount(uint32_t amount) {
-    uint32_t gold = amount / 10000;
-    uint32_t silver = (amount / 100) % 100;
-    uint32_t copper = amount % 100;
+    uint32_t gold = amount / game::COPPER_PER_GOLD;
+    uint32_t silver = (amount / game::COPPER_PER_SILVER) % 100;
+    uint32_t copper = amount % game::COPPER_PER_SILVER;
 
     std::ostringstream oss;
     bool wrote = false;
@@ -150,9 +151,9 @@ GameHandler::GameHandler(GameServices& services)
 
     // Default action bar layout
     actionBar[0].type = ActionBarSlot::SPELL;
-    actionBar[0].id = 6603;   // Attack in slot 1
+    actionBar[0].id = game::SPELL_ID_ATTACK;   // Attack in slot 1
     actionBar[11].type = ActionBarSlot::SPELL;
-    actionBar[11].id = 8690;  // Hearthstone in slot 12
+    actionBar[11].id = game::SPELL_ID_HEARTHSTONE;  // Hearthstone in slot 12
 
     // Build the opcode dispatch table (replaces switch(*logicalOp) in handlePacket)
     registerOpcodeHandlers();
@@ -365,11 +366,11 @@ void GameHandler::updateNetworking(float deltaTime) {
         lastRxTime_.time_since_epoch().count() > 0) {
         auto silenceMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - lastRxTime_).count();
-        if (silenceMs > 10000 && !rxSilenceLogged_) {
+        if (silenceMs > game::RX_SILENCE_WARNING_MS && !rxSilenceLogged_) {
             rxSilenceLogged_ = true;
             LOG_WARNING("RX SILENCE: No packets from server for ", silenceMs, "ms — possible soft disconnect");
         }
-        if (silenceMs > 15000 && !rxSilence15sLogged_) {
+        if (silenceMs > game::RX_SILENCE_CRITICAL_MS && !rxSilence15sLogged_) {
             rxSilence15sLogged_ = true;
             LOG_WARNING("RX SILENCE: 15s — server appears to have stopped sending");
         }
@@ -393,7 +394,7 @@ void GameHandler::updateNetworking(float deltaTime) {
             LOG_DEBUG("Warden gate status: elapsed=", wardenGateElapsed_,
                      "s connected=", socket->isConnected() ? "yes" : "no",
                      " packetsAfterGate=", wardenPacketsAfterGate_);
-            wardenGateNextStatusLog_ += 30.0f;
+            wardenGateNextStatusLog_ += game::WARDEN_GATE_LOG_INTERVAL_SEC;
         }
     }
 }
@@ -420,7 +421,7 @@ if (onTaxiFlight_) {
     auto playerEntity = entityController_->getEntityManager().getEntity(playerGuid);
     auto unit = std::dynamic_pointer_cast<Unit>(playerEntity);
     if (unit &&
-        (unit->getUnitFlags() & 0x00000100) == 0 &&
+        (unit->getUnitFlags() & game::UNIT_FLAG_TAXI_FLIGHT) == 0 &&
         !taxiClientActive_ &&
         !taxiActivatePending_ &&
         taxiStartGrace_ <= 0.0f) {
@@ -452,7 +453,7 @@ if (!onTaxiFlight_ && taxiMountActive_) {
     auto playerEntity = entityController_->getEntityManager().getEntity(playerGuid);
     auto playerUnit = std::dynamic_pointer_cast<Unit>(playerEntity);
     if (playerUnit) {
-        serverStillTaxi = (playerUnit->getUnitFlags() & 0x00000100) != 0;
+        serverStillTaxi = (playerUnit->getUnitFlags() & game::UNIT_FLAG_TAXI_FLIGHT) != 0;
     }
 
     if (taxiStartGrace_ > 0.0f || serverStillTaxi || taxiClientActive_ || taxiActivatePending_) {
@@ -541,7 +542,7 @@ void GameHandler::updateAutoAttack(float deltaTime) {
 void GameHandler::updateEntityInterpolation(float deltaTime) {
 // Update entity movement interpolation (keeps targeting in sync with visuals)
 // Only update entities within reasonable distance for performance
-const float updateRadiusSq = 150.0f * 150.0f;  // 150 unit radius
+const float updateRadiusSq = game::ENTITY_UPDATE_RADIUS * game::ENTITY_UPDATE_RADIUS;  // 150 unit radius
 auto playerEntity = entityController_->getEntityManager().getEntity(playerGuid);
 glm::vec3 playerPos = playerEntity ? glm::vec3(playerEntity->getX(), playerEntity->getY(), playerEntity->getZ()) : glm::vec3(0.0f);
 
@@ -788,7 +789,7 @@ void GameHandler::update(float deltaTime) {
         if (movementHandler_) movementHandler_->timeSinceLastMoveHeartbeatRef() += deltaTime;
 
         const float currentPingInterval =
-            (isPreWotlk()) ? 10.0f : pingInterval;
+            (isPreWotlk()) ? game::CLASSIC_PING_INTERVAL_SEC : pingInterval;
         if (timeSinceLastPing >= currentPingInterval) {
             if (socket) {
                 sendPing();
@@ -819,9 +820,9 @@ void GameHandler::update(float deltaTime) {
             !taxiClientActive_ &&
             (movementInfo.flags & locomotionFlags) == 0;
         float heartbeatInterval = (onTaxiFlight_ || taxiActivatePending_ || taxiClientActive_)
-                                      ? 0.25f
-                                      : (classicLikeStationaryCombatSync ? 0.75f
-                                                                         : (classicLikeCombatSync ? 0.20f
+                                      ? game::HEARTBEAT_INTERVAL_TAXI
+                                      : (classicLikeStationaryCombatSync ? game::HEARTBEAT_INTERVAL_STATIONARY_COMBAT
+                                                                         : (classicLikeCombatSync ? game::HEARTBEAT_INTERVAL_MOVING_COMBAT
                                                                                                   : moveHeartbeatInterval_));
         if (movementHandler_ && movementHandler_->timeSinceLastMoveHeartbeatRef() >= heartbeatInterval) {
             sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
@@ -830,7 +831,7 @@ void GameHandler::update(float deltaTime) {
 
         // Check area triggers (instance portals, tavern rests, etc.)
         areaTriggerCheckTimer_ += deltaTime;
-        if (areaTriggerCheckTimer_ >= 0.25f) {
+        if (areaTriggerCheckTimer_ >= game::AREA_TRIGGER_CHECK_INTERVAL) {
             areaTriggerCheckTimer_ = 0.0f;
             checkAreaTriggers();
         }
@@ -894,7 +895,7 @@ void GameHandler::update(float deltaTime) {
             if (!npc) return;
             float dx = movementInfo.x - npc->getX();
             float dy = movementInfo.y - npc->getY();
-            if (std::sqrt(dx * dx + dy * dy) > 15.0f) {
+            if (std::sqrt(dx * dx + dy * dy) > game::NPC_INTERACT_MAX_DISTANCE) {
                 closeFn();
                 LOG_INFO(label, " closed: walked too far from NPC");
             }
@@ -918,7 +919,7 @@ void GameHandler::update(float deltaTime) {
 // ============================================================
 
 // WotLK 3.3.5a XP-to-next-level table (from player_xp_for_level)
-static const uint32_t XP_TABLE[] = {
+static constexpr uint32_t XP_TABLE[] = {
     0,       // level 0 (unused)
     400,     900,     1400,    2100,    2800,    3600,    4500,    5400,    6500,    7600,     // 1-10
     8700,    9800,    11000,   12300,   13600,   15000,   16400,   17800,   19300,   20800,    // 11-20
