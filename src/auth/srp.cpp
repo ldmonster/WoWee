@@ -96,6 +96,10 @@ void SRP::feed(const std::vector<uint8_t>& B_bytes,
     // 5. Compute proofs (M1, M2)
     computeProofs(stored_username);
 
+    // Credentials are no longer needed — zero and release them so they don't
+    // linger in process memory longer than necessary.
+    clearCredentials();
+
     // Log key values for debugging auth issues
     auto hexStr = [](const std::vector<uint8_t>& v, size_t maxBytes = 8) -> std::string {
         std::ostringstream ss;
@@ -312,6 +316,27 @@ std::vector<uint8_t> SRP::getSessionKey() const {
         LOG_WARNING("Session key K not yet computed!");
     }
     return K;
+}
+
+void SRP::clearCredentials() {
+    // Overwrite plaintext password bytes before releasing storage so that a
+    // heap dump / core file doesn't leak the user's credentials.  This is
+    // not a guarantee against a privileged attacker with live memory access,
+    // but it removes the most common exposure vector.
+    if (!stored_password.empty()) {
+        volatile char* p = const_cast<volatile char*>(stored_password.data());
+        for (size_t i = 0; i < stored_password.size(); ++i)
+            p[i] = '\0';
+        stored_password.clear();
+        stored_password.shrink_to_fit();
+    }
+    if (!stored_auth_hash.empty()) {
+        volatile uint8_t* h = const_cast<volatile uint8_t*>(stored_auth_hash.data());
+        for (size_t i = 0; i < stored_auth_hash.size(); ++i)
+            h[i] = 0;
+        stored_auth_hash.clear();
+        stored_auth_hash.shrink_to_fit();
+    }
 }
 
 } // namespace auth

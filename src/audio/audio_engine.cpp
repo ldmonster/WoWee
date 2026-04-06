@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <iterator>
 #include <memory>
+#include <shared_mutex>
 #include <unordered_map>
 
 namespace wowee {
@@ -26,6 +27,10 @@ struct DecodedWavCacheEntry {
 };
 
 static std::unordered_map<uint64_t, DecodedWavCacheEntry> gDecodedWavCache;
+// Protects gDecodedWavCache — shared_lock for reads, unique_lock for writes.
+// Required because playSound2D() can be called from multiple threads
+// (main thread, async loaders, animation callbacks).
+static std::shared_mutex gDecodedWavCacheMutex;
 
 static uint64_t makeWavCacheKey(const std::vector<uint8_t>& wavData) {
     // FNV-1a over the first 256 bytes + last 256 bytes + total size.
@@ -53,9 +58,14 @@ static bool decodeWavCached(const std::vector<uint8_t>& wavData, DecodedWavCache
     if (wavData.empty()) return false;
 
     const uint64_t key = makeWavCacheKey(wavData);
-    if (auto it = gDecodedWavCache.find(key); it != gDecodedWavCache.end()) {
-        out = it->second;
-        return true;
+
+    // Fast path: shared (read) lock for cache hits — allows concurrent lookups.
+    {
+        std::shared_lock<std::shared_mutex> readLock(gDecodedWavCacheMutex);
+        if (auto it = gDecodedWavCache.find(key); it != gDecodedWavCache.end()) {
+            out = it->second;
+            return true;
+        }
     }
 
     ma_decoder decoder;
@@ -102,13 +112,22 @@ static bool decodeWavCached(const std::vector<uint8_t>& wavData, DecodedWavCache
     // Evict oldest half when cache grows too large. 256 entries ≈ 50-100 MB of decoded
     // PCM data depending on file lengths; halving keeps memory bounded while retaining
     // recently-heard sounds (footsteps, UI clicks, combat hits) for instant replay.
-    constexpr size_t kMaxCachedSounds = 256;
-    if (gDecodedWavCache.size() >= kMaxCachedSounds) {
-        auto it = gDecodedWavCache.begin();
-        std::advance(it, gDecodedWavCache.size() / 2);
-        gDecodedWavCache.erase(gDecodedWavCache.begin(), it);
+    // Exclusive (write) lock — only one thread can evict + insert.
+    {
+        std::lock_guard<std::shared_mutex> writeLock(gDecodedWavCacheMutex);
+        // Re-check in case another thread inserted while we were decoding.
+        if (auto it = gDecodedWavCache.find(key); it != gDecodedWavCache.end()) {
+            out = it->second;
+            return true;
+        }
+        constexpr size_t kMaxCachedSounds = 256;
+        if (gDecodedWavCache.size() >= kMaxCachedSounds) {
+            auto it = gDecodedWavCache.begin();
+            std::advance(it, gDecodedWavCache.size() / 2);
+            gDecodedWavCache.erase(gDecodedWavCache.begin(), it);
+        }
+        gDecodedWavCache.emplace(key, entry);
     }
-    gDecodedWavCache.emplace(key, entry);
     out = entry;
     return true;
 }
