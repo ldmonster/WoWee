@@ -32,7 +32,7 @@ static std::vector<std::string> parseEmoteCommands(const std::string& raw) {
 
 static bool isLoopingEmote(const std::string& command) {
     static const std::unordered_set<std::string> kLooping = {
-        "dance", "train", "dead", "eat", "work",
+        "dance", "train", "dead", "eat", "work", "sleep",
     };
     return kLooping.find(command) != kLooping.end();
 }
@@ -117,6 +117,9 @@ void EmoteRegistry::loadFromDbc() {
             uint32_t animId = emotesDbc->getUInt32(r, emL ? (*emL)["AnimID"] : 2);
             if (animId != 0) emoteIdToAnim[emoteId] = animId;
         }
+        LOG_WARNING("Emotes: loaded ", emoteIdToAnim.size(), " anim mappings from Emotes.dbc");
+    } else {
+        LOG_WARNING("Emotes: Emotes.dbc failed to load — all emotes will use fallback animations");
     }
 
     emoteTable_.clear();
@@ -128,11 +131,13 @@ void EmoteRegistry::loadFromDbc() {
 
         uint32_t emoteRef = emotesTextDbc->getUInt32(r, etL ? (*etL)["EmoteRef"] : 2);
         uint32_t animId = 0;
-        auto animIt = emoteIdToAnim.find(emoteRef);
-        if (animIt != emoteIdToAnim.end()) {
-            animId = animIt->second;
-        } else {
-            animId = emoteRef;
+        if (emoteRef != 0) {
+            auto animIt = emoteIdToAnim.find(emoteRef);
+            if (animIt != emoteIdToAnim.end()) {
+                animId = animIt->second;
+            }
+            // If Emotes.dbc has AnimID=0 for this ref, leave animId=0 (text-only).
+            // Previously fell back to using emoteRef as animId which is wrong.
         }
 
         uint32_t senderTargetTextId = emotesTextDbc->getUInt32(r, etL ? (*etL)["SenderTargetTextID"] : 5);
@@ -161,11 +166,33 @@ void EmoteRegistry::loadFromDbc() {
         }
     }
 
+    // Override emotes whose DBC chain yields animId=0.
+    // /sleep uses the stand-state system in WoW rather than Emotes.dbc AnimID.
+    // /laugh and /flirt should resolve from Emotes.dbc (70 and 83), but these
+    // serve as backup if Emotes.dbc failed to load.
+    // /fart and /stink have EmoteRef=0 in EmotesText.dbc — no Emotes.dbc link.
+    static const std::unordered_map<std::string, uint32_t> kAnimOverrides = {
+        {"sleep",   anim::EMOTE_SLEEP},     // 71 — stand-state emote
+        {"laugh",   anim::EMOTE_LAUGH},     // 70 — backup
+        {"flirt",   anim::EMOTE_SHY},       // 83 — DBC calls it SHY; it's the flirt animation
+        {"fart",    anim::EMOTE_FLEX},       // 82 — straining/tensing gesture
+        {"stink",   anim::EMOTE_RUDE},       // 73 — dismissive/disgusted gesture
+    };
+    for (auto& [cmd, info] : emoteTable_) {
+        if (info.animId == 0) {
+            auto ov = kAnimOverrides.find(cmd);
+            if (ov != kAnimOverrides.end()) {
+                LOG_WARNING("Emotes: override /", cmd, " → animId=", ov->second);
+                info.animId = ov->second;
+            }
+        }
+    }
+
     if (emoteTable_.empty()) {
         LOG_WARNING("Emotes: DBC loaded but no commands parsed, using fallback list");
         loadFallbackEmotes();
     } else {
-        LOG_INFO("Emotes: loaded ", emoteTable_.size(), " commands from DBC");
+        LOG_WARNING("Emotes: loaded ", emoteTable_.size(), " commands from DBC");
     }
 
     buildDbcIdIndex();

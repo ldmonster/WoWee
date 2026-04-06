@@ -515,17 +515,28 @@ void MovementHandler::sendMovement(Opcode opcode) {
 
     // Add transport data if player is on a server-recognized transport
     if (includeTransportInWire) {
+        bool transportResolved = false;
         if (owner_.transportManager_) {
             auto* tr = owner_.transportManager_->getTransport(owner_.playerTransportGuid_);
             if (tr) {
+                transportResolved = true;
                 glm::vec3 composed = owner_.transportManager_->getPlayerWorldPosition(owner_.playerTransportGuid_, owner_.playerTransportOffset_);
                 movementInfo.x = composed.x;
                 movementInfo.y = composed.y;
                 movementInfo.z = composed.z;
             }
-            // If transport not found, keep current movementInfo position —
-            // the localOffset fallback would place us near map origin (0,0,0).
         }
+        if (!transportResolved) {
+            // Transport not tracked — don't send ONTRANSPORT to the server.
+            // Sending stale transport GUID + local offset causes the server to
+            // compute a bad world position and teleport us to map origin.
+            LOG_WARNING("sendMovement: transport 0x", std::hex, owner_.playerTransportGuid_,
+                        std::dec, " not found — clearing transport state");
+            includeTransportInWire = false;
+            owner_.clearPlayerTransport();
+        }
+    }
+    if (includeTransportInWire) {
         movementInfo.flags |= static_cast<uint32_t>(MovementFlags::ONTRANSPORT);
         movementInfo.transportGuid = owner_.playerTransportGuid_;
         movementInfo.transportX = owner_.playerTransportOffset_.x;
@@ -600,6 +611,17 @@ void MovementHandler::sendMovement(Opcode opcode) {
     LOG_DEBUG("Sending movement packet: opcode=0x", std::hex,
               wireOpcode(opcode), std::dec,
               (includeTransportInWire ? " ONTRANSPORT" : ""));
+
+    // Detect near-origin position on Eastern Kingdoms (map 0) — this would place
+    // the player near Alterac Mountains and is almost certainly a bug.
+    if (owner_.currentMapId_ == 0 &&
+        std::abs(movementInfo.x) < 500.0f && std::abs(movementInfo.y) < 500.0f) {
+        LOG_WARNING("sendMovement: position near map origin! canonical=(",
+                    movementInfo.x, ", ", movementInfo.y, ", ", movementInfo.z,
+                    ") onTransport=", owner_.isOnTransport(),
+                    " transportGuid=0x", std::hex, owner_.playerTransportGuid_, std::dec,
+                    " flags=0x", std::hex, movementInfo.flags, std::dec);
+    }
 
     // Convert canonical → server coordinates for the wire
     MovementInfo wireInfo = movementInfo;
@@ -2539,6 +2561,17 @@ void MovementHandler::checkAreaTriggers() {
     const float px = movementInfo.x;
     const float py = movementInfo.y;
     const float pz = movementInfo.z;
+
+    // Sanity: if position is near map origin on Eastern Kingdoms (map 0),
+    // something has corrupted movementInfo — skip area trigger check to
+    // avoid firing Alterac/Hillsbrad triggers and causing a rogue teleport.
+    if (owner_.currentMapId_ == 0 && std::abs(px) < 500.0f && std::abs(py) < 500.0f) {
+        LOG_WARNING("checkAreaTriggers: position near map origin (", px, ", ", py, ", ", pz,
+                    ") on map 0 — skipping to avoid rogue teleport. onTransport=",
+                    owner_.isOnTransport(), " transportGuid=0x", std::hex,
+                    owner_.playerTransportGuid_, std::dec);
+        return;
+    }
 
     // On first check after map transfer, just mark which triggers we're inside
     // without firing them — prevents exit portal from immediately sending us back

@@ -1419,6 +1419,17 @@ void WMORenderer::render(VkCommandBuffer cmd, VkDescriptorSet perFrameSet, const
         portalVisibleGroups_.clear();
         bool usePortalCulling = doPortalCull && !model.portals.empty() && !model.portalRefs.empty();
         if (usePortalCulling) {
+            // If the actual camera is outside all groups, skip portal culling.
+            // The character position (portalViewerPos) may fall inside a group's
+            // loose AABB while visually outside the WMO, causing the BFS to start
+            // from an interior group whose portals aren't in the frustum — hiding
+            // the entire WMO.
+            glm::vec3 localRealCam = glm::vec3(instance.invModelMatrix * glm::vec4(camPos, 1.0f));
+            if (findContainingGroup(model, localRealCam) < 0) {
+                usePortalCulling = false;
+            }
+        }
+        if (usePortalCulling) {
             portalVisibleGroupSet_.clear();
             glm::vec4 localCamPos = instance.invModelMatrix * glm::vec4(portalViewerPos, 1.0f);
             getVisibleGroupsViaPortals(model, glm::vec3(localCamPos), frustum,
@@ -2134,6 +2145,23 @@ void WMORenderer::getVisibleGroupsViaPortals(const ModelData& model,
                 outVisibleGroups.insert(static_cast<uint32_t>(gi));
             }
             return;
+        }
+        // Best-fit group is indoor-only, but the position might also be inside an
+        // outdoor group's AABB (e.g., standing on a street near a building whose
+        // indoor AABB extends outward).  If any outdoor group also contains the
+        // position, treat this as an outdoor location and show all groups.
+        for (size_t gi = 0; gi < model.groups.size(); gi++) {
+            if (static_cast<int>(gi) == cameraGroup) continue;
+            const auto& g = model.groups[gi];
+            if (!(g.groupFlags & WMO_GROUP_FLAG_OUTDOOR)) continue;
+            if (cameraLocalPos.x >= g.boundingBoxMin.x && cameraLocalPos.x <= g.boundingBoxMax.x &&
+                cameraLocalPos.y >= g.boundingBoxMin.y && cameraLocalPos.y <= g.boundingBoxMax.y &&
+                cameraLocalPos.z >= g.boundingBoxMin.z && cameraLocalPos.z <= g.boundingBoxMax.z) {
+                for (size_t gj = 0; gj < model.groups.size(); gj++) {
+                    outVisibleGroups.insert(static_cast<uint32_t>(gj));
+                }
+                return;
+            }
         }
     }
 

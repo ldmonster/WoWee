@@ -93,6 +93,9 @@ void AnimationController::playEmote(const std::string& emoteName) {
     auto* characterRenderer = renderer_->getCharacterRenderer();
     uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
     if (characterRenderer && characterInstanceId > 0) {
+        bool hasAnim = characterRenderer->hasAnimation(characterInstanceId, animId);
+        LOG_WARNING("playEmote '", emoteName, "': animId=", animId, " loop=", loop,
+                    " modelHasAnim=", hasAnim);
         characterRenderer->playAnimation(characterInstanceId, animId, loop);
         lastPlayerAnimRequest_ = animId;
         lastPlayerAnimLoopRequest_ = loop;

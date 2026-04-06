@@ -190,7 +190,7 @@ void ChatHandler::handleMessageChat(network::Packet& packet) {
         LOG_WARNING("Failed to parse SMSG_MESSAGECHAT, size=", packet.getSize());
         return;
     }
-    LOG_INFO("INCOMING CHAT: type=", static_cast<int>(data.type),
+    LOG_WARNING("INCOMING CHAT: type=", static_cast<int>(data.type),
              " (", getChatTypeString(data.type), ") sender=0x", std::hex, data.senderGuid, std::dec,
              " '", data.senderName, "' msg='", data.message.substr(0, 60), "'");
 
