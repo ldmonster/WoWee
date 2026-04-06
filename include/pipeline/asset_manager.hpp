@@ -4,6 +4,7 @@
 #include "pipeline/dbc_loader.hpp"
 #include "pipeline/asset_manifest.hpp"
 #include "pipeline/loose_file_reader.hpp"
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -166,7 +167,11 @@ private:
      */
     std::string resolveFile(const std::string& normalizedPath) const;
 
+    // Guards fileCache, dbcCache, fileCacheTotalBytes, fileCacheAccessCounter, and
+    // fileCacheBudget.  Shared lock for read-only cache lookups (readFile cache hit,
+    // loadDBC cache hit); exclusive lock for inserts and eviction.
     mutable std::shared_mutex cacheMutex;
+    // THREAD-SAFE: protected by cacheMutex (exclusive lock for writes).
     std::unordered_map<std::string, std::shared_ptr<DBCFile>> dbcCache;
 
     // File cache (LRU, dynamic budget based on system RAM)
@@ -174,11 +179,14 @@ private:
         std::vector<uint8_t> data;
         uint64_t lastAccessTime;
     };
+    // THREAD-SAFE: protected by cacheMutex (shared_mutex — shared_lock for reads,
+    // exclusive lock_guard for writes/eviction).
     mutable std::unordered_map<std::string, CachedFile> fileCache;
     mutable size_t fileCacheTotalBytes = 0;
     mutable uint64_t fileCacheAccessCounter = 0;
-    mutable size_t fileCacheHits = 0;
-    mutable size_t fileCacheMisses = 0;
+    // THREAD-SAFE: atomic — incremented from any thread after releasing cacheMutex.
+    mutable std::atomic<size_t> fileCacheHits{0};
+    mutable std::atomic<size_t> fileCacheMisses{0};
     mutable size_t fileCacheBudget = 1024 * 1024 * 1024;  // Dynamic, starts at 1GB
 
     void setupFileCacheBudget();

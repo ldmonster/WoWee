@@ -94,15 +94,18 @@ private:
     void recordRecentPacket(bool outbound, uint16_t opcode, uint16_t payloadLen);
     void dumpRecentPacketHistoryLocked(const char* reason, size_t bufferedBytes);
 
-    socket_t sockfd = INVALID_SOCK;
-    bool connected = false;
-    bool encryptionEnabled = false;
+    socket_t sockfd = INVALID_SOCK;           // THREAD-SAFE: protected by ioMutex_
+    bool connected = false;                    // THREAD-SAFE: protected by ioMutex_
+    bool encryptionEnabled = false;            // THREAD-SAFE: protected by ioMutex_
     bool useVanillaCrypt = false;  // true = XOR cipher, false = RC4
     bool useAsyncPump_ = true;
     std::thread asyncPumpThread_;
-    std::atomic<bool> asyncPumpStop_{false};
-    std::atomic<bool> asyncPumpRunning_{false};
+    std::atomic<bool> asyncPumpStop_{false};   // THREAD-SAFE: atomic
+    std::atomic<bool> asyncPumpRunning_{false}; // THREAD-SAFE: atomic
+    // Guards sockfd, connected, encryptionEnabled, receiveBuffer, cipher state,
+    // headerBytesDecrypted, and recentPacketHistory_.
     mutable std::mutex ioMutex_;
+    // Guards pendingPacketCallbacks_ (asyncPumpThread_ produces, main thread consumes).
     mutable std::mutex callbackMutex_;
 
     // WotLK RC4 ciphers for header encryption/decryption
@@ -112,11 +115,12 @@ private:
     // Vanilla/TBC XOR+addition cipher
     auth::VanillaCrypt vanillaCrypt;
 
-    // Receive buffer
+    // THREAD-SAFE: protected by ioMutex_
     std::vector<uint8_t> receiveBuffer;
     size_t receiveReadOffset_ = 0;
     // Optional reused packet queue (feature-gated) to reduce per-update allocations.
     std::vector<Packet> parsedPacketsScratch_;
+    // THREAD-SAFE: protected by callbackMutex_.
     // Parsed packets waiting for callback dispatch; drained with a strict per-update budget.
     std::deque<Packet> pendingPacketCallbacks_;
 

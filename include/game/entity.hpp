@@ -361,6 +361,8 @@ public:
     }
 
 private:
+    // MAIN-THREAD-ONLY: all entity map mutations happen via dispatchQueuedPackets()
+    // which runs on the main thread.  Do NOT access from the async network pump thread.
     std::unordered_map<uint64_t, std::shared_ptr<Entity>> entities;
 };
 

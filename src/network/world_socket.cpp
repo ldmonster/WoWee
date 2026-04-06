@@ -571,7 +571,21 @@ void WorldSocket::pumpNetworkIO() {
                 }
                 receiveBuffer.insert(receiveBuffer.end(), buffer, buffer + receivedSize);
             } else {
-                receiveBuffer.insert(receiveBuffer.end(), buffer, buffer + received);
+                // Non-fast path: same overflow pre-check as fast path to prevent
+                // unbounded buffer growth before the post-check below.
+                size_t liveBytes = bufferedBytes();
+                if (liveBytes > kMaxReceiveBufferBytes || receivedSize > (kMaxReceiveBufferBytes - liveBytes)) {
+                    compactReceiveBuffer();
+                    liveBytes = bufferedBytes();
+                }
+                if (liveBytes > kMaxReceiveBufferBytes || receivedSize > (kMaxReceiveBufferBytes - liveBytes)) {
+                    LOG_ERROR("World socket receive buffer would overflow (buffered=", liveBytes,
+                              " incoming=", receivedSize, " max=", kMaxReceiveBufferBytes,
+                              "). Disconnecting to recover framing.");
+                    closeSocketNoJoin();
+                    return;
+                }
+                receiveBuffer.insert(receiveBuffer.end(), buffer, buffer + receivedSize);
             }
             if (bufferedBytes() > kMaxReceiveBufferBytes) {
                 LOG_ERROR("World socket receive buffer overflow (", bufferedBytes(),

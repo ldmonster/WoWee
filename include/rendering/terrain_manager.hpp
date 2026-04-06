@@ -362,10 +362,18 @@ private:
     // Background loading worker pool
     std::vector<std::thread> workerThreads;
     int workerCount = 0;
+    // THREAD-SAFE: guards loadQueue, readyQueue, and pendingTiles.
+    // Workers wait on queueCV; main thread signals when new tiles are enqueued
+    // or when readyQueue drains below maxReadyQueueSize_.
     std::mutex queueMutex;
     std::condition_variable queueCV;
-    std::deque<TileCoord> loadQueue;
-    std::queue<std::shared_ptr<PendingTile>> readyQueue;
+    std::deque<TileCoord> loadQueue;              // THREAD-SAFE: protected by queueMutex
+    std::queue<std::shared_ptr<PendingTile>> readyQueue; // THREAD-SAFE: protected by queueMutex
+    // Maximum number of prepared-but-not-finalized tiles in readyQueue.
+    // Each prepared tile can hold 100–500 MB of decoded textures in RAM.
+    // Workers sleep when this limit is reached, letting the main thread
+    // finalize (GPU-upload + free) before more tiles are prepared.
+    static constexpr size_t maxReadyQueueSize_ = 3;
 
     // In-RAM tile cache (LRU) to avoid re-reading from disk
     struct CachedTile {
@@ -373,6 +381,7 @@ private:
         size_t bytes = 0;
         std::list<TileCoord>::iterator lruIt;
     };
+    // THREAD-SAFE: protected by tileCacheMutex_.
     std::unordered_map<TileCoord, CachedTile, TileCoord::Hash> tileCache_;
     std::list<TileCoord> tileCacheLru_;
     size_t tileCacheBytes_ = 0;
@@ -386,8 +395,8 @@ private:
     std::atomic<bool> workerRunning{false};
 
     // Track tiles currently queued or being processed to avoid duplicates
-    std::unordered_map<TileCoord, bool, TileCoord::Hash> pendingTiles;
-    std::unordered_set<std::string> missingAdtWarnings_;
+    std::unordered_map<TileCoord, bool, TileCoord::Hash> pendingTiles; // THREAD-SAFE: protected by queueMutex
+    std::unordered_set<std::string> missingAdtWarnings_; // THREAD-SAFE: protected by missingAdtWarningsMutex_
     std::mutex missingAdtWarningsMutex_;
 
     // Thread-safe set of M2 model IDs already uploaded to GPU
@@ -400,10 +409,11 @@ private:
     std::unordered_set<uint32_t> preparedWmoUniqueIds_;
     std::mutex preparedWmoUniqueIdsMutex_;
 
-    // Dedup set for doodad placements across tile boundaries
+    // MAIN-THREAD-ONLY: checked and modified in processReadyTiles() and unloadDistantTiles(),
+    // both of which run exclusively on the main thread.
     std::unordered_set<uint32_t> placedDoodadIds;
 
-    // Dedup set for WMO placements across tile boundaries (prevents rendering Stormwind 16x)
+    // MAIN-THREAD-ONLY: same contract as placedDoodadIds.
     std::unordered_set<uint32_t> placedWmoIds;
 
     // Tiles currently being incrementally finalized across frames

@@ -48,6 +48,10 @@ public:
     // Get session key (K) - used for encryption
     std::vector<uint8_t> getSessionKey() const;
 
+    // Securely erase stored plaintext credentials from memory.
+    // Called automatically at the end of feed() once the SRP values are computed.
+    void clearCredentials();
+
 private:
     // WoW-specific SRP multiplier (k = 3)
     static constexpr uint32_t K_VALUE = 3;
