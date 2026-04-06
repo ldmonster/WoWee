@@ -1083,9 +1083,17 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
             }
 
             if (!splineParsed) {
+                // Dump first 5 uint32s at beforeSplineHeader for format diagnosis
+                packet.setReadPos(beforeSplineHeader);
+                uint32_t d[5] = {};
+                for (int di = 0; di < 5 && packet.hasRemaining(4); ++di)
+                    d[di] = packet.readUInt32();
+                packet.setReadPos(beforeSplineHeader);
                 LOG_WARNING("WotLK spline parse failed for guid=0x", std::hex, block.guid, std::dec,
-                            " splineFlags=0x", std::hex, splineFlags, std::dec,
-                            " remaining=", packet.getRemainingSize());
+                            " splineFlags=0x", splineFlags,
+                            " remaining=", std::dec, packet.getRemainingSize(),
+                            " header=[0x", std::hex, d[0], " 0x", d[1], " 0x", d[2],
+                            " 0x", d[3], " 0x", d[4], "]", std::dec);
                 return false;
             }
         }
