@@ -1,6 +1,7 @@
 #include "rendering/animation/combat_fsm.hpp"
 #include "rendering/animation/animation_ids.hpp"
 #include "game/inventory.hpp"
+#include "core/logger.hpp"
 
 namespace wowee {
 namespace rendering {
@@ -378,7 +379,10 @@ AnimOutput CombatFSM::resolve(const Input& in, const AnimCapabilitySet& caps,
                     animId = caps.resolvedMelee1H;
                 }
             }
-            if (animId == 0) animId = anim::STAND; // Melee must play something
+            if (animId == 0) {
+                LOG_WARNING("CombatFSM: MELEE_SWING resolved animId=0, falling back to STAND");
+                animId = anim::STAND;
+            }
             loop = false;
             break;
 

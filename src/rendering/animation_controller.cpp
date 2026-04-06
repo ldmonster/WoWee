@@ -245,6 +245,18 @@ void AnimationController::triggerMeleeSwing() {
     if (durationSec < 0.25f) durationSec = 0.25f;
     if (durationSec > 1.0f) durationSec = 1.0f;
     meleeSwingTimer_ = durationSec;
+
+    // Diagnostic: log the melee swing trigger with key state
+    const auto& caps = characterAnimator_.getCapabilities();
+    auto* cc = renderer_->getCameraController();
+    LOG_WARNING("triggerMeleeSwing: meleeAnimId=", meleeAnimId_,
+                " dur=", durationSec,
+                " caps.melee1H=", caps.resolvedMelee1H,
+                " caps.melee2H=", caps.resolvedMelee2H,
+                " caps.meleeUnarmed=", caps.resolvedMeleeUnarmed,
+                " grounded=", (cc ? cc->isGrounded() : false),
+                " probed=", capabilitiesProbed_);
+
     if (renderer_->getAudioCoordinator()->getActivitySoundManager()) {
         renderer_->getAudioCoordinator()->getActivitySoundManager()->playMeleeSwing();
     }
@@ -1043,9 +1055,17 @@ void AnimationController::updateCharacterAnimation() {
     auto* cameraController = renderer_->getCameraController();
     uint32_t characterInstanceId = renderer_->getCharacterInstanceId();
 
-    // Lazy probe: populate capability set once per model
-    if (!capabilitiesProbed_ && characterRenderer && characterInstanceId != 0) {
-        probeCapabilities();
+    // Lazy probe: populate capability set once per model.
+    // Re-probe if melee capabilities are missing (model may not have been fully
+    // loaded on the first probe attempt).
+    if (characterRenderer && characterInstanceId != 0) {
+        if (!capabilitiesProbed_) {
+            probeCapabilities();
+        } else if (meleeSwingTimer_ > 0.0f && !characterAnimator_.getCapabilities().hasMelee) {
+            LOG_WARNING("Re-probing capabilities: melee swing active but hasMelee=false");
+            capabilitiesProbed_ = false;
+            probeCapabilities();
+        }
     }
 
     // When mounted, delegate to MountFSM and handle positioning
