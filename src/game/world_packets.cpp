@@ -3428,8 +3428,8 @@ bool AttackStopParser::parse(network::Packet& packet, AttackStopData& data) {
 }
 
 bool AttackerStateUpdateParser::parse(network::Packet& packet, AttackerStateUpdateData& data) {
-    // Upfront validation: hitInfo(4) + packed GUIDs(1-8 each) + totalDamage(4) + subDamageCount(1) = 13 bytes minimum
-    if (!packet.hasRemaining(13)) return false;
+    // Upfront validation: hitInfo(4) + packed GUIDs(1-8 each) + totalDamage(4) + overkill(4) + subDamageCount(1) = 17 bytes minimum
+    if (!packet.hasRemaining(17)) return false;
 
     size_t startPos = packet.getReadPos();
     data.hitInfo = packet.readUInt32();
@@ -3444,13 +3444,15 @@ bool AttackerStateUpdateParser::parse(network::Packet& packet, AttackerStateUpda
     }
     data.targetGuid = packet.readPackedGuid();
 
-    // Validate totalDamage + subDamageCount can be read (5 bytes)
-    if (!packet.hasRemaining(5)) {
+    // Validate totalDamage + overkill + subDamageCount can be read (9 bytes)
+    // WotLK (AzerothCore) sends: damage(4) + overkill(4) + subDamageCount(1)
+    if (!packet.hasRemaining(9)) {
         packet.setReadPos(startPos);
         return false;
     }
 
     data.totalDamage = static_cast<int32_t>(packet.readUInt32());
+    data.overkill = static_cast<int32_t>(packet.readUInt32());
     data.subDamageCount = packet.readUInt8();
 
     // Cap subDamageCount: each entry is 20 bytes. If the claimed count
@@ -3487,17 +3489,14 @@ bool AttackerStateUpdateParser::parse(network::Packet& packet, AttackerStateUpda
     // Validate victimState + overkill fields (8 bytes)
     if (!packet.hasRemaining(8)) {
         data.victimState = 0;
-        data.overkill = 0;
         return !data.subDamages.empty();
     }
 
     data.victimState = packet.readUInt32();
-    // WotLK (AzerothCore): two unknown uint32 fields follow victimState before overkill.
-    // Older parsers omitted these, reading overkill from the wrong offset.
+    // WotLK: attackerState(4) + meleeSpellId(4) follow victimState
     auto rem = [&]() { return packet.getRemainingSize(); };
-    if (rem() >= 4) packet.readUInt32(); // unk1 (always 0)
-    if (rem() >= 4) packet.readUInt32(); // unk2 (melee spell ID, 0 for auto-attack)
-    data.overkill = (rem() >= 4) ? static_cast<int32_t>(packet.readUInt32()) : -1;
+    if (rem() >= 4) packet.readUInt32(); // attackerState (always 0)
+    if (rem() >= 4) packet.readUInt32(); // meleeSpellId (0 for auto-attack)
 
     // hitInfo-conditional fields: HITINFO_BLOCK(0x2000), RAGE_GAIN(0x20000), FAKE_DAMAGE(0x40)
     if ((data.hitInfo & 0x2000) && rem() >= 4)  data.blocked  = packet.readUInt32();
