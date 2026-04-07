@@ -235,6 +235,23 @@ jobs:
           exit 1
         fi
 
+        # dylibbundler may miss Homebrew's FFmpeg libraries.
+        # Copy libavformat, libavcodec, libavutil, and libswscale.
+        FFMPEG_LIB_DIR="$(brew --prefix ffmpeg)/lib"
+        for lib in "${FFMPEG_LIB_DIR}"/libavformat*.dylib \
+                   "${FFMPEG_LIB_DIR}"/libavcodec*.dylib \
+                   "${FFMPEG_LIB_DIR}"/libavutil*.dylib \
+                   "${FFMPEG_LIB_DIR}"/libswscale*.dylib \
+                   "${FFMPEG_LIB_DIR}"/libswresample*.dylib; do
+          [ -e "${lib}" ] || continue
+          cp -f "${lib}" Wowee.app/Contents/Frameworks/
+        done
+
+        if ! ls Wowee.app/Contents/Frameworks/libavformat*.dylib >/dev/null 2>&1; then
+          echo "Missing FFmpeg libavformat dylib(s) in app bundle Frameworks/" >&2
+          exit 1
+        fi
+
         # Info.plist
         cat > Wowee.app/Contents/Info.plist << 'EOF'
         <?xml version="1.0" encoding="UTF-8"?>
