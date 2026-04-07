@@ -344,6 +344,20 @@ void M2Renderer::clear() {
     particleOnlyInstanceIndices_.clear();
     particleInstanceIndices_.clear();
     smokeEmitAccum = 0.0f;
+
+    // Clear texture cache so stale textures don't block loads for the next
+    // character/map.  Without this, the old session's textures fill the cache
+    // budget and failedTextureRetryAt_ blocks legitimate reloads, causing an
+    // infinite model-load loop on character switch.
+    textureCache.clear();
+    texturePropsByPtr_.clear();
+    textureCacheBytes_ = 0;
+    textureCacheCounter_ = 0;
+    failedTextureCache_.clear();
+    failedTextureRetryAt_.clear();
+    loggedTextureLoadFails_.clear();
+    textureLookupSerial_ = 0;
+    textureBudgetRejectWarnings_ = 0;
 }
 
 void M2Renderer::setCollisionFocus(const glm::vec3& worldPos, float radius) {
