@@ -1959,6 +1959,7 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
         // Only apply to humanoid-like clothing models.
         if (hasGroup3 || hasGroup4 || hasGroup8 || hasGroup12 || hasGroup13 || hasGroup15) {
             bool hasRenderableCape = false;
+            std::string capeTexturePath;  // first found cape texture for override
             bool hasEquippedTabard = false;
             bool hasHumanoidExtra = false;
             uint8_t extraRaceId = 0;
@@ -2066,6 +2067,7 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
                                 for (const auto& p : candidates) {
                                     if (assetManager_->fileExists(p)) {
                                         hasRenderableCape = true;
+                                        capeTexturePath = p;
                                         break;
                                     }
                                 }
@@ -2203,14 +2205,37 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
                 if (pantsSid != 0) normalizedGeosets.insert(pantsSid);
             }
 
-            // Prefer explicit cloak variant only when a cape is equipped.
-            if (hasGroup15 && hasRenderableCape) {
-                uint16_t capeSid = pickFromGroup(kGeosetWithCape, 15);
-                if (capeSid != 0) normalizedGeosets.insert(capeSid);
+            // Group 15: cloak mesh. Use "with cape" when equipped, otherwise
+            // use "no cape" back panel to cover the single-sided torso.
+            if (hasGroup15) {
+                if (hasRenderableCape) {
+                    uint16_t capeSid = pickFromGroup(kGeosetWithCape, 15);
+                    if (capeSid != 0) normalizedGeosets.insert(capeSid);
+                } else {
+                    uint16_t noCape = pickFromGroup(kGeosetNoCape, 15);
+                    if (noCape != 0) normalizedGeosets.insert(noCape);
+                }
             }
 
             if (!normalizedGeosets.empty()) {
                 charRenderer->setActiveGeosets(instanceId, normalizedGeosets);
+            }
+
+            // Apply cape texture override so the cloak mesh shows the actual cape
+            // instead of the default body texture.
+            if (hasRenderableCape && !capeTexturePath.empty()) {
+                rendering::VkTexture* capeTex = charRenderer->loadTexture(capeTexturePath);
+                const rendering::VkTexture* whiteTex = charRenderer->loadTexture("");
+                if (capeTex && capeTex != whiteTex) {
+                    charRenderer->setGroupTextureOverride(instanceId, 15, capeTex);
+                    if (const auto* md2 = charRenderer->getModelData(modelId)) {
+                        for (size_t ti = 0; ti < md2->textures.size(); ti++) {
+                            if (md2->textures[ti].type == 2) {
+                                charRenderer->setTextureSlotOverride(instanceId, static_cast<uint16_t>(ti), capeTex);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
