@@ -2,6 +2,7 @@
 
 #include "pipeline/m2_loader.hpp"
 #include "pipeline/blp_loader.hpp"
+#include "rendering/m2_model_classifier.hpp"
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 #include <glm/glm.hpp>
@@ -78,11 +79,15 @@ struct M2ModelGPU {
     bool collisionTreeTrunk = false;
     bool collisionNoBlock = false;
     bool collisionStatue = false;
-    bool isSmallFoliage = false;  // Small foliage (bushes, grass, plants) - skip during taxi
-    bool isInvisibleTrap = false; // Invisible trap objects (don't render, no collision)
-    bool isGroundDetail = false;  // Ground clutter/detail doodads (special fallback render path)
+    bool isSmallFoliage = false;    // Small foliage (bushes, grass, plants) - skip during taxi
+    bool isInvisibleTrap = false;   // Invisible trap objects (don't render, no collision)
+    bool isGroundDetail = false;    // Ground clutter/detail doodads (special fallback render path)
     bool isWaterVegetation = false; // Cattails, reeds, kelp etc. near water (insect spawning)
     bool isFireflyEffect = false;   // Firefly/fireflies M2 (exempt from particle dampeners)
+    bool isWaterfall = false;       // Waterfall model (ambient sound + splash particles)
+    bool isBrazierOrFire = false;   // Brazier / campfire / bonfire model
+    bool isTorch = false;           // Wall-mounted or standing torch
+    AmbientEmitterType ambientEmitterType = AmbientEmitterType::None;
 
     // Collision mesh with spatial grid (from M2 bounding geometry)
     struct CollisionMesh {
@@ -282,6 +287,8 @@ public:
 
     bool hasModel(uint32_t modelId) const;
     bool loadModel(const pipeline::M2Model& model, uint32_t modelId);
+    /** Mark a loaded model as a spell effect (full-brightness particles, no collision). */
+    void markModelAsSpellEffect(uint32_t modelId);
 
     uint32_t createInstance(uint32_t modelId, const glm::vec3& position,
                             const glm::vec3& rotation = glm::vec3(0.0f),

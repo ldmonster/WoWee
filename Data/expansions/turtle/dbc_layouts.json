@@ -213,6 +213,7 @@
     "RangeIndex": 33,
     "Rank": 129,
     "SchoolEnum": 1,
+    "SpellVisualID": 115,
     "Tooltip": 147
   },
   "SpellIcon": {
@@ -230,7 +231,8 @@
     "CastKit": 2,
     "ID": 0,
     "ImpactKit": 3,
-    "MissileModel": 8
+    "MissileModel": 8,
+    "PrecastKit": 1
   },
   "SpellVisualEffectName": {
     "FilePath": 2,
@@ -238,7 +240,12 @@
   },
   "SpellVisualKit": {
     "BaseEffect": 5,
+    "BreathEffect": 8,
+    "ChestEffect": 4,
+    "HeadEffect": 3,
     "ID": 0,
+    "LeftHandEffect": 6,
+    "RightHandEffect": 7,
     "SpecialEffect0": 11,
     "SpecialEffect1": 12,
     "SpecialEffect2": 13

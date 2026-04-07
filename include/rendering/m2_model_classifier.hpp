@@ -7,6 +7,17 @@
 namespace wowee {
 namespace rendering {
 
+/// Ambient sound emitter type for doodad models (fire, water, etc.).
+enum class AmbientEmitterType : uint8_t {
+    None           = 0,
+    FireplaceSmall = 1, ///< Small fire / campfire
+    FireplaceLarge = 2, ///< Large brazier / bonfire
+    Torch          = 3, ///< Wall torch / standing torch
+    Fountain       = 4, ///< Fountain water loop
+    Waterfall      = 5, ///< Waterfall ambient
+    Forge          = 6, ///< Forge / anvil fire
+};
+
 /**
  * Output of classifyM2Model(): all name/geometry-based flags for an M2 model.
  * Pure data — no Vulkan, GPU, or asset-manager dependencies.
@@ -25,6 +36,7 @@ struct M2ClassificationResult {
 
     // --- Rendering / effect classification ---
     bool isFoliageLike      = false; ///< Foliage or tree (wind sway, disabled animation)
+    bool isSmallFoliage     = false; ///< Small bush/grass/plant (skip during taxi/flight)
     bool isSpellEffect      = false; ///< Spell effect / particle-dominated visual
     bool isLavaModel        = false; ///< Lava surface (UV scroll animation)
     bool isInstancePortal   = false; ///< Instance portal (additive, spin, no collision)
@@ -36,6 +48,12 @@ struct M2ClassificationResult {
     bool isGroundDetail     = false; ///< Ground-clutter detail doodad (always non-blocking)
     bool isInvisibleTrap    = false; ///< Event-object invisible trap (no render, no collision)
     bool isSmoke            = false; ///< Smoke model (UV scroll animation)
+    bool isWaterfall        = false; ///< Waterfall model (ambient sound + splash particles)
+    bool isBrazierOrFire    = false; ///< Brazier / campfire / bonfire model
+    bool isTorch            = false; ///< Wall-mounted or standing torch
+
+    // --- Ambient emitter type (for sound system) ---
+    AmbientEmitterType ambientEmitterType = AmbientEmitterType::None;
 
     // --- Animation flags ---
     bool disableAnimation   = false; ///< Keep visually stable (foliage, chest lids, etc.)
@@ -88,6 +106,19 @@ struct M2BatchTexClassification {
  * @param lowerTexKey Lowercased, backslash-normalised texture path (may be empty)
  */
 M2BatchTexClassification classifyBatchTexture(const std::string& lowerTexKey);
+
+// ---------------------------------------------------------------------------
+// Lightweight ambient emitter classification (name-only, no geometry needed)
+// ---------------------------------------------------------------------------
+
+/**
+ * Classify an M2 model path for ambient sound emitter type.
+ * Faster than the full classifyM2Model() when only the emitter type is needed.
+ *
+ * @param lowerName Lowercased model path/name
+ * @return AmbientEmitterType::None if the model is not an ambient emitter source
+ */
+AmbientEmitterType classifyAmbientEmitter(const std::string& lowerName);
 
 } // namespace rendering
 } // namespace wowee

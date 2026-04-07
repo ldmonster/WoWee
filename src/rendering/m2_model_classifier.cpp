@@ -56,18 +56,30 @@ M2ClassificationResult classifyM2Model(
     r.isInvisibleTrap = has(n, "invisibletrap");
     r.isGroundDetail  = has(n, "\\nodxt\\detail\\") || has(n, "\\detail\\");
     r.isSmoke         = has(n, "smoke");
-    r.isLavaModel     = has(n, "forgelava") || has(n, "lavapot") || has(n, "lavaflow");
+    r.isLavaModel     = has(n, "forgelava") || has(n, "lavapot") || has(n, "lavaflow")
+                    || has(n, "lavapool");
 
     r.isInstancePortal  = has(n, "instanceportal") || has(n, "instancenewportal")
                         || has(n, "portalfx")       || has(n, "spellportal");
 
     r.isWaterVegetation = has(n, "cattail") || has(n, "reed")     || has(n, "bulrush")
-                        || has(n, "seaweed") || has(n, "kelp")    || has(n, "lilypad");
+                        || has(n, "seaweed") || has(n, "kelp")    || has(n, "lilypad")
+                        || has(n, "waterlily");
+
+    r.isWaterfall       = has(n, "waterfall");
 
     r.isElvenLike   = has(n, "elf")     || has(n, "elven") || has(n, "quel");
     r.isLanternLike = has(n, "lantern") || has(n, "lamp")  || has(n, "light");
     r.isKoboldFlame = has(n, "kobold")
                     && (has(n, "candle") || has(n, "torch") || has(n, "mine"));
+
+    // Fire / brazier / torch model detection (for ambient emitter + rendering)
+    const bool fireName    = has(n, "fire") || has(n, "campfire") || has(n, "bonfire");
+    const bool brazierName = has(n, "brazier") || has(n, "cauldronfire");
+    const bool forgeName   = has(n, "forge") && !has(n, "forgelava");
+    const bool torchName   = has(n, "torch") && !r.isKoboldFlame;
+    r.isBrazierOrFire = fireName || brazierName;
+    r.isTorch         = torchName;
 
     // ---------------------------------------------------------------
     // Collision: shape categories (mirrors original logic ordering)
@@ -83,7 +95,11 @@ M2ClassificationResult classifyM2Model(
                                                  || has(n, "seat")  || has(n, "throne");
     const bool smallSolid     = (statueName && !sittable)
                               || has(n, "crate") || has(n, "box")
-                              || has(n, "chest") || has(n, "barrel");
+                              || has(n, "chest") || has(n, "barrel")
+                              || has(n, "anvil") || has(n, "mailbox")
+                              || has(n, "cauldron") || has(n, "cannon")
+                              || has(n, "wagon") || has(n, "cart")
+                              || has(n, "table") || has(n, "desk");
     const bool chestName      = has(n, "chest");
 
     r.collisionSteppedFountain    = has(n, "fountain");
@@ -106,17 +122,22 @@ M2ClassificationResult classifyM2Model(
     // Foliage token table (sorted alphabetically)
     // ---------------------------------------------------------------
     static constexpr auto kFoliageTokens = std::to_array<std::string_view>({
-        "algae",      "bamboo",     "banana",     "branch",     "bush",
-        "cactus",     "canopy",     "cattail",    "coconut",    "coral",
-        "corn",       "crop",       "dead-grass", "dead_grass", "deadgrass",
+        "algae",      "bamboo",     "banana",     "barley",     "bracken",
+        "branch",     "briars",     "brush",      "bush",
+        "cactus",     "canopy",     "cattail",    "clover",     "coconut",
+        "coral",      "corn",       "crop",
+        "dead-grass", "dead_grass", "deadgrass",
         "dry-grass",  "dry_grass",  "drygrass",
-        "fern",       "fireflies",  "firefly",    "fireflys",
-        "flower",     "frond",      "fungus",     "gourd",      "grass",
-        "hay",        "hedge",      "ivy",        "kelp",       "leaf",
-        "leaves",     "lily",       "melon",      "moss",       "mushroom",
-        "palm",       "pumpkin",    "reed",       "root",       "seaweed",
-        "shrub",      "squash",     "stalk",      "thorn",      "toadstool",
-        "vine",       "watermelon", "weed",       "wheat",
+        "fern",       "fernleaf",   "fireflies",  "firefly",    "fireflys",
+        "flower",     "frond",      "fungus",     "gourd",      "grapes",
+        "grass",
+        "hay",        "hedge",      "hops",       "ivy",
+        "kelp",       "leaf",       "leaves",     "lichen",     "lily",
+        "melon",      "moss",       "mushroom",   "nettle",
+        "palm",       "pinecone",   "pumpkin",    "reed",       "root",
+        "sapling",    "seaweed",    "seedling",   "shrub",      "squash",
+        "stalk",      "thorn",      "thistle",    "toadstool",
+        "underbrush", "vine",       "watermelon", "weed",       "wheat",
     });
 
     // "plant" is foliage unless "planter" is also present (planters are solid curbs).
@@ -173,19 +194,43 @@ M2ClassificationResult classifyM2Model(
     r.shadowWindFoliage = r.isFoliageLike;
     r.isFireflyEffect   = ambientCreature;
 
+    // Small foliage: foliage-like models with a small bounding box.
+    // Used to skip rendering during taxi/flight for performance.
+    r.isSmallFoliage = r.isFoliageLike && !treeLike
+                     && horiz < 3.0f && vert < 2.0f;
+
     // ---------------------------------------------------------------
     // Spell effects (named tokens + particle-dominated geometry heuristic)
     // ---------------------------------------------------------------
     static constexpr auto kEffectTokens = std::to_array<std::string_view>({
-        "bubbles",        "hazardlight",      "instancenewportal", "instanceportal",
+        "bubbles",        "dustcloud",        "hazardlight",
+        "instancenewportal", "instanceportal",
         "lavabubble",     "lavasplash",        "lavasteam",         "levelup",
         "lightshaft",     "mageportal",        "particleemitter",
-        "spotlight",      "volumetriclight",   "wisps",             "worldtreeportal",
+        "smokepuff",      "sparkle",           "spotlight",
+        "steam",          "volumetriclight",   "wisps",             "worldtreeportal",
     });
     r.isSpellEffect = hasAny(n, kEffectTokens)
                     || (emitterCount >= 3 && vertexCount <= 200);
     // Instance portals are spell effects too.
     if (r.isInstancePortal) r.isSpellEffect = true;
+
+    // ---------------------------------------------------------------
+    // Ambient emitter type (for sound system integration)
+    // ---------------------------------------------------------------
+    if (r.isBrazierOrFire) {
+        const bool isSmallFire = has(n, "small") || has(n, "campfire");
+        r.ambientEmitterType = isSmallFire ? AmbientEmitterType::FireplaceSmall
+                                           : AmbientEmitterType::FireplaceLarge;
+    } else if (r.isTorch) {
+        r.ambientEmitterType = AmbientEmitterType::Torch;
+    } else if (forgeName) {
+        r.ambientEmitterType = AmbientEmitterType::Forge;
+    } else if (r.collisionSteppedFountain) {
+        r.ambientEmitterType = AmbientEmitterType::Fountain;
+    } else if (r.isWaterfall) {
+        r.ambientEmitterType = AmbientEmitterType::Waterfall;
+    }
 
     return r;
 }
@@ -242,6 +287,29 @@ M2BatchTexClassification classifyBatchTexture(const std::string& lowerTexKey)
                        : 0;
 
     return r;
+}
+
+// ---------------------------------------------------------------------------
+// classifyAmbientEmitter — lightweight name-only emitter type detection
+// ---------------------------------------------------------------------------
+
+AmbientEmitterType classifyAmbientEmitter(const std::string& lowerName)
+{
+    const bool fireName    = has(lowerName, "fire") || has(lowerName, "campfire")
+                           || has(lowerName, "bonfire");
+    const bool brazierName = has(lowerName, "brazier") || has(lowerName, "cauldronfire");
+    const bool forgeName   = has(lowerName, "forge") && !has(lowerName, "forgelava");
+
+    if (fireName || brazierName) {
+        const bool isSmall = has(lowerName, "small") || has(lowerName, "campfire");
+        return isSmall ? AmbientEmitterType::FireplaceSmall
+                       : AmbientEmitterType::FireplaceLarge;
+    }
+    if (has(lowerName, "torch"))     return AmbientEmitterType::Torch;
+    if (forgeName)                   return AmbientEmitterType::Forge;
+    if (has(lowerName, "fountain"))  return AmbientEmitterType::Fountain;
+    if (has(lowerName, "waterfall")) return AmbientEmitterType::Waterfall;
+    return AmbientEmitterType::None;
 }
 
 } // namespace rendering

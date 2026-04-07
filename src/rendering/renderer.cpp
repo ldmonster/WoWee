@@ -1936,7 +1936,7 @@ bool Renderer::initializeRenderers(pipeline::AssetManager* assetManager, const s
         // Initialize SpellVisualSystem once M2Renderer is available (§4.4)
         if (!spellVisualSystem_) {
             spellVisualSystem_ = std::make_unique<SpellVisualSystem>();
-            spellVisualSystem_->initialize(m2Renderer.get());
+            spellVisualSystem_->initialize(m2Renderer.get(), this);
         }
     }
 

@@ -189,6 +189,15 @@ void M2Renderer::emitParticles(M2Instance& inst, const M2ModelGPU& gpu, float dt
             }
 
             inst.particles.push_back(p);
+
+            // Diagnostic: log first particle birth per spell effect instance
+            if (gpu.isSpellEffect && inst.particles.size() == 1) {
+                LOG_INFO("SpellEffect: first particle for '", gpu.name,
+                         "' pos=(", p.position.x, ",", p.position.y, ",", p.position.z,
+                         ") rate=", rate, " life=", life,
+                         " bone=", em.bone, " boneCount=", inst.boneMatrices.size(),
+                         " globalSeqs=", gpu.globalSequenceDurations.size());
+            }
         }
         // Cap accumulator to avoid bursts after lag
         if (inst.emitterAccumulators[ei] > 2.0f) {
@@ -258,13 +267,23 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
 
         // Determine bone world position for spine
         glm::vec3 spineWorld = inst.position;
-        if (em.bone < inst.boneMatrices.size()) {
+        // Use referenced bone; fall back to bone 0 if out of range (common for spell effects
+        // where ribbon bone fields may be unset/garbage, e.g. bone=4294967295)
+        uint32_t boneIdx = em.bone;
+        if (boneIdx >= inst.boneMatrices.size() && !inst.boneMatrices.empty()) {
+            boneIdx = 0;
+        }
+        if (boneIdx < inst.boneMatrices.size()) {
             glm::vec4 local(em.position.x, em.position.y, em.position.z, 1.0f);
-            spineWorld = glm::vec3(inst.modelMatrix * inst.boneMatrices[em.bone] * local);
+            spineWorld = glm::vec3(inst.modelMatrix * inst.boneMatrices[boneIdx] * local);
         } else {
             glm::vec4 local(em.position.x, em.position.y, em.position.z, 1.0f);
             spineWorld = glm::vec3(inst.modelMatrix * local);
         }
+
+        // Skip emitters that produce NaN positions (garbage bone/position data)
+        if (std::isnan(spineWorld.x) || std::isnan(spineWorld.y) || std::isnan(spineWorld.z))
+            continue;
 
         // Evaluate animated tracks (use first available sequence key, or fallback value)
         auto getFloatVal = [&](const pipeline::M2AnimationTrack& track, float fallback) -> float {
@@ -311,6 +330,16 @@ void M2Renderer::updateRibbons(M2Instance& inst, const M2ModelGPU& gpu, float dt
                 e.heightBelow = heightBelow;
                 e.age         = 0.0f;
                 edges.push_back(e);
+
+                // Diagnostic: log first ribbon edge per spell effect instance+emitter
+                if (gpu.isSpellEffect && edges.size() == 1) {
+                    LOG_INFO("SpellEffect: ribbon edge[0] for '", gpu.name,
+                             "' emitter=", ri, " pos=(", spineWorld.x, ",", spineWorld.y,
+                             ",", spineWorld.z, ") hA=", heightAbove, " hB=", heightBelow,
+                             " vis=", visibility, " eps=", em.edgesPerSecond,
+                             " edgeLife=", em.edgeLifetime, " bone=", em.bone);
+                }
+
                 // Cap trail length
                 if (edges.size() > 128) edges.pop_front();
             }
@@ -359,7 +388,17 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
             // Descriptor set for texture
             VkDescriptorSet texSet = (ri < gpu.ribbonTexSets.size())
                                      ? gpu.ribbonTexSets[ri] : VK_NULL_HANDLE;
-            if (!texSet) continue;
+            if (!texSet) {
+                if (gpu.isSpellEffect) {
+                    static bool ribbonTexWarn = false;
+                    if (!ribbonTexWarn) {
+                        LOG_WARNING("SpellEffect: ribbon[", ri, "] for '", gpu.name,
+                                    "' has null texSet — descriptor pool may be exhausted");
+                        ribbonTexWarn = true;
+                    }
+                }
+                continue;
+            }
 
             uint32_t firstVert = static_cast<uint32_t>(written);
 
@@ -405,6 +444,29 @@ void M2Renderer::renderM2Ribbons(VkCommandBuffer cmd, VkDescriptorSet perFrameSe
             } else {
                 // Rollback if too few verts
                 written = firstVert;
+            }
+        }
+    }
+
+    // Periodic diagnostic: spell ribbon draw count
+    {
+        static uint32_t ribbonDiagFrame_ = 0;
+        if (++ribbonDiagFrame_ % 300 == 1) {
+            size_t spellRibbonDraws = 0;
+            size_t spellRibbonVerts = 0;
+            for (const auto& inst : instances) {
+                if (!inst.cachedModel || !inst.cachedModel->isSpellEffect) continue;
+                for (size_t ri = 0; ri < inst.ribbonEdges.size(); ri++) {
+                    if (inst.ribbonEdges[ri].size() >= 2) {
+                        spellRibbonDraws++;
+                        spellRibbonVerts += inst.ribbonEdges[ri].size() * 2;
+                    }
+                }
+            }
+            if (spellRibbonDraws > 0 || !draws.empty()) {
+                LOG_INFO("SpellEffect: ", spellRibbonDraws, " spell ribbon strips (",
+                         spellRibbonVerts, " verts), total draws=", draws.size(),
+                         " written=", written);
             }
         }
     }
@@ -471,7 +533,13 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
                 if (rawScale > 2.0f) alpha *= 0.02f;
                 if (em.blendingType == 3 || em.blendingType == 4) alpha *= 0.05f;
             }
-            float scale = (gpu.isSpellEffect || gpu.isFireflyEffect) ? rawScale : std::min(rawScale, 1.5f);
+            // Spell effect particles: mild boost so tiny M2 scales stay visible
+            float scale = rawScale;
+            if (gpu.isSpellEffect) {
+                scale = std::max(rawScale * 1.5f, 0.15f);
+            } else if (!gpu.isFireflyEffect) {
+                scale = std::min(rawScale, 1.5f);
+            }
 
             VkTexture* tex = whiteTexture_.get();
             if (p.emitterIndex < static_cast<int>(gpu.particleTextures.size())) {
@@ -514,6 +582,22 @@ void M2Renderer::renderM2Particles(VkCommandBuffer cmd, VkDescriptorSet perFrame
             }
             group.vertexData.push_back(tileIndex);
             totalParticles++;
+        }
+    }
+
+    // Periodic diagnostic: spell effect particle count
+    {
+        static uint32_t spellParticleDiagFrame_ = 0;
+        if (++spellParticleDiagFrame_ % 300 == 1) {
+            size_t spellPtc = 0;
+            for (const auto& inst : instances) {
+                if (inst.cachedModel && inst.cachedModel->isSpellEffect)
+                    spellPtc += inst.particles.size();
+            }
+            if (spellPtc > 0) {
+                LOG_INFO("SpellEffect: rendering ", spellPtc, " spell particles (",
+                         totalParticles, " total)");
+            }
         }
     }
 

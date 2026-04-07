@@ -2493,6 +2493,7 @@ public:
         uint32_t schoolMask = 0; uint8_t dispelType = 0; uint32_t attrEx = 0;
         int32_t effectBasePoints[3] = {0, 0, 0};
         float durationSec = 0.0f;
+        uint32_t spellVisualId = 0;
     };
     static constexpr size_t PLAYER_EXPLORED_ZONES_COUNT = 128;
     std::string getAreaName(uint32_t areaId) const;

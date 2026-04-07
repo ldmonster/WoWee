@@ -89,6 +89,56 @@ void SpellHandler::playSpellImpactSound(uint32_t spellId) {
                      audio::SpellSoundManager::SpellPower::MEDIUM);
 }
 
+// ---- Spell visual effect helpers ----
+
+uint32_t SpellHandler::resolveSpellVisualId(uint32_t spellId) {
+    owner_.loadSpellNameCache();
+    auto it = owner_.spellNameCacheRef().find(spellId);
+    return (it != owner_.spellNameCacheRef().end()) ? it->second.spellVisualId : 0;
+}
+
+bool SpellHandler::resolveUnitPosition(uint64_t guid, glm::vec3& outPos) {
+    auto* renderer = owner_.services().renderer;
+    if (!renderer) return false;
+    if (guid == owner_.getPlayerGuid()) {
+        outPos = renderer->getCharacterPosition();
+        return true;
+    }
+    auto entity = owner_.getEntityManager().getEntity(guid);
+    if (!entity) return false;
+    glm::vec3 canonical(entity->getLatestX(), entity->getLatestY(), entity->getLatestZ());
+    outPos = core::coords::canonicalToRender(canonical);
+    return true;
+}
+
+void SpellHandler::triggerCastVisual(uint32_t spellId, uint64_t casterGuid, uint32_t castTimeMs) {
+    LOG_INFO("SpellVisual: triggerCastVisual spellId=", spellId, " casterGuid=0x", std::hex, casterGuid, std::dec);
+    auto* renderer = owner_.services().renderer;
+    if (!renderer) { LOG_WARNING("SpellVisual: triggerCastVisual — no renderer"); return; }
+    auto* svs = renderer->getSpellVisualSystem();
+    if (!svs) { LOG_WARNING("SpellVisual: triggerCastVisual — no SpellVisualSystem"); return; }
+    uint32_t visualId = resolveSpellVisualId(spellId);
+    if (visualId == 0) { LOG_WARNING("SpellVisual: triggerCastVisual — visualId=0 for spellId=", spellId); return; }
+    glm::vec3 casterPos;
+    if (!resolveUnitPosition(casterGuid, casterPos)) { LOG_WARNING("SpellVisual: triggerCastVisual — cannot resolve caster position"); return; }
+    LOG_INFO("SpellVisual: triggerCastVisual visualId=", visualId, " pos=(", casterPos.x, ",", casterPos.y, ",", casterPos.z, ") castTimeMs=", castTimeMs);
+    svs->playSpellVisualPrecast(visualId, casterPos, castTimeMs);
+}
+
+void SpellHandler::triggerImpactVisual(uint32_t spellId, uint64_t targetGuid) {
+    LOG_INFO("SpellVisual: triggerImpactVisual spellId=", spellId, " targetGuid=0x", std::hex, targetGuid, std::dec);
+    auto* renderer = owner_.services().renderer;
+    if (!renderer) return;
+    auto* svs = renderer->getSpellVisualSystem();
+    if (!svs) return;
+    uint32_t visualId = resolveSpellVisualId(spellId);
+    if (visualId == 0) { LOG_WARNING("SpellVisual: triggerImpactVisual — visualId=0 for spellId=", spellId); return; }
+    glm::vec3 targetPos;
+    if (!resolveUnitPosition(targetGuid, targetPos)) return;
+    LOG_INFO("SpellVisual: triggerImpactVisual visualId=", visualId, " pos=(", targetPos.x, ",", targetPos.y, ",", targetPos.z, ")");
+    svs->playSpellVisual(visualId, targetPos, /*useImpactKit=*/true);
+}
+
 
 static std::string displaySpellName(GameHandler& handler, uint32_t spellId) {
     if (spellId == 0) return {};
@@ -387,6 +437,11 @@ void SpellHandler::cancelCast() {
     queuedSpellTarget_ = 0;
     if (owner_.addonEventCallbackRef())
         owner_.addonEventCallbackRef()("UNIT_SPELLCAST_STOP", {"player"});
+    // Remove lingering precast visual effects
+    if (auto* renderer = owner_.services().renderer) {
+        if (auto* svs = renderer->getSpellVisualSystem())
+            svs->cancelAllPrecastVisuals();
+    }
 }
 
 void SpellHandler::startCraftQueue(uint32_t spellId, int count) {
@@ -828,6 +883,11 @@ void SpellHandler::handleCastFailed(network::Packet& packet) {
     owner_.pendingGameObjectInteractGuidRef() = 0;
     craftQueueSpellId_ = 0;
     craftQueueRemaining_ = 0;
+    // Remove lingering precast visual effects
+    if (auto* renderer = owner_.services().renderer) {
+        if (auto* svs = renderer->getSpellVisualSystem())
+            svs->cancelAllPrecastVisuals();
+    }
     queuedSpellId_ = 0;
     queuedSpellTarget_ = 0;
 
@@ -947,6 +1007,12 @@ void SpellHandler::handleSpellStart(network::Packet& packet) {
         std::string unitId = owner_.guidToUnitId(data.casterUnit);
         if (!unitId.empty())
             owner_.addonEventCallbackRef()("UNIT_SPELLCAST_START", {unitId, std::to_string(data.spellId)});
+    }
+
+    // Trigger cast visual effect (precast/cast kit M2) at the caster's position.
+    // Skip profession spells (crafting has no flashy cast effects).
+    if (!owner_.isProfessionSpell(data.spellId)) {
+        triggerCastVisual(data.spellId, data.casterUnit, data.castTime);
     }
 }
 
@@ -1094,6 +1160,29 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
 
     if (playerIsHit || playerHitEnemy)
         playSpellImpactSound(data.spellId);
+
+    // Trigger spell visual effects: cast kit at caster + impact kit at each hit target.
+    // Skip profession spells and melee (schoolMask == 1) abilities.
+    if (!owner_.isProfessionSpell(data.spellId)) {
+        uint32_t visualId = resolveSpellVisualId(data.spellId);
+        if (visualId != 0) {
+            // Cast-complete visual at caster (for instant spells that skip SPELL_START)
+            glm::vec3 casterPos;
+            if (resolveUnitPosition(data.casterUnit, casterPos)) {
+                if (auto* renderer = owner_.services().renderer) {
+                    if (auto* svs = renderer->getSpellVisualSystem()) {
+                        svs->playSpellVisual(visualId, casterPos, /*useImpactKit=*/false);
+                    }
+                }
+            }
+            // Impact visual at each hit target
+            for (const auto& tgt : data.hitTargets) {
+                if (tgt != 0) {
+                    triggerImpactVisual(data.spellId, tgt);
+                }
+            }
+        }
+    }
 }
 
 void SpellHandler::handleSpellCooldown(network::Packet& packet) {
@@ -1798,6 +1887,7 @@ void SpellHandler::loadSpellNameCache() const {
     const uint32_t ebp1Field = spellL ? spellL->field("EffectBasePoints1") : 0xFFFFFFFF;
     const uint32_t ebp2Field = spellL ? spellL->field("EffectBasePoints2") : 0xFFFFFFFF;
     const uint32_t durIdxField = spellL ? spellL->field("DurationIndex") : 0xFFFFFFFF;
+    const uint32_t spellVisualIdField = spellL ? spellL->field("SpellVisualID") : 0xFFFFFFFF;
 
     uint32_t count = dbc->getRecordCount();
     for (uint32_t i = 0; i < count; ++i) {
@@ -1806,7 +1896,7 @@ void SpellHandler::loadSpellNameCache() const {
         std::string name = dbc->getString(i, nameField);
         std::string rank = dbc->getString(i, rankField);
         if (!name.empty()) {
-            GameHandler::SpellNameEntry entry{std::move(name), std::move(rank), {}, 0, 0, 0};
+            GameHandler::SpellNameEntry entry{std::move(name), std::move(rank), {}, 0, 0, 0, {0, 0, 0}, 0.0f, 0};
             if (tooltipField != 0xFFFFFFFF) {
                 entry.description = dbc->getString(i, tooltipField);
             }
@@ -1830,6 +1920,9 @@ void SpellHandler::loadSpellNameCache() const {
             // Duration: read DurationIndex and resolve via SpellDuration.dbc later
             if (durIdxField != 0xFFFFFFFF)
                 entry.durationSec = static_cast<float>(dbc->getUInt32(i, durIdxField)); // store index temporarily
+            // SpellVisualID: references SpellVisual.dbc for cast/impact M2 effects
+            if (spellVisualIdField != 0xFFFFFFFF && spellVisualIdField < dbc->getFieldCount())
+                entry.spellVisualId = dbc->getUInt32(i, spellVisualIdField);
             owner_.spellNameCacheRef()[id] = std::move(entry);
         }
     }
@@ -2417,6 +2510,11 @@ void SpellHandler::handleSpellFailure(network::Packet& packet) {
         craftQueueRemaining_ = 0;
         queuedSpellId_ = 0;
         queuedSpellTarget_ = 0;
+        // Remove lingering precast visual effects
+        if (auto* renderer = owner_.services().renderer) {
+            if (auto* svs = renderer->getSpellVisualSystem())
+                svs->cancelAllPrecastVisuals();
+        }
         if (auto* ac = owner_.services().audioCoordinator) {
             if (auto* ssm = ac->getSpellSoundManager()) {
                 ssm->stopPrecast();

@@ -1123,6 +1123,20 @@ bool M2Renderer::hasModel(uint32_t modelId) const {
     return models.find(modelId) != models.end();
 }
 
+void M2Renderer::markModelAsSpellEffect(uint32_t modelId) {
+    auto it = models.find(modelId);
+    if (it != models.end()) {
+        it->second.isSpellEffect = true;
+        // Spell effects MUST have bone animation for ribbons/particles to work.
+        // The classifier may have set disableAnimation=true based on name tokens
+        // (e.g. "chest" in HolySmite_Low_Chest.m2) — override that for spell effects.
+        if (it->second.disableAnimation && it->second.hasAnimation) {
+            it->second.disableAnimation = false;
+            LOG_INFO("SpellEffect: re-enabled animation for '", it->second.name, "'");
+        }
+    }
+}
+
 bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
     if (models.find(modelId) != models.end()) {
         // Already loaded
@@ -1186,6 +1200,7 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
     gpuModel.disableAnimation            = cls.disableAnimation;
     gpuModel.shadowWindFoliage           = cls.shadowWindFoliage;
     gpuModel.isFireflyEffect             = cls.isFireflyEffect;
+    gpuModel.isSmallFoliage              = cls.isSmallFoliage;
     gpuModel.isSmoke                     = cls.isSmoke;
     gpuModel.isSpellEffect               = cls.isSpellEffect;
     gpuModel.isLavaModel                 = cls.isLavaModel;
@@ -1194,6 +1209,10 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
     gpuModel.isElvenLike                 = cls.isElvenLike;
     gpuModel.isLanternLike               = cls.isLanternLike;
     gpuModel.isKoboldFlame               = cls.isKoboldFlame;
+    gpuModel.isWaterfall                 = cls.isWaterfall;
+    gpuModel.isBrazierOrFire             = cls.isBrazierOrFire;
+    gpuModel.isTorch                     = cls.isTorch;
+    gpuModel.ambientEmitterType          = cls.ambientEmitterType;
     gpuModel.boundMin = tightMin;
     gpuModel.boundMax = tightMax;
     gpuModel.boundRadius = model.boundRadius;
@@ -1402,17 +1421,25 @@ bool M2Renderer::loadModel(const pipeline::M2Model& model, uint32_t modelId) {
         gpuModel.ribbonTextures.resize(model.ribbonEmitters.size(), whiteTexture_.get());
         gpuModel.ribbonTexSets.resize(model.ribbonEmitters.size(), VK_NULL_HANDLE);
         for (size_t ri = 0; ri < model.ribbonEmitters.size(); ri++) {
-            // Resolve texture via textureLookup table
-            uint16_t texLookupIdx = model.ribbonEmitters[ri].textureIndex;
-            uint32_t texIdx = (texLookupIdx < model.textureLookup.size())
-                              ? model.textureLookup[texLookupIdx] : UINT32_MAX;
-            if (texIdx < allTextures.size() && allTextures[texIdx] != nullptr) {
-                gpuModel.ribbonTextures[ri] = allTextures[texIdx];
+            // Resolve texture: ribbon textureIndex is a direct index into the
+            // model's texture array (NOT through the textureLookup table).
+            uint16_t texDirect = model.ribbonEmitters[ri].textureIndex;
+            if (texDirect < allTextures.size() && allTextures[texDirect] != nullptr) {
+                gpuModel.ribbonTextures[ri] = allTextures[texDirect];
             } else {
-                LOG_WARNING("M2 '", model.name, "' ribbon emitter[", ri,
-                            "] texLookup=", texLookupIdx, " resolved texIdx=", texIdx,
-                            " out of range (", allTextures.size(),
-                            " textures) — using white fallback");
+                // Fallback: try through textureLookup table
+                uint32_t texIdx = (texDirect < model.textureLookup.size())
+                                  ? model.textureLookup[texDirect] : UINT32_MAX;
+                if (texIdx < allTextures.size() && allTextures[texIdx] != nullptr) {
+                    gpuModel.ribbonTextures[ri] = allTextures[texIdx];
+                } else {
+                    LOG_WARNING("M2 '", model.name, "' ribbon emitter[", ri,
+                                "] texIndex=", texDirect, " lookup failed"
+                                " (direct=", (texDirect < allTextures.size() ? "yes" : "OOB"),
+                                " lookup=", texIdx,
+                                " textures=", allTextures.size(),
+                                ") — using white fallback");
+                }
             }
             // Allocate descriptor set (reuse particleTexLayout_ = single sampler)
             if (particleTexLayout_ && materialDescPool_) {

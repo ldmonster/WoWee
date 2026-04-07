@@ -1378,10 +1378,43 @@ M2Model M2Loader::load(const std::vector<uint8_t>& m2Data) {
                 if (rib.edgesPerSecond < 1.0f  || rib.edgesPerSecond > 200.0f) rib.edgesPerSecond = 15.0f;
                 if (rib.edgeLifetime   < 0.05f || rib.edgeLifetime   > 10.0f)  rib.edgeLifetime   = 0.5f;
 
-                // visibilityTrack M2TrackDisk at 0x98 (uint8, treat as float 0/1)
+                // visibilityTrack M2TrackDisk at 0x98 — keys are uint8 (0/1), NOT float.
+                // Must read as uint8 and convert to float, else 0x01 reads as
+                // float ~1.4e-45 which fails the visibility > 0.5 check.
                 if (base + 0x98 + sizeof(M2TrackDisk) <= m2Data.size()) {
                     M2TrackDisk disk = readValue<M2TrackDisk>(m2Data, base + 0x98);
-                    parseAnimTrack(m2Data, disk, rib.visibilityTrack, TrackType::FLOAT, ribSeqFlags);
+                    auto& track = rib.visibilityTrack;
+                    track.interpolationType = disk.interpolationType;
+                    track.globalSequence    = disk.globalSequence;
+                    uint32_t nSeqs = disk.nTimestamps;
+                    if (nSeqs > 0 && nSeqs <= 4096) {
+                        track.sequences.resize(nSeqs);
+                        for (uint32_t s = 0; s < nSeqs; s++) {
+                            if (s < ribSeqFlags.size() && !(ribSeqFlags[s] & kM2SeqFlagEmbeddedData)) continue;
+                            uint32_t tsHdr  = disk.ofsTimestamps + s * 8;
+                            uint32_t keyHdr = disk.ofsKeys + s * 8;
+                            if (tsHdr + 8 > m2Data.size() || keyHdr + 8 > m2Data.size()) continue;
+                            uint32_t tsCount = readValue<uint32_t>(m2Data, tsHdr);
+                            uint32_t tsOfs   = readValue<uint32_t>(m2Data, tsHdr + 4);
+                            uint32_t kCount  = readValue<uint32_t>(m2Data, keyHdr);
+                            uint32_t kOfs    = readValue<uint32_t>(m2Data, keyHdr + 4);
+                            if (tsCount == 0 || kCount == 0) continue;
+                            if (tsOfs + tsCount * 4 > m2Data.size()) continue;
+                            if (kOfs + kCount * sizeof(uint8_t) > m2Data.size()) continue;
+                            track.sequences[s].timestamps = readArray<uint32_t>(m2Data, tsOfs, tsCount);
+                            track.sequences[s].floatValues.reserve(kCount);
+                            for (uint32_t k = 0; k < kCount; k++) {
+                                uint8_t raw = readValue<uint8_t>(m2Data, kOfs + k);
+                                track.sequences[s].floatValues.push_back(raw != 0 ? 1.0f : 0.0f);
+                            }
+                        }
+                    }
+                }
+
+                // Skip garbage emitters (common M2 artifact: alternating emitters
+                // have bone=UINT_MAX or other invalid state)
+                if (rib.bone == 0xFFFFFFFF) {
+                    continue;
                 }
 
                 model.ribbonEmitters.push_back(std::move(rib));
