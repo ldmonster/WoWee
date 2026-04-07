@@ -6,6 +6,7 @@
 #include "game/handler_types.hpp"
 #include "audio/spell_sound_manager.hpp"
 #include "network/packet.hpp"
+#include <glm/glm.hpp>
 #include <array>
 #include <chrono>
 #include <functional>
@@ -282,6 +283,15 @@ private:
     // Play a spell cast or impact sound via audioCoordinator, if available.
     void playSpellCastSound(uint32_t spellId);
     void playSpellImpactSound(uint32_t spellId);
+
+    // Resolve SpellVisualID from Spell.dbc cache for a given spellId.
+    uint32_t resolveSpellVisualId(uint32_t spellId);
+    // Resolve render-space position for a unit GUID (player or entity).
+    bool resolveUnitPosition(uint64_t guid, glm::vec3& outPos);
+    // Play the cast/precast visual effect at the caster's position.
+    void triggerCastVisual(uint32_t spellId, uint64_t casterGuid, uint32_t castTimeMs = 0);
+    // Play the impact visual effect at the target's position.
+    void triggerImpactVisual(uint32_t spellId, uint64_t targetGuid);
 
     // --- handleSpellLogExecute per-effect parsers (extracted to reduce nesting) ---
     void parseEffectPowerDrain(network::Packet& packet, uint32_t effectLogCount,

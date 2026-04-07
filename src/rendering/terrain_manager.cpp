@@ -3,6 +3,7 @@
 #include "rendering/vk_context.hpp"
 #include "rendering/water_renderer.hpp"
 #include "rendering/m2_renderer.hpp"
+#include "rendering/m2_model_classifier.hpp"
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/camera.hpp"
 #include "audio/ambient_sound_manager.hpp"
@@ -691,35 +692,20 @@ std::shared_ptr<PendingTile> TerrainManager::prepareTile(int x, int y) {
                             doodadLogCount++;
                         }
 
-                        if (m2PathLower.find("fire") != std::string::npos ||
-                            m2PathLower.find("brazier") != std::string::npos ||
-                            m2PathLower.find("campfire") != std::string::npos) {
-                            // Fireplace/brazier emitter
+                        auto emitterType = rendering::classifyAmbientEmitter(m2PathLower);
+                        if (emitterType != rendering::AmbientEmitterType::None) {
                             PendingTile::AmbientEmitter emitter;
                             emitter.position = worldPos;
-                            if (m2PathLower.find("small") != std::string::npos || m2PathLower.find("campfire") != std::string::npos) {
-                                emitter.type = 0;  // FIREPLACE_SMALL
-                            } else {
-                                emitter.type = 1;  // FIREPLACE_LARGE
+                            // Map classifier enum to AmbientSoundManager type codes
+                            switch (emitterType) {
+                                case rendering::AmbientEmitterType::FireplaceSmall: emitter.type = 0; break;
+                                case rendering::AmbientEmitterType::FireplaceLarge: emitter.type = 1; break;
+                                case rendering::AmbientEmitterType::Torch:          emitter.type = 2; break;
+                                case rendering::AmbientEmitterType::Fountain:       emitter.type = 3; break;
+                                case rendering::AmbientEmitterType::Waterfall:      emitter.type = 6; break;
+                                case rendering::AmbientEmitterType::Forge:          emitter.type = 1; break; // Forge → large fire
+                                default: emitter.type = 0; break;
                             }
-                            pending->ambientEmitters.push_back(emitter);
-                        } else if (m2PathLower.find("torch") != std::string::npos) {
-                            // Torch emitter
-                            PendingTile::AmbientEmitter emitter;
-                            emitter.position = worldPos;
-                            emitter.type = 2;  // TORCH
-                            pending->ambientEmitters.push_back(emitter);
-                        } else if (m2PathLower.find("fountain") != std::string::npos) {
-                            // Fountain emitter
-                            PendingTile::AmbientEmitter emitter;
-                            emitter.position = worldPos;
-                            emitter.type = 3;  // FOUNTAIN
-                            pending->ambientEmitters.push_back(emitter);
-                        } else if (m2PathLower.find("waterfall") != std::string::npos) {
-                            // Waterfall emitter
-                            PendingTile::AmbientEmitter emitter;
-                            emitter.position = worldPos;
-                            emitter.type = 6;  // WATERFALL
                             pending->ambientEmitters.push_back(emitter);
                         }
 
