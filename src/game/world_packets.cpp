@@ -1029,25 +1029,37 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
             // Save position before WotLK spline header for fallback
             size_t beforeSplineHeader = packet.getReadPos();
 
+            // AzerothCore MoveSplineFlag constants:
+            // CATMULLROM   = 0x00080000  — uncompressed Catmull-Rom interpolation
+            // CYCLIC       = 0x00100000  — cyclic path
+            // ENTER_CYCLE  = 0x00200000  — entering cyclic path
+            // ANIMATION    = 0x00400000  — animation spline with animType+effectStart
+            // PARABOLIC    = 0x00000008  — vertical_acceleration+effectStartTime
+            constexpr uint32_t SF_PARABOLIC   = 0x00000008;
+            constexpr uint32_t SF_CATMULLROM  = 0x00080000;
+            constexpr uint32_t SF_CYCLIC      = 0x00100000;
+            constexpr uint32_t SF_ENTER_CYCLE = 0x00200000;
+            constexpr uint32_t SF_ANIMATION   = 0x00400000;
+            constexpr uint32_t SF_UNCOMPRESSED_MASK = SF_CATMULLROM | SF_CYCLIC | SF_ENTER_CYCLE;
+
             // Try 1: WotLK format (durationMod+durationModNext+[ANIMATION]+vertAccel+effectStart+points)
+            // Some servers (ChromieCraft) always write vertAccel+effectStart unconditionally.
             bool splineParsed = false;
             if (bytesAvailable(8)) {
                 /*float durationMod =*/ packet.readFloat();
                 /*float durationModNext =*/ packet.readFloat();
                 bool wotlkOk = true;
-                if (splineFlags & 0x00400000) { // SPLINEFLAG_ANIMATION
+                if (splineFlags & SF_ANIMATION) {
                     if (!bytesAvailable(5)) { wotlkOk = false; }
                     else { packet.readUInt8(); packet.readUInt32(); }
                 }
-                // AzerothCore/ChromieCraft always writes verticalAcceleration(float)
-                // + effectStartTime(uint32) unconditionally -- NOT gated by PARABOLIC flag.
+                // Unconditional vertAccel+effectStart (ChromieCraft/some AzerothCore builds)
                 if (wotlkOk) {
                     if (!bytesAvailable(8)) { wotlkOk = false; }
                     else { /*float vertAccel =*/ packet.readFloat(); /*uint32_t effectStart =*/ packet.readUInt32(); }
                 }
                 if (wotlkOk) {
-                    // WotLK: compressed unless CYCLIC(0x80000) or ENTER_CYCLE(0x2000) set
-                    bool useCompressed = (splineFlags & (0x00080000 | 0x00002000)) == 0;
+                    bool useCompressed = (splineFlags & SF_UNCOMPRESSED_MASK) == 0;
                     splineParsed = tryParseSplinePoints(useCompressed, "wotlk-compressed");
                     if (!splineParsed) {
                         splineParsed = tryParseSplinePoints(false, "wotlk-uncompressed");
@@ -1055,29 +1067,72 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
                 }
             }
 
-            if (!splineParsed) {
-                // WotLK compressed+uncompressed both failed. Try without the parabolic
-                // fields (some cores don't send vertAccel+effectStart unconditionally).
+            // Try 2: ANIMATION present but vertAccel+effectStart gated by PARABOLIC
+            // (standard AzerothCore: only writes vertAccel+effectStart when PARABOLIC is set)
+            if (!splineParsed && (splineFlags & SF_ANIMATION)) {
                 packet.setReadPos(beforeSplineHeader);
                 if (bytesAvailable(8)) {
                     packet.readFloat(); // durationMod
                     packet.readFloat(); // durationModNext
-                    // Skip parabolic fields — try points directly
+                    bool ok = true;
+                    if (!bytesAvailable(5)) { ok = false; }
+                    else { packet.readUInt8(); packet.readUInt32(); } // animType + effectStart
+                    if (ok && (splineFlags & SF_PARABOLIC)) {
+                        if (!bytesAvailable(8)) { ok = false; }
+                        else { packet.readFloat(); packet.readUInt32(); }
+                    }
+                    if (ok) {
+                        bool useCompressed = (splineFlags & SF_UNCOMPRESSED_MASK) == 0;
+                        splineParsed = tryParseSplinePoints(useCompressed, "wotlk-anim-conditional");
+                        if (!splineParsed) {
+                            splineParsed = tryParseSplinePoints(false, "wotlk-anim-conditional-uncomp");
+                        }
+                    }
+                }
+            }
+
+            // Try 3: No ANIMATION — vertAccel+effectStart only when PARABOLIC set
+            if (!splineParsed) {
+                packet.setReadPos(beforeSplineHeader);
+                if (bytesAvailable(8)) {
+                    packet.readFloat(); // durationMod
+                    packet.readFloat(); // durationModNext
+                    bool ok = true;
+                    if (splineFlags & SF_PARABOLIC) {
+                        if (!bytesAvailable(8)) { ok = false; }
+                        else { packet.readFloat(); packet.readUInt32(); }
+                    }
+                    if (ok) {
+                        bool useCompressed = (splineFlags & SF_UNCOMPRESSED_MASK) == 0;
+                        splineParsed = tryParseSplinePoints(useCompressed, "wotlk-parabolic-gated");
+                        if (!splineParsed) {
+                            splineParsed = tryParseSplinePoints(false, "wotlk-parabolic-gated-uncomp");
+                        }
+                    }
+                }
+            }
+
+            // Try 4: No header at all — just durationMod+durationModNext then points
+            if (!splineParsed) {
+                packet.setReadPos(beforeSplineHeader);
+                if (bytesAvailable(8)) {
+                    packet.readFloat(); // durationMod
+                    packet.readFloat(); // durationModNext
                     splineParsed = tryParseSplinePoints(false, "wotlk-no-parabolic");
                     if (!splineParsed) {
-                        bool useComp = (splineFlags & (0x00080000 | 0x00002000)) == 0;
+                        bool useComp = (splineFlags & SF_UNCOMPRESSED_MASK) == 0;
                         splineParsed = tryParseSplinePoints(useComp, "wotlk-no-parabolic-compressed");
                     }
                 }
             }
 
-            // Try 3: bare points (no WotLK header at all — some spline types skip everything)
+            // Try 5: bare points (no WotLK header at all — some spline types skip everything)
             if (!splineParsed) {
                 packet.setReadPos(beforeSplineHeader);
                 splineParsed = tryParseSplinePoints(false, "bare-uncompressed");
                 if (!splineParsed) {
                     packet.setReadPos(beforeSplineHeader);
-                    bool useComp = (splineFlags & (0x00080000 | 0x00002000)) == 0;
+                    bool useComp = (splineFlags & SF_UNCOMPRESSED_MASK) == 0;
                     splineParsed = tryParseSplinePoints(useComp, "bare-compressed");
                 }
             }
@@ -1090,8 +1145,8 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
                     d[di] = packet.readUInt32();
                 packet.setReadPos(beforeSplineHeader);
                 LOG_WARNING("WotLK spline parse failed for guid=0x", std::hex, block.guid, std::dec,
-                            " splineFlags=0x", splineFlags,
-                            " remaining=", std::dec, packet.getRemainingSize(),
+                            " splineFlags=0x", std::hex, splineFlags, std::dec,
+                            " remaining=", packet.getRemainingSize(),
                             " header=[0x", std::hex, d[0], " 0x", d[1], " 0x", d[2],
                             " 0x", d[3], " 0x", d[4], "]", std::dec);
                 return false;
@@ -1424,10 +1479,12 @@ bool UpdateObjectParser::parse(network::Packet& packet, UpdateObjectData& data) 
         UpdateBlock block;
         if (!parseUpdateBlock(packet, block)) {
             static int parseBlockErrors = 0;
-            if (++parseBlockErrors <= 5) {
+            const uint32_t lostBlocks = data.blockCount - i;
+            if (++parseBlockErrors <= 10) {
                 LOG_ERROR("Failed to parse update block ", i + 1, " of ", data.blockCount,
-                          " (", i, " blocks parsed successfully before failure)");
-                if (parseBlockErrors == 5)
+                          " (", i, " blocks parsed, ", lostBlocks, " blocks LOST",
+                          ", remaining=", packet.getRemainingSize(), " bytes)");
+                if (parseBlockErrors == 10)
                     LOG_ERROR("(suppressing further update block parse errors)");
             }
             // Cannot reliably re-sync to the next block after a parse failure,
