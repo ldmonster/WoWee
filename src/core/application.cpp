@@ -720,8 +720,12 @@ void Application::run() {
                         int newWidth = event.window.data1;
                         int newHeight = event.window.data2;
                         window->setSize(newWidth, newHeight);
+                        // Mark swapchain dirty so it gets recreated at the correct size
+                        if (window->getVkContext()) {
+                            window->getVkContext()->markSwapchainDirty();
+                        }
                         // Vulkan viewport set in command buffer, not globally
-                        if (renderer && renderer->getCamera()) {
+                        if (renderer && renderer->getCamera() && newHeight > 0) {
                             renderer->getCamera()->setAspectRatio(static_cast<float>(newWidth) / newHeight);
                         }
                         // Notify addons so UI layouts can adapt to the new size
