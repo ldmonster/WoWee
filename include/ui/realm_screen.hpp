@@ -45,6 +45,18 @@ public:
     }
 
     /**
+     * Reset for back-navigation from character screen.
+     * Preserves autoSelectAttempted so single-realm auto-connect doesn't re-fire.
+     */
+    void resetForBack() {
+        selectedRealmIndex = -1;
+        realmSelected = false;
+        selectedRealmName.clear();
+        selectedRealmAddress.clear();
+        statusMessage.clear();
+    }
+
+    /**
      * Check if a realm has been selected
      */
     bool hasSelection() const { return realmSelected; }
