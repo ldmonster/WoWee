@@ -1740,7 +1740,16 @@ void Application::update(float deltaTime) {
                         if (canonDistSq > syncRadiusSq) continue;
                     }
 
-                    glm::vec3 canonical(entity->getX(), entity->getY(), entity->getZ());
+                    // Use the destination position once the entity has reached its
+                    // target.  During the dead-reckoning overrun window getX/Y/Z
+                    // drifts past the destination at the last known velocity;
+                    // using getLatest (== moveEnd while isMoving_) avoids the
+                    // visible forward-drift followed by a backward snap.
+                    const bool inOverrun = entity->isEntityMoving() && !entity->isActivelyMoving();
+                    glm::vec3 canonical(
+                        inOverrun ? entity->getLatestX() : entity->getX(),
+                        inOverrun ? entity->getLatestY() : entity->getY(),
+                        inOverrun ? entity->getLatestZ() : entity->getZ());
                     glm::vec3 renderPos = core::coords::canonicalToRender(canonical);
 
                     // Visual collision guard: keep hostile melee units from rendering inside the
@@ -1822,17 +1831,18 @@ void Application::update(float deltaTime) {
                         auto unitPtr = std::static_pointer_cast<game::Unit>(entity);
                         const bool deadOrCorpse = unitPtr->getHealth() == 0;
                         const bool largeCorrection = (planarDistSq > 36.0f) || (dz > 3.0f);
-                        // isEntityMoving() reflects server-authoritative move state set by
-                        // startMoveTo() in handleMonsterMove, regardless of distance-cull.
-                        // This correctly detects movement for distant creatures (> 150u)
-                        // where updateMovement() is not called and getX/Y/Z() stays stale.
-                        // Use isActivelyMoving() (not isEntityMoving()) so the
-                        // Run/Walk animation stops when the creature reaches its
-                        // destination, rather than persisting through the dead-
-                        // reckoning overrun window.
+                        // Use isActivelyMoving() so Run/Walk animation stops when the
+                        // creature reaches its destination. Don't use position-change
+                        // (planarDistSq) as a movement indicator when the entity is in
+                        // the dead-reckoning overrun window — the residual velocity
+                        // drift would keep the walk/run animation playing long after
+                        // the creature has actually arrived. Only fall back to position-
+                        // change detection for entities with no active movement tracking
+                        // (e.g. teleports or position-only updates from the server).
                         const bool entityIsMoving = entity->isActivelyMoving();
                         constexpr float kMoveThreshSq = 0.03f * 0.03f;
-                        const bool isMovingNow = !deadOrCorpse && (entityIsMoving || planarDistSq > kMoveThreshSq || dz > 0.08f);
+                        const bool posChanging = planarDistSq > kMoveThreshSq || dz > 0.08f;
+                        const bool isMovingNow = !deadOrCorpse && (entityIsMoving || (posChanging && !entity->isEntityMoving()));
                         if (deadOrCorpse || largeCorrection) {
                             charRenderer->setInstancePosition(instanceId, renderPos);
                         } else if (planarDistSq > kMoveThreshSq || dz > 0.08f) {
@@ -1936,8 +1946,13 @@ void Application::update(float deltaTime) {
                         if (glm::dot(d, d) > pSyncRadiusSq) continue;
                     }
 
-                    // Position sync
-                    glm::vec3 canonical(entity->getX(), entity->getY(), entity->getZ());
+                    // Position sync — clamp to destination during dead-reckoning
+                    // overrun to avoid drift + backward snap (same as creature loop).
+                    const bool inOverrun = entity->isEntityMoving() && !entity->isActivelyMoving();
+                    glm::vec3 canonical(
+                        inOverrun ? entity->getLatestX() : entity->getX(),
+                        inOverrun ? entity->getLatestY() : entity->getY(),
+                        inOverrun ? entity->getLatestZ() : entity->getZ());
                     glm::vec3 renderPos = core::coords::canonicalToRender(canonical);
 
                     auto posIt = _pCreatureRenderPosCache.find(guid);
@@ -1956,7 +1971,8 @@ void Application::update(float deltaTime) {
                         const bool largeCorrection = (planarDistSq > 36.0f) || (dz > 3.0f);
                         const bool entityIsMoving = entity->isActivelyMoving();
                         constexpr float kMoveThreshSq2 = 0.03f * 0.03f;
-                        const bool isMovingNow = !deadOrCorpse && (entityIsMoving || planarDistSq > kMoveThreshSq2 || dz > 0.08f);
+                        const bool posChanging2 = planarDistSq > kMoveThreshSq2 || dz > 0.08f;
+                        const bool isMovingNow = !deadOrCorpse && (entityIsMoving || (posChanging2 && !entity->isEntityMoving()));
 
                         if (deadOrCorpse || largeCorrection) {
                             charRenderer->setInstancePosition(instanceId, renderPos);
