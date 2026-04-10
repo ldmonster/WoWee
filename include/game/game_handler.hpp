@@ -943,6 +943,10 @@ public:
     using MeleeSwingCallback = std::function<void(uint32_t spellId)>;
     void setMeleeSwingCallback(MeleeSwingCallback cb) { meleeSwingCallback_ = std::move(cb); }
 
+    // Ranged weapon swap callback — show=true: swap to ranged weapon, false: back to melee
+    using RangedWeaponSwapCallback = std::function<void(bool show)>;
+    void setRangedWeaponSwapCallback(RangedWeaponSwapCallback cb) { rangedWeaponSwapCallback_ = std::move(cb); }
+
     // Spell cast animation callbacks — true=start cast/channel, false=finish/cancel
     // guid: caster (may be player or another unit), isChannel: channel vs regular cast
     // castType: DIRECTED (unit target), OMNI (self/no target), AREA (ground AoE)
@@ -2399,6 +2403,13 @@ public:
     auto& knockBackCallbackRef() { return knockBackCallback_; }
     auto& lootWindowCallbackRef() { return lootWindowCallback_; }
     auto& meleeSwingCallbackRef() { return meleeSwingCallback_; }
+    auto& rangedWeaponSwapCallbackRef() { return rangedWeaponSwapCallback_; }
+    void suppressNextMeleeSwingAnim() { suppressMeleeSwingAnim_ = true; }
+    bool consumeSuppressMeleeSwingAnim() {
+        bool v = suppressMeleeSwingAnim_;
+        suppressMeleeSwingAnim_ = false;
+        return v;
+    }
     auto& mountCallbackRef() { return mountCallback_; }
     auto& npcAggroCallbackRef() { return npcAggroCallback_; }
     auto& npcDeathCallbackRef() { return npcDeathCallback_; }
@@ -3436,6 +3447,8 @@ private:
     AppearanceChangedCallback appearanceChangedCallback_;
     GhostStateCallback ghostStateCallback_;
     MeleeSwingCallback meleeSwingCallback_;
+    RangedWeaponSwapCallback rangedWeaponSwapCallback_;
+    bool suppressMeleeSwingAnim_ = false;
     // lastMeleeSwingMs_ moved to CombatHandler
     SpellCastAnimCallback spellCastAnimCallback_;
     SpellCastFailedCallback spellCastFailedCallback_;
