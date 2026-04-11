@@ -1,4 +1,6 @@
 #include "game/transport_manager.hpp"
+#include "game/transport_clock_sync.hpp"
+#include "game/transport_animator.hpp"
 #include "rendering/wmo_renderer.hpp"
 #include "rendering/m2_renderer.hpp"
 #include "core/coordinates.hpp"
@@ -105,11 +107,7 @@ void TransportManager::registerTransport(uint64_t guid, uint32_t wmoInstanceId, 
     updateTransformMatrices(transport);
 
     // CRITICAL: Update WMO renderer with initial transform
-    if (transport.isM2) {
-        if (m2Renderer_) m2Renderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
-    } else {
-        if (wmoRenderer_) wmoRenderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
-    }
+    pushTransform(transport);
 
     transports_[guid] = transport;
 
@@ -195,129 +193,44 @@ void TransportManager::updateTransportMovement(ActiveTransport& transport, float
     if (spline.durationMs() == 0) {
         // Just update transform (position already set)
         updateTransformMatrices(transport);
-        if (transport.isM2) {
-            if (m2Renderer_) m2Renderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
-        } else {
-            if (wmoRenderer_) wmoRenderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
-        }
+        pushTransform(transport);
         return;
     }
 
-    // Evaluate path time
-    uint32_t nowMs = static_cast<uint32_t>(elapsedTime_ * 1000.0);
+    // Compute path time via ClockSync
     uint32_t pathTimeMs = 0;
-    uint32_t durationMs = spline.durationMs();
-
-    if (transport.hasServerClock) {
-        // Predict server time using clock offset (works for both client and server-driven modes)
-        int64_t serverTimeMs = static_cast<int64_t>(nowMs) + transport.serverClockOffsetMs;
-        int64_t mod = static_cast<int64_t>(durationMs);
-        int64_t wrapped = serverTimeMs % mod;
-        if (wrapped < 0) wrapped += mod;
-        pathTimeMs = static_cast<uint32_t>(wrapped);
-    } else if (transport.useClientAnimation) {
-        // Pure local clock (no server sync yet, client-driven)
-        uint32_t dtMs = static_cast<uint32_t>(deltaTime * 1000.0f);
-        if (!transport.clientAnimationReverse) {
-            transport.localClockMs += dtMs;
-        } else {
-            if (dtMs > durationMs) {
-                dtMs %= durationMs;
-            }
-            if (transport.localClockMs >= dtMs) {
-                transport.localClockMs -= dtMs;
-            } else {
-                transport.localClockMs = durationMs - (dtMs - transport.localClockMs);
-            }
-        }
-        pathTimeMs = transport.localClockMs % durationMs;
-    } else {
+    if (!clockSync_.computePathTime(transport, spline, elapsedTime_, deltaTime, pathTimeMs)) {
         // Strict server-authoritative mode: do not guess movement between server snapshots.
         updateTransformMatrices(transport);
-        if (transport.isM2) {
-            if (m2Renderer_) m2Renderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
-        } else {
-            if (wmoRenderer_) wmoRenderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
-        }
+        pushTransform(transport);
         return;
     }
 
-    // Evaluate position from time via CatmullRomSpline (path is local offsets, add base position)
-    glm::vec3 pathOffset = spline.evaluatePosition(pathTimeMs);
-    // Guard against bad fallback Z curves on some remapped transport paths (notably icebreakers),
-    // where path offsets can sink far below sea level when we only have spawn-time data.
-    // Skip Z clamping for world-coordinate paths (TaxiPathNode) where values are absolute positions.
-    // Clamp fallback Z offsets for non-world-coordinate paths to prevent transport
-    // models from sinking below sea level on paths derived only from spawn-time data
-    // (notably icebreaker routes where the DBC path has steep vertical curves).
-    constexpr float kMinFallbackZOffset = -2.0f;
-    constexpr float kMaxFallbackZOffset =  8.0f;
-    if (!pathEntry->worldCoords) {
-        if (transport.useClientAnimation && transport.serverUpdateCount <= 1) {
-            pathOffset.z = glm::max(pathOffset.z, kMinFallbackZOffset);
-        }
-        if (!transport.useClientAnimation && !transport.hasServerClock) {
-            pathOffset.z = glm::clamp(pathOffset.z, kMinFallbackZOffset, kMaxFallbackZOffset);
-        }
-    }
-    transport.position = transport.basePosition + pathOffset;
-
-    // Use server yaw if available (authoritative), otherwise compute from spline tangent
-    if (transport.hasServerYaw) {
-        float effectiveYaw = transport.serverYaw + (transport.serverYawFlipped180 ? glm::pi<float>() : 0.0f);
-        transport.rotation = glm::angleAxis(effectiveYaw, glm::vec3(0.0f, 0.0f, 1.0f));
-    } else {
-        auto result = spline.evaluate(pathTimeMs);
-        transport.rotation = orientationFromSplineTangent(result.tangent);
-    }
+    // Evaluate position + rotation via Animator
+    animator_.evaluateAndApply(transport, *pathEntry, pathTimeMs);
 
     // Update transform matrices
     updateTransformMatrices(transport);
-
-    // Update WMO instance position
-    if (transport.isM2) {
-        if (m2Renderer_) m2Renderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
-    } else {
-        if (wmoRenderer_) wmoRenderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
-    }
+    pushTransform(transport);
 
     // Debug logging every 600 frames (~10 seconds at 60fps)
     static int debugFrameCount = 0;
     if (debugFrameCount++ % 600 == 0) {
         LOG_DEBUG("Transport 0x", std::hex, transport.guid, std::dec,
-                 " pathTime=", pathTimeMs, "ms / ", durationMs, "ms",
+                 " pathTime=", pathTimeMs, "ms / ", spline.durationMs(), "ms",
                  " pos=(", transport.position.x, ", ", transport.position.y, ", ", transport.position.z, ")",
                  " mode=", (transport.useClientAnimation ? "client" : "server"),
                  " isM2=", transport.isM2);
     }
 }
 
-// Legacy transport orientation from spline tangent.
-// Preserves the original TransportManager cross-product order for visual consistency.
-glm::quat TransportManager::orientationFromSplineTangent(const glm::vec3& tangent) {
-    float tangentLenSq = glm::dot(tangent, tangent);
-    if (tangentLenSq < 1e-6f) {
-        return glm::quat(1.0f, 0.0f, 0.0f, 0.0f);  // Identity
+// Push transform to the appropriate renderer (WMO or M2).
+void TransportManager::pushTransform(ActiveTransport& transport) {
+    if (transport.isM2) {
+        if (m2Renderer_) m2Renderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
+    } else {
+        if (wmoRenderer_) wmoRenderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
     }
-
-    glm::vec3 forward = tangent * glm::inversesqrt(tangentLenSq);
-    glm::vec3 up(0.0f, 0.0f, 1.0f);  // WoW Z is up
-
-    // If forward is nearly vertical, use different up vector
-    if (std::abs(forward.z) > 0.99f) {
-        up = glm::vec3(0.0f, 1.0f, 0.0f);
-    }
-
-    glm::vec3 right = glm::normalize(glm::cross(up, forward));
-    up = glm::cross(forward, right);
-
-    // Build rotation matrix and convert to quaternion
-    glm::mat3 rotMat;
-    rotMat[0] = right;
-    rotMat[1] = forward;
-    rotMat[2] = up;
-
-    return glm::quat_cast(rotMat);
 }
 
 void TransportManager::updateTransformMatrices(ActiveTransport& transport) {
@@ -349,220 +262,26 @@ void TransportManager::updateServerTransport(uint64_t guid, const glm::vec3& pos
         return;
     }
 
-    const bool hadPrevUpdate = (transport->serverUpdateCount > 0);
-    const float prevUpdateTime = transport->lastServerUpdate;
-    const glm::vec3 prevPos = transport->position;
-
     auto* pathEntry = pathRepo_.findPath(transport->pathId);
-    const bool hasPath = (pathEntry != nullptr);
-    const bool isZOnlyPath = (hasPath && pathEntry->fromDBC && pathEntry->zOnly && pathEntry->spline.durationMs() > 0);
-    const bool isWorldCoordPath = (hasPath && pathEntry->worldCoords && pathEntry->spline.durationMs() > 0);
 
-    // Don't let (0,0,0) server updates override a TaxiPathNode world-coordinate path
-    if (isWorldCoordPath && glm::dot(position, position) < 1.0f) {
+    if (!pathEntry || pathEntry->spline.durationMs() == 0) {
+        // No path or stationary — handle directly before delegating to ClockSync.
+        // Still track update count so future path assignments work.
         transport->serverUpdateCount++;
         transport->lastServerUpdate = elapsedTime_;
-        transport->serverYaw = orientation;
-        transport->hasServerYaw = true;
-        return;
-    }
-
-    // Track server updates
-    transport->serverUpdateCount++;
-    transport->lastServerUpdate = elapsedTime_;
-    // Z-only elevators and world-coordinate paths (TaxiPathNode) always stay client-driven.
-    // For other DBC paths (trams, ships): only switch to server-driven mode when the server
-    // sends a position that actually differs from the current position, indicating it's
-    // actively streaming movement data (not just echoing the spawn position).
-    if (isZOnlyPath || isWorldCoordPath) {
-        transport->useClientAnimation = true;
-    } else if (transport->useClientAnimation && hasPath && pathEntry->fromDBC) {
-        glm::vec3 pd = position - transport->position;
-        float posDeltaSq = glm::dot(pd, pd);
-        if (posDeltaSq > 1.0f) {
-            // Server sent a meaningfully different position — it's actively driving this transport
-            transport->useClientAnimation = false;
-            LOG_INFO("Transport 0x", std::hex, guid, std::dec,
-                     " switching to server-driven (posDeltaSq=", posDeltaSq, ")");
-        }
-        // Otherwise keep client animation (server just echoed spawn pos or sent small jitter)
-    } else if (!hasPath || !pathEntry->fromDBC) {
-        // No DBC path — purely server-driven
-        transport->useClientAnimation = false;
-    }
-    transport->clientAnimationReverse = false;
-
-    if (!hasPath || pathEntry->spline.durationMs() == 0) {
-        // No path or stationary - just set position directly
         transport->basePosition = position;
         transport->position = position;
         transport->rotation = glm::angleAxis(orientation, glm::vec3(0.0f, 0.0f, 1.0f));
         updateTransformMatrices(*transport);
-        if (transport->isM2) {
-            if (m2Renderer_) m2Renderer_->setInstanceTransform(transport->wmoInstanceId, transport->transform);
-        } else {
-            if (wmoRenderer_) wmoRenderer_->setInstanceTransform(transport->wmoInstanceId, transport->transform);
-        }
+        pushTransform(*transport);
         return;
     }
 
-    // Server-authoritative transport mode:
-    // Trust explicit server world position/orientation directly for all moving transports.
-    // This avoids wrong-route and direction errors when local DBC path mapping differs from server route IDs.
-    transport->hasServerClock = false;
-    if (transport->serverUpdateCount == 1) {
-        // Seed once from first authoritative update; keep stable base for fallback phase estimation.
-        // For z-only elevator paths, keep the spawn-derived basePosition (the DBC path is local offsets).
-        if (!isZOnlyPath) {
-            transport->basePosition = position;
-        }
-    }
-    transport->position = position;
-    transport->serverYaw = orientation;
-    transport->hasServerYaw = true;
-    float effectiveYaw = transport->serverYaw + (transport->serverYawFlipped180 ? glm::pi<float>() : 0.0f);
-    transport->rotation = glm::angleAxis(effectiveYaw, glm::vec3(0.0f, 0.0f, 1.0f));
-
-    if (hadPrevUpdate) {
-        const float dt = elapsedTime_ - prevUpdateTime;
-        if (dt > 0.001f) {
-            glm::vec3 v = (position - prevPos) / dt;
-            float speedSq = glm::dot(v, v);
-            constexpr float kMinAuthoritativeSpeed = 0.15f;
-            constexpr float kMaxSpeed = 60.0f;
-            if (speedSq >= kMinAuthoritativeSpeed * kMinAuthoritativeSpeed) {
-                // Auto-detect 180-degree yaw mismatch by comparing heading to movement direction.
-                // Some transports appear to report yaw opposite their actual travel direction.
-                glm::vec2 horizontalV(v.x, v.y);
-                float hLenSq = glm::dot(horizontalV, horizontalV);
-                if (hLenSq > 0.04f) {
-                    horizontalV *= glm::inversesqrt(hLenSq);
-                    glm::vec2 heading(std::cos(transport->serverYaw), std::sin(transport->serverYaw));
-                    float alignDot = glm::dot(heading, horizontalV);
-
-                    if (alignDot < -0.35f) {
-                        transport->serverYawAlignmentScore = std::max(transport->serverYawAlignmentScore - 1, -12);
-                    } else if (alignDot > 0.35f) {
-                        transport->serverYawAlignmentScore = std::min(transport->serverYawAlignmentScore + 1, 12);
-                    }
-
-                    if (!transport->serverYawFlipped180 && transport->serverYawAlignmentScore <= -4) {
-                        transport->serverYawFlipped180 = true;
-                        LOG_INFO("Transport 0x", std::hex, guid, std::dec,
-                                 " enabled 180-degree yaw correction (alignScore=",
-                                 transport->serverYawAlignmentScore, ")");
-                    } else if (transport->serverYawFlipped180 &&
-                               transport->serverYawAlignmentScore >= 4) {
-                        transport->serverYawFlipped180 = false;
-                        LOG_INFO("Transport 0x", std::hex, guid, std::dec,
-                                 " disabled 180-degree yaw correction (alignScore=",
-                                 transport->serverYawAlignmentScore, ")");
-                    }
-                }
-
-                if (speedSq > kMaxSpeed * kMaxSpeed) {
-                    v *= (kMaxSpeed * glm::inversesqrt(speedSq));
-                }
-
-                transport->serverLinearVelocity = v;
-                transport->serverAngularVelocity = 0.0f;
-                transport->hasServerVelocity = true;
-
-                // Re-apply potentially corrected yaw this frame after alignment check.
-                effectiveYaw = transport->serverYaw + (transport->serverYawFlipped180 ? glm::pi<float>() : 0.0f);
-                transport->rotation = glm::angleAxis(effectiveYaw, glm::vec3(0.0f, 0.0f, 1.0f));
-            }
-        }
-    } else {
-        // Seed fallback path phase from nearest waypoint to the first authoritative sample.
-        if (pathEntry && pathEntry->spline.keyCount() > 0 && pathEntry->spline.durationMs() > 0) {
-            glm::vec3 local = position - transport->basePosition;
-            size_t bestIdx = pathEntry->spline.findNearestKey(local);
-            transport->localClockMs = pathEntry->spline.keys()[bestIdx].timeMs % pathEntry->spline.durationMs();
-        }
-
-        // Bootstrap velocity from mapped DBC path on first authoritative sample.
-        // This avoids "stalled at dock" when server sends sparse transport snapshots.
-        if (transport->allowBootstrapVelocity && pathEntry && pathEntry->spline.keyCount() >= 2 && pathEntry->spline.durationMs() > 0) {
-            const auto& keys = pathEntry->spline.keys();
-            glm::vec3 local = position - transport->basePosition;
-            size_t bestIdx = pathEntry->spline.findNearestKey(local);
-
-            float bestDistSq = 0.0f;
-            {
-                glm::vec3 d = keys[bestIdx].position - local;
-                bestDistSq = glm::dot(d, d);
-            }
-
-                constexpr float kMaxBootstrapNearestDist = 80.0f;
-                if (bestDistSq > (kMaxBootstrapNearestDist * kMaxBootstrapNearestDist)) {
-                    LOG_WARNING("Transport 0x", std::hex, guid, std::dec,
-                                " skipping DBC bootstrap velocity: nearest path point too far (dist=",
-                                std::sqrt(bestDistSq), ", path=", transport->pathId, ")");
-                } else {
-                    size_t n = keys.size();
-                    uint32_t durMs = pathEntry->spline.durationMs();
-                    constexpr float kMinBootstrapSpeed = 0.25f;
-                    constexpr float kMaxSpeed = 60.0f;
-
-                    auto tryApplySegment = [&](size_t a, size_t b) {
-                        uint32_t t0 = keys[a].timeMs;
-                        uint32_t t1 = keys[b].timeMs;
-                        if (b == 0 && t1 <= t0 && durMs > 0) {
-                            t1 = durMs;
-                        }
-                        if (t1 <= t0) return;
-                        glm::vec3 seg = keys[b].position - keys[a].position;
-                        float dtSeg = static_cast<float>(t1 - t0) / 1000.0f;
-                        if (dtSeg <= 0.001f) return;
-                        glm::vec3 v = seg / dtSeg;
-                        float speedSq = glm::dot(v, v);
-                        if (speedSq < kMinBootstrapSpeed * kMinBootstrapSpeed) return;
-                        if (speedSq > kMaxSpeed * kMaxSpeed) {
-                            v *= (kMaxSpeed * glm::inversesqrt(speedSq));
-                        }
-                        transport->serverLinearVelocity = v;
-                        transport->serverAngularVelocity = 0.0f;
-                        transport->hasServerVelocity = true;
-                    };
-
-                    // Prefer nearest forward meaningful segment from bestIdx.
-                    for (size_t step = 1; step < n && !transport->hasServerVelocity; ++step) {
-                        size_t a = (bestIdx + step - 1) % n;
-                        size_t b = (bestIdx + step) % n;
-                        tryApplySegment(a, b);
-                    }
-                    // Fallback: nearest backward meaningful segment.
-                    for (size_t step = 1; step < n && !transport->hasServerVelocity; ++step) {
-                        size_t b = (bestIdx + n - step + 1) % n;
-                        size_t a = (bestIdx + n - step) % n;
-                        tryApplySegment(a, b);
-                    }
-
-                    if (transport->hasServerVelocity) {
-                        LOG_INFO("Transport 0x", std::hex, guid, std::dec,
-                                 " bootstrapped velocity from DBC path ", transport->pathId,
-                                 " v=(", transport->serverLinearVelocity.x, ", ",
-                                 transport->serverLinearVelocity.y, ", ",
-                                 transport->serverLinearVelocity.z, ")");
-                    } else {
-                        LOG_INFO("Transport 0x", std::hex, guid, std::dec,
-                                 " skipped DBC bootstrap velocity (segment too short/static)");
-                    }
-                }
-        } else if (!transport->allowBootstrapVelocity) {
-            LOG_INFO("Transport 0x", std::hex, guid, std::dec,
-                     " DBC bootstrap velocity disabled for this transport");
-        }
-    }
+    // Delegate clock sync, yaw correction, and velocity bootstrap to ClockSync.
+    clockSync_.processServerUpdate(*transport, pathEntry, position, orientation, elapsedTime_);
 
     updateTransformMatrices(*transport);
-    if (transport->isM2) {
-        if (m2Renderer_) m2Renderer_->setInstanceTransform(transport->wmoInstanceId, transport->transform);
-    } else {
-        if (wmoRenderer_) wmoRenderer_->setInstanceTransform(transport->wmoInstanceId, transport->transform);
-    }
-    return;
+    pushTransform(*transport);
 }
 
 bool TransportManager::loadTransportAnimationDBC(pipeline::AssetManager* assetMgr) {
@@ -609,9 +328,7 @@ bool TransportManager::assignTaxiPathToTransport(uint32_t entry, uint32_t taxiPa
         }
 
         updateTransformMatrices(transport);
-        if (wmoRenderer_) {
-            wmoRenderer_->setInstanceTransform(transport.wmoInstanceId, transport.transform);
-        }
+        pushTransform(transport);
 
         LOG_INFO("Assigned TaxiPathNode path to transport 0x", std::hex, guid, std::dec,
                  " entry=", entry, " taxiPathId=", taxiPathId,

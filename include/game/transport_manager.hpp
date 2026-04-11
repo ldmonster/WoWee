@@ -1,6 +1,8 @@
 #pragma once
 
 #include "game/transport_path_repository.hpp"
+#include "game/transport_clock_sync.hpp"
+#include "game/transport_animator.hpp"
 #include <cstdint>
 #include <vector>
 #include <unordered_map>
@@ -124,10 +126,11 @@ public:
 private:
     void updateTransportMovement(ActiveTransport& transport, float deltaTime);
     void updateTransformMatrices(ActiveTransport& transport);
-    /// Legacy transport orientation from tangent (preserves original cross-product order).
-    static glm::quat orientationFromSplineTangent(const glm::vec3& tangent);
+    void pushTransform(ActiveTransport& transport);
 
     TransportPathRepository pathRepo_;
+    TransportClockSync clockSync_;
+    TransportAnimator animator_;
     std::unordered_map<uint64_t, ActiveTransport> transports_;
     rendering::WMORenderer* wmoRenderer_ = nullptr;
     rendering::M2Renderer* m2Renderer_ = nullptr;
