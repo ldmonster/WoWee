@@ -68,6 +68,9 @@ add_executable(test_spline
 target_include_directories(test_spline PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_spline SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
 target_link_libraries(test_spline PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_spline PRIVATE glm::glm)
+endif()
 add_test(NAME spline COMMAND test_spline)
 register_test_target(test_spline)
 
@@ -82,6 +85,9 @@ add_executable(test_transport_path_repo
 target_include_directories(test_transport_path_repo PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_transport_path_repo SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
 target_link_libraries(test_transport_path_repo PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_transport_path_repo PRIVATE glm::glm)
+endif()
 add_test(NAME transport_path_repo COMMAND test_transport_path_repo)
 register_test_target(test_transport_path_repo)
 
@@ -107,6 +113,9 @@ add_executable(test_entity
 target_include_directories(test_entity PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_entity SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
 target_link_libraries(test_entity PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_entity PRIVATE glm::glm)
+endif()
 add_test(NAME entity COMMAND test_entity)
 register_test_target(test_entity)
 
@@ -248,6 +257,9 @@ add_executable(test_transport_components
 target_include_directories(test_transport_components PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_transport_components SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
 target_link_libraries(test_transport_components PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_transport_components PRIVATE glm::glm)
+endif()
 add_test(NAME transport_components COMMAND test_transport_components)
 register_test_target(test_transport_components)
 
