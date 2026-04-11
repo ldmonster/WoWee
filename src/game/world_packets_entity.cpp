@@ -1,5 +1,6 @@
 #include "game/world_packets.hpp"
 #include "game/packet_parsers.hpp"
+#include "game/spline_packet.hpp"
 #include "game/opcodes.hpp"
 #include "game/character.hpp"
 #include "auth/crypto.hpp"
@@ -595,96 +596,22 @@ bool MonsterMoveParser::parse(network::Packet& packet, MonsterMoveData& data) {
     if (!packet.hasRemaining(4)) return false;
     data.splineFlags = packet.readUInt32();
 
-    // WotLK 3.3.5a SplineFlags (from TrinityCore/MaNGOS MoveSplineFlag.h):
-    //   Animation    = 0x00400000
-    //   Parabolic    = 0x00000800
-    //   Catmullrom   = 0x00080000  \  either means uncompressed (absolute) waypoints
-    //   Flying       = 0x00002000  /
-
-    // [if Animation] uint8 animationType + int32 effectStartTime (5 bytes)
-    if (data.splineFlags & 0x00400000) {
-        if (!packet.hasRemaining(5)) return false;
-        packet.readUInt8();  // animationType
-        packet.readUInt32(); // effectStartTime (int32, read as uint32 same size)
-    }
-
-    // uint32 duration
-    if (!packet.hasRemaining(4)) return false;
-    data.duration = packet.readUInt32();
-
-    // [if Parabolic] float verticalAcceleration + int32 effectStartTime (8 bytes)
-    if (data.splineFlags & 0x00000800) {
-        if (!packet.hasRemaining(8)) return false;
-        packet.readFloat(); // verticalAcceleration
-        packet.readUInt32(); // effectStartTime
-    }
-
-    // uint32 pointCount
-    if (!packet.hasRemaining(4)) return false;
-    uint32_t pointCount = packet.readUInt32();
-
-    if (pointCount == 0) return true;
-
-    constexpr uint32_t kMaxSplinePoints = 1000;
-    if (pointCount > kMaxSplinePoints) {
-        LOG_WARNING("SMSG_MONSTER_MOVE: pointCount=", pointCount, " exceeds max ", kMaxSplinePoints,
-                    " (guid=0x", std::hex, data.guid, std::dec, ")");
-        return false;
-    }
-
-    // Catmullrom or Flying → all waypoints stored as absolute float3 (uncompressed).
-    // Otherwise: first float3 is final destination, remaining are packed deltas.
-    bool uncompressed = (data.splineFlags & (0x00080000 | 0x00002000)) != 0;
-
-    if (uncompressed) {
-        // All waypoints stored as absolute float3 (Catmullrom/Flying paths)
-        // Read all intermediate points, then the final destination
-        for (uint32_t i = 0; i < pointCount - 1; i++) {
-            if (!packet.hasRemaining(12)) return true;
-            MonsterMoveData::Point wp;
-            wp.x = packet.readFloat();
-            wp.y = packet.readFloat();
-            wp.z = packet.readFloat();
-            data.waypoints.push_back(wp);
+    // Consolidated spline body parser
+    {
+        SplineBlockData spline;
+        if (!parseMonsterMoveSplineBody(packet, spline, data.splineFlags,
+                                        glm::vec3(data.x, data.y, data.z))) {
+            return false;
         }
-        if (!packet.hasRemaining(12)) return true;
-        data.destX = packet.readFloat();
-        data.destY = packet.readFloat();
-        data.destZ = packet.readFloat();
-        data.hasDest = true;
-    } else {
-        // Compressed: first 3 floats are the destination (final point)
-        if (!packet.hasRemaining(12)) return true;
-        data.destX = packet.readFloat();
-        data.destY = packet.readFloat();
-        data.destZ = packet.readFloat();
-        data.hasDest = true;
-
-        // Remaining waypoints are packed as uint32 deltas from the midpoint
-        // between the creature's start position and the destination.
-        // Encoding matches TrinityCore MoveSpline::PackXYZ:
-        //   x = 11-bit signed (bits 0-10), y = 11-bit signed (bits 11-21),
-        //   z = 10-bit signed (bits 22-31), each scaled by 0.25 units.
-        if (pointCount > 1) {
-            float midX = (data.x + data.destX) * 0.5f;
-            float midY = (data.y + data.destY) * 0.5f;
-            float midZ = (data.z + data.destZ) * 0.5f;
-            for (uint32_t i = 0; i < pointCount - 1; i++) {
-                if (!packet.hasRemaining(4)) break;
-                uint32_t packed = packet.readUInt32();
-                // Sign-extend 11-bit x and y, 10-bit z (2's complement)
-                int32_t sx = static_cast<int32_t>(packed & 0x7FF);
-                if (sx & 0x400) sx |= static_cast<int32_t>(0xFFFFF800);
-                int32_t sy = static_cast<int32_t>((packed >> 11) & 0x7FF);
-                if (sy & 0x400) sy |= static_cast<int32_t>(0xFFFFF800);
-                int32_t sz = static_cast<int32_t>((packed >> 22) & 0x3FF);
-                if (sz & 0x200) sz |= static_cast<int32_t>(0xFFFFFC00);
-                MonsterMoveData::Point wp;
-                wp.x = midX - static_cast<float>(sx) * 0.25f;
-                wp.y = midY - static_cast<float>(sy) * 0.25f;
-                wp.z = midZ - static_cast<float>(sz) * 0.25f;
-                data.waypoints.push_back(wp);
-            }
+        data.duration = spline.duration;
+        if (spline.hasDest) {
+            data.destX = spline.destination.x;
+            data.destY = spline.destination.y;
+            data.destZ = spline.destination.z;
+            data.hasDest = true;
+        }
+        for (const auto& wp : spline.waypoints) {
+            data.waypoints.push_back({wp.x, wp.y, wp.z});
         }
     }
 
@@ -743,65 +670,22 @@ bool MonsterMoveParser::parseVanilla(network::Packet& packet, MonsterMoveData& d
     if (!packet.hasRemaining(4)) return false;
     data.splineFlags = packet.readUInt32();
 
-    // Animation flag (same bit as WotLK MoveSplineFlag::Animation)
-    if (data.splineFlags & 0x00400000) {
-        if (!packet.hasRemaining(5)) return false;
-        packet.readUInt8();
-        packet.readUInt32();
-    }
-
-    if (!packet.hasRemaining(4)) return false;
-    data.duration = packet.readUInt32();
-
-    // Parabolic flag (same bit as WotLK MoveSplineFlag::Parabolic)
-    if (data.splineFlags & 0x00000800) {
-        if (!packet.hasRemaining(8)) return false;
-        packet.readFloat();
-        packet.readUInt32();
-    }
-
-    if (!packet.hasRemaining(4)) return false;
-    uint32_t pointCount = packet.readUInt32();
-
-    if (pointCount == 0) return true;
-
-    // Reject extreme point counts from malformed packets.
-    constexpr uint32_t kMaxSplinePoints = 1000;
-    if (pointCount > kMaxSplinePoints) {
-        return false;
-    }
-
-    size_t requiredBytes = 12;
-    if (pointCount > 1) {
-        requiredBytes += static_cast<size_t>(pointCount - 1) * 4ull;
-    }
-    if (!packet.hasRemaining(requiredBytes)) return false;
-
-    // First float[3] is destination.
-    data.destX = packet.readFloat();
-    data.destY = packet.readFloat();
-    data.destZ = packet.readFloat();
-    data.hasDest = true;
-
-    // Remaining waypoints are packed as uint32 deltas from midpoint.
-    if (pointCount > 1) {
-        float midX = (data.x + data.destX) * 0.5f;
-        float midY = (data.y + data.destY) * 0.5f;
-        float midZ = (data.z + data.destZ) * 0.5f;
-        for (uint32_t i = 0; i < pointCount - 1; i++) {
-            if (!packet.hasRemaining(4)) break;
-            uint32_t packed = packet.readUInt32();
-            int32_t sx = static_cast<int32_t>(packed & 0x7FF);
-            if (sx & 0x400) sx |= static_cast<int32_t>(0xFFFFF800);
-            int32_t sy = static_cast<int32_t>((packed >> 11) & 0x7FF);
-            if (sy & 0x400) sy |= static_cast<int32_t>(0xFFFFF800);
-            int32_t sz = static_cast<int32_t>((packed >> 22) & 0x3FF);
-            if (sz & 0x200) sz |= static_cast<int32_t>(0xFFFFFC00);
-            MonsterMoveData::Point wp;
-            wp.x = midX - static_cast<float>(sx) * 0.25f;
-            wp.y = midY - static_cast<float>(sy) * 0.25f;
-            wp.z = midZ - static_cast<float>(sz) * 0.25f;
-            data.waypoints.push_back(wp);
+    // Consolidated Vanilla spline body parser (always compressed)
+    {
+        SplineBlockData spline;
+        if (!parseMonsterMoveSplineBodyVanilla(packet, spline, data.splineFlags,
+                                               glm::vec3(data.x, data.y, data.z))) {
+            return false;
+        }
+        data.duration = spline.duration;
+        if (spline.hasDest) {
+            data.destX = spline.destination.x;
+            data.destY = spline.destination.y;
+            data.destZ = spline.destination.z;
+            data.hasDest = true;
+        }
+        for (const auto& wp : spline.waypoints) {
+            data.waypoints.push_back({wp.x, wp.y, wp.z});
         }
     }
 
@@ -814,7 +698,7 @@ bool MonsterMoveParser::parseVanilla(network::Packet& packet, MonsterMoveData& d
 
 
 // ============================================================
-// Phase 2: Combat Core
+// Combat Core
 // ============================================================
 
 bool AttackStartParser::parse(network::Packet& packet, AttackStartData& data) {
@@ -1035,7 +919,7 @@ bool XpGainParser::parse(network::Packet& packet, XpGainData& data) {
 }
 
 // ============================================================
-// Phase 3: Spells, Action Bar, Auras
+// Spells, Action Bar, Auras
 // ============================================================
 
 bool InitialSpellsParser::parse(network::Packet& packet, InitialSpellsData& data,

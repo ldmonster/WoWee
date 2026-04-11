@@ -55,7 +55,7 @@ public:
     // Dependency injection for extracted classes (Phase A singleton breaking)
     void setAppearanceComposer(core::AppearanceComposer* ac) { appearanceComposer_ = ac; }
 
-    // Section 3.5: UIServices injection (Phase B singleton breaking)
+    // UIServices injection (Phase B singleton breaking)
     void setServices(const UIServices& services);
 
 private:

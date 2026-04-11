@@ -73,7 +73,7 @@ public:
     void renderInspectWindow(game::GameHandler& gameHandler,
                              InventoryScreen& inventoryScreen);
 
-    // Section 3.5: UIServices injection (Phase B singleton breaking)
+    // UIServices injection (singleton breaking)
     void setServices(const UIServices& services) { services_ = services; }
 
 private:

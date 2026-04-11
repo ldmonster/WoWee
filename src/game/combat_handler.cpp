@@ -206,14 +206,21 @@ void CombatHandler::startAutoAttack(uint64_t targetGuid) {
         owner_.dismount();
     }
 
-    // Client-side melee range gate to avoid starting "swing forever" loops when
+    // Client-side range gate to avoid starting "swing forever" loops when
     // target is already clearly out of range.
     if (auto target = owner_.getEntityManager().getEntity(targetGuid)) {
         float dx = owner_.movementInfoRef().x - target->getLatestX();
         float dy = owner_.movementInfoRef().y - target->getLatestY();
         float dz = owner_.movementInfoRef().z - target->getLatestZ();
         float dist3d = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (dist3d > 8.0f) {
+        // Use longer range limit when a ranged weapon is equipped
+        const auto& rangedSlot = owner_.getInventory().getEquipSlot(game::EquipSlot::RANGED);
+        bool hasRangedWeapon = !rangedSlot.empty() &&
+            (rangedSlot.item.inventoryType == game::InvType::RANGED_BOW ||
+             rangedSlot.item.inventoryType == game::InvType::RANGED_GUN ||
+             rangedSlot.item.inventoryType == game::InvType::THROWN);
+        float maxRange = hasRangedWeapon ? 40.0f : 8.0f;
+        if (dist3d > maxRange) {
             if (autoAttackRangeWarnCooldown_ <= 0.0f) {
                 owner_.addSystemChatMessage("Target is too far away.");
                 autoAttackRangeWarnCooldown_ = 1.25f;
@@ -443,7 +450,14 @@ void CombatHandler::handleAttackerStateUpdate(network::Packet& packet) {
         lastMeleeSwingMs_ = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count());
-        if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(0);
+        // Skip melee animation if a ranged shot was just triggered from
+        // SMSG_SPELL_GO (Auto Shot / Shoot / Throw).  The ranged animation
+        // is already playing; firing the melee callback here would override it.
+        if (owner_.consumeSuppressMeleeSwingAnim()) {
+            LOG_DEBUG("Suppressed melee swing anim — ranged shot already triggered");
+        } else {
+            if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(0);
+        }
     }
     if (!isPlayerAttacker && owner_.npcSwingCallbackRef()) {
         owner_.npcSwingCallbackRef()(data.attackerGuid);

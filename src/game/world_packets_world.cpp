@@ -321,7 +321,7 @@ bool SpellCooldownParser::parse(network::Packet& packet, SpellCooldownData& data
 }
 
 // ============================================================
-// Phase 4: Group/Party System
+// Group/Party System
 // ============================================================
 
 network::Packet GroupInvitePacket::build(const std::string& playerName) {
@@ -468,7 +468,7 @@ bool GroupDeclineResponseParser::parse(network::Packet& packet, GroupDeclineData
 }
 
 // ============================================================
-// Phase 5: Loot System
+// Loot System
 // ============================================================
 
 network::Packet LootPacket::build(uint64_t targetGuid) {
@@ -624,7 +624,7 @@ bool LootResponseParser::parse(network::Packet& packet, LootResponseData& data, 
 }
 
 // ============================================================
-// Phase 5: NPC Gossip
+// NPC Gossip
 // ============================================================
 
 network::Packet GossipHelloPacket::build(uint64_t npcGuid) {
@@ -1090,7 +1090,7 @@ network::Packet QuestgiverChooseRewardPacket::build(uint64_t npcGuid, uint32_t q
 }
 
 // ============================================================
-// Phase 5: Vendor
+// Vendor
 // ============================================================
 
 network::Packet ListInventoryPacket::build(uint64_t npcGuid) {

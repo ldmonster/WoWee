@@ -1,4 +1,5 @@
 #include "game/packet_parsers.hpp"
+#include "game/spline_packet.hpp"
 #include "core/logger.hpp"
 
 namespace wowee {
@@ -670,46 +671,20 @@ bool TbcPacketParsers::parseMonsterMove(network::Packet& packet, MonsterMoveData
     if (!packet.hasRemaining(4)) return false;
     data.splineFlags = packet.readUInt32();
 
-    // TBC 2.4.3 SplineFlags animation bit is same as WotLK: 0x00400000
-    if (data.splineFlags & 0x00400000) {
-        if (!packet.hasRemaining(5)) return false;
-        packet.readUInt8();  // animationType
-        packet.readUInt32(); // effectStartTime
-    }
-
-    if (!packet.hasRemaining(4)) return false;
-    data.duration = packet.readUInt32();
-
-    if (data.splineFlags & 0x00000800) {
-        if (!packet.hasRemaining(8)) return false;
-        packet.readFloat();  // verticalAcceleration
-        packet.readUInt32(); // effectStartTime
-    }
-
-    if (!packet.hasRemaining(4)) return false;
-    uint32_t pointCount = packet.readUInt32();
-    if (pointCount == 0) return true;
-    if (pointCount > 16384) return false;
-
-    // Spline points are stored uncompressed when Catmull-Rom interpolation (0x80000)
-    // or linear movement (0x2000) flags are set; otherwise they use packed delta format
-    bool uncompressed = (data.splineFlags & (0x00080000 | 0x00002000)) != 0;
-    if (uncompressed) {
-        for (uint32_t i = 0; i < pointCount - 1; i++) {
-            if (!packet.hasRemaining(12)) return true;
-            packet.readFloat(); packet.readFloat(); packet.readFloat();
+    // Consolidated spline body parser (TBC uses different uncompressed mask)
+    {
+        SplineBlockData spline;
+        if (!parseMonsterMoveSplineBody(packet, spline, data.splineFlags,
+                                        glm::vec3(data.x, data.y, data.z), true)) {
+            return false;
         }
-        if (!packet.hasRemaining(12)) return true;
-        data.destX = packet.readFloat();
-        data.destY = packet.readFloat();
-        data.destZ = packet.readFloat();
-        data.hasDest = true;
-    } else {
-        if (!packet.hasRemaining(12)) return true;
-        data.destX = packet.readFloat();
-        data.destY = packet.readFloat();
-        data.destZ = packet.readFloat();
-        data.hasDest = true;
+        data.duration = spline.duration;
+        if (spline.hasDest) {
+            data.destX = spline.destination.x;
+            data.destY = spline.destination.y;
+            data.destZ = spline.destination.z;
+            data.hasDest = true;
+        }
     }
 
     LOG_DEBUG("[TBC] MonsterMove: guid=0x", std::hex, data.guid, std::dec,

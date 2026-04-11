@@ -73,17 +73,24 @@ EntityController::EntityController(GameHandler& owner)
     : owner_(owner) { initTypeHandlers(); }
 
 void EntityController::registerOpcodes(DispatchTable& table) {
-    // World object updates
-    table[Opcode::SMSG_UPDATE_OBJECT] = [this](network::Packet& packet) {
+    // World object updates — accept during ENTERING_WORLD too so that entity
+    // packets arriving before SMSG_LOGIN_VERIFY_WORLD are parsed and queued
+    // rather than silently dropped (the budget system processes them later once
+    // the state transitions to IN_WORLD).
+    auto inWorldOrEntering = [this]() {
+        auto s = owner_.getState();
+        return s == WorldState::IN_WORLD || s == WorldState::ENTERING_WORLD;
+    };
+    table[Opcode::SMSG_UPDATE_OBJECT] = [this, inWorldOrEntering](network::Packet& packet) {
         LOG_DEBUG("Received SMSG_UPDATE_OBJECT, state=", static_cast<int>(owner_.getState()), " size=", packet.getSize());
-        if (owner_.getState() == WorldState::IN_WORLD) handleUpdateObject(packet);
+        if (inWorldOrEntering()) handleUpdateObject(packet);
     };
-    table[Opcode::SMSG_COMPRESSED_UPDATE_OBJECT] = [this](network::Packet& packet) {
+    table[Opcode::SMSG_COMPRESSED_UPDATE_OBJECT] = [this, inWorldOrEntering](network::Packet& packet) {
         LOG_DEBUG("Received SMSG_COMPRESSED_UPDATE_OBJECT, state=", static_cast<int>(owner_.getState()), " size=", packet.getSize());
-        if (owner_.getState() == WorldState::IN_WORLD) handleCompressedUpdateObject(packet);
+        if (inWorldOrEntering()) handleCompressedUpdateObject(packet);
     };
-    table[Opcode::SMSG_DESTROY_OBJECT] = [this](network::Packet& packet) {
-        if (owner_.getState() == WorldState::IN_WORLD) handleDestroyObject(packet);
+    table[Opcode::SMSG_DESTROY_OBJECT] = [this, inWorldOrEntering](network::Packet& packet) {
+        if (inWorldOrEntering()) handleDestroyObject(packet);
     };
 
     // Entity queries

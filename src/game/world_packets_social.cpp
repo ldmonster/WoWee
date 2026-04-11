@@ -376,7 +376,7 @@ bool ChannelNotifyParser::parse(network::Packet& packet, ChannelNotifyData& data
 }
 
 // ============================================================
-// Phase 1: Foundation — Targeting, Name Queries
+// Foundation — Targeting, Name Queries
 // ============================================================
 
 network::Packet SetSelectionPacket::build(uint64_t targetGuid) {

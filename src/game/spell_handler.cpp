@@ -1025,8 +1025,16 @@ void SpellHandler::handleSpellGo(network::Packet& packet) {
         if (!owner_.isProfessionSpell(data.spellId))
             playSpellCastSound(data.spellId);
 
-        // Instant melee abilities → trigger attack animation
+        // Ranged auto-attack spells (Auto Shot, Shoot, Throw) complete as timed
+        // casts and are NOT classified as instant melee abilities, so trigger the
+        // ranged shot animation explicitly here.
         uint32_t sid = data.spellId;
+        if (sid == 75 || sid == 5019 || sid == 2764) {
+            if (owner_.meleeSwingCallbackRef()) owner_.meleeSwingCallbackRef()(sid);
+            owner_.suppressNextMeleeSwingAnim();
+        }
+
+        // Instant melee abilities → trigger attack animation
         bool isMeleeAbility = false;
         if (!owner_.isProfessionSpell(sid)) {
             owner_.loadSpellNameCache();

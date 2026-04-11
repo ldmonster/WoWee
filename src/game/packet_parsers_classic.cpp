@@ -1,4 +1,5 @@
 #include "game/packet_parsers.hpp"
+#include "game/spline_packet.hpp"
 #include "core/logger.hpp"
 #include <cstdio>
 #include <functional>
@@ -258,45 +259,8 @@ bool ClassicPacketParsers::parseMovementBlock(network::Packet& packet, UpdateBlo
 
         // Spline data (Classic: SPLINE_ENABLED=0x00400000)
         if (moveFlags & ClassicMoveFlags::SPLINE_ENABLED) {
-            if (rem() < 4) return false;
-            uint32_t splineFlags = packet.readUInt32();
-            LOG_DEBUG("  [Classic] Spline: flags=0x", std::hex, splineFlags, std::dec);
-
-            if (splineFlags & 0x00010000) { // FINAL_POINT
-                if (rem() < 12) return false;
-                /*float finalX =*/ packet.readFloat();
-                /*float finalY =*/ packet.readFloat();
-                /*float finalZ =*/ packet.readFloat();
-            } else if (splineFlags & 0x00020000) { // FINAL_TARGET
-                if (rem() < 8) return false;
-                /*uint64_t finalTarget =*/ packet.readUInt64();
-            } else if (splineFlags & 0x00040000) { // FINAL_ANGLE
-                if (rem() < 4) return false;
-                /*float finalAngle =*/ packet.readFloat();
-            }
-
-            // Classic spline: timePassed, duration, id, pointCount
-            if (rem() < 16) return false;
-            /*uint32_t timePassed =*/ packet.readUInt32();
-            /*uint32_t duration =*/ packet.readUInt32();
-            /*uint32_t splineId =*/ packet.readUInt32();
-
-            uint32_t pointCount = packet.readUInt32();
-            // Cap waypoints to prevent DoS from malformed packets allocating huge arrays
-            if (pointCount > 256) return false;
-
-            // points + endPoint (no splineMode in Classic)
-            if (rem() < static_cast<size_t>(pointCount) * 12 + 12) return false;
-            for (uint32_t i = 0; i < pointCount; i++) {
-                /*float px =*/ packet.readFloat();
-                /*float py =*/ packet.readFloat();
-                /*float pz =*/ packet.readFloat();
-            }
-
-            // Classic: NO splineMode byte
-            /*float endPointX =*/ packet.readFloat();
-            /*float endPointY =*/ packet.readFloat();
-            /*float endPointZ =*/ packet.readFloat();
+            SplineBlockData splineData;
+            if (!parseClassicMoveUpdateSpline(packet, splineData)) return false;
         }
     }
     else if (updateFlags & UPDATEFLAG_HAS_POSITION) {
@@ -2004,45 +1968,8 @@ bool TurtlePacketParsers::parseMovementBlock(network::Packet& packet, UpdateBloc
         bool hasSpline = (moveFlags & TurtleMoveFlags::SPLINE_CLASSIC) ||
                          (moveFlags & TurtleMoveFlags::SPLINE_TBC);
         if (hasSpline) {
-            if (rem() < 4) return false;
-            uint32_t splineFlags = packet.readUInt32();
-            LOG_DEBUG("  [Turtle] Spline: flags=0x", std::hex, splineFlags, std::dec);
-
-            if (splineFlags & 0x00010000) {
-                if (rem() < 12) return false;
-                packet.readFloat(); packet.readFloat(); packet.readFloat();
-            } else if (splineFlags & 0x00020000) {
-                if (rem() < 8) return false;
-                packet.readUInt64();
-            } else if (splineFlags & 0x00040000) {
-                if (rem() < 4) return false;
-                packet.readFloat();
-            }
-
-            // timePassed + duration + splineId + pointCount = 16 bytes
-            if (rem() < 16) return false;
-            /*uint32_t timePassed =*/ packet.readUInt32();
-            /*uint32_t duration =*/ packet.readUInt32();
-            /*uint32_t splineId =*/ packet.readUInt32();
-
-            uint32_t pointCount = packet.readUInt32();
-            if (pointCount > 256) {
-                static uint32_t badTurtleSplineCount = 0;
-                ++badTurtleSplineCount;
-                if (badTurtleSplineCount <= 5 || (badTurtleSplineCount % 100) == 0) {
-                    LOG_WARNING("  [Turtle] Spline pointCount=", pointCount,
-                                " exceeds max (occurrence=", badTurtleSplineCount, ")");
-                }
-                return false;
-            }
-            // points + endPoint
-            if (rem() < static_cast<size_t>(pointCount) * 12 + 12) return false;
-            for (uint32_t i = 0; i < pointCount; i++) {
-                packet.readFloat(); packet.readFloat(); packet.readFloat();
-            }
-
-            // End point
-            packet.readFloat(); packet.readFloat(); packet.readFloat();
+            SplineBlockData splineData;
+            if (!parseClassicMoveUpdateSpline(packet, splineData)) return false;
         }
 
         LOG_DEBUG("  [Turtle] LIVING block consumed ", packet.getReadPos() - livingStart,

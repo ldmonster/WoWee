@@ -136,6 +136,7 @@ void EntitySpawner::resetAllState() {
 
     // Clear display/spawn caches
     nonRenderableCreatureDisplayIds_.clear();
+    displayIdModelCache_.clear();
     displayIdTexturesApplied_.clear();
     charSectionsCache_.clear();
     charSectionsCacheBuilt_ = false;

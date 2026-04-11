@@ -980,13 +980,22 @@ void Application::setState(AppState newState) {
                     if (renderer) {
                         // Ranged auto-attack spells: Auto Shot (75), Shoot (5019), Throw (2764)
                         if (spellId == 75 || spellId == 5019 || spellId == 2764) {
+                            if (appearanceComposer_ && !appearanceComposer_->isShowingRanged())
+                                appearanceComposer_->showRangedWeapon(true);
                             if (auto* ac = renderer->getAnimationController()) ac->triggerRangedShot();
                         } else if (spellId != 0) {
+                            if (appearanceComposer_ && appearanceComposer_->isShowingRanged())
+                                appearanceComposer_->showRangedWeapon(false);
                             if (auto* ac = renderer->getAnimationController()) ac->triggerSpecialAttack(spellId);
                         } else {
+                            if (appearanceComposer_ && appearanceComposer_->isShowingRanged())
+                                appearanceComposer_->showRangedWeapon(false);
                             if (auto* ac = renderer->getAnimationController()) ac->triggerMeleeSwing();
                         }
                     }
+                });
+                gameHandler->setRangedWeaponSwapCallback([this](bool show) {
+                    if (appearanceComposer_) appearanceComposer_->showRangedWeapon(show);
                 });
                 gameHandler->setKnockBackCallback([this](float vcos, float vsin, float hspeed, float vspeed) {
                     if (renderer && renderer->getCameraController()) {
@@ -1215,6 +1224,10 @@ void Application::update(float deltaTime) {
                 if (autoAttacking && !wasAutoAttacking_ && appearanceComposer_ && appearanceComposer_->isWeaponsSheathed()) {
                     appearanceComposer_->setWeaponsSheathed(false);
                     appearanceComposer_->loadEquippedWeapons();
+                }
+                // Swap back to melee weapon when auto-attack stops
+                if (!autoAttacking && wasAutoAttacking_ && appearanceComposer_ && appearanceComposer_->isShowingRanged()) {
+                    appearanceComposer_->showRangedWeapon(false);
                 }
                 wasAutoAttacking_ = autoAttacking;
             }

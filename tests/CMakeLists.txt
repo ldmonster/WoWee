@@ -59,6 +59,38 @@ target_link_libraries(test_srp PRIVATE catch2_main OpenSSL::SSL OpenSSL::Crypto)
 add_test(NAME srp COMMAND test_srp)
 register_test_target(test_srp)
 
+# ── test_spline ──────────────────────────────────────────────
+add_executable(test_spline
+    test_spline.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/math/spline.cpp
+)
+target_include_directories(test_spline PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_spline SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_spline PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_spline PRIVATE glm::glm)
+endif()
+add_test(NAME spline COMMAND test_spline)
+register_test_target(test_spline)
+
+# ── test_transport_path_repo ─────────────────────────────────
+add_executable(test_transport_path_repo
+    test_transport_path_repo.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/game/transport_path_repository.cpp
+    ${CMAKE_SOURCE_DIR}/src/math/spline.cpp
+    ${CMAKE_SOURCE_DIR}/src/pipeline/dbc_loader.cpp
+)
+target_include_directories(test_transport_path_repo PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_transport_path_repo SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_transport_path_repo PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_transport_path_repo PRIVATE glm::glm)
+endif()
+add_test(NAME transport_path_repo COMMAND test_transport_path_repo)
+register_test_target(test_transport_path_repo)
+
 # ── test_opcode_table ────────────────────────────────────────
 add_executable(test_opcode_table
     test_opcode_table.cpp
@@ -76,10 +108,14 @@ add_executable(test_entity
     test_entity.cpp
     ${TEST_COMMON_SOURCES}
     ${CMAKE_SOURCE_DIR}/src/game/entity.cpp
+    ${CMAKE_SOURCE_DIR}/src/math/spline.cpp
 )
 target_include_directories(test_entity PRIVATE ${TEST_INCLUDE_DIRS})
 target_include_directories(test_entity SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
 target_link_libraries(test_entity PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_entity PRIVATE glm::glm)
+endif()
 add_test(NAME entity COMMAND test_entity)
 register_test_target(test_entity)
 
@@ -209,6 +245,23 @@ if(TARGET glm::glm)
 endif()
 add_test(NAME indoor_shadows COMMAND test_indoor_shadows)
 register_test_target(test_indoor_shadows)
+
+# ── test_transport_components ────────────────────────────────
+add_executable(test_transport_components
+    test_transport_components.cpp
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/game/transport_clock_sync.cpp
+    ${CMAKE_SOURCE_DIR}/src/game/transport_animator.cpp
+    ${CMAKE_SOURCE_DIR}/src/math/spline.cpp
+)
+target_include_directories(test_transport_components PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_transport_components SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_transport_components PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_transport_components PRIVATE glm::glm)
+endif()
+add_test(NAME transport_components COMMAND test_transport_components)
+register_test_target(test_transport_components)
 
 # ── ASAN / UBSan for test targets ────────────────────────────
 if(WOWEE_ENABLE_ASAN AND NOT MSVC)

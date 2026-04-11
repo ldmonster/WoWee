@@ -324,6 +324,7 @@ bool AppearanceComposer::loadWeaponM2(const std::string& m2Path, pipeline::M2Mod
 }
 
 void AppearanceComposer::loadEquippedWeapons() {
+    showingRanged_ = false;
     if (!renderer_ || !renderer_->getCharacterRenderer() || !assetManager_ || !assetManager_->isInitialized())
         return;
     if (!gameHandler_) return;
@@ -354,8 +355,11 @@ void AppearanceComposer::loadEquippedWeapons() {
         for (const auto& ws : weaponSlots) {
             charRenderer->detachWeapon(charInstanceId, ws.attachmentId);
         }
+        charRenderer->detachWeapon(charInstanceId, 1); // ranged may also use right hand
         return;
     }
+
+    bool rightHandFilled = false;
 
     for (const auto& ws : weaponSlots) {
         const auto& equipSlot = inventory.getEquipSlot(ws.slot);
@@ -421,7 +425,122 @@ void AppearanceComposer::loadEquippedWeapons() {
                                               weaponModel, weaponModelId, texturePath);
         if (ok) {
             LOG_INFO("Equipped weapon: ", m2Path, " at attachment ", ws.attachmentId);
+            if (ws.attachmentId == 1) rightHandFilled = true;
         }
+    }
+
+    // --- RANGED slot (bow, gun, crossbow, thrown) ---
+    // Show ranged weapon in right hand when main hand is empty.
+    const auto& rangedSlot = inventory.getEquipSlot(game::EquipSlot::RANGED);
+    if (!rightHandFilled && !rangedSlot.empty() && rangedSlot.item.displayInfoId != 0) {
+        uint32_t displayInfoId = rangedSlot.item.displayInfoId;
+        int32_t recIdx = displayInfoDbc->findRecordById(displayInfoId);
+        if (recIdx >= 0) {
+            const auto* idiL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("ItemDisplayInfo") : nullptr;
+            std::string modelName = displayInfoDbc->getString(static_cast<uint32_t>(recIdx), idiL ? (*idiL)["LeftModel"] : 1);
+            std::string textureName = displayInfoDbc->getString(static_cast<uint32_t>(recIdx), idiL ? (*idiL)["LeftModelTexture"] : 3);
+
+            if (!modelName.empty()) {
+                std::string modelFile = modelName;
+                {
+                    size_t dotPos = modelFile.rfind('.');
+                    if (dotPos != std::string::npos) {
+                        modelFile = modelFile.substr(0, dotPos) + ".m2";
+                    } else {
+                        modelFile += ".m2";
+                    }
+                }
+
+                std::string m2Path = "Item\\ObjectComponents\\Weapon\\" + modelFile;
+                pipeline::M2Model weaponModel;
+                if (!loadWeaponM2(m2Path, weaponModel)) {
+                    m2Path = "Item\\ObjectComponents\\Shield\\" + modelFile;
+                    loadWeaponM2(m2Path, weaponModel);
+                }
+
+                if (weaponModel.vertices.size() > 0) {
+                    std::string texturePath;
+                    if (!textureName.empty()) {
+                        texturePath = "Item\\ObjectComponents\\Weapon\\" + textureName + ".blp";
+                        if (!assetManager_->fileExists(texturePath)) {
+                            texturePath = "Item\\ObjectComponents\\Shield\\" + textureName + ".blp";
+                        }
+                    }
+
+                    uint32_t weaponModelId = entitySpawner_->allocateWeaponModelId();
+                    bool ok = charRenderer->attachWeapon(charInstanceId, 1,
+                                                          weaponModel, weaponModelId, texturePath);
+                    if (ok) {
+                        LOG_INFO("Equipped ranged weapon: ", m2Path, " at attachment 1 (right hand)");
+                    }
+                }
+            }
+        }
+    }
+}
+
+void AppearanceComposer::showRangedWeapon(bool show) {
+    if (show == showingRanged_) return;
+    showingRanged_ = show;
+
+    if (!renderer_ || !renderer_->getCharacterRenderer() || !gameHandler_ || !assetManager_ || !assetManager_->isInitialized())
+        return;
+
+    auto* charRenderer = renderer_->getCharacterRenderer();
+    uint32_t charInstanceId = renderer_->getCharacterInstanceId();
+    if (charInstanceId == 0) return;
+
+    if (!show) {
+        // Swap back to normal melee weapons
+        loadEquippedWeapons();
+        return;
+    }
+
+    auto& inventory = gameHandler_->getInventory();
+    const auto& rangedSlot = inventory.getEquipSlot(game::EquipSlot::RANGED);
+    if (rangedSlot.empty() || rangedSlot.item.displayInfoId == 0) return;
+
+    auto displayInfoDbc = assetManager_->loadDBC("ItemDisplayInfo.dbc");
+    if (!displayInfoDbc) return;
+
+    uint32_t displayInfoId = rangedSlot.item.displayInfoId;
+    int32_t recIdx = displayInfoDbc->findRecordById(displayInfoId);
+    if (recIdx < 0) return;
+
+    const auto* idiL = pipeline::getActiveDBCLayout() ? pipeline::getActiveDBCLayout()->getLayout("ItemDisplayInfo") : nullptr;
+    std::string modelName = displayInfoDbc->getString(static_cast<uint32_t>(recIdx), idiL ? (*idiL)["LeftModel"] : 1);
+    std::string textureName = displayInfoDbc->getString(static_cast<uint32_t>(recIdx), idiL ? (*idiL)["LeftModelTexture"] : 3);
+    if (modelName.empty()) return;
+
+    std::string modelFile = modelName;
+    {
+        size_t dotPos = modelFile.rfind('.');
+        if (dotPos != std::string::npos)
+            modelFile = modelFile.substr(0, dotPos) + ".m2";
+        else
+            modelFile += ".m2";
+    }
+
+    std::string m2Path = "Item\\ObjectComponents\\Weapon\\" + modelFile;
+    pipeline::M2Model weaponModel;
+    if (!loadWeaponM2(m2Path, weaponModel)) {
+        m2Path = "Item\\ObjectComponents\\Shield\\" + modelFile;
+        if (!loadWeaponM2(m2Path, weaponModel)) return;
+    }
+
+    std::string texturePath;
+    if (!textureName.empty()) {
+        texturePath = "Item\\ObjectComponents\\Weapon\\" + textureName + ".blp";
+        if (!assetManager_->fileExists(texturePath))
+            texturePath = "Item\\ObjectComponents\\Shield\\" + textureName + ".blp";
+    }
+
+    // Detach current right-hand weapon and attach ranged weapon
+    charRenderer->detachWeapon(charInstanceId, 1);
+    uint32_t weaponModelId = entitySpawner_->allocateWeaponModelId();
+    bool ok = charRenderer->attachWeapon(charInstanceId, 1, weaponModel, weaponModelId, texturePath);
+    if (ok) {
+        LOG_INFO("Swapped to ranged weapon: ", m2Path, " at attachment 1 (right hand)");
     }
 }
 

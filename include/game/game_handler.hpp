@@ -199,7 +199,7 @@ public:
     using CharCreateCallback = std::function<void(bool success, const std::string& message)>;
     void setCharCreateCallback(CharCreateCallback cb) { charCreateCallback_ = std::move(cb); }
 
-    using CharDeleteCallback = std::function<void(bool success)>;
+    using CharDeleteCallback = std::function<void(bool success, const std::string& message)>;
     void setCharDeleteCallback(CharDeleteCallback cb) { charDeleteCallback_ = std::move(cb); }
     uint8_t getLastCharDeleteResult() const { return lastCharDeleteResult_; }
 
@@ -942,6 +942,10 @@ public:
     // spellId: 0 = regular auto-attack swing, non-zero = melee ability (special attack)
     using MeleeSwingCallback = std::function<void(uint32_t spellId)>;
     void setMeleeSwingCallback(MeleeSwingCallback cb) { meleeSwingCallback_ = std::move(cb); }
+
+    // Ranged weapon swap callback — show=true: swap to ranged weapon, false: back to melee
+    using RangedWeaponSwapCallback = std::function<void(bool show)>;
+    void setRangedWeaponSwapCallback(RangedWeaponSwapCallback cb) { rangedWeaponSwapCallback_ = std::move(cb); }
 
     // Spell cast animation callbacks — true=start cast/channel, false=finish/cancel
     // guid: caster (may be player or another unit), isChannel: channel vs regular cast
@@ -2399,6 +2403,13 @@ public:
     auto& knockBackCallbackRef() { return knockBackCallback_; }
     auto& lootWindowCallbackRef() { return lootWindowCallback_; }
     auto& meleeSwingCallbackRef() { return meleeSwingCallback_; }
+    auto& rangedWeaponSwapCallbackRef() { return rangedWeaponSwapCallback_; }
+    void suppressNextMeleeSwingAnim() { suppressMeleeSwingAnim_ = true; }
+    bool consumeSuppressMeleeSwingAnim() {
+        bool v = suppressMeleeSwingAnim_;
+        suppressMeleeSwingAnim_ = false;
+        return v;
+    }
     auto& mountCallbackRef() { return mountCallback_; }
     auto& npcAggroCallbackRef() { return npcAggroCallback_; }
     auto& npcDeathCallbackRef() { return npcDeathCallback_; }
@@ -3336,6 +3347,10 @@ private:
     CharDeleteCallback charDeleteCallback_;
     CharLoginFailCallback charLoginFailCallback_;
     uint8_t lastCharDeleteResult_ = 0xFF;
+    bool pendingCharDeleteResponse_ = false;
+    uint64_t pendingDeleteGuid_ = 0;
+    float pendingDeleteTimer_ = 0.0f;
+    bool pendingDeleteFallbackEnum_ = false;
     bool pendingCharCreateResult_ = false;
     bool pendingCharCreateSuccess_ = false;
     std::string pendingCharCreateMsg_;
@@ -3432,6 +3447,8 @@ private:
     AppearanceChangedCallback appearanceChangedCallback_;
     GhostStateCallback ghostStateCallback_;
     MeleeSwingCallback meleeSwingCallback_;
+    RangedWeaponSwapCallback rangedWeaponSwapCallback_;
+    bool suppressMeleeSwingAnim_ = false;
     // lastMeleeSwingMs_ moved to CombatHandler
     SpellCastAnimCallback spellCastAnimCallback_;
     SpellCastFailedCallback spellCastFailedCallback_;

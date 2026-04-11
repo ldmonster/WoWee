@@ -166,15 +166,10 @@ void UIScreenCallbackHandler::setupCallbacks() {
     });
 
     // Character delete result callback
-    gameHandler_.setCharDeleteCallback([this](bool success) {
+    gameHandler_.setCharDeleteCallback([this](bool success, const std::string& message) {
+        uiManager_.getCharacterScreen().setStatus(message, !success);
         if (success) {
-            uiManager_.getCharacterScreen().setStatus("Character deleted.");
-            // Refresh character list
             gameHandler_.requestCharacterList();
-        } else {
-            uint8_t code = gameHandler_.getLastCharDeleteResult();
-            uiManager_.getCharacterScreen().setStatus(
-                "Delete failed (code " + std::to_string(static_cast<int>(code)) + ").", true);
         }
     });
 }

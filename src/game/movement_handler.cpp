@@ -2,6 +2,7 @@
 #include "game/game_handler.hpp"
 #include "game/game_utils.hpp"
 #include "game/packet_parsers.hpp"
+#include "game/spline_packet.hpp"
 #include "game/transport_manager.hpp"
 #include "game/entity.hpp"
 #include "network/world_socket.hpp"
@@ -1572,52 +1573,17 @@ void MovementHandler::handleMonsterMoveTransport(network::Packet& packet) {
     if (packet.getReadPos() + 4 > packet.getSize()) return;
     uint32_t splineFlags = packet.readUInt32();
 
-    if (splineFlags & 0x00400000) {
-        if (packet.getReadPos() + 5 > packet.getSize()) return;
-        packet.readUInt8(); packet.readUInt32();
+    // Consolidated spline body parser
+    SplineBlockData spline;
+    if (!parseMonsterMoveSplineBody(packet, spline, splineFlags,
+                                    glm::vec3(localX, localY, localZ))) {
+        return;
     }
-
-    if (packet.getReadPos() + 4 > packet.getSize()) return;
-    uint32_t duration = packet.readUInt32();
-
-    if (splineFlags & 0x00000800) {
-        if (packet.getReadPos() + 8 > packet.getSize()) return;
-        packet.readFloat(); packet.readUInt32();
-    }
-
-    if (packet.getReadPos() + 4 > packet.getSize()) return;
-    uint32_t pointCount = packet.readUInt32();
-    constexpr uint32_t kMaxTransportSplinePoints = 1000;
-    if (pointCount > kMaxTransportSplinePoints) {
-        LOG_WARNING("SMSG_MONSTER_MOVE_TRANSPORT: pointCount=", pointCount,
-                    " clamped to ", kMaxTransportSplinePoints);
-        pointCount = kMaxTransportSplinePoints;
-    }
-
-    float destLocalX = localX, destLocalY = localY, destLocalZ = localZ;
-    bool hasDest = false;
-    if (pointCount > 0) {
-        const bool uncompressed = (splineFlags & (0x00080000 | 0x00002000)) != 0;
-        if (uncompressed) {
-            for (uint32_t i = 0; i < pointCount - 1; ++i) {
-                if (packet.getReadPos() + 12 > packet.getSize()) break;
-                packet.readFloat(); packet.readFloat(); packet.readFloat();
-            }
-            if (packet.getReadPos() + 12 <= packet.getSize()) {
-                destLocalX = packet.readFloat();
-                destLocalY = packet.readFloat();
-                destLocalZ = packet.readFloat();
-                hasDest = true;
-            }
-        } else {
-            if (packet.getReadPos() + 12 <= packet.getSize()) {
-                destLocalX = packet.readFloat();
-                destLocalY = packet.readFloat();
-                destLocalZ = packet.readFloat();
-                hasDest = true;
-            }
-        }
-    }
+    uint32_t duration = spline.duration;
+    float destLocalX = spline.hasDest ? spline.destination.x : localX;
+    float destLocalY = spline.hasDest ? spline.destination.y : localY;
+    float destLocalZ = spline.hasDest ? spline.destination.z : localZ;
+    bool hasDest = spline.hasDest;
 
     if (!owner_.getTransportManager()) {
         LOG_WARNING("SMSG_MONSTER_MOVE_TRANSPORT: TransportManager not available for mover 0x",

@@ -343,9 +343,9 @@ void AnimationCallbackHandler::setupCallbacks() {
 
     // Spell cast animation callback — play cast animation on caster (player or NPC/other player)
     // WoW-accurate 3-phase spell animation sequence:
-    //   Phase 1: SPELL_PRECAST (31)              — one-shot wind-up
-    //   Phase 2: READY_SPELL_DIRECTED/OMNI (51/52) — looping hold while cast bar fills
-    //   Phase 3: SPELL_CAST_DIRECTED/OMNI/AREA (53/54/33) — one-shot release at completion
+    //   SPELL_PRECAST (31)              — one-shot wind-up
+    //   READY_SPELL_DIRECTED/OMNI (51/52) — looping hold while cast bar fills
+    //   SPELL_CAST_DIRECTED/OMNI/AREA (53/54/33) — one-shot release at completion
     // Channels use CHANNEL_CAST_DIRECTED/OMNI (124/125) or SPELL_CHANNEL_DIRECTED_OMNI (201).
     // castType comes from the spell packet's targetGuid:
     //   DIRECTED — spell targets a specific unit  (Frostbolt, Heal)
@@ -398,13 +398,13 @@ void AnimationCallbackHandler::setupCallbacks() {
                 return 0;
             };
 
-            // Phase 1: Precast wind-up (one-shot, non-channels only)
+            // Precast wind-up (one-shot, non-channels only)
             uint32_t precastAnim = 0;
             if (!isChannel) {
                 precastAnim = pickFirst({rendering::anim::SPELL_PRECAST});
             }
 
-            // Phase 2: Cast hold (looping while cast bar fills / channel active)
+            // Cast hold (looping while cast bar fills / channel active)
             uint32_t castAnim = 0;
             if (isChannel) {
                 // Channel hold: prefer DIRECTED/OMNI based on spell target classification
@@ -449,7 +449,7 @@ void AnimationCallbackHandler::setupCallbacks() {
             }
             if (castAnim == 0) castAnim = rendering::anim::SPELL;
 
-            // Phase 3: Finalization release (one-shot after cast completes)
+            // Finalization release (one-shot after cast completes)
             // Animation chosen by spell target type: AREA → SPELL_CAST_AREA,
             // DIRECTED → SPELL_CAST_DIRECTED, OMNI → SPELL_CAST_OMNI
             uint32_t finalizeAnim = 0;

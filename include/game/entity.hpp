@@ -8,6 +8,8 @@
 #include <map>
 #include <unordered_map>
 #include <memory>
+#include <optional>
+#include "math/spline.hpp"
 
 namespace wowee {
 namespace game {
@@ -80,31 +82,41 @@ public:
         orientation = o;
         isMoving_ = false; // Instant position set cancels interpolation
         usePathMode_ = false;
+        activeSpline_.reset();
     }
 
-    // Multi-segment path movement
+    // Multi-segment path movement (Catmull-Rom spline interpolation)
     void startMoveAlongPath(const std::vector<std::array<float, 3>>& path, float destO, float totalDuration) {
         if (path.empty()) return;
         if (path.size() == 1 || totalDuration <= 0.0f) {
             startMoveTo(path.back()[0], path.back()[1], path.back()[2], destO, totalDuration);
             return;
         }
-        // Compute cumulative distances for proportional segment timing
-        pathPoints_ = path;
-        pathSegDists_.resize(path.size());
-        pathSegDists_[0] = 0.0f;
+        // Build cumulative distances for proportional time assignment
+        std::vector<float> cumDist(path.size(), 0.0f);
         float totalDist = 0.0f;
         for (size_t i = 1; i < path.size(); i++) {
             float dx = path[i][0] - path[i - 1][0];
             float dy = path[i][1] - path[i - 1][1];
             float dz = path[i][2] - path[i - 1][2];
             totalDist += std::sqrt(dx * dx + dy * dy + dz * dz);
-            pathSegDists_[i] = totalDist;
+            cumDist[i] = totalDist;
         }
         if (totalDist < 0.001f) {
             startMoveTo(path.back()[0], path.back()[1], path.back()[2], destO, totalDuration);
             return;
         }
+        // Build SplineKeys with distance-proportional time
+        uint32_t durationMs = static_cast<uint32_t>(totalDuration * 1000.0f);
+        std::vector<math::SplineKey> keys(path.size());
+        for (size_t i = 0; i < path.size(); i++) {
+            float fraction = cumDist[i] / totalDist;
+            keys[i].timeMs = static_cast<uint32_t>(fraction * durationMs);
+            keys[i].position = {path[i][0], path[i][1], path[i][2]};
+        }
+        activeSpline_.emplace(std::move(keys), /*timeClosed=*/false);
+        splineDurationMs_ = durationMs;
+
         // Snap position if in overrun phase
         if (isMoving_ && moveElapsed_ >= moveDuration_) {
             x = moveEndX_; y = moveEndY_; z = moveEndZ_;
@@ -130,6 +142,7 @@ public:
     // Movement interpolation (syncs entity position with renderer during movement)
     void startMoveTo(float destX, float destY, float destZ, float destO, float durationSec) {
         usePathMode_ = false;
+        activeSpline_.reset();
         if (durationSec <= 0.0f) {
             setPosition(destX, destY, destZ, destO);
             return;
@@ -172,24 +185,14 @@ public:
         if (!isMoving_) return;
         moveElapsed_ += deltaTime;
         if (moveElapsed_ < moveDuration_) {
-            if (usePathMode_ && pathPoints_.size() > 1) {
-                // Multi-segment path interpolation
-                float totalDist = pathSegDists_.back();
-                float t = moveElapsed_ / moveDuration_;
-                float targetDist = t * totalDist;
-                // Find the segment containing targetDist
-                size_t seg = 1;
-                while (seg < pathSegDists_.size() - 1 && pathSegDists_[seg] < targetDist)
-                    seg++;
-                float segStart = pathSegDists_[seg - 1];
-                float segEnd = pathSegDists_[seg];
-                float segLen = segEnd - segStart;
-                float segT = (segLen > 0.001f) ? (targetDist - segStart) / segLen : 0.0f;
-                const auto& p0 = pathPoints_[seg - 1];
-                const auto& p1 = pathPoints_[seg];
-                x = p0[0] + (p1[0] - p0[0]) * segT;
-                y = p0[1] + (p1[1] - p0[1]) * segT;
-                z = p0[2] + (p1[2] - p0[2]) * segT;
+            if (usePathMode_ && activeSpline_) {
+                // Catmull-Rom spline interpolation
+                uint32_t pathTimeMs = static_cast<uint32_t>(moveElapsed_ * 1000.0f);
+                if (pathTimeMs >= splineDurationMs_) pathTimeMs = splineDurationMs_ - 1;
+                glm::vec3 pos = activeSpline_->evaluatePosition(pathTimeMs);
+                x = pos.x;
+                y = pos.y;
+                z = pos.z;
             } else {
                 // Single-segment linear interpolation
                 float t = moveElapsed_ / moveDuration_;
@@ -277,9 +280,9 @@ protected:
     float moveDuration_ = 0;
     float moveElapsed_ = 0;
     float velX_ = 0, velY_ = 0, velZ_ = 0;  // Smoothed velocity for dead reckoning
-    // Multi-segment path data
-    std::vector<std::array<float, 3>> pathPoints_;
-    std::vector<float> pathSegDists_;  // Cumulative distances for each waypoint
+    // CatmullRom spline for multi-segment path movement (replaces linear pathPoints_/pathSegDists_)
+    std::optional<math::CatmullRomSpline> activeSpline_;
+    uint32_t splineDurationMs_ = 0;
 };
 
 /**

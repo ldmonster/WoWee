@@ -71,7 +71,7 @@ public:
     std::unordered_map<uint32_t, uint32_t> macroPrimarySpellCache_;
     size_t macroCacheSpellCount_ = 0;
 
-    // Section 3.5: UIServices injection (Phase B singleton breaking)
+    // UIServices injection (Phase B singleton breaking)
     void setServices(const UIServices& services) { services_ = services; }
 
 private:

@@ -151,10 +151,23 @@ void GameHandler::registerOpcodeHandlers() {
     dispatchTable_[Opcode::SMSG_CHAR_DELETE] = [this](network::Packet& packet) {
         uint8_t result = packet.readUInt8();
         lastCharDeleteResult_ = result;
+        pendingCharDeleteResponse_ = false;
         bool success = (result == 0x00 || result == 0x47);
         LOG_INFO("SMSG_CHAR_DELETE result: ", static_cast<int>(result), success ? " (success)" : " (failed)");
         requestCharacterList();
-        if (charDeleteCallback_) charDeleteCallback_(success);
+        std::string msg;
+        if (success) {
+            msg = "Character deleted.";
+        } else {
+            // Map known CHAR_DELETE_* result codes to user-friendly messages
+            switch (result) {
+                case 0x31: msg = "Delete failed: character is a guild leader. Transfer leadership first."; break;
+                case 0x32: msg = "Delete failed: character is in an arena team."; break;
+                case 0x3A: msg = "Delete failed: character has mail. Check mailbox first."; break;
+                default:   msg = "Delete failed (server error code " + std::to_string(static_cast<int>(result)) + ")."; break;
+            }
+        }
+        if (charDeleteCallback_) charDeleteCallback_(success, msg);
     };
     dispatchTable_[Opcode::SMSG_CHAR_ENUM] = [this](network::Packet& packet) {
         if (state == WorldState::CHAR_LIST_REQUESTED)

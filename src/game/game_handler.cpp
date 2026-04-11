@@ -756,6 +756,43 @@ void GameHandler::update(float deltaTime) {
     updateNetworking(deltaTime);
     if (!socket) return;  // disconnect() may have been called
 
+    // Fallback for CMSG_CHAR_DELETE with no server response: if the server
+    // doesn't send SMSG_CHAR_DELETE within 3 seconds, re-request the character
+    // list.  Some server cores silently process the delete without responding.
+    if (pendingCharDeleteResponse_) {
+        pendingDeleteTimer_ += deltaTime;
+        if (pendingDeleteTimer_ >= 3.0f) {
+            LOG_WARNING("No SMSG_CHAR_DELETE response after 3s — requesting character list to verify");
+            pendingCharDeleteResponse_ = false;
+            pendingDeleteFallbackEnum_ = true;
+            requestCharacterList();
+        }
+    }
+
+    // After the fallback SMSG_CHAR_ENUM has been processed, check if the
+    // character was actually removed and fire the delete callback.
+    if (pendingDeleteFallbackEnum_ && state == WorldState::CHAR_LIST_RECEIVED) {
+        pendingDeleteFallbackEnum_ = false;
+        uint64_t deletedGuid = pendingDeleteGuid_;
+        pendingDeleteGuid_ = 0;
+        bool found = false;
+        for (const auto& ch : characters) {
+            if (ch.guid == deletedGuid) { found = true; break; }
+        }
+        bool deleted = !found;
+        LOG_INFO("Char delete fallback: GUID 0x", std::hex, deletedGuid, std::dec,
+                 deleted ? " was deleted" : " still exists");
+        std::string msg;
+        if (deleted) {
+            msg = "Character deleted.";
+        } else {
+            msg = "Delete failed: the server did not respond. "
+                  "This usually happens if you recently logged out — "
+                  "wait 20-30 seconds and try again.";
+        }
+        if (charDeleteCallback_) charDeleteCallback_(deleted, msg);
+    }
+
     // Validate target still exists
     if (targetGuid != 0 && !entityController_->getEntityManager().hasEntity(targetGuid)) {
         clearTarget();

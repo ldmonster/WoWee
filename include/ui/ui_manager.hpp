@@ -75,7 +75,7 @@ public:
         if (gameScreen) gameScreen->setAppearanceComposer(ac);
     }
 
-    // Section 3.5: UIServices injection (Phase B singleton breaking)
+    // UIServices injection (Phase B singleton breaking)
     void setServices(const UIServices& services) {
         services_ = services;
         if (gameScreen) gameScreen->setServices(services);
@@ -86,7 +86,7 @@ public:
 
 private:
     core::Window* window = nullptr;
-    UIServices services_;  // Section 3.5: Injected services
+    UIServices services_;  // Injected services
 
     // UI Screens
     std::unique_ptr<AuthScreen> authScreen;

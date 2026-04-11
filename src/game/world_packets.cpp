@@ -1,5 +1,6 @@
 #include "game/world_packets.hpp"
 #include "game/packet_parsers.hpp"
+#include "game/spline_packet.hpp"
 #include "game/opcodes.hpp"
 #include "game/character.hpp"
 #include "auth/crypto.hpp"
@@ -959,141 +960,10 @@ bool UpdateObjectParser::parseMovementBlock(network::Packet& packet, UpdateBlock
 
         // Spline data
         if (moveFlags & 0x08000000) { // MOVEMENTFLAG_SPLINE_ENABLED
-            auto bytesAvailable = [&](size_t n) -> bool { return packet.hasRemaining(n); };
-            if (!bytesAvailable(4)) return false;
-            uint32_t splineFlags = packet.readUInt32();
-            LOG_DEBUG("  Spline: flags=0x", std::hex, splineFlags, std::dec);
-
-            if (splineFlags & 0x00010000) { // SPLINEFLAG_FINAL_POINT
-                if (!bytesAvailable(12)) return false;
-                /*float finalX =*/ packet.readFloat();
-                /*float finalY =*/ packet.readFloat();
-                /*float finalZ =*/ packet.readFloat();
-            } else if (splineFlags & 0x00020000) { // SPLINEFLAG_FINAL_TARGET
-                if (!bytesAvailable(8)) return false;
-                /*uint64_t finalTarget =*/ packet.readUInt64();
-            } else if (splineFlags & 0x00040000) { // SPLINEFLAG_FINAL_ANGLE
-                if (!bytesAvailable(4)) return false;
-                /*float finalAngle =*/ packet.readFloat();
-            }
-
-            // WotLK spline data layout:
-            //   timePassed(4)+duration(4)+splineId(4)+durationMod(4)+durationModNext(4)
-            //   +[ANIMATION(5)]+verticalAccel(4)+effectStartTime(4)+pointCount(4)+points+mode(1)+endPoint(12)
-            if (!bytesAvailable(12)) return false;
-            /*uint32_t timePassed =*/ packet.readUInt32();
-            /*uint32_t duration =*/ packet.readUInt32();
-            /*uint32_t splineId =*/ packet.readUInt32();
-
-            // Helper: parse spline points + splineMode + endPoint.
-            // WotLK uses compressed points by default (first=12 bytes, rest=4 bytes packed).
-            auto tryParseSplinePoints = [&](bool compressed, const char* tag) -> bool {
-                if (!bytesAvailable(4)) return false;
-                size_t prePointCount = packet.getReadPos();
-                uint32_t pc = packet.readUInt32();
-                if (pc > 256) return false;
-                size_t pointsBytes;
-                if (compressed && pc > 0) {
-                    // First point = 3 floats (12 bytes), rest = packed uint32 (4 bytes each)
-                    pointsBytes = 12ull + (pc > 1 ? static_cast<size_t>(pc - 1) * 4ull : 0ull);
-                } else {
-                    // All uncompressed: 3 floats each
-                    pointsBytes = static_cast<size_t>(pc) * 12ull;
-                }
-                size_t needed = pointsBytes + 13ull; // + splineMode(1) + endPoint(12)
-                if (!bytesAvailable(needed)) {
-                    packet.setReadPos(prePointCount);
-                    return false;
-                }
-                packet.setReadPos(packet.getReadPos() + pointsBytes);
-                uint8_t splineMode = packet.readUInt8();
-                if (splineMode > 3) {
-                    packet.setReadPos(prePointCount);
-                    return false;
-                }
-                float epX = packet.readFloat();
-                float epY = packet.readFloat();
-                float epZ = packet.readFloat();
-                // Validate endPoint: garbage bytes rarely produce finite world coords
-                if (!std::isfinite(epX) || !std::isfinite(epY) || !std::isfinite(epZ) ||
-                    std::fabs(epX) > 65000.0f || std::fabs(epY) > 65000.0f ||
-                    std::fabs(epZ) > 65000.0f) {
-                    packet.setReadPos(prePointCount);
-                    return false;
-                }
-                LOG_DEBUG("  Spline pointCount=", pc, " compressed=", compressed,
-                          " endPt=(", epX, ",", epY, ",", epZ, ") (", tag, ")");
-                return true;
-            };
-
-            // Save position before WotLK spline header for fallback
-            size_t beforeSplineHeader = packet.getReadPos();
-
-            // Try 1: WotLK format (durationMod+durationModNext+[ANIMATION]+vertAccel+effectStart+points)
-            bool splineParsed = false;
-            if (bytesAvailable(8)) {
-                /*float durationMod =*/ packet.readFloat();
-                /*float durationModNext =*/ packet.readFloat();
-                bool wotlkOk = true;
-                if (splineFlags & 0x00400000) { // SPLINEFLAG_ANIMATION
-                    if (!bytesAvailable(5)) { wotlkOk = false; }
-                    else { packet.readUInt8(); packet.readUInt32(); }
-                }
-                // AzerothCore/ChromieCraft always writes verticalAcceleration(float)
-                // + effectStartTime(uint32) unconditionally -- NOT gated by PARABOLIC flag.
-                if (wotlkOk) {
-                    if (!bytesAvailable(8)) { wotlkOk = false; }
-                    else { /*float vertAccel =*/ packet.readFloat(); /*uint32_t effectStart =*/ packet.readUInt32(); }
-                }
-                if (wotlkOk) {
-                    // WotLK: compressed unless CYCLIC(0x80000) or ENTER_CYCLE(0x2000) set
-                    bool useCompressed = (splineFlags & (0x00080000 | 0x00002000)) == 0;
-                    splineParsed = tryParseSplinePoints(useCompressed, "wotlk-compressed");
-                    if (!splineParsed) {
-                        splineParsed = tryParseSplinePoints(false, "wotlk-uncompressed");
-                    }
-                }
-            }
-
-            if (!splineParsed) {
-                // WotLK compressed+uncompressed both failed. Try without the parabolic
-                // fields (some cores don't send vertAccel+effectStart unconditionally).
-                packet.setReadPos(beforeSplineHeader);
-                if (bytesAvailable(8)) {
-                    packet.readFloat(); // durationMod
-                    packet.readFloat(); // durationModNext
-                    // Skip parabolic fields — try points directly
-                    splineParsed = tryParseSplinePoints(false, "wotlk-no-parabolic");
-                    if (!splineParsed) {
-                        bool useComp = (splineFlags & (0x00080000 | 0x00002000)) == 0;
-                        splineParsed = tryParseSplinePoints(useComp, "wotlk-no-parabolic-compressed");
-                    }
-                }
-            }
-
-            // Try 3: bare points (no WotLK header at all — some spline types skip everything)
-            if (!splineParsed) {
-                packet.setReadPos(beforeSplineHeader);
-                splineParsed = tryParseSplinePoints(false, "bare-uncompressed");
-                if (!splineParsed) {
-                    packet.setReadPos(beforeSplineHeader);
-                    bool useComp = (splineFlags & (0x00080000 | 0x00002000)) == 0;
-                    splineParsed = tryParseSplinePoints(useComp, "bare-compressed");
-                }
-            }
-
-            if (!splineParsed) {
-                // Dump first 5 uint32s at beforeSplineHeader for format diagnosis
-                packet.setReadPos(beforeSplineHeader);
-                uint32_t d[5] = {};
-                for (int di = 0; di < 5 && packet.hasRemaining(4); ++di)
-                    d[di] = packet.readUInt32();
-                packet.setReadPos(beforeSplineHeader);
-                LOG_WARNING("WotLK spline parse failed for guid=0x", std::hex, block.guid, std::dec,
-                            " splineFlags=0x", splineFlags,
-                            " remaining=", std::dec, packet.getRemainingSize(),
-                            " header=[0x", std::hex, d[0], " 0x", d[1], " 0x", d[2],
-                            " 0x", d[3], " 0x", d[4], "]", std::dec);
+            SplineBlockData splineData;
+            glm::vec3 entityPos(block.x, block.y, block.z);
+            if (!parseWotlkMoveUpdateSpline(packet, splineData, entityPos)) {
+                LOG_WARNING("WotLK spline parse failed for guid=0x", std::hex, block.guid, std::dec);
                 return false;
             }
         }
@@ -1424,10 +1294,12 @@ bool UpdateObjectParser::parse(network::Packet& packet, UpdateObjectData& data) 
         UpdateBlock block;
         if (!parseUpdateBlock(packet, block)) {
             static int parseBlockErrors = 0;
-            if (++parseBlockErrors <= 5) {
+            const uint32_t lostBlocks = data.blockCount - i;
+            if (++parseBlockErrors <= 10) {
                 LOG_ERROR("Failed to parse update block ", i + 1, " of ", data.blockCount,
-                          " (", i, " blocks parsed successfully before failure)");
-                if (parseBlockErrors == 5)
+                          " (", i, " blocks parsed, ", lostBlocks, " blocks LOST",
+                          ", remaining=", packet.getRemainingSize(), " bytes)");
+                if (parseBlockErrors == 10)
                     LOG_ERROR("(suppressing further update block parse errors)");
             }
             // Cannot reliably re-sync to the next block after a parse failure,

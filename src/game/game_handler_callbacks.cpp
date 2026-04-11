@@ -342,13 +342,16 @@ void GameHandler::handleCharCreateResponse(network::Packet& packet) {
 
 void GameHandler::deleteCharacter(uint64_t characterGuid) {
     if (!socket) {
-        if (charDeleteCallback_) charDeleteCallback_(false);
+        if (charDeleteCallback_) charDeleteCallback_(false, "Delete failed: not connected to server.");
         return;
     }
 
     network::Packet packet(wireOpcode(Opcode::CMSG_CHAR_DELETE));
     packet.writeUInt64(characterGuid);
     socket->send(packet);
+    pendingCharDeleteResponse_ = true;
+    pendingDeleteGuid_ = characterGuid;
+    pendingDeleteTimer_ = 0.0f;
     LOG_INFO("CMSG_CHAR_DELETE sent for GUID: 0x", std::hex, characterGuid, std::dec);
 }
 

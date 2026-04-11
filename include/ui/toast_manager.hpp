@@ -41,7 +41,7 @@ public:
     /// Fire achievement earned toast + sound
     void triggerAchievementToast(uint32_t achievementId, std::string name = {});
 
-    // Section 3.5: UIServices injection (Phase B singleton breaking)
+    // UIServices injection (Phase B singleton breaking)
     void setServices(const UIServices& services) { services_ = services; }
 
     // --- public state consumed by GameScreen for the golden burst overlay ---
@@ -49,7 +49,7 @@ public:
     uint32_t levelUpDisplayLevel = 0;
 
 private:
-    // Section 3.5: Injected UI services
+    // Injected UI services
     UIServices services_;
 
     // ---- Ding effect (own level-up) ----

@@ -72,7 +72,7 @@ public:
     void renderThreatWindow(game::GameHandler& gameHandler);
     void renderBgScoreboard(game::GameHandler& gameHandler);
 
-    // Section 3.5: UIServices injection (Phase B singleton breaking)
+    // UIServices injection (Phase B singleton breaking)
     void setServices(const UIServices& services) { services_ = services; }
 
 private:

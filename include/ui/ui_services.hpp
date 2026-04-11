@@ -23,7 +23,7 @@ namespace ui {
 /**
  * UI Services - Dependency injection container for UI components.
  * 
- * Section 3.5: Break the singleton Phase B
+ * Break the singleton Phase B
  * 
  * Replaces Application::getInstance() calls throughout UI code.
  * Application creates this struct and injects it into UIManager,

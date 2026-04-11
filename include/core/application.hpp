@@ -113,7 +113,7 @@ public:
     // World loader access
     WorldLoader* getWorldLoader() { return worldLoader_.get(); }
 
-    // Audio coordinator access (Section 4.1: extracted audio subsystem)
+    // Audio coordinator access
     audio::AudioCoordinator* getAudioCoordinator() { return audioCoordinator_.get(); }
 
 private:

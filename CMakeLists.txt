@@ -504,6 +504,9 @@ set(WOWEE_SOURCES
     src/core/logger.cpp
     src/core/memory_monitor.cpp
 
+    # Math
+    src/math/spline.cpp
+
     # Network
     src/network/socket.cpp
     src/network/packet.cpp
@@ -543,6 +546,9 @@ set(WOWEE_SOURCES
     src/game/warden_emulator.cpp
     src/game/warden_memory.cpp
     src/game/transport_manager.cpp
+    src/game/transport_path_repository.cpp
+    src/game/transport_clock_sync.cpp
+    src/game/transport_animator.cpp
     src/game/world.cpp
     src/game/player.cpp
     src/game/entity.cpp
@@ -552,6 +558,7 @@ set(WOWEE_SOURCES
     src/game/world_packets_entity.cpp
     src/game/world_packets_world.cpp
     src/game/world_packets_economy.cpp
+    src/game/spline_packet.cpp
     src/game/packet_parsers_tbc.cpp
     src/game/packet_parsers_classic.cpp
     src/game/character.cpp

@@ -110,14 +110,14 @@ public:
     /** Reset all chat settings to defaults. */
     void restoreDefaults();
 
-    // Section 3.5: UIServices injection (Phase B singleton breaking)
+    // UIServices injection (Phase B singleton breaking)
     void setServices(const UIServices& services) { services_ = services; }
 
     /** Replace $g/$G and $n/$N gender/name placeholders in quest/chat text. */
     std::string replaceGenderPlaceholders(const std::string& text, game::GameHandler& gameHandler);
 
 private:
-    // Section 3.5: Injected UI services (Phase B singleton breaking)
+    // Injected UI services (Phase B singleton breaking)
     UIServices services_;
 
     // ---- Chat input state ----

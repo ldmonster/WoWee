@@ -74,6 +74,10 @@ public:
     bool isWeaponsSheathed() const { return weaponsSheathed_; }
     void toggleWeaponsSheathed() { weaponsSheathed_ = !weaponsSheathed_; }
 
+    // Ranged weapon swap: temporarily show ranged weapon in right hand
+    void showRangedWeapon(bool show);
+    bool isShowingRanged() const { return showingRanged_; }
+
     // Saved skin state accessors (used by game_screen.cpp for equipment re-compositing)
     const std::string& getBodySkinPath() const { return bodySkinPath_; }
     const std::vector<std::string>& getUnderwearPaths() const { return underwearPaths_; }
@@ -96,6 +100,7 @@ private:
     uint32_t cloakTextureSlotIndex_ = 0;
 
     bool weaponsSheathed_ = false;
+    bool showingRanged_ = false;
 };
 
 } // namespace core
