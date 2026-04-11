@@ -1454,8 +1454,23 @@ void MovementHandler::handleMonsterMove(network::Packet& packet) {
             }
         }
 
-        entity->startMoveTo(destCanonical.x, destCanonical.y, destCanonical.z,
-                            orientation, data.duration / 1000.0f);
+        // Build full path: start → waypoints → destination (all in canonical coords)
+        if (!data.waypoints.empty()) {
+            glm::vec3 startCanonical = core::coords::serverToCanonical(
+                glm::vec3(data.x, data.y, data.z));
+            std::vector<std::array<float, 3>> path;
+            path.push_back({startCanonical.x, startCanonical.y, startCanonical.z});
+            for (const auto& wp : data.waypoints) {
+                glm::vec3 wpCanonical = core::coords::serverToCanonical(
+                    glm::vec3(wp.x, wp.y, wp.z));
+                path.push_back({wpCanonical.x, wpCanonical.y, wpCanonical.z});
+            }
+            path.push_back({destCanonical.x, destCanonical.y, destCanonical.z});
+            entity->startMoveAlongPath(path, orientation, data.duration / 1000.0f);
+        } else {
+            entity->startMoveTo(destCanonical.x, destCanonical.y, destCanonical.z,
+                                orientation, data.duration / 1000.0f);
+        }
 
         if (owner_.creatureMoveCallbackRef()) {
             owner_.creatureMoveCallbackRef()(data.guid,

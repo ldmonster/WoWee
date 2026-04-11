@@ -6,6 +6,7 @@
 #include "core/application.hpp"
 #include "core/logger.hpp"
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -241,6 +242,43 @@ void CharacterScreen::render(game::GameHandler& gameHandler) {
 
         ImGui::EndTable();
     }
+
+    // Keyboard navigation: Up/Down to change selection, Enter to enter world
+    // Claim ownership of arrow keys so ImGui nav doesn't move focus between buttons
+    ImGuiID charListOwner = ImGui::GetID("CharListNav");
+    ImGui::SetKeyOwner(ImGuiKey_UpArrow, charListOwner);
+    ImGui::SetKeyOwner(ImGuiKey_DownArrow, charListOwner);
+
+    if (!characters.empty() && deleteConfirmStage == 0) {
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+            if (selectedCharacterIndex > 0) {
+                selectedCharacterIndex--;
+                selectedCharacterGuid = characters[selectedCharacterIndex].guid;
+                saveLastCharacter(selectedCharacterGuid);
+            }
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+            if (selectedCharacterIndex < static_cast<int>(characters.size()) - 1) {
+                selectedCharacterIndex++;
+                selectedCharacterGuid = characters[selectedCharacterIndex].guid;
+                saveLastCharacter(selectedCharacterGuid);
+            }
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
+            if (selectedCharacterIndex >= 0 &&
+                selectedCharacterIndex < static_cast<int>(characters.size())) {
+                const auto& ch = characters[selectedCharacterIndex];
+                characterSelected = true;
+                saveLastCharacter(ch.guid);
+                // Claim Enter so the game screen doesn't activate chat on the same press
+                ImGui::SetKeyOwner(ImGuiKey_Enter, charListOwner, ImGuiInputFlags_LockUntilRelease);
+                ImGui::SetKeyOwner(ImGuiKey_KeypadEnter, charListOwner, ImGuiInputFlags_LockUntilRelease);
+                gameHandler.selectCharacter(ch.guid);
+                if (onCharacterSelected) onCharacterSelected(ch.guid);
+            }
+        }
+    }
+
     ImGui::EndChild();
 
     // ── Right: Details panel ──

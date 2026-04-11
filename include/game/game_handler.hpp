@@ -1699,10 +1699,7 @@ public:
     bool isServerMovementAllowed() const;
 
     // Quest giver status (! and ? markers)
-    QuestGiverStatus getQuestGiverStatus(uint64_t guid) const {
-        auto it = npcQuestStatus_.find(guid);
-        return (it != npcQuestStatus_.end()) ? it->second : QuestGiverStatus::NONE;
-    }
+    QuestGiverStatus getQuestGiverStatus(uint64_t guid) const;
     const std::unordered_map<uint64_t, QuestGiverStatus>& getNpcQuestStatuses() const;
 
     // Charge callback — fires when player casts a charge spell toward target

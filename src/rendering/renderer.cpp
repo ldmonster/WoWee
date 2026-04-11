@@ -859,6 +859,8 @@ void Renderer::beginFrame() {
 
     // Handle swapchain recreation if needed
     if (vkCtx->isSwapchainDirty()) {
+        // Skip recreation while window is minimized (0×0 extent is a Vulkan spec violation)
+        if (window->getWidth() == 0 || window->getHeight() == 0) return;
         (void)vkCtx->recreateSwapchain(window->getWidth(), window->getHeight());
         // Rebuild water resources that reference swapchain extent/views
         if (waterRenderer) {

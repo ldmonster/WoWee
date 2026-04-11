@@ -339,6 +339,8 @@ void QuestHandler::registerOpcodes(DispatchTable& table) {
         if (packet.hasRemaining(9)) {
             uint64_t npcGuid = packet.readUInt64();
             uint8_t status = owner_.getPacketParsers()->readQuestGiverStatus(packet);
+            LOG_INFO("SMSG_QUESTGIVER_STATUS: npcGuid=0x", std::hex, npcGuid, std::dec,
+                     " status=", static_cast<int>(status));
             npcQuestStatus_[npcGuid] = static_cast<QuestGiverStatus>(status);
         }
     };
@@ -1075,8 +1077,17 @@ void QuestHandler::acceptQuest() {
     const bool inLocalLog = hasQuestInLog(questId);
     const int serverSlot = findQuestLogSlotIndexFromServer(questId);
     if (serverSlot >= 0) {
-        LOG_INFO("Ignoring duplicate quest accept already in server quest log: questId=", questId,
-                 " slot=", serverSlot);
+        LOG_INFO("Quest already in server quest log: questId=", questId,
+                 " slot=", serverSlot, " inLocalLog=", inLocalLog);
+        // Ensure it's in our local log even if server already has it
+        addQuestToLocalLogIfMissing(questId, currentQuestDetails_.title, currentQuestDetails_.objectives);
+        requestQuestQuery(questId, false);
+        // Re-query NPC status from server
+        if (npcGuid && owner_.getSocket()) {
+            network::Packet qsPkt(wireOpcode(Opcode::CMSG_QUESTGIVER_STATUS_QUERY));
+            qsPkt.writeUInt64(npcGuid);
+            owner_.getSocket()->send(qsPkt);
+        }
         questDetailsOpen_ = false;
         questDetailsOpenTime_ = std::chrono::steady_clock::time_point{};
         currentQuestDetails_ = QuestDetailsData{};
@@ -1093,6 +1104,9 @@ void QuestHandler::acceptQuest() {
     owner_.getSocket()->send(packet);
     pendingQuestAcceptTimeouts_[questId] = 5.0f;
     pendingQuestAcceptNpcGuids_[questId] = npcGuid;
+
+    // Immediately add to local quest log using available details
+    addQuestToLocalLogIfMissing(questId, currentQuestDetails_.title, currentQuestDetails_.objectives);
 
     // Play quest-accept sound
     if (auto* ac = owner_.services().audioCoordinator) {
@@ -1220,6 +1234,19 @@ void QuestHandler::abandonQuest(uint32_t questId) {
             owner_.addonEventCallbackRef()("QUEST_LOG_UPDATE", {});
             owner_.addonEventCallbackRef()("UNIT_QUEST_LOG_CHANGED", {"player"});
             owner_.addonEventCallbackRef()("QUEST_REMOVED", {std::to_string(questId)});
+        }
+    }
+
+    // Re-query nearby quest giver NPCs so markers refresh (e.g. "?" → "!")
+    if (owner_.getSocket()) {
+        for (const auto& [guid, entity] : owner_.getEntityManager().getEntities()) {
+            if (entity->getType() != ObjectType::UNIT) continue;
+            auto unit = std::static_pointer_cast<Unit>(entity);
+            if (unit->getNpcFlags() & 0x02) {
+                network::Packet qsPkt(wireOpcode(Opcode::CMSG_QUESTGIVER_STATUS_QUERY));
+                qsPkt.writeUInt64(guid);
+                owner_.getSocket()->send(qsPkt);
+            }
         }
     }
 
@@ -1376,7 +1403,7 @@ bool QuestHandler::resyncQuestLogFromServerSlots(bool forceQueryMetadata) {
 
 void QuestHandler::applyQuestStateFromFields(const std::map<uint16_t, uint32_t>& fields) {
     const uint16_t ufQuestStart = fieldIndex(UF::PLAYER_QUEST_LOG_START);
-    if (ufQuestStart == 0xFFFF || questLog_.empty()) return;
+    if (ufQuestStart == 0xFFFF) return;
 
     const uint8_t qStride = owner_.getPacketParsers() ? owner_.getPacketParsers()->questLogStride() : 5;
     if (qStride < 2) return;
@@ -1390,6 +1417,20 @@ void QuestHandler::applyQuestStateFromFields(const std::map<uint16_t, uint32_t>&
         if (idIt == fields.end()) continue;
         uint32_t questId = idIt->second;
         if (questId == 0) continue;
+
+        // Add quest to local log only if we have a pending accept for it
+        if (!hasQuestInLog(questId) && pendingQuestAcceptTimeouts_.count(questId) != 0) {
+            addQuestToLocalLogIfMissing(questId, "Quest #" + std::to_string(questId), "");
+            requestQuestQuery(questId, false);
+            // Re-query quest giver status for the NPC that gave us this quest
+            auto pendingIt = pendingQuestAcceptNpcGuids_.find(questId);
+            if (pendingIt != pendingQuestAcceptNpcGuids_.end() && pendingIt->second != 0 && owner_.getSocket()) {
+                network::Packet qsPkt(wireOpcode(Opcode::CMSG_QUESTGIVER_STATUS_QUERY));
+                qsPkt.writeUInt64(pendingIt->second);
+                owner_.getSocket()->send(qsPkt);
+            }
+            clearPendingQuestAccept(questId);
+        }
 
         auto stateIt = fields.find(stateField);
         if (stateIt == fields.end()) continue;

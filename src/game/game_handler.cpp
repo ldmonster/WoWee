@@ -2261,6 +2261,10 @@ const std::unordered_map<uint64_t, QuestGiverStatus>& GameHandler::getNpcQuestSt
     static const std::unordered_map<uint64_t, QuestGiverStatus> empty;
     return empty;
 }
+QuestGiverStatus GameHandler::getQuestGiverStatus(uint64_t guid) const {
+    if (questHandler_) return questHandler_->getQuestGiverStatus(guid);
+    return QuestGiverStatus::NONE;
+}
 const std::vector<GameHandler::QuestLogEntry>& GameHandler::getQuestLog() const {
     if (questHandler_) return questHandler_->getQuestLog();
     static const std::vector<QuestLogEntry> empty;

@@ -155,7 +155,7 @@ void UIScreenCallbackHandler::setupCallbacks() {
     uiManager_.getCharacterScreen().setOnBack([this]() {
         // Disconnect from world server and reset UI state for fresh realm selection
         gameHandler_.disconnect();
-        uiManager_.getRealmScreen().reset();
+        uiManager_.getRealmScreen().resetForBack();
         uiManager_.getCharacterScreen().reset();
         setState_(AppState::REALM_SELECTION);
     });

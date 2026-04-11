@@ -637,13 +637,15 @@ bool MonsterMoveParser::parse(network::Packet& packet, MonsterMoveData& data) {
     bool uncompressed = (data.splineFlags & (0x00080000 | 0x00002000)) != 0;
 
     if (uncompressed) {
-        // Read last point as destination
-        // Skip to last point: each point is 12 bytes
-        if (pointCount > 1) {
-            for (uint32_t i = 0; i < pointCount - 1; i++) {
-                if (!packet.hasRemaining(12)) return true;
-                packet.readFloat(); packet.readFloat(); packet.readFloat();
-            }
+        // All waypoints stored as absolute float3 (Catmullrom/Flying paths)
+        // Read all intermediate points, then the final destination
+        for (uint32_t i = 0; i < pointCount - 1; i++) {
+            if (!packet.hasRemaining(12)) return true;
+            MonsterMoveData::Point wp;
+            wp.x = packet.readFloat();
+            wp.y = packet.readFloat();
+            wp.z = packet.readFloat();
+            data.waypoints.push_back(wp);
         }
         if (!packet.hasRemaining(12)) return true;
         data.destX = packet.readFloat();
@@ -657,6 +659,33 @@ bool MonsterMoveParser::parse(network::Packet& packet, MonsterMoveData& data) {
         data.destY = packet.readFloat();
         data.destZ = packet.readFloat();
         data.hasDest = true;
+
+        // Remaining waypoints are packed as uint32 deltas from the midpoint
+        // between the creature's start position and the destination.
+        // Encoding matches TrinityCore MoveSpline::PackXYZ:
+        //   x = 11-bit signed (bits 0-10), y = 11-bit signed (bits 11-21),
+        //   z = 10-bit signed (bits 22-31), each scaled by 0.25 units.
+        if (pointCount > 1) {
+            float midX = (data.x + data.destX) * 0.5f;
+            float midY = (data.y + data.destY) * 0.5f;
+            float midZ = (data.z + data.destZ) * 0.5f;
+            for (uint32_t i = 0; i < pointCount - 1; i++) {
+                if (!packet.hasRemaining(4)) break;
+                uint32_t packed = packet.readUInt32();
+                // Sign-extend 11-bit x and y, 10-bit z (2's complement)
+                int32_t sx = static_cast<int32_t>(packed & 0x7FF);
+                if (sx & 0x400) sx |= static_cast<int32_t>(0xFFFFF800);
+                int32_t sy = static_cast<int32_t>((packed >> 11) & 0x7FF);
+                if (sy & 0x400) sy |= static_cast<int32_t>(0xFFFFF800);
+                int32_t sz = static_cast<int32_t>((packed >> 22) & 0x3FF);
+                if (sz & 0x200) sz |= static_cast<int32_t>(0xFFFFFC00);
+                MonsterMoveData::Point wp;
+                wp.x = midX - static_cast<float>(sx) * 0.25f;
+                wp.y = midY - static_cast<float>(sy) * 0.25f;
+                wp.z = midZ - static_cast<float>(sz) * 0.25f;
+                data.waypoints.push_back(wp);
+            }
+        }
     }
 
     LOG_DEBUG("MonsterMove: guid=0x", std::hex, data.guid, std::dec,
@@ -754,12 +783,26 @@ bool MonsterMoveParser::parseVanilla(network::Packet& packet, MonsterMoveData& d
     data.destZ = packet.readFloat();
     data.hasDest = true;
 
-    // Remaining waypoints are packed as uint32 deltas.
+    // Remaining waypoints are packed as uint32 deltas from midpoint.
     if (pointCount > 1) {
-        size_t skipBytes = static_cast<size_t>(pointCount - 1) * 4;
-        size_t newPos = packet.getReadPos() + skipBytes;
-        if (newPos > packet.getSize()) return false;
-        packet.setReadPos(newPos);
+        float midX = (data.x + data.destX) * 0.5f;
+        float midY = (data.y + data.destY) * 0.5f;
+        float midZ = (data.z + data.destZ) * 0.5f;
+        for (uint32_t i = 0; i < pointCount - 1; i++) {
+            if (!packet.hasRemaining(4)) break;
+            uint32_t packed = packet.readUInt32();
+            int32_t sx = static_cast<int32_t>(packed & 0x7FF);
+            if (sx & 0x400) sx |= static_cast<int32_t>(0xFFFFF800);
+            int32_t sy = static_cast<int32_t>((packed >> 11) & 0x7FF);
+            if (sy & 0x400) sy |= static_cast<int32_t>(0xFFFFF800);
+            int32_t sz = static_cast<int32_t>((packed >> 22) & 0x3FF);
+            if (sz & 0x200) sz |= static_cast<int32_t>(0xFFFFFC00);
+            MonsterMoveData::Point wp;
+            wp.x = midX - static_cast<float>(sx) * 0.25f;
+            wp.y = midY - static_cast<float>(sy) * 0.25f;
+            wp.z = midZ - static_cast<float>(sz) * 0.25f;
+            data.waypoints.push_back(wp);
+        }
     }
 
     LOG_DEBUG("MonsterMove(turtle): guid=0x", std::hex, data.guid, std::dec,

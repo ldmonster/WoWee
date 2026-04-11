@@ -1678,6 +1678,9 @@ struct MonsterMoveData {
     // Destination (final point of the spline, server coords)
     float destX = 0, destY = 0, destZ = 0;
     bool hasDest = false;
+    // Intermediate waypoints along the path (server coords, excludes start & final dest)
+    struct Point { float x, y, z; };
+    std::vector<Point> waypoints;
 };
 
 class MonsterMoveParser {
