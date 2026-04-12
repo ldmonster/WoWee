@@ -3,6 +3,7 @@
 #include "ui/keybinding_manager.hpp"
 #include "game/game_handler.hpp"
 #include "core/application.hpp"
+#include "core/world_loader.hpp"
 #include "rendering/vk_context.hpp"
 #include "core/input.hpp"
 #include "rendering/character_preview.hpp"
@@ -2632,15 +2633,8 @@ void InventoryScreen::renderItemTooltip(const game::ItemDef& item, const game::I
                 homeLocation = gameHandler_->getWhoAreaName(zoneId);
             // Fall back to continent name if zone unavailable
             if (homeLocation.empty()) {
-                switch (mapId) {
-                    case 0:   homeLocation = "Eastern Kingdoms"; break;
-                    case 1:   homeLocation = "Kalimdor"; break;
-                    case 530: homeLocation = "Outland"; break;
-                    case 571: homeLocation = "Northrend"; break;
-                    case 13:  homeLocation = "Test"; break;
-                    case 169: homeLocation = "Emerald Dream"; break;
-                    default:  homeLocation = "Unknown"; break;
-                }
+                const char* dn = core::WorldLoader::mapDisplayName(mapId);
+                homeLocation = dn ? dn : "Unknown";
             }
             ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Home: %s", homeLocation.c_str());
         } else {

@@ -46,7 +46,8 @@ class CharacterRenderer;
 class WMORenderer;
 class M2Renderer;
 class Minimap;
-class WorldMap;
+namespace world_map { class WorldMapFacade; }
+using WorldMap = world_map::WorldMapFacade;
 class QuestMarkerRenderer;
 class CharacterPreview;
 class AmdFsr3Runtime;

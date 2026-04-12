@@ -11,6 +11,7 @@
 #include "ui/quest_log_screen.hpp"
 #include "ui/ui_colors.hpp"
 #include "core/application.hpp"
+#include "core/world_loader.hpp"
 #include "core/logger.hpp"
 #include "rendering/renderer.hpp"
 #include "rendering/vk_context.hpp"
@@ -611,13 +612,8 @@ void ActionBarPanel::renderActionBar(game::GameHandler& gameHandler,
                         }
                         // Fall back to continent name if zone unavailable
                         if (homeLocation.empty()) {
-                            switch (mapId) {
-                                case 0:   homeLocation = "Eastern Kingdoms"; break;
-                                case 1:   homeLocation = "Kalimdor"; break;
-                                case 530: homeLocation = "Outland"; break;
-                                case 571: homeLocation = "Northrend"; break;
-                                default:  homeLocation = "Unknown"; break;
-                            }
+                            const char* dn = core::WorldLoader::mapDisplayName(mapId);
+                            homeLocation = dn ? dn : "Unknown";
                         }
                         ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f),
                                            "Home: %s", homeLocation.c_str());

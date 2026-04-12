@@ -46,6 +46,7 @@ public:
 
     // Map name utilities
     static const char* mapIdToName(uint32_t mapId);
+    static int mapNameToId(const std::string& name);
     static const char* mapDisplayName(uint32_t mapId);
 
     // Background preloading — warms AssetManager file cache

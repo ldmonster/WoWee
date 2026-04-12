@@ -634,7 +634,25 @@ set(WOWEE_SOURCES
     src/rendering/hiz_system.cpp
     src/rendering/quest_marker_renderer.cpp
     src/rendering/minimap.cpp
-    src/rendering/world_map.cpp
+    src/rendering/world_map/coordinate_projection.cpp
+    src/rendering/world_map/map_resolver.cpp
+    src/rendering/world_map/exploration_state.cpp
+    src/rendering/world_map/zone_metadata.cpp
+    src/rendering/world_map/data_repository.cpp
+    src/rendering/world_map/view_state_machine.cpp
+    src/rendering/world_map/composite_renderer.cpp
+    src/rendering/world_map/overlay_renderer.cpp
+    src/rendering/world_map/input_handler.cpp
+    src/rendering/world_map/world_map_facade.cpp
+    src/rendering/world_map/layers/player_marker_layer.cpp
+    src/rendering/world_map/layers/party_dot_layer.cpp
+    src/rendering/world_map/layers/taxi_node_layer.cpp
+    src/rendering/world_map/layers/poi_marker_layer.cpp
+    src/rendering/world_map/layers/quest_poi_layer.cpp
+    src/rendering/world_map/layers/corpse_marker_layer.cpp
+    src/rendering/world_map/layers/zone_highlight_layer.cpp
+    src/rendering/world_map/layers/coordinate_display.cpp
+    src/rendering/world_map/layers/subzone_tooltip_layer.cpp
     src/rendering/swim_effects.cpp
     src/rendering/mount_dust.cpp
     src/rendering/levelup_effect.cpp
@@ -778,6 +796,26 @@ set(WOWEE_HEADERS
     include/rendering/lightning.hpp
     include/rendering/swim_effects.hpp
     include/rendering/world_map.hpp
+    include/rendering/world_map/world_map_types.hpp
+    include/rendering/world_map/coordinate_projection.hpp
+    include/rendering/world_map/map_resolver.hpp
+    include/rendering/world_map/exploration_state.hpp
+    include/rendering/world_map/zone_metadata.hpp
+    include/rendering/world_map/data_repository.hpp
+    include/rendering/world_map/view_state_machine.hpp
+    include/rendering/world_map/composite_renderer.hpp
+    include/rendering/world_map/overlay_renderer.hpp
+    include/rendering/world_map/input_handler.hpp
+    include/rendering/world_map/world_map_facade.hpp
+    include/rendering/world_map/layers/player_marker_layer.hpp
+    include/rendering/world_map/layers/party_dot_layer.hpp
+    include/rendering/world_map/layers/taxi_node_layer.hpp
+    include/rendering/world_map/layers/poi_marker_layer.hpp
+    include/rendering/world_map/layers/quest_poi_layer.hpp
+    include/rendering/world_map/layers/corpse_marker_layer.hpp
+    include/rendering/world_map/layers/zone_highlight_layer.hpp
+    include/rendering/world_map/layers/coordinate_display.hpp
+    include/rendering/world_map/layers/subzone_tooltip_layer.hpp
     include/rendering/character_renderer.hpp
     include/rendering/character_preview.hpp
     include/rendering/wmo_renderer.hpp
