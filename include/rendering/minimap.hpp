@@ -56,6 +56,9 @@ public:
 
     void setOpacity(float opacity) { opacity_ = opacity; }
 
+    float getArrowRotation() const { return arrowRotation_; }
+    VkDescriptorSet getArrowDS() const { return arrowDS_; }
+
     // Public accessors for WorldMap
     VkTexture* getOrLoadTileTexture(int tileX, int tileY);
     void ensureTRSParsed() { if (!trsParsed) parseTRS(); }
@@ -121,6 +124,12 @@ private:
     // Tile tracking
     int lastCenterTileX = -1;
     int lastCenterTileY = -1;
+
+    // Player arrow texture (MinimapArrow.blp)
+    std::unique_ptr<VkTexture> arrowTexture_;
+    VkDescriptorSet arrowDS_ = VK_NULL_HANDLE;
+    bool arrowLoadAttempted_ = false;
+    float arrowRotation_ = 0.0f;
 };
 
 } // namespace rendering

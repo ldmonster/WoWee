@@ -31,9 +31,6 @@ void CoordinateDisplay::render(const LayerContext& ctx) {
         float l, r, t, b;
         getContinentProjectionBounds(*ctx.zones, ctx.currentZoneIdx, l, r, t, b);
         left = l; right = r; top = t; bottom = b;
-        // Undo the kVOffset applied during renderPosToMapUV for continent
-        constexpr float kVOffset = -0.15f;
-        mv -= kVOffset;
     }
 
     float hWowX = left - mu * (left - right);

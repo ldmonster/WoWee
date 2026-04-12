@@ -122,6 +122,7 @@ struct WorldMapFacade::Impl {
     QuestPOILayer* questPOILayer = nullptr;
     CorpseMarkerLayer* corpseMarkerLayer = nullptr;
     ZoneHighlightLayer* zoneHighlightLayer = nullptr;
+    PlayerMarkerLayer* playerMarkerLayer = nullptr;
 
     // Data set each frame from the UI layer
     std::vector<PartyDot> partyDots;
@@ -242,7 +243,9 @@ void WorldMapFacade::Impl::initOverlayLayers() {
     overlay.addLayer(std::move(zhLayer));
 
     // Player marker
-    overlay.addLayer(std::make_unique<PlayerMarkerLayer>());
+    auto pmLayer = std::make_unique<PlayerMarkerLayer>();
+    playerMarkerLayer = pmLayer.get();
+    overlay.addLayer(std::move(pmLayer));
 
     // Party dots
     auto pdLayer = std::make_unique<PartyDotLayer>();
@@ -293,6 +296,8 @@ bool WorldMapFacade::initialize(VkContext* ctx, pipeline::AssetManager* am) {
     if (!impl_->compositor.initialize(ctx, am)) return false;
     if (impl_->zoneHighlightLayer)
         impl_->zoneHighlightLayer->initialize(ctx, am);
+    if (impl_->playerMarkerLayer)
+        impl_->playerMarkerLayer->initialize(ctx, am);
     impl_->initialized = true;
     return true;
 }
@@ -549,11 +554,9 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
     float sw = static_cast<float>(screenWidth);
     float sh = static_cast<float>(screenHeight);
 
-    // Use the full FBO (1024×768) for aspect ratio — all coordinate math
-    // (kVOffset, zone DBC projection, ZMP grid) is calibrated for the full
-    // tile grid, not the cropped 1002×668 content area.
-    float mapAspect = static_cast<float>(CompositeRenderer::FBO_W) /
-                      static_cast<float>(CompositeRenderer::FBO_H);
+    // Use the visible WoW map area (1002×668) for aspect ratio.
+    float mapAspect = static_cast<float>(CompositeRenderer::MAP_W) /
+                      static_cast<float>(CompositeRenderer::MAP_H);
     float availW = sw * 0.70f;
     float availH = sh * 0.70f;
     float displayW, displayH;
@@ -568,12 +571,17 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
     // Floor to pixel boundary
     displayW = std::floor(displayW);
     displayH = std::floor(displayH);
-    float mapX = std::floor((sw - displayW) / 2.0f);
-    float mapY = std::floor((sh - displayH) / 2.0f);
+
+    // Account for the ImGui title bar so the content area matches the map
+    float titleBarH = ImGui::GetFrameHeight();
+    float windowW = displayW;
+    float windowH = displayH + titleBarH;
+    float mapX = std::floor((sw - windowW) / 2.0f);
+    float mapY = std::floor((sh - windowH) / 2.0f);
 
     // Map window — styled like the character selection window
     ImGui::SetNextWindowPos(ImVec2(mapX, mapY), ImGuiCond_Once);
-    ImGui::SetNextWindowSize(ImVec2(displayW, displayH), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(windowW, windowH), ImGuiCond_Always);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
                              ImGuiWindowFlags_NoScrollbar |
@@ -597,12 +605,12 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
         ImVec2 imgMax(contentPos.x + contentSize.x, contentPos.y + contentSize.y);
         displayW = contentSize.x;
         displayH = contentSize.y;
-        // Show the full 1024×768 FBO — coordinate math (kVOffset, ZMP grid,
-        // DBC zone projection) is all calibrated for the full tile grid.
+        // Show only the visible 1002×668 content region of the 1024×768 FBO.
         ImGui::Image(
             reinterpret_cast<ImTextureID>(compositor.displayDescriptorSet()),
             ImVec2(displayW, displayH),
-            ImVec2(0, 0), ImVec2(1, 1));
+            ImVec2(0, 0), ImVec2(CompositeRenderer::MAP_U_MAX,
+                                 CompositeRenderer::MAP_V_MAX));
 
         // Transition fade overlay
         const auto& trans = viewState.transition();
@@ -971,15 +979,19 @@ void WorldMapFacade::Impl::renderImGuiOverlay(const glm::vec3& playerRenderPos,
                     //   • Full stretch (like WoW original): hlW = displayW, hlH = displayH
                     //   • Shift glow position: adjust hlX offset
                     //
-                    float hlW = displayW;       // width  of highlight rect (= square)
-                    float hlH = displayH;       // height of highlight rect (= square)
-                    float hlX, hlY;
+                    float hlW,hlH,hlX, hlY;
                     if (cosmicLabel == "azeroth") {
-                        hlX = imgMax.x - hlW;   // flush right
-                        hlY = imgMax.y - hlH;   // flush bottom
+                        hlW = displayW * 0.90f;            // width  of highlight rect (= square)
+                        hlH = displayH * 0.985f;           // height of highlight rect (= square)
+                    
+                        hlX = imgMax.x - hlW;              // flush right
+                        hlY = imgMax.y - hlH;              // flush bottom + title bar
                     } else {
-                        hlX = imgMin.x;          // flush left
-                        hlY = imgMin.y;          // flush top
+                        hlW = displayW * 0.86f;            // width  of highlight rect (= square)
+                        hlH = displayH * 0.91f;            // height of highlight rect (= square)
+                        
+                        hlX = imgMin.x + displayW * 0.02f; // flush left
+                        hlY = imgMax.y - displayH * 0.95f; // flush bottom
                     }
 
                     if (zoneHighlightLayer) {

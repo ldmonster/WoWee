@@ -79,9 +79,9 @@ TEST_CASE("renderPosToMapUV: continent applies vertical offset", "[world_map][co
     glm::vec2 zone_uv = renderPosToMapUV(center, bounds, false);
     glm::vec2 cont_uv = renderPosToMapUV(center, bounds, true);
 
-    // Continent mode applies kVOffset = -0.15
+    // No vertical offset — continent and zone UV should be identical
     REQUIRE(zone_uv.x == Catch::Approx(cont_uv.x).margin(0.01f));
-    REQUIRE(cont_uv.y != Catch::Approx(zone_uv.y).margin(0.01f));
+    REQUIRE(cont_uv.y == Catch::Approx(zone_uv.y).margin(0.01f));
 }
 
 // ── zoneBelongsToContinent ───────────────────────────────────
