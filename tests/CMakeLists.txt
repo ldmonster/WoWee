@@ -263,6 +263,92 @@ endif()
 add_test(NAME transport_components COMMAND test_transport_components)
 register_test_target(test_transport_components)
 
+# ── test_world_map ────────────────────────────────────────────
+add_executable(test_world_map
+    test_world_map.cpp
+)
+target_include_directories(test_world_map PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_world_map SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_world_map PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_world_map PRIVATE glm::glm)
+endif()
+add_test(NAME world_map COMMAND test_world_map)
+register_test_target(test_world_map)
+
+# ── test_world_map_coordinate_projection ──────────────────────
+add_executable(test_world_map_coordinate_projection
+    test_world_map_coordinate_projection.cpp
+    ${CMAKE_SOURCE_DIR}/src/rendering/world_map/coordinate_projection.cpp
+)
+target_include_directories(test_world_map_coordinate_projection PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_world_map_coordinate_projection SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_world_map_coordinate_projection PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_world_map_coordinate_projection PRIVATE glm::glm)
+endif()
+add_test(NAME world_map_coordinate_projection COMMAND test_world_map_coordinate_projection)
+register_test_target(test_world_map_coordinate_projection)
+
+# ── test_world_map_map_resolver ───────────────────────────────
+add_executable(test_world_map_map_resolver
+    test_world_map_map_resolver.cpp
+    ${CMAKE_SOURCE_DIR}/src/rendering/world_map/map_resolver.cpp
+    ${CMAKE_SOURCE_DIR}/src/rendering/world_map/coordinate_projection.cpp
+    ${TEST_COMMON_SOURCES}
+)
+target_include_directories(test_world_map_map_resolver PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_world_map_map_resolver SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_world_map_map_resolver PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_world_map_map_resolver PRIVATE glm::glm)
+endif()
+add_test(NAME world_map_map_resolver COMMAND test_world_map_map_resolver)
+register_test_target(test_world_map_map_resolver)
+
+# ── test_world_map_view_state_machine ─────────────────────────
+add_executable(test_world_map_view_state_machine
+    test_world_map_view_state_machine.cpp
+    ${CMAKE_SOURCE_DIR}/src/rendering/world_map/view_state_machine.cpp
+)
+target_include_directories(test_world_map_view_state_machine PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_world_map_view_state_machine SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_world_map_view_state_machine PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_world_map_view_state_machine PRIVATE glm::glm)
+endif()
+add_test(NAME world_map_view_state_machine COMMAND test_world_map_view_state_machine)
+register_test_target(test_world_map_view_state_machine)
+
+# ── test_world_map_exploration_state ──────────────────────────
+add_executable(test_world_map_exploration_state
+    test_world_map_exploration_state.cpp
+    ${CMAKE_SOURCE_DIR}/src/rendering/world_map/exploration_state.cpp
+    ${CMAKE_SOURCE_DIR}/src/rendering/world_map/coordinate_projection.cpp
+)
+target_include_directories(test_world_map_exploration_state PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_world_map_exploration_state SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_world_map_exploration_state PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_world_map_exploration_state PRIVATE glm::glm)
+endif()
+add_test(NAME world_map_exploration_state COMMAND test_world_map_exploration_state)
+register_test_target(test_world_map_exploration_state)
+
+# ── test_world_map_zone_metadata ──────────────────────────────
+add_executable(test_world_map_zone_metadata
+    test_world_map_zone_metadata.cpp
+    ${CMAKE_SOURCE_DIR}/src/rendering/world_map/zone_metadata.cpp
+)
+target_include_directories(test_world_map_zone_metadata PRIVATE ${TEST_INCLUDE_DIRS})
+target_include_directories(test_world_map_zone_metadata SYSTEM PRIVATE ${TEST_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(test_world_map_zone_metadata PRIVATE catch2_main)
+if(TARGET glm::glm)
+    target_link_libraries(test_world_map_zone_metadata PRIVATE glm::glm)
+endif()
+add_test(NAME world_map_zone_metadata COMMAND test_world_map_zone_metadata)
+register_test_target(test_world_map_zone_metadata)
+
 # ── ASAN / UBSan for test targets ────────────────────────────
 if(WOWEE_ENABLE_ASAN AND NOT MSVC)
     foreach(_t IN LISTS ALL_TEST_TARGETS)

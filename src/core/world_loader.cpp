@@ -71,6 +71,8 @@ const char* WorldLoader::mapDisplayName(uint32_t mapId) {
     switch (mapId) {
         case 0: return "Eastern Kingdoms";
         case 1: return "Kalimdor";
+        case 13: return "Test";
+        case 169: return "Emerald Dream";
         case 530: return "Outland";
         case 571: return "Northrend";
         default: return nullptr;
@@ -168,6 +170,15 @@ const char* WorldLoader::mapIdToName(uint32_t mapId) {
         case 724: return "ChamberOfAspectsRed";
         default: return "";
     }
+}
+
+int WorldLoader::mapNameToId(const std::string& name) {
+    // Reverse lookup: iterate known continent IDs and match against mapIdToName.
+    static constexpr uint32_t kContinentIds[] = {0, 1, 530, 571};
+    for (uint32_t id : kContinentIds) {
+        if (name == mapIdToName(id)) return static_cast<int>(id);
+    }
+    return -1;
 }
 
 void WorldLoader::processPendingEntry() {
