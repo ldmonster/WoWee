@@ -463,9 +463,10 @@ void EntitySpawner::processCreatureSpawnQueue(bool unlimited) {
                                             std::string(compDirs[region]) + "\\" + texName;
                                         std::string gp = base + (isFem ? "_F.blp" : "_M.blp");
                                         std::string up = base + "_U.blp";
+                                        std::string bp = base + ".blp";
                                         if (am->fileExists(gp)) displaySkinPaths.push_back(gp);
                                         else if (am->fileExists(up)) displaySkinPaths.push_back(up);
-                                        else displaySkinPaths.push_back(base + ".blp");
+                                        else if (am->fileExists(bp)) displaySkinPaths.push_back(bp);
                                     }
                                 }
                             }
@@ -673,9 +674,10 @@ std::vector<std::string> EntitySpawner::resolveEquipmentTexturePaths(uint64_t gu
                 std::string(componentDirs[region]) + "\\" + texName;
             std::string genderPath = base + (isFemale ? "_F.blp" : "_M.blp");
             std::string unisexPath = base + "_U.blp";
+            std::string basePath = base + ".blp";
             if (assetManager_->fileExists(genderPath)) paths.push_back(genderPath);
             else if (assetManager_->fileExists(unisexPath)) paths.push_back(unisexPath);
-            else paths.push_back(base + ".blp");
+            else if (assetManager_->fileExists(basePath)) paths.push_back(basePath);
         }
     }
     return paths;

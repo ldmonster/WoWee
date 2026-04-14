@@ -649,6 +649,14 @@ void EntitySpawner::buildCreatureDisplayLookups() {
 }
 
 std::string EntitySpawner::getModelPathForDisplayId(uint32_t displayId) const {
+    // WotLK 3.3.5a CreatureDisplayInfo tops out around ~32000; values far
+    // beyond that are corrupted update-field data or packet parse errors.
+    // Silently reject to avoid pointless DBC lookups and log spam.
+    constexpr uint32_t kMaxReasonableDisplayId = 100000;
+    if (displayId == 0 || displayId > kMaxReasonableDisplayId) {
+        return "";
+    }
+
     if (displayId == 30412) return "Creature\\Gryphon\\Gryphon.m2";
     if (displayId == 30413) return "Creature\\Wyvern\\Wyvern.m2";
 

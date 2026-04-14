@@ -769,10 +769,12 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
             std::string base = "Item\\TextureComponents\\" + std::string(componentDirs[region]) + "\\" + texName;
             std::string genderPath = base + (isFemale ? "_F.blp" : "_M.blp");
             std::string unisexPath = base + "_U.blp";
+            std::string basePath = base + ".blp";
             std::string fullPath;
             if (assetManager_->fileExists(genderPath)) fullPath = genderPath;
             else if (assetManager_->fileExists(unisexPath)) fullPath = unisexPath;
-            else fullPath = base + ".blp";
+            else if (assetManager_->fileExists(basePath)) fullPath = basePath;
+            else continue;
 
             regionLayers.emplace_back(region, fullPath);
         }

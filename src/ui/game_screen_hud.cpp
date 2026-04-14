@@ -315,9 +315,10 @@ void GameScreen::updateCharacterTextures(game::Inventory& inventory) {
                 fullPath = genderPath;
             } else if (assetManager->fileExists(unisexPath)) {
                 fullPath = unisexPath;
-            } else {
-                // Last resort: try without suffix
+            } else if (assetManager->fileExists(base + ".blp")) {
                 fullPath = base + ".blp";
+            } else {
+                continue;
             }
             regionLayers.emplace_back(region, fullPath);
         }
