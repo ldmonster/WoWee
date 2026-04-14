@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated**: 2026-03-30
+**Last updated**: 2026-04-14
 
 ## What This Repo Is
 
@@ -36,8 +36,19 @@ Implemented (working in normal use):
 - Multi-expansion: Classic/Vanilla, TBC, WotLK, and Turtle WoW (1.17) protocol and asset variants
 - CI: GitHub Actions for Linux (x86-64, ARM64), Windows (MSYS2 x86-64 + ARM64), macOS (ARM64); container builds via Podman
 
+Recent refactors (PRs #59-63, April 2026):
+
+- Chat system decomposed into 15+ modules under `src/ui/chat/` with 11 command modules, GM command support, macro evaluator, and tab completion
+- World map decomposed into 16 modules under `src/rendering/world_map/` with overlay layer system, view state machine, and ZMP-based hover detection
+- TransportManager decomposed: spline math extracted to `src/math/`, path data to TransportPathRepository, 7 duplicated spline parsers consolidated into `spline_packet.cpp`
+- Spell visual effects system with bone-tracked ribbons and particles
+- Entity movement improvements: multi-segment path interpolation, terrain height clamping, walk/run animation fix
+- 27 unit tests (up from 8), covering chat, world map, spline math, transport, and animation systems
+- Code quality fix pass: 7 issues resolved across hover detection, null safety, buffer bounds, and coordinate validation
+
 In progress / known gaps:
 
+- World map: zone hover detection has edge cases with some zone boundaries; cosmic highlight sizing is approximate
 - Transports: M2 transports (trams) working with position-delta riding; WMO transports (ships, zeppelins) working with path following; some edge cases remain
 - Quest GO interaction: CMSG_GAMEOBJ_USE + CMSG_LOOT sent correctly, but some AzerothCore/ChromieCraft servers don't grant quest credit for chest-type GOs (server-side limitation)
 - Visual edge cases: some M2/WMO rendering gaps (some particle effects)

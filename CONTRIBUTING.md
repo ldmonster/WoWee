@@ -13,7 +13,7 @@ make -C build -j$(nproc)
 ## Code Style
 
 - **C++20**. Use `#pragma once` for include guards.
-- Namespaces: `wowee::game`, `wowee::rendering`, `wowee::ui`, `wowee::core`, `wowee::network`.
+- Namespaces: `wowee::game`, `wowee::rendering`, `wowee::rendering::world_map`, `wowee::ui`, `wowee::ui::chat`, `wowee::math`, `wowee::core`, `wowee::network`.
 - Conventional commit messages in imperative mood:
   - `feat:` new feature
   - `fix:` bug fix
@@ -37,9 +37,12 @@ See [docs/architecture.md](docs/architecture.md) for the full picture. Key names
 
 | Namespace | Responsibility |
 |---|---|
-| `wowee::game` | Game state, packet handling (`GameHandler`), opcode dispatch |
+| `wowee::game` | Game state, packet handling (`GameHandler`), opcode dispatch, spline parsing |
 | `wowee::rendering` | Vulkan renderer, M2/WMO/terrain, sky system |
+| `wowee::rendering::world_map` | Modular world map (16 components: facade, compositor, layers, etc.) |
 | `wowee::ui` | ImGui windows and HUD (`GameScreen`) |
+| `wowee::ui::chat` | Modular chat system (15+ components: commands, markup, macros, etc.) |
+| `wowee::math` | Reusable math modules (CatmullRomSpline) |
 | `wowee::core` | Coordinates, math, utilities |
 | `wowee::network` | Connection, `Packet` read/write API |
 
@@ -56,17 +59,22 @@ Helper variants: `registerWorldHandler` (requires `isInWorld()`), `registerSkipH
 
 ## Testing
 
-There is no automated test suite. Changes are verified by manual testing against
-WoW 3.3.5a private servers (primarily ChromieCraft/AzerothCore). Classic and TBC
-expansion paths are tested against their respective server builds.
+27 unit tests cover core systems, animation, transport/spline, world map, and chat.
+See [TESTING.md](TESTING.md) for the full guide. Run with `./test.sh --test`.
+Manual testing against WoW 3.3.5a private servers (primarily ChromieCraft/AzerothCore)
+is expected for gameplay-affecting changes.
 
 ## Key Files for New Contributors
 
-| File | What it does |
+| File / Directory | What it does |
 |---|---|
 | `include/game/game_handler.hpp` | Central game state and all packet handler declarations |
 | `src/game/game_handler.cpp` | Packet dispatch registration and handler implementations |
 | `include/network/packet.hpp` | `Packet` class -- the read/write API every handler uses |
 | `include/ui/game_screen.hpp` | Main gameplay UI screen (ImGui) |
+| `src/ui/chat/` | Modular chat system (commands, markup, macros, tab completion) |
+| `src/rendering/world_map/` | Modular world map (facade, compositor, layers, coordinate projection) |
+| `src/math/spline.cpp` | Reusable CatmullRomSpline math |
+| `src/game/spline_packet.cpp` | Unified spline packet parsing for all expansions |
 | `src/rendering/m2_renderer.cpp` | M2 model loading and rendering |
 | `docs/architecture.md` | High-level system architecture reference |

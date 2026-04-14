@@ -125,6 +125,19 @@ Wowee follows a modular architecture with clear separation of concerns:
 - Distance-weighted light volume blending
 - Fog color/distance parameters
 
+**World Map System** (`src/rendering/world_map/`) - Modular map architecture:
+- `WorldMapFacade` - Public API (PIMPL pattern), composes all components
+- `CompositeRenderer` - Vulkan tile pipeline + off-screen FBO compositing (1024×768 FBO, 1002×668 visible)
+- `DataRepository` - DBC zone loading, ZMP pixel map, POI/overlay storage
+- `CoordinateProjection` - UV projection, zone/continent spatial lookups
+- `ExplorationState` - Server exploration mask + local fog-of-war tracking
+- `ViewStateMachine` - COSMIC → WORLD → CONTINENT → ZONE navigation with transitions
+- `InputHandler` - Keyboard/mouse input → `InputAction` mapping
+- `OverlayRenderer` - Layer-based ImGui overlay system (Open/Closed Principle)
+- `MapResolver` - Cross-map navigation (Outland, Northrend detection)
+- `ZoneMetadata` - Zone level ranges and faction data for labels
+- 9 overlay layers (each implements `IOverlayLayer`): player marker, party dot, taxi node, POI marker, quest POI, corpse marker, zone highlight, coordinate display, subzone tooltip
+
 ### 3. Networking (`src/network/`)
 
 **TCPSocket** (`tcp_socket.hpp/cpp`) - Platform TCP
@@ -183,10 +196,28 @@ Wowee follows a modular architecture with clear separation of concerns:
 - Player, Unit, GameObject subtypes
 - GUID-based lookup, field extraction (health, level, display ID, etc.)
 
-**TransportManager** - Transport path evaluation
-- Catmull-Rom spline interpolation from TransportAnimation.dbc
-- Clock-based motion with server time synchronization
-- Time-closed looping paths (wrap point duplicated, no index wrapping)
+**TransportManager** - Transport lifecycle and server sync
+- Delegates path data to `TransportPathRepository`
+- Delegates spline math to `math::CatmullRomSpline`
+- Clock-based motion with `TransportClockSync`
+- Reduced from ~1,200 to ~500 lines after decomposition
+
+**TransportPathRepository** - Transport path data
+- DBC loading (TransportAnimation.dbc, TaxiPathNode.dbc)
+- Path inference heuristics for server spawn→DBC mapping
+- Z-only elevator detection vs XY transport paths
+
+**math::CatmullRomSpline** (`src/math/`) - Reusable spline module
+- Catmull-Rom interpolation with O(log n) binary search segment lookup
+- Fused position+tangent evaluation (single call per frame per transport)
+- Time-closed (looping) and clamped (non-looping) path modes
+- `orientationFromTangent()` for smooth transport/entity facing
+
+**SplineBlockData** (`src/game/spline_packet.hpp/cpp`) - Unified spline parsing
+- Consolidates 7 duplicated spline parsers into shared functions
+- `parseMonsterMoveSplineBody()` (WotLK/TBC), `parseMonsterMoveSplineBodyVanilla()`
+- `parseWotlkMoveUpdateSpline()`, `parseClassicMoveUpdateSpline()`
+- Packed delta decoding (11+11+10-bit signed, ×0.25 scale)
 
 **Expansion Helpers** (`game_utils.hpp`):
 - `isActiveExpansion("classic")` / `isActiveExpansion("tbc")` / `isActiveExpansion("wotlk")`
@@ -244,7 +275,7 @@ Wowee follows a modular architecture with clear separation of concerns:
 **Screens:**
 - `AuthScreen` - Login with username/password, server address, security code
 - `RealmScreen` - Realm list with population and type indicators
-- `CharacterScreen` - Character selection with 3D animated preview
+- `CharacterScreen` - Character selection with 3D animated preview, keyboard navigation
 - `CharacterCreateScreen` - Race/class/gender/appearance customization
 - `GameScreen` - Main HUD: chat, action bar, target frame, minimap, nameplates, combat text, tooltips
 - `InventoryScreen` - Equipment paper doll, backpack, bag windows, item tooltips with stats
@@ -252,6 +283,22 @@ Wowee follows a modular architecture with clear separation of concerns:
 - `QuestLogScreen` - Quest list with objectives, details, and rewards
 - `TalentScreen` - Talent tree UI with point allocation
 - `SettingsScreen` - Graphics presets (LOW/MEDIUM/HIGH/ULTRA), audio, keybindings
+
+**Chat System** (`src/ui/chat/`) - Modular chat architecture:
+- `ChatPanel` - Main chat UI (tabs, input, message display)
+- `ChatInput` - Input handling and history
+- `ChatTabManager` - Tab creation, switching, per-tab filters
+- `ChatTabCompleter` - Tab-completion for player names, commands, channels
+- `ChatCommandRegistry` - Slash command dispatch with `IChatCommand` interface
+- `ChatMarkupParser` / `ChatMarkupRenderer` - Item link parsing and colored rich-text rendering
+- `ChatBubbleManager` - Floating chat bubbles above entities
+- `ChatSettings` - Per-channel color, font size, timestamp options
+- `MacroEvaluator` - WoW-style macro conditional evaluation (`[mod:shift]`, `[target=focus]`, etc.)
+- `GameStateAdapter` / `InputModifierAdapter` - Testable abstractions over game state
+- `ItemTooltipRenderer` - Chat-embedded item tooltip rendering (510 LOC)
+- `CastSequenceTracker` - `/castsequence` state tracking
+- 11 command modules under `commands/`: channel, combat, emote, GM, group, guild, help, misc, social, system, target
+- 190-command GM data table with dot-prefix interception and `/gmhelp`
 
 ### 8. Audio System (`src/audio/`)
 
@@ -313,7 +360,7 @@ Wowee follows a modular architecture with clear separation of concerns:
 ## Code Style
 
 - **C++20 standard**
-- **Namespaces**: `wowee::core`, `wowee::rendering`, `wowee::game`, `wowee::ui`, `wowee::network`, `wowee::auth`, `wowee::audio`, `wowee::pipeline`
+- **Namespaces**: `wowee::core`, `wowee::rendering`, `wowee::rendering::world_map`, `wowee::game`, `wowee::ui`, `wowee::ui::chat`, `wowee::math`, `wowee::network`, `wowee::auth`, `wowee::audio`, `wowee::pipeline`
 - **Naming**: PascalCase for classes, camelCase for functions/variables, kPascalCase for constants
 - **Headers**: `.hpp` extension, `#pragma once`
 - **Commits**: Conventional style (`feat:`, `fix:`, `refactor:`, `docs:`, `perf:`)

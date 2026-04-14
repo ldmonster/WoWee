@@ -8,6 +8,42 @@
 - Extract 8 domain handler classes from GameHandler
 - Replace 3,300-line switch with dispatch table
 - Multi-platform Docker build system (Linux, macOS arm64/x86_64, Windows cross-compilation)
+- Decompose ChatPanel monolith into 15+ modules under `src/ui/chat/` with IChatCommand interface, ChatCommandRegistry, MacroEvaluator, ChatMarkupParser/Renderer, ChatBubbleManager, ChatTabManager, GameStateAdapter, and 11 command modules (PR #62)
+- Decompose WorldMap (1,360 LOC) into 16 modules under `src/rendering/world_map/` with WorldMapFacade (PIMPL), CompositeRenderer, DataRepository, CoordinateProjection, ViewStateMachine, 9 overlay layers (PR #61)
+- Extract reusable CatmullRomSpline module to `src/math/` with O(log n) binary search and fused position+tangent evaluation (PR #60)
+- Decompose TransportManager (1,200→500 LOC): extract TransportPathRepository, TransportClockSync, TransportAnimator; consolidate 7 duplicated spline parsers into `spline_packet.cpp` (PR #60)
+
+### Features
+- Spell visual effects system with bone-tracked ribbons and particles (PR #58)
+- GM command support: 190-command data table with dot-prefix interception, tab-completion, `/gmhelp` with category filter (PR #62)
+- ZMP pixel-accurate zone hover detection on world map (PR #63)
+- Textured player arrow (MinimapArrow.blp) on world map (PR #63)
+- Multi-segment path interpolation for entity movement (PR #59)
+- Character screen keyboard navigation (Up/Down/Enter) (PR #59)
+
+### Bug Fixes (v1.8.10+)
+- Fix walk/run animation persisting after entity arrival (PR #59)
+- Fix entity teleport during dead-reckoning overrun phase (PR #59)
+- Fix Vulkan crash on window resize when minimized (0×0 extent) (PR #59)
+- Fix quest log not populating on quest accept (PR #59)
+- Fix hit-reaction animation being overridden on next frame (PR #59)
+- Fix ChatType enum values to match WoW wire protocol (SAY=0x01 not 0x00) (PR #62)
+- Fix BG_SYSTEM_* values from 82–84 (UB in bitmask shifts) to 0x24–0x26 (PR #62)
+- Fix infinite Enter key loop after teleport (PR #62)
+- Remove stale kVOffset (-0.15) from zone hover detection causing ~15% vertical offset
+- Add null guard for cachedGameHandler_ in ChatPanel input callback
+- Fix cosmic highlight aspect ratio with resolution-independent square rendering
+- Skip transport waypoints with broken coordinate conversion instead of silent use
+- Fix spline endpoint validation bypass for entities near world origin
+- Fix off-by-one in chat link insertion buffer capacity check
+- Zero window border in world map to eliminate content/window gap
+
+### Tests
+- Add 19 new test files (27 total, up from 8):
+  - Chat: chat_markup_parser, chat_tab_completer, gm_commands, macro_evaluator
+  - World map: world_map, coordinate_projection, exploration_state, map_resolver, view_state_machine, zone_metadata
+  - Transport/spline: spline, transport_components, transport_path_repo
+  - Animation: animation_ids, locomotion_fsm, combat_fsm, activity_fsm, anim_capability, indoor_shadows
 
 ### Bug Fixes (v1.8.2–v1.8.9)
 - Fix VkTexture ownsSampler_ flag after move/destroy (prevented double-free)
