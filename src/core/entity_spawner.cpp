@@ -1069,7 +1069,8 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
                                     } else if (section == 4 && npcUnderwear.empty() && color == npcSkin) {
                                         for (uint32_t f = csF.texture1; f <= csF.texture1 + 2; f++) {
                                             std::string tex = csDbc->getString(r, f);
-                                            if (!tex.empty()) npcUnderwear.push_back(tex);
+                                            if (!tex.empty() && am->fileExists(tex))
+                                                npcUnderwear.push_back(tex);
                                         }
                                     }
                                 }
@@ -1659,14 +1660,15 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
                             const bool hasDir = (name.find('\\') != std::string::npos);
                             const bool hasExt = hasBlpExt(name);
                             if (hasDir) {
-                                addCapeCandidate(name);
-                                if (!hasExt) addCapeCandidate(name + ".blp");
+                                if (hasExt) addCapeCandidate(name);
+                                else addCapeCandidate(name + ".blp");
                             } else {
                                 std::string baseObj = "Item\\ObjectComponents\\Cape\\" + name;
                                 std::string baseTex = "Item\\TextureComponents\\Cape\\" + name;
-                                addCapeCandidate(baseObj);
-                                addCapeCandidate(baseTex);
-                                if (!hasExt) {
+                                if (hasExt) {
+                                    addCapeCandidate(baseObj);
+                                    addCapeCandidate(baseTex);
+                                } else {
                                     addCapeCandidate(baseObj + ".blp");
                                     addCapeCandidate(baseTex + ".blp");
                                 }
@@ -2055,14 +2057,15 @@ void EntitySpawner::spawnOnlineCreature(uint64_t guid, uint32_t displayId, float
                                     const bool hasDir = (name.find('\\') != std::string::npos);
                                     const bool hasExt = hasBlpExt(name);
                                     if (hasDir) {
-                                        addCandidate(name);
-                                        if (!hasExt) addCandidate(name + ".blp");
+                                        if (hasExt) addCandidate(name);
+                                        else addCandidate(name + ".blp");
                                     } else {
                                         std::string baseObj = "Item\\ObjectComponents\\Cape\\" + name;
                                         std::string baseTex = "Item\\TextureComponents\\Cape\\" + name;
-                                        addCandidate(baseObj);
-                                        addCandidate(baseTex);
-                                        if (!hasExt) {
+                                        if (hasExt) {
+                                            addCandidate(baseObj);
+                                            addCandidate(baseTex);
+                                        } else {
                                             addCandidate(baseObj + ".blp");
                                             addCandidate(baseTex + ".blp");
                                         }

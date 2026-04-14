@@ -2523,6 +2523,8 @@ void GameHandler::registerOpcodeHandlers() {
     };
     // GM ticket status (new/updated); no ticket UI yet
     registerSkipHandler(Opcode::SMSG_GM_TICKET_STATUS_UPDATE);
+    // Broadcast of another player's collision height change — cosmetic only.
+    registerSkipHandler(Opcode::MSG_MOVE_SET_COLLISION_HGT);
     // Client uses this outbound; treat inbound variant as no-op for robustness.
     registerSkipHandler(Opcode::MSG_MOVE_WORLDPORT_ACK);
     // Observed custom server packet (8 bytes). Safe-consume for now.

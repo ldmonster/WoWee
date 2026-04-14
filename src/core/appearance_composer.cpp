@@ -123,12 +123,12 @@ PlayerTextureInfo AppearanceComposer::resolvePlayerTextures(pipeline::M2Model& m
             else if (baseSection == 4 && !foundUnderwear && colorIndex == charSkinId) {
                 for (uint32_t f = csF.texture1; f <= csF.texture1 + 2; f++) {
                     std::string tex = charSectionsDbc->getString(r, f);
-                    if (!tex.empty()) {
+                    if (!tex.empty() && assetManager_->fileExists(tex)) {
                         result.underwearPaths.push_back(tex);
                         LOG_INFO("  DBC underwear texture: ", tex);
                     }
                 }
-                foundUnderwear = true;
+                foundUnderwear = !result.underwearPaths.empty();
             }
 
             if (foundSkin && foundHair && foundFaceLower && foundUnderwear) break;

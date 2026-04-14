@@ -228,11 +228,23 @@ void EntitySpawner::spawnOnlinePlayer(uint64_t guid,
                 hairTexturePath = charSectionsDbc->getString(r, csF.texture1);
                 if (!hairTexturePath.empty()) foundHair = true;
             } else if (baseSection == 4 && !foundUnderwear && colorIndex == skinId) {
+                // Verify textures exist — some DBC entries reference BLPs
+                // that were never shipped (e.g. Draenei skin colors 10-16).
+                bool allExist = true;
+                std::vector<std::string> candidateUW;
                 for (uint32_t f = csF.texture1; f <= csF.texture1 + 2; f++) {
                     std::string tex = charSectionsDbc->getString(r, f);
-                    if (!tex.empty()) underwearPaths.push_back(tex);
+                    if (!tex.empty()) {
+                        if (assetManager_->fileExists(tex))
+                            candidateUW.push_back(tex);
+                        else
+                            allExist = false;
+                    }
                 }
-                foundUnderwear = true;
+                if (allExist || !candidateUW.empty()) {
+                    underwearPaths = std::move(candidateUW);
+                    foundUnderwear = true;
+                }
             } else if (baseSection == 1 && !foundFaceLower &&
                        variationIndex == faceId && colorIndex == skinId) {
                 std::string tex1 = charSectionsDbc->getString(r, csF.texture1);
@@ -694,14 +706,15 @@ void EntitySpawner::setOnlinePlayerEquipment(uint64_t guid,
                     };
 
                     if (hasDir) {
-                        addCapeCandidate(capeName);
-                        if (!hasExt) addCapeCandidate(capeName + ".blp");
+                        if (hasExt) addCapeCandidate(capeName);
+                        else addCapeCandidate(capeName + ".blp");
                     } else {
                         std::string baseObj = "Item\\ObjectComponents\\Cape\\" + capeName;
                         std::string baseTex = "Item\\TextureComponents\\Cape\\" + capeName;
-                        addCapeCandidate(baseObj);
-                        addCapeCandidate(baseTex);
-                        if (!hasExt) {
+                        if (hasExt) {
+                            addCapeCandidate(baseObj);
+                            addCapeCandidate(baseTex);
+                        } else {
                             addCapeCandidate(baseObj + ".blp");
                             addCapeCandidate(baseTex + ".blp");
                         }

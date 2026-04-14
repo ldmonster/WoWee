@@ -370,12 +370,15 @@ void SpellVisualSystem::playSpellVisual(uint32_t visualId, const glm::vec3& worl
 
     if (!spellVisualDbcLoaded_) loadSpellVisualDbc();
 
-    // Select cast or impact path map
-    auto& pathMap = useImpactKit ? spellVisualImpactPath_ : spellVisualCastPath_;
-    auto pathIt = pathMap.find(visualId);
-    if (pathIt == pathMap.end()) {
-        LOG_WARNING("SpellVisual: no ", (useImpactKit ? "impact" : "cast"), " path for visualId=", visualId);
-        return;
+    // Select cast or impact path map; fall back to the other if missing
+    auto& primaryMap = useImpactKit ? spellVisualImpactPath_ : spellVisualCastPath_;
+    auto& fallbackMap = useImpactKit ? spellVisualCastPath_ : spellVisualImpactPath_;
+    auto pathIt = primaryMap.find(visualId);
+    if (pathIt == primaryMap.end()) {
+        pathIt = fallbackMap.find(visualId);
+        if (pathIt == fallbackMap.end()) {
+            return;
+        }
     }
 
     const std::string& modelPath = pathIt->second;

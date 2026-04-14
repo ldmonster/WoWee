@@ -120,7 +120,7 @@ void SpellHandler::triggerCastVisual(uint32_t spellId, uint64_t casterGuid, uint
     uint32_t visualId = resolveSpellVisualId(spellId);
     if (visualId == 0) { LOG_WARNING("SpellVisual: triggerCastVisual — visualId=0 for spellId=", spellId); return; }
     glm::vec3 casterPos;
-    if (!resolveUnitPosition(casterGuid, casterPos)) { LOG_WARNING("SpellVisual: triggerCastVisual — cannot resolve caster position"); return; }
+    if (!resolveUnitPosition(casterGuid, casterPos)) { LOG_DEBUG("SpellVisual: triggerCastVisual — cannot resolve caster position for guid=0x", std::hex, casterGuid, std::dec); return; }
     LOG_INFO("SpellVisual: triggerCastVisual visualId=", visualId, " pos=(", casterPos.x, ",", casterPos.y, ",", casterPos.z, ") castTimeMs=", castTimeMs);
     svs->playSpellVisualPrecast(visualId, casterPos, castTimeMs);
 }

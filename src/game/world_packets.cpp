@@ -1183,9 +1183,9 @@ bool UpdateObjectParser::parseUpdateBlock(network::Packet& packet, UpdateBlock& 
         }
 
         case UpdateType::MOVEMENT: {
-            // Movement update
-            if (!packet.hasRemaining(8)) return false;
-            block.guid = packet.readUInt64();
+            // Movement update — WotLK 3.3.5a uses PackedGuid (NOT full uint64)
+            if (!packet.hasData()) return false;
+            block.guid = packet.readPackedGuid();
             LOG_DEBUG("  MOVEMENT update for GUID: 0x", std::hex, block.guid, std::dec);
 
             return parseMovementBlock(packet, block);
@@ -1288,9 +1288,18 @@ bool UpdateObjectParser::parse(network::Packet& packet, UpdateObjectData& data) 
     data.blockCount = remainingBlockCount;
     data.blocks.reserve(data.blockCount);
 
+    // Track last block state for desync diagnostics
+    uint8_t prevUpdateType = 0;
+    uint8_t prevObjectType = 0;
+    uint16_t prevUpdateFlags = 0;
+    uint32_t prevMoveFlags = 0;
+    uint64_t prevGuid = 0;
+    size_t prevReadPos = packet.getReadPos();
+
     for (uint32_t i = 0; i < data.blockCount; ++i) {
         LOG_DEBUG("Parsing block ", i + 1, " / ", data.blockCount);
 
+        size_t blockStartPos = packet.getReadPos();
         UpdateBlock block;
         if (!parseUpdateBlock(packet, block)) {
             static int parseBlockErrors = 0;
@@ -1299,6 +1308,31 @@ bool UpdateObjectParser::parse(network::Packet& packet, UpdateObjectData& data) 
                 LOG_ERROR("Failed to parse update block ", i + 1, " of ", data.blockCount,
                           " (", i, " blocks parsed, ", lostBlocks, " blocks LOST",
                           ", remaining=", packet.getRemainingSize(), " bytes)");
+                LOG_ERROR("  blockStartPos=", blockStartPos, " packetSize=", packet.getSize());
+                if (i > 0) {
+                    LOG_ERROR("  prevBlock: type=", static_cast<int>(prevUpdateType),
+                              " objType=", static_cast<int>(prevObjectType),
+                              " updateFlags=0x", std::hex, prevUpdateFlags,
+                              " moveFlags=0x", prevMoveFlags,
+                              " guid=0x", prevGuid, std::dec,
+                              " startPos=", prevReadPos,
+                              " consumed=", blockStartPos - prevReadPos, " bytes");
+                }
+                // Peek at the failing byte(s) for format diagnosis
+                packet.setReadPos(blockStartPos);
+                uint8_t peekBytes[8] = {};
+                size_t peekCount = std::min<size_t>(8, packet.getRemainingSize());
+                for (size_t p = 0; p < peekCount; ++p)
+                    peekBytes[p] = packet.readUInt8();
+                LOG_ERROR("  failBytes: ",
+                          std::hex, static_cast<int>(peekBytes[0]), " ",
+                          static_cast<int>(peekBytes[1]), " ",
+                          static_cast<int>(peekBytes[2]), " ",
+                          static_cast<int>(peekBytes[3]), " ",
+                          static_cast<int>(peekBytes[4]), " ",
+                          static_cast<int>(peekBytes[5]), " ",
+                          static_cast<int>(peekBytes[6]), " ",
+                          static_cast<int>(peekBytes[7]), std::dec);
                 if (parseBlockErrors == 10)
                     LOG_ERROR("(suppressing further update block parse errors)");
             }
@@ -1307,6 +1341,12 @@ bool UpdateObjectParser::parse(network::Packet& packet, UpdateObjectData& data) 
             break;
         }
 
+        prevUpdateType = static_cast<uint8_t>(block.updateType);
+        prevObjectType = static_cast<uint8_t>(block.objectType);
+        prevUpdateFlags = block.updateFlags;
+        prevMoveFlags = block.moveFlags;
+        prevGuid = block.guid;
+        prevReadPos = blockStartPos;
         data.blocks.emplace_back(std::move(block));
     }
 

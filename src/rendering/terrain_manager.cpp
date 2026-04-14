@@ -1055,7 +1055,12 @@ bool TerrainManager::advanceFinalization(FinalizingTile& ft) {
             size_t uploaded = 0;
             while (ft.wmoDoodadIndex < pending->wmoDoodads.size() && uploaded < kDoodadsPerStep) {
                 auto& doodad = pending->wmoDoodads[ft.wmoDoodadIndex];
-                if (m2Renderer->loadModel(doodad.model, doodad.modelId)) {
+                if (!m2Renderer->loadModel(doodad.model, doodad.modelId)) {
+                    ft.wmoDoodadIndex++;
+                    uploaded++;
+                    continue;
+                }
+                {
                     std::lock_guard<std::mutex> lock(uploadedM2IdsMutex_);
                     uploadedM2Ids_.insert(doodad.modelId);
                 }

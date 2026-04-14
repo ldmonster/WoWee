@@ -443,11 +443,11 @@ bool CharacterPreview::loadCharacter(game::Race race, game::Gender gender,
                      variationIndex == 0 && colorIndex == static_cast<uint32_t>(skin)) {
                 for (uint32_t f = csF.texture1; f <= csF.texture1 + 2; f++) {
                     std::string tex = charSectionsDbc->getString(r, f);
-                    if (!tex.empty()) {
+                    if (!tex.empty() && assetManager_->fileExists(tex)) {
                         underwearPaths.push_back(tex);
                     }
                 }
-                foundUnderwear = true;
+                foundUnderwear = !underwearPaths.empty();
             }
         }
 
@@ -824,14 +824,15 @@ bool CharacterPreview::applyEquipment(const std::vector<game::EquipmentItem>& eq
                     bool hasDir = (name.find('\\') != std::string::npos);
                     bool hasExt = hasBlpExt(name);
                     if (hasDir) {
-                        addCandidate(name);
-                        if (!hasExt) addCandidate(name + ".blp");
+                        if (hasExt) addCandidate(name);
+                        else addCandidate(name + ".blp");
                     } else {
                         std::string baseObj = "Item\\ObjectComponents\\Cape\\" + name;
                         std::string baseTex = "Item\\TextureComponents\\Cape\\" + name;
-                        addCandidate(baseObj);
-                        addCandidate(baseTex);
-                        if (!hasExt) {
+                        if (hasExt) {
+                            addCandidate(baseObj);
+                            addCandidate(baseTex);
+                        } else {
                             addCandidate(baseObj + ".blp");
                             addCandidate(baseTex + ".blp");
                         }
