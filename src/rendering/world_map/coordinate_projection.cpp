@@ -49,11 +49,7 @@ glm::vec2 renderPosToMapUV(const glm::vec3& renderPos,
     float u = (bounds.locLeft - wowX) / denom_h;
     float v = (bounds.locTop  - wowY) / denom_v;
 
-    if (isContinent) {
-        constexpr float kVScale = 1.0f;
-        constexpr float kVOffset = -0.15f;
-        v = (v - 0.5f) * kVScale + 0.5f + kVOffset;
-    }
+    (void)isContinent;
     return glm::vec2(u, v);
 }
 

@@ -163,8 +163,45 @@ void ZoneHighlightLayer::render(const LayerContext& ctx) {
     hoveredZone_ = -1;
     ImVec2 mousePos = ImGui::GetMousePos();
 
-    // ── Render zone rectangles using DBC world-coord AABB projection ──
-    // (Restored from old WorldMap::renderImGuiOverlay — no ZMP dependency)
+    // ── ZMP pixel-accurate hover detection ──
+    // The ZMP is a 128x128 grid covering the full world (64×64 ADTs of 533.333 each).
+    // Convert mouse screen position → world coordinates → ZMP grid cell → areaID → zone.
+    int zmpHoveredZone = -1;
+    if (ctx.hasZmpData && ctx.zmpGrid && ctx.zmpResolveZoneIdx && ctx.zmpRepoPtr) {
+        float mu = (mousePos.x - ctx.imgMin.x) / ctx.displayW;
+        float mv = (mousePos.y - ctx.imgMin.y) / ctx.displayH;
+
+        if (mu >= 0.0f && mu <= 1.0f && mv >= 0.0f && mv <= 1.0f) {
+            // Undo the -0.15 vertical offset applied during continent rendering
+            constexpr float kVOffset = -0.15f;
+            mv -= kVOffset;
+
+            // Screen UV → world coordinates
+            float wowX = cLeft - mu * cDenomU;
+            float wowY = cTop  - mv * cDenomV;
+
+            // World coordinates → ZMP UV (0.5 = world center)
+            constexpr float kWorldSize = 64.0f * 533.333f;  // 34133.312
+            float zmpX = 0.5f - wowX / kWorldSize;
+            float zmpY = 0.5f - wowY / kWorldSize;
+
+            if (zmpX >= 0.0f && zmpX < 1.0f && zmpY >= 0.0f && zmpY < 1.0f) {
+                int col = static_cast<int>(zmpX * 128.0f);
+                int row = static_cast<int>(zmpY * 128.0f);
+                col = std::clamp(col, 0, 127);
+                row = std::clamp(row, 0, 127);
+                uint32_t areaId = (*ctx.zmpGrid)[row * 128 + col];
+                if (areaId != 0) {
+                    int zi = ctx.zmpResolveZoneIdx(ctx.zmpRepoPtr, areaId);
+                    if (zi >= 0 && zoneBelongsToContinent(*ctx.zones, zi, ctx.continentIdx)) {
+                        zmpHoveredZone = zi;
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Render zone rectangles ──
     for (int zi = 0; zi < static_cast<int>(ctx.zones->size()); zi++) {
         if (!zoneBelongsToContinent(*ctx.zones, zi, ctx.continentIdx)) continue;
         const auto& z = (*ctx.zones)[zi];
@@ -184,26 +221,26 @@ void ZoneHighlightLayer::render(const LayerContext& ctx) {
         zuMin = cu - hu; zuMax = cu + hu;
         zvMin = cv - hv; zvMax = cv + hv;
 
-        constexpr float kVOffset = -0.15f;
-        zvMin = (zvMin - 0.5f) + 0.5f + kVOffset;
-        zvMax = (zvMax - 0.5f) + 0.5f + kVOffset;
-
         zuMin = std::clamp(zuMin, 0.0f, 1.0f);
         zuMax = std::clamp(zuMax, 0.0f, 1.0f);
         zvMin = std::clamp(zvMin, 0.0f, 1.0f);
         zvMax = std::clamp(zvMax, 0.0f, 1.0f);
         if (zuMax - zuMin < 0.001f || zvMax - zvMin < 0.001f) continue;
 
+        float titleBarH = ImGui::GetFrameHeight();
         float sx0 = ctx.imgMin.x + zuMin * ctx.displayW;
-        float sy0 = ctx.imgMin.y + zvMin * ctx.displayH;
+        float sy0 = ctx.imgMin.y + zvMin * ctx.displayH + titleBarH;
         float sx1 = ctx.imgMin.x + zuMax * ctx.displayW;
-        float sy1 = ctx.imgMin.y + zvMax * ctx.displayH;
+        float sy1 = ctx.imgMin.y + zvMax * ctx.displayH + titleBarH;
 
         bool explored = !ctx.exploredZones ||
                         ctx.exploredZones->empty() ||
                         ctx.exploredZones->count(zi) > 0;
-        bool hovered = (mousePos.x >= sx0 && mousePos.x <= sx1 &&
-                        mousePos.y >= sy0 && mousePos.y <= sy1);
+        // Use ZMP pixel-accurate hover when available; fall back to AABB
+        bool hovered = (zmpHoveredZone >= 0)
+            ? (zi == zmpHoveredZone)
+            : (mousePos.x >= sx0 && mousePos.x <= sx1 &&
+               mousePos.y >= sy0 && mousePos.y <= sy1);
 
         if (hovered) {
             hoveredZone_ = zi;
