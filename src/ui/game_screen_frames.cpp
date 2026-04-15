@@ -464,6 +464,7 @@ void GameScreen::renderPlayerFrame(game::GameHandler& gameHandler) {
                 }
             }
             ImGui::SetCursorScreenPos(ImVec2(cursor.x, cursor.y + slotH + 2.0f));
+            ImGui::Dummy(ImVec2(totalW, 0.0f));
         }
     }
 

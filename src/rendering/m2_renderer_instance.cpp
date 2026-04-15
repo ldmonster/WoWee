@@ -330,6 +330,23 @@ void M2Renderer::clear() {
                 write.pBufferInfo = &bufInfo;
                 vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
             }
+            // Re-allocate mega bone sets (invalidated by pool reset)
+            for (int i = 0; i < 2; i++) {
+                megaBoneSet_[i] = allocateBoneSet();
+                if (megaBoneSet_[i] && megaBoneBuffer_[i]) {
+                    VkDescriptorBufferInfo mbInfo{};
+                    mbInfo.buffer = megaBoneBuffer_[i];
+                    mbInfo.offset = 0;
+                    mbInfo.range = MEGA_BONE_MAX_INSTANCES * MAX_BONES_PER_INSTANCE * sizeof(glm::mat4);
+                    VkWriteDescriptorSet mw{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                    mw.dstSet = megaBoneSet_[i];
+                    mw.dstBinding = 0;
+                    mw.descriptorCount = 1;
+                    mw.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                    mw.pBufferInfo = &mbInfo;
+                    vkUpdateDescriptorSets(device, 1, &mw, 0, nullptr);
+                }
+            }
         }
     }
     models.clear();
