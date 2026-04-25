@@ -614,6 +614,7 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
     activeAreaTriggers_.clear();
     areaTriggerCheckTimer_ = -5.0f;
     areaTriggerSuppressFirst_ = true;
+    areaTriggerCooldown_ = 10.0f;
 
     // Notify application to load terrain for this map/position (online mode)
     if (worldEntryCallback_) {
@@ -625,6 +626,14 @@ void GameHandler::handleLoginVerifyWorld(network::Packet& packet) {
         auto activeMoverPacket = SetActiveMoverPacket::build(playerGuid);
         socket->send(activeMoverPacket);
         LOG_INFO("Sent CMSG_SET_ACTIVE_MOVER for player 0x", std::hex, playerGuid, std::dec);
+    }
+
+    // Immediately sync our position so the server doesn't keep stale coordinates
+    // from a previous session or character. Without this, the server can think
+    // the player is elsewhere and issue a corrective teleport.
+    if (socket) {
+        sendMovement(game::Opcode::MSG_MOVE_STOP);
+        sendMovement(game::Opcode::MSG_MOVE_HEARTBEAT);
     }
 
     // Kick the first keepalive immediately on world entry. Classic-like realms

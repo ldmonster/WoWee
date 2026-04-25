@@ -613,15 +613,18 @@ void MovementHandler::sendMovement(Opcode opcode) {
               wireOpcode(opcode), std::dec,
               (includeTransportInWire ? " ONTRANSPORT" : ""));
 
-    // Detect near-origin position on Eastern Kingdoms (map 0) — this would place
-    // the player near Alterac Mountains and is almost certainly a bug.
+    // Block heartbeats from a near-origin position on Eastern Kingdoms (map 0).
+    // These positions are almost certainly bugs (area trigger misfire, corrupted
+    // save). Sending them tells the server the player is there, which persists
+    // the bad position across sessions and creates a teleport loop.
     if (owner_.getCurrentMapId() == 0 &&
-        std::abs(movementInfo.x) < 500.0f && std::abs(movementInfo.y) < 500.0f) {
-        LOG_WARNING("sendMovement: position near map origin! canonical=(",
+        std::abs(movementInfo.x) < 1000.0f && std::abs(movementInfo.y) < 1000.0f) {
+        LOG_WARNING("sendMovement: BLOCKED near-origin heartbeat canonical=(",
                     movementInfo.x, ", ", movementInfo.y, ", ", movementInfo.z,
                     ") onTransport=", owner_.isOnTransport(),
                     " transportGuid=0x", std::hex, owner_.playerTransportGuidRef(), std::dec,
                     " flags=0x", std::hex, movementInfo.flags, std::dec);
+        return;
     }
 
     // Convert canonical → server coordinates for the wire
@@ -1660,6 +1663,21 @@ void MovementHandler::handleTeleportAck(network::Packet& packet) {
                 " currentPos=(", movementInfo.x, ", ", movementInfo.y, ", ", movementInfo.z, ")");
 
     glm::vec3 canonical = core::coords::serverToCanonical(glm::vec3(serverX, serverY, serverZ));
+
+    // Reject teleports to a near-origin position on Eastern Kingdoms (map 0).
+    // No legitimate gameplay sends the player there; in this codebase it has
+    // only ever been an area-trigger-destination misfire on the server side.
+    // Refusing it (no ACK, no position update, no world reload) keeps the
+    // client at its current position. Heartbeats from the real position will
+    // eventually convince the server's anti-cheat to update its record.
+    if (owner_.getCurrentMapId() == 0 &&
+        std::abs(canonical.x) < 1000.0f && std::abs(canonical.y) < 1000.0f) {
+        LOG_WARNING("REJECTED MSG_MOVE_TELEPORT to near-origin canonical=(",
+                    canonical.x, ", ", canonical.y, ", ", canonical.z, ")"
+                    " — keeping current position");
+        return;
+    }
+
     movementInfo.x = canonical.x;
     movementInfo.y = canonical.y;
     movementInfo.z = canonical.z;
@@ -1668,6 +1686,14 @@ void MovementHandler::handleTeleportAck(network::Packet& packet) {
 
     // Clear cast bar on teleport — SpellHandler owns the casting_ flag
     if (owner_.getSpellHandler()) owner_.getSpellHandler()->resetCastState();
+
+    // Suppress area triggers for 10s after teleport. A one-shot flag is not
+    // enough — the player can leave and re-enter a trigger within seconds and
+    // get teleported again before the world has finished loading.
+    owner_.activeAreaTriggersRef().clear();
+    owner_.areaTriggerCheckTimerRef() = -5.0f;
+    owner_.areaTriggerSuppressFirstRef() = true;
+    owner_.areaTriggerCooldownRef() = 10.0f;
 
     if (owner_.getSocket()) {
         network::Packet ack(wireOpcode(Opcode::MSG_MOVE_TELEPORT_ACK));
@@ -1682,6 +1708,11 @@ void MovementHandler::handleTeleportAck(network::Packet& packet) {
         ack.writeUInt32(moveTime);
         owner_.getSocket()->send(ack);
         LOG_INFO("Sent MSG_MOVE_TELEPORT_ACK response");
+
+        // Immediately tell the server our position so it doesn't keep using
+        // stale pre-teleport coordinates for area-trigger / anti-cheat checks.
+        sendMovement(Opcode::MSG_MOVE_STOP);
+        sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
     }
 
     if (owner_.worldEntryCallbackRef()) {
@@ -1732,10 +1763,18 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
         owner_.tabCycleStaleRef() = true;
         owner_.resetCastState();
 
+        owner_.activeAreaTriggersRef().clear();
+        owner_.areaTriggerCheckTimerRef() = -5.0f;
+        owner_.areaTriggerSuppressFirstRef() = true;
+        owner_.areaTriggerCooldownRef() = 10.0f;
+
         if (owner_.getSocket()) {
             network::Packet ack(wireOpcode(Opcode::MSG_MOVE_WORLDPORT_ACK));
             owner_.getSocket()->send(ack);
             LOG_INFO("Sent MSG_MOVE_WORLDPORT_ACK (resurrection)");
+
+            sendMovement(Opcode::MSG_MOVE_STOP);
+            sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
         }
         return;
     }
@@ -1794,6 +1833,7 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
     owner_.activeAreaTriggersRef().clear();
     owner_.areaTriggerCheckTimerRef() = -5.0f;
     owner_.areaTriggerSuppressFirstRef() = true;
+    owner_.areaTriggerCooldownRef() = 10.0f;
     owner_.stopAutoAttack();
     owner_.resetCastState();
 
@@ -1801,6 +1841,10 @@ void MovementHandler::handleNewWorld(network::Packet& packet) {
         network::Packet ack(wireOpcode(Opcode::MSG_MOVE_WORLDPORT_ACK));
         owner_.getSocket()->send(ack);
         LOG_INFO("Sent MSG_MOVE_WORLDPORT_ACK");
+
+        // Sync position immediately so the server doesn't keep stale coordinates.
+        sendMovement(Opcode::MSG_MOVE_STOP);
+        sendMovement(Opcode::MSG_MOVE_HEARTBEAT);
     }
 
     owner_.timeSinceLastPingRef() = 0.0f;
@@ -2549,13 +2593,19 @@ void MovementHandler::checkAreaTriggers() {
     // Sanity: if position is near map origin on Eastern Kingdoms (map 0),
     // something has corrupted movementInfo — skip area trigger check to
     // avoid firing Alterac/Hillsbrad triggers and causing a rogue teleport.
-    if (owner_.getCurrentMapId() == 0 && std::abs(px) < 500.0f && std::abs(py) < 500.0f) {
+    if (owner_.getCurrentMapId() == 0 &&
+        std::abs(px) < 1000.0f && std::abs(py) < 1000.0f) {
         LOG_WARNING("checkAreaTriggers: position near map origin (", px, ", ", py, ", ", pz,
                     ") on map 0 — skipping to avoid rogue teleport. onTransport=",
                     owner_.isOnTransport(), " transportGuid=0x", std::hex,
                     owner_.playerTransportGuidRef(), std::dec);
         return;
     }
+
+    // Time-based cooldown after teleport/world entry — suppress ALL trigger
+    // firing (not just the first check) to prevent re-entry from immediately
+    // sending us to a wrong destination.
+    const bool cooldownActive = owner_.areaTriggerCooldownRef() > 0.0f;
 
     // On first check after map transfer, just mark which triggers we're inside
     // without firing them — prevents exit portal from immediately sending us back
@@ -2600,19 +2650,16 @@ void MovementHandler::checkAreaTriggers() {
             if (owner_.activeAreaTriggersRef().count(at.id) == 0) {
                 owner_.activeAreaTriggersRef().insert(at.id);
 
-                if (suppressFirst) {
-                    // After map transfer: mark triggers we're inside of, but don't fire them.
-                    // This prevents the exit portal from immediately sending us back.
-                    LOG_WARNING("AreaTrigger suppressed (post-transfer): AT", at.id);
+                if (suppressFirst || cooldownActive) {
+                    LOG_WARNING("AreaTrigger suppressed (post-transfer): AT", at.id,
+                                " cooldown=", owner_.areaTriggerCooldownRef());
                 } else {
-                    // Send CMSG_AREATRIGGER — the player is already inside the
-                    // trigger radius so the server's distance check should pass.
-                    // Do NOT spoof position to the trigger center; that tells the
-                    // server we're somewhere we're not and can cause rogue teleports.
                     network::Packet pkt(wireOpcode(Opcode::CMSG_AREATRIGGER));
                     pkt.writeUInt32(at.id);
                     owner_.getSocket()->send(pkt);
-                    LOG_DEBUG("Fired CMSG_AREATRIGGER: id=", at.id);
+                    LOG_WARNING("Fired CMSG_AREATRIGGER: id=", at.id,
+                                " pos=(", px, ", ", py, ", ", pz, ")",
+                                " trigger=(", at.x, ", ", at.y, ", ", at.z, ")");
                 }
             }
         } else {

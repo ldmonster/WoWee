@@ -867,6 +867,7 @@ void GameHandler::update(float deltaTime) {
         }
 
         // Check area triggers (instance portals, tavern rests, etc.)
+        if (areaTriggerCooldown_ > 0.0f) areaTriggerCooldown_ -= deltaTime;
         areaTriggerCheckTimer_ += deltaTime;
         if (areaTriggerCheckTimer_ >= game::AREA_TRIGGER_CHECK_INTERVAL) {
             areaTriggerCheckTimer_ = 0.0f;

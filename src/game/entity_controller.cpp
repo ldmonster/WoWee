@@ -611,6 +611,14 @@ void EntityController::applyPlayerTransportState(const UpdateBlock& block,
                                                    const std::shared_ptr<Entity>& entity,
                                                    const glm::vec3& canonicalPos, float oCanonical,
                                                    bool updateMovementInfoPos) {
+    // Reject server-pushed position corrections to near-origin on map 0.
+    // The server stores a corrupted position from a faulty area-trigger
+    // destination; accepting it lets heartbeats reinforce the bad save.
+    auto positionIsBad = [&](float x, float y) {
+        return owner_.getCurrentMapId() == 0 &&
+               std::abs(x) < 1000.0f && std::abs(y) < 1000.0f;
+    };
+
     if (block.onTransport) {
         // Convert transport offset from server → canonical coordinates
         glm::vec3 serverOffset(block.transportX, block.transportY, block.transportZ);
@@ -623,18 +631,28 @@ void EntityController::applyPlayerTransportState(const UpdateBlock& block,
             owner_.movementInfoRef().y = composed.y;
             owner_.movementInfoRef().z = composed.z;
         } else if (updateMovementInfoPos) {
-            owner_.movementInfoRef().x = canonicalPos.x;
-            owner_.movementInfoRef().y = canonicalPos.y;
-            owner_.movementInfoRef().z = canonicalPos.z;
+            if (positionIsBad(canonicalPos.x, canonicalPos.y)) {
+                LOG_WARNING("REJECTED player UPDATE_OBJECT to near-origin canonical=(",
+                            canonicalPos.x, ", ", canonicalPos.y, ", ", canonicalPos.z, ")");
+            } else {
+                owner_.movementInfoRef().x = canonicalPos.x;
+                owner_.movementInfoRef().y = canonicalPos.y;
+                owner_.movementInfoRef().z = canonicalPos.z;
+            }
         }
         LOG_INFO("Player on transport: 0x", std::hex, owner_.playerTransportGuidRef(), std::dec,
                 " offset=(", owner_.playerTransportOffsetRef().x, ", ", owner_.playerTransportOffsetRef().y,
                 ", ", owner_.playerTransportOffsetRef().z, ")");
     } else {
         if (updateMovementInfoPos) {
-            owner_.movementInfoRef().x = canonicalPos.x;
-            owner_.movementInfoRef().y = canonicalPos.y;
-            owner_.movementInfoRef().z = canonicalPos.z;
+            if (positionIsBad(canonicalPos.x, canonicalPos.y)) {
+                LOG_WARNING("REJECTED player UPDATE_OBJECT to near-origin canonical=(",
+                            canonicalPos.x, ", ", canonicalPos.y, ", ", canonicalPos.z, ")");
+            } else {
+                owner_.movementInfoRef().x = canonicalPos.x;
+                owner_.movementInfoRef().y = canonicalPos.y;
+                owner_.movementInfoRef().z = canonicalPos.z;
+            }
         }
         // Don't clear client-side M2 transport boarding (trams) —
         // the server doesn't know about client-detected transport attachment.

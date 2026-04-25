@@ -2332,6 +2332,7 @@ public:
     auto& areaTriggerMsgsRef() { return areaTriggerMsgs_; }
     auto& areaTriggersRef() { return areaTriggers_; }
     auto& areaTriggerSuppressFirstRef() { return areaTriggerSuppressFirst_; }
+    auto& areaTriggerCooldownRef() { return areaTriggerCooldown_; }
 
     // ── Death & Resurrection ─────────────────────────────────────────
     auto& playerDeadRef() { return playerDead_; }
@@ -2944,6 +2945,7 @@ private:
     std::unordered_set<uint32_t> activeAreaTriggers_;  // triggers player is currently inside
     float areaTriggerCheckTimer_ = 0.0f;
     bool areaTriggerSuppressFirst_ = false;  // suppress first check after map transfer
+    float areaTriggerCooldown_ = 0.0f;       // seconds remaining — suppress ALL triggers
 
     std::array<ActionBarSlot, ACTION_BAR_SLOTS> actionBar{};
     std::unordered_map<uint32_t, std::string> macros_;  // client-side macro text (persisted in char config)
